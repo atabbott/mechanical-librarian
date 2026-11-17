@@ -159,7 +159,11 @@ from mechanical_librarian.domain.reviewer_access import (
     OpenRouterModelId,
 )
 from mechanical_librarian.domain.value_flags import ValueFlagDestination, ValueFlagRule
-from mechanical_librarian.interfaces.web import live_stream, review_frontend
+from mechanical_librarian.interfaces.web import (
+    find_this_book,
+    live_stream,
+    review_frontend,
+)
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
     ReactAssetError,
@@ -706,6 +710,9 @@ class _CoverIdentity(_ClosedModel):
         "verified_manifestation_match",
         "verified_work_match",
         "title_creator_work_match",
+        # Only the owner's link or its anchor reached it (#1477, S26).
+        "owner_link_match",
+        "owner_link_anchor_match",
         "plausible_match",
         "unknown",
         "conflict",
@@ -751,9 +758,19 @@ class _CoverCandidate(_ClosedModel):
     match_state: Literal["same_edition", "same_book", "match_not_confirmed"]
     # A proposed cover from the exactly matched book of an audiobook with no
     # admitted recording, or one whose source record has the book's title and
-    # author at the chosen Book matching level; display only, its identity and
-    # match state stay as stated (#1642, #1355).
-    match_reason: Literal["matched_book", "title_and_author"] | None
+    # author at the chosen Book matching level, or one only the owner's link
+    # reached: the linked book's own, or one with its title and author;
+    # display only, its identity and match state stay as stated (#1642,
+    # #1355, #1477).
+    match_reason: (
+        Literal[
+            "matched_book",
+            "title_and_author",
+            "linked_book",
+            "linked_title_and_author",
+        ]
+        | None
+    )
     observation: _CoverObservation | None
     original_sha256: str
     ordinal: _Count
@@ -1403,6 +1420,28 @@ class _HistoryDescriptionItem(_ClosedModel):
     decision: _DescriptionDecisionCopy | None
 
 
+_OwnerLinkProvider = Literal[
+    "audible_catalog", "google_books", "hardcover", "inventaire", "open_library"
+]
+_OwnerLinkScope = Literal["work", "edition", "recording"]
+
+
+class _HistoryOwnerLinkItem(_ClosedModel):
+    """A book link the owner made, changed or withdrew (#1477, S31).
+
+    A withdrawal names the link it withdrew.
+    """
+
+    kind: Literal["linked", "link_changed", "link_withdrawn"]
+    link_row_id: str = Field(pattern=r"^owner_link_[0-9a-f]{64}$")
+    occurred_at: _Instant
+    provider: _OwnerLinkProvider
+    review_case_id: str
+    schema_version: Literal["owner-link-history-event-v1"]
+    scope: _OwnerLinkScope
+    title: str = Field(min_length=1, max_length=512)
+
+
 class _HistoryResponse(_ClosedModel):
     items: list[
         _HistoryTransitionItem
@@ -1412,6 +1451,7 @@ class _HistoryResponse(_ClosedModel):
         | _HistoryMatchingChangedItem
         | _HistoryCoverItem
         | _HistoryDescriptionItem
+        | _HistoryOwnerLinkItem
     ] = Field(max_length=150)
     next_cursor: str | None
     review_case_id: str
@@ -1530,7 +1570,10 @@ class _ProviderOutcome(_ClosedModel):
     # iTunes asked for an audiobook's cover alone (#1779).
     cover_only: bool
     provider_requests: int = Field(ge=0)
-    lane_kind: Literal["isbn", "work", "asin", "discovery", "none"]
+    # `link` reads an owner link's record by its key (#1477).
+    lane_kind: Literal["isbn", "work", "asin", "discovery", "none", "link"]
+    # A WORK lane asked with the linked record's title and authors (#1477).
+    anchored: bool
     provider: str = Field(max_length=128)
     reason: str = Field(max_length=512)
     status: Literal[
@@ -1812,6 +1855,14 @@ class _LibraryValueFlag(_ClosedModel):
         return self
 
 
+class _LibraryLink(_ClosedModel):
+    """A row's book link state and source; the selected work reads the rest (#1477)."""
+
+    state: Literal["linked", "preparing", "waiting", "contradicted", "needs_replacing"]
+    # The linked source, so a waiting row can say which source it waits for.
+    provider: _OwnerLinkProvider
+
+
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: _Count
@@ -1828,6 +1879,10 @@ class _LibraryWork(_ClosedModel):
     dispositions: list[str]
     item: str
     library: str
+    # Whether the header offers Find this book: the link view's `offered`
+    # rule, carried with the row so the header shows its final entry at once.
+    find_offered: bool
+    link: _LibraryLink | None
     library_display_name: str | None = Field(default=None, max_length=512)
     media_kind: _MediaKind
     review_case_id: str | None
@@ -2385,6 +2440,7 @@ class _PreparationTriggerRecord(_ClosedModel):
         "title_recovery",
         "automatic_confirmed",
         "matching_changed",
+        "book_linked",
     ]
     accepted_count: int = Field(ge=1)
     first_accepted_at: int = Field(ge=0)
@@ -3271,7 +3327,13 @@ _BODY_PATH_LIMITS = {
     "/api/v1/reviewer-access/codex": DEFAULT_BODY_LIMIT_BYTES,
     # Three maximum passwords may each expand sixfold under JSON escaping.
     "/api/v1/session/password": 3 * 1_024 * 6 + 128,
+    # A work's address, a title and four authors of 512 code points each,
+    # with room for JSON escaping (#1477).
+    "/api/v1/library/find/searches": 16_384,
+    # A work's address and a link row id (#1477).
+    "/api/v1/library/link/withdraw": 4_096,
 }
+# A Find this book choice, a position and a scope, stays at the default.
 _BODY_PATTERN_LIMITS = ((re.compile(r"/api/v1/review-cases/[^/]+/decisions"), 8_192),)
 
 
@@ -3424,26 +3486,15 @@ def create_review_app(
             "ready\n" if ready else "draining\n", status_code=200 if ready else 503
         )
 
-    _register_operations_routes(app, application, authenticated_session_cookie)
-    _register_session_routes(
-        app, application, configuration, authenticated_session_cookie
+    _register_routes(
+        app,
+        application,
+        configuration,
+        session_cookie,
+        authenticated_session_cookie,
+        browser_csrf,
+        assets,
     )
-    _register_settings_routes(app, application, authenticated_session_cookie)
-    _register_reviewer_access_routes(app, application, authenticated_session_cookie)
-    _register_policy_routes(app, application, authenticated_session_cookie)
-    _register_write_plan_route(app, application, authenticated_session_cookie)
-    _register_case_and_effect_routes(
-        app, application, session_cookie, authenticated_session_cookie
-    )
-    _register_browse_and_preparation_routes(
-        app, application, session_cookie, authenticated_session_cookie
-    )
-    _register_taste_routes(
-        app, application, session_cookie, authenticated_session_cookie
-    )
-    _register_cover_routes(app, application, session_cookie)
-    _register_live_update_route(app, application, configuration, session_cookie)
-    _register_html_routes(app, application, session_cookie, browser_csrf, assets)
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, error: HTTPException) -> JSONResponse:
@@ -3539,6 +3590,41 @@ def _document_build_identity_header(app: FastAPI) -> None:
         return schema
 
     app.openapi = openapi  # type: ignore[method-assign]
+
+
+def _register_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    configuration: ReviewWebConfiguration,
+    session_cookie: APIKeyCookie,
+    authenticated_session_cookie: _SessionDependency,
+    browser_csrf: Callable[[str], str],
+    assets: ReactAssetLoader,
+) -> None:
+    """Register every API and page route, in the order they always were."""
+    _register_operations_routes(app, application, authenticated_session_cookie)
+    _register_session_routes(
+        app, application, configuration, authenticated_session_cookie
+    )
+    _register_settings_routes(app, application, authenticated_session_cookie)
+    _register_reviewer_access_routes(app, application, authenticated_session_cookie)
+    _register_policy_routes(app, application, authenticated_session_cookie)
+    _register_write_plan_route(app, application, authenticated_session_cookie)
+    _register_case_and_effect_routes(
+        app, application, session_cookie, authenticated_session_cookie
+    )
+    _register_browse_and_preparation_routes(
+        app, application, session_cookie, authenticated_session_cookie
+    )
+    find_this_book.register_routes(
+        app, application, session_cookie, authenticated_session_cookie, _require_session
+    )
+    _register_taste_routes(
+        app, application, session_cookie, authenticated_session_cookie
+    )
+    _register_cover_routes(app, application, session_cookie)
+    _register_live_update_route(app, application, configuration, session_cookie)
+    _register_html_routes(app, application, session_cookie, browser_csrf, assets)
 
 
 def _register_settings_routes(
@@ -6339,6 +6425,8 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             # Distinct from `stale`: the case stands, its field's offer moved
             # (#1355).
             "offer_changed": 409,
+            # The book link changed since the case's report (#1477 Q6).
+            "link_changed": 409,
         }.get(error.code, 503)
         reason = getattr(error, "reason", None)
         raise HTTPException(

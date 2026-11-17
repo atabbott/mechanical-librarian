@@ -27,8 +27,10 @@ from mechanical_librarian.adapters.providers.sdk import (
     ProviderClocks,
     ProviderResponseFacts,
     decode_json,
+    owner_search_page,
     provider_bounds,
     provider_client_lifetime,
+    run_owner_search,
 )
 from mechanical_librarian.adapters.providers.visible_text import (
     projected_description,
@@ -81,6 +83,12 @@ from mechanical_librarian.domain.metadata_report import (
     isbn_family,
     normalize_title,
     validate_observed_title,
+)
+from mechanical_librarian.domain.owner_link import (
+    OWNER_SEARCH_REQUEST_LIMIT,
+    OwnerSearchAnswer,
+    OwnerSearchQuery,
+    OwnerSearchRecord,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
@@ -504,6 +512,41 @@ class GoogleBooksMetadataProvider:
             dispatch_lineage=WorkDispatchLineage.from_query(work_query),
         )
 
+    def owner_search(
+        self, query: OwnerSearchQuery, *, deadline: float
+    ) -> OwnerSearchAnswer:
+        """One owner search of the volumes route, one attempt (#1477 S8).
+
+        The title search sends the first rung's `q`, as a WORK lane does; the
+        ISBN search sends `isbn:`. Only `maxResults` differs. A volume stating
+        no ISBN is a card that cannot be chosen; one an ISBN search returns
+        without that ISBN is dropped.
+        """
+        session = self._session.owner_search(
+            _DiscoveryRequestLedger("google_books", "owner-search-v1")
+        )
+
+        def search() -> OwnerSearchAnswer:
+            if query.lane == "title_authors":
+                ladder = work_query_ladder(query.title or "", query.authors)
+                if not ladder:
+                    return OwnerSearchAnswer()
+                q = _google_books_work_query(ladder[0])
+            else:
+                q = f"isbn:{query.isbn}"
+            payload = self._request(
+                q,
+                deadline=deadline,
+                session=session,
+                max_results=OWNER_SEARCH_REQUEST_LIMIT,
+            )
+            return owner_search_page(
+                payload.get("items", []),
+                lambda item: _owner_search_record(self._name, item, query.isbn),
+            )
+
+        return run_owner_search(session, search)
+
     def _reject_schema_members(self, count: int = 1) -> None:
         if count <= 0:
             return
@@ -551,10 +594,12 @@ class GoogleBooksMetadataProvider:
         *,
         deadline: float | None,
         query_retry: bool = False,
+        session: BoundedProviderSession | None = None,
+        max_results: int = _MAX_RETURNED_RESULTS,
     ) -> dict[str, Any]:
         params = {
             "fields": _FIELDS,
-            "maxResults": str(_MAX_RETURNED_RESULTS),
+            "maxResults": str(max_results),
             "printType": "books",
             "projection": "full",
             "q": query,
@@ -568,7 +613,7 @@ class GoogleBooksMetadataProvider:
         # request line, proxy log or error that echoes a URL can carry it.
         if self._api_key is not None:
             headers["X-Goog-Api-Key"] = self._api_key
-        return self._session.request_json(
+        return (session or self._session).request_json(
             GOOGLE_BOOKS_URL,
             params=params,
             headers=headers,
@@ -582,6 +627,44 @@ class GoogleBooksMetadataProvider:
         if failure.category == "burst_throttled" and self._pacer is not None:
             self._pacer.hold_burst(_BURST_WINDOW_SECONDS)
         return failure
+
+
+def _owner_search_record(
+    provider: str, item: object, isbn: str | None
+) -> OwnerSearchRecord | None:
+    """One volume as an owner search card (#1477 S9).
+
+    Its identity is its first checksum-valid ISBN, which is the work and the
+    edition at once; a volume with none has no lookup identity.
+    """
+    if type(item) is not dict or set(item) != {"id", "volumeInfo"}:
+        raise ValueError("provider candidate is malformed")
+    volume_id, info = item["id"], item["volumeInfo"]
+    if (
+        type(volume_id) is not str
+        or _VOLUME_ID.fullmatch(volume_id) is None
+        or type(info) is not dict
+    ):
+        raise ValueError("provider volume is malformed")
+    candidate = _candidate(
+        provider,
+        volume_id,
+        info,
+        (),
+        requested_family=isbn,
+        schema_rejections=lambda _: None,
+    )
+    if candidate is None:
+        return None
+    families = [
+        family
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.ISBN
+        and claim.value is not None
+        and (family := isbn_family(claim.value)) is not None
+    ]
+    identity = isbn if isbn is not None else (families[0] if families else None)
+    return OwnerSearchRecord(candidate, identity, identity)
 
 
 def _classify(facts: ProviderResponseFacts) -> ProviderFailure:

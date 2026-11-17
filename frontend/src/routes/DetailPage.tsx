@@ -34,6 +34,7 @@ import {
   transitionLabels,
 } from '../labels'
 import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
+import { sourceName } from '../findThisBook'
 
 // A recorded value, a language read by its name (#1286). `empty` is what an
 // empty field reads as where the item's null is known to mean empty (#1523).
@@ -90,6 +91,14 @@ const coverPolicySentences = {
   recommended: 'The policy recommended a cover.',
   abstained: 'The policy recommended no cover.',
 } as const
+
+const ownerLinkAs = { work: 'this book', edition: 'this edition', recording: 'this recording' }
+const ownerLinkSentence = (
+  item: Extract<HistoryView['items'][number], { category: 'owner_link' }>,
+) =>
+  item.kind === 'link_withdrawn'
+    ? `You withdrew the link to ${item.title}.`
+    : `${item.kind === 'linked' ? 'You linked this work to' : 'You changed the link to'} ${item.title} on ${sourceName(item.provider)}, as ${ownerLinkAs[item.scope]}.`
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
   if (item.category === 'description')
@@ -203,6 +212,14 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
       <article className="diagnostic-entry">
         <h3>{destinationLabel(item.destination)}</h3>
         <p>Asked again because Book matching changed what this field offers.</p>
+      </article>
+    )
+  // A book link the owner made, changed or withdrew (#1477).
+  if (item.category === 'owner_link')
+    return (
+      <article className="diagnostic-entry">
+        <h3>Book link</h3>
+        <p>{ownerLinkSentence(item)}</p>
       </article>
     )
   // The heading says what happened; a sentence under it would only repeat it

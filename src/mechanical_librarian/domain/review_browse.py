@@ -36,6 +36,7 @@ from mechanical_librarian.domain.metadata_report import (
     REPORT_SCHEMA,
     FileFacts,
     MetadataReport,
+    OwnerLinkFacts,
     ProviderQueryKind,
     ProviderStatus,
     TargetDestination,
@@ -46,6 +47,8 @@ from mechanical_librarian.domain.metadata_report import (
     _provider_lane_dispatch_from_data,
     _request_accounting,
     companion_isbn_lane,
+    owner_link_facts_from_data,
+    owner_link_lanes,
     provider_supplies_field_evidence,
     report_content_address,
 )
@@ -209,6 +212,13 @@ class ProviderLaneFacts:
     # A cover-only authority's lane on an audio report: iTunes, asked for a
     # cover alone, so it neither matches nor limits the work (#1779).
     cover_only: bool = False
+    # A WORK lane asked with the owner link's anchor, the linked record's
+    # title and creators, in place of the work's own (#1477).
+    anchored: bool = False
+    # What the report's owner link read found, on each lane the link was
+    # read through (a `link` lane, or an identifier lane asked with the
+    # link's claim); None on every other lane (#1477).
+    link_outcome: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,10 +265,25 @@ class CaseBrowseFacts:
     proposals: tuple[dict[str, object], ...]
 
 
+def _anchors(facts: OwnerLinkFacts | None) -> bool:
+    """Whether a report's WORK lanes were asked with its owner link's anchor.
+
+    The report's own replay refuses a WORK lane any other plan asked while
+    the link stands, so every WORK lane is the anchored one (#1477).
+    """
+    return facts is not None and facts.stands
+
+
 def provider_lane_facts(report: MetadataReport) -> tuple[ProviderLaneFacts, ...]:
     """State a parsed report's provider lanes in the browse vocabulary."""
     companion = companion_isbn_lane(report.companion)
     companion_identity = None if companion is None else companion.identity
+    facts = report.owner_link
+    anchors = _anchors(facts)
+    link_lanes = {
+        (provider.provider, lane.identity)
+        for provider, lane in owner_link_lanes(report)
+    }
     return tuple(
         ProviderLaneFacts(
             provider.authority,
@@ -275,6 +300,14 @@ def provider_lane_facts(report: MetadataReport) -> tuple[ProviderLaneFacts, ...]
             ),
             identity is not None and identity == companion_identity,
             not provider_supplies_field_evidence(report, provider),
+            anchored=anchors
+            and identity is not None
+            and kind is ProviderQueryKind.WORK,
+            link_outcome=(
+                facts.outcome
+                if facts is not None and (provider.provider, identity) in link_lanes
+                else None
+            ),
         )
         for provider in report.providers
         for kind, status, dispatch, diagnostics, identity in (
@@ -338,6 +371,10 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
             raise ValueError
         companion = companion_isbn_lane(_companion_from_data(report["companion"]))
         companion_identity = None if companion is None else companion.identity
+        link = owner_link_facts_from_data(report["owner_link"])
+        anchors = _anchors(link)
+        link_claim = None if link is None else link.lookup.claim
+        link_reference = None if link_claim is None else link_claim.reference
         # `provider_supplies_field_evidence` over the stored report: a
         # validated report states `audio` as an object or null.
         audio = report["audio"] is not None
@@ -368,13 +405,21 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                     ),
                     companion_identity is not None
                     and lane["identity"] == companion_identity,
+                    anchors and lane["kind"] == ProviderQueryKind.WORK.value,
+                    # `owner_link_lanes` over the stored lane (#1477).
+                    link is not None
+                    and (
+                        lane["kind"] == ProviderQueryKind.LINK.value
+                        or (
+                            link_reference is not None
+                            and type(lane["input_references"]) is list
+                            and link_reference in lane["input_references"]
+                        )
+                    ),
                 )
                 for lane in provider["lanes"]
             ]
-            if any(
-                lane_kind not in PROVIDER_LANE_KINDS
-                for lane_kind, _, _, _, _, _ in pairs
-            ):
+            if any(lane_kind not in PROVIDER_LANE_KINDS for lane_kind, *_ in pairs):
                 raise ValueError
             lanes.extend(
                 ProviderLaneFacts(
@@ -387,14 +432,29 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                     refused,
                     companion_lane,
                     cover_only,
+                    anchored=anchored,
+                    link_outcome=(
+                        cast("OwnerLinkFacts", link).outcome if link_lane else None
+                    ),
                 )
-                for value, state, dispatch, fault, refused, companion_lane in pairs
+                for (
+                    value,
+                    state,
+                    dispatch,
+                    fault,
+                    refused,
+                    companion_lane,
+                    anchored,
+                    link_lane,
+                ) in pairs
                 or [
                     (
                         kind,
                         status,
                         None,
                         _adapter_faulted(provider["diagnostics"]),
+                        False,
+                        False,
                         False,
                         False,
                     )

@@ -488,13 +488,18 @@ function CoverCardText({
           ? coverSourceLabels.retained
           : contradicted
             ? 'Contradicts this book'
-            : candidate.matchState === 'same_edition'
-              ? 'Same edition'
-              : candidate.matchState === 'same_book' || candidate.matchReason === 'matched_book'
-                ? 'Same book'
-                : candidate.matchReason === 'title_and_author'
-                  ? 'Same title and author'
-                  : 'Match not confirmed'}
+            : candidate.matchReason === 'linked_book'
+              ? // The owner's own link names the book (#1477).
+                'From the linked book'
+              : candidate.matchReason === 'linked_title_and_author'
+                ? 'Same title and author as the linked book'
+                : candidate.matchState === 'same_edition'
+                  ? 'Same edition'
+                  : candidate.matchState === 'same_book' || candidate.matchReason === 'matched_book'
+                    ? 'Same book'
+                    : candidate.matchReason === 'title_and_author'
+                      ? 'Same title and author'
+                      : 'Match not confirmed'}
         {/* The identity stays unverified: only the wording names its basis (#1642). */}
         {candidate.matchReason === 'matched_book' && !contradicted
           ? ' · recording not confirmed'

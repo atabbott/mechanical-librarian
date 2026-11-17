@@ -17,7 +17,7 @@ import random
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Callable, TypeVar
 
@@ -44,6 +44,13 @@ from mechanical_librarian.application.provider_evidence import (
 from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     provider_access_time,
+)
+from mechanical_librarian.domain.owner_link import (
+    OWNER_SEARCH_PAGE,
+    OwnerSearchAnswer,
+    OwnerSearchFailure,
+    OwnerSearchRecord,
+    owner_search_failure,
 )
 
 _MAX_BACKOFF_SECONDS = 16.0
@@ -186,6 +193,34 @@ class BoundedProviderSession:
         self._attempt_records: list[ProviderAttemptRecord] = []
         self._incomplete_causes: list[ProviderIncompleteCauseRecord] = []
         self._accessed_at: str | None = None
+
+    def owner_search(
+        self, ledger: _DiscoveryRequestLedger, requests: int = 1
+    ) -> BoundedProviderSession:
+        """A fresh session for one owner search (#1477 S8, S12).
+
+        The same client, clocks and response rules, with one attempt per
+        request and at most `requests` requests: no retry, no pacer step (the
+        caller waited once on the shared pacer) and no held answer read or
+        kept. The adapter's own observation state is not touched.
+        """
+        return BoundedProviderSession(
+            self._name,
+            self._client,
+            replace(
+                self._bounds,
+                attempts_per_request=1,
+                attempts_per_observation=requests,
+                retries_per_observation=0,
+            ),
+            ledger,
+            pacer=None,
+            clocks=self._clocks,
+            accept_content_types=tuple(sorted(self._accept_content_types)),
+            name_response_failures=self._name_response_failures,
+            refuse_empty_success=self._refuse_empty_success,
+            responses=None,
+        )
 
     @property
     def ledger(self) -> _DiscoveryRequestLedger:
@@ -766,6 +801,58 @@ def _reject_number(_: str) -> float:
     raise ValueError("provider number is invalid")
 
 
+# What one owner search row's projection may raise: the row is dropped and
+# counted, never the whole answer (#1477 S9).
+_OWNER_ROW_FAILURES = (KeyError, TypeError, ValueError, UnicodeError, RecursionError)
+
+
+def owner_search_page(
+    rows: object,
+    project: Callable[[Any], OwnerSearchRecord | None],
+    *,
+    page: int = OWNER_SEARCH_PAGE,
+) -> OwnerSearchAnswer:
+    """Project one owner search's rows: a page of cards and the sentinel.
+
+    A row past `page` is the sentinel and is never projected; it only says
+    there are more. A row that fails its projection, or that `project`
+    declines with `None`, is dropped and counted.
+    """
+    if type(rows) is not list or len(rows) > page + 1:
+        raise ValueError("owner search rows are malformed")
+    records: list[OwnerSearchRecord] = []
+    dropped = 0
+    for row in rows[:page]:
+        try:
+            record = project(row)
+        except _OWNER_ROW_FAILURES:
+            record = None
+        if record is None:
+            dropped += 1
+        else:
+            records.append(record)
+    return OwnerSearchAnswer(tuple(records), len(rows) > page, dropped)
+
+
+def run_owner_search(
+    session: BoundedProviderSession, search: Callable[[], OwnerSearchAnswer]
+) -> OwnerSearchAnswer:
+    """Run one owner search, naming any failure in the closed vocabulary.
+
+    `requested` says whether a request left the host, which is all the
+    hourly limit counts.
+    """
+    try:
+        answer = search()
+    except ProviderFailure as error:
+        answer = owner_search_failure(
+            error.status.value, error.category, error.retry_after
+        )
+    except _OWNER_ROW_FAILURES:
+        answer = OwnerSearchAnswer(failure=OwnerSearchFailure.UNREADABLE)
+    return replace(answer, requested=session.attempt_count > 0)
+
+
 __all__ = [
     "BoundedProviderSession",
     "ProviderBounds",
@@ -773,7 +860,9 @@ __all__ = [
     "ProviderResponseClassifier",
     "ProviderResponseFacts",
     "decode_json",
+    "owner_search_page",
     "provider_bounds",
+    "run_owner_search",
 ]
 
 

@@ -111,6 +111,10 @@ def _work(
         # has one has a review case behind it.
         "detail_kind": "case" if case else None,
         "dispositions": dispositions,
+        # Every cohort work may be searched, as its link view says, except one
+        # that could not finish (#1477, L4); none is linked to a book.
+        "find_offered": preparation is None,
+        "link": None,
         "preparation": preparation,
         "preparation_outcomes": preparation_outcomes or [],
         "summary": summary,
@@ -145,6 +149,7 @@ TERMINAL_LIBRARY_WORK = _work(
     preparation_outcomes=[
         {
             "companion_isbn": False,
+            "anchored": False,
             "cover_only": False,
             "provider_requests": 1,
             "lane_kind": "work",
@@ -264,6 +269,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         preparation_outcomes=[
             {
                 "companion_isbn": False,
+                "anchored": False,
                 "cover_only": False,
                 "provider_requests": 2,
                 "lane_kind": "work",
@@ -273,6 +279,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
             },
             {
                 "companion_isbn": False,
+                "anchored": False,
                 "cover_only": False,
                 "provider_requests": 0,
                 "lane_kind": "work",
@@ -416,6 +423,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         preparation_outcomes=[
             {
                 "companion_isbn": False,
+                "anchored": False,
                 "cover_only": False,
                 "provider_requests": 1,
                 "lane_kind": "work",
@@ -2413,6 +2421,25 @@ def _shadow_outcome_set(
     }
 
 
+def _owner_link_view(query: dict[str, list[str]]) -> dict[str, object]:
+    """`GET /api/v1/library/link` (#1477): every cohort work may be searched
+    on Hardcover, and none is linked, so its header offers Find this book."""
+    assert set(query) == {"connection", "library", "item"}, query
+    return {
+        "link": None,
+        "offered": True,
+        "prefill": {"asin": None, "authors": [], "isbn": None, "title": None},
+        "schema_version": "owner-link-view-v1",
+        "sources": [
+            {
+                "lanes": ["title_authors", "isbn"],
+                "marketplaces": None,
+                "provider": "hardcover",
+            }
+        ],
+    }
+
+
 def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     """Return a fresh response for one synthetic API target or absolute URL."""
     parsed = urlsplit(target)
@@ -2500,6 +2527,8 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         }
     if path == "/api/v1/library":
         return _library(query)
+    if path == "/api/v1/library/link":
+        return _owner_link_view(query)
     if path == "/api/v1/library/progress":
         return _library_progress()
     if path == "/api/v1/attention":
@@ -2544,6 +2573,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "source_ledger": [
                     {
                         "companion_isbn": False,
+                        "anchored": False,
                         "cover_only": False,
                         "provider_requests": 1,
                         "lane_kind": "work",
@@ -2553,6 +2583,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     },
                     {
                         "companion_isbn": False,
+                        "anchored": False,
                         "cover_only": False,
                         "provider_requests": 2,
                         "lane_kind": "isbn",

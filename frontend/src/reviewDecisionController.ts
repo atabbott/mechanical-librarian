@@ -104,6 +104,11 @@ const pinFailureCopy = (
 // One sentence for a written decision, shared by the refusal and the note.
 export const writtenRefusal =
   'This decision has been written to your library, so it can’t be withdrawn.'
+// A choice refused because the work's book link changed since its case was
+// prepared (#1477, Q6): nothing is recorded until preparation runs again.
+export const linkChangedNotice = 'The book link changed. This work is being prepared again.'
+export const linkChanged = (error: unknown) =>
+  error instanceof ApiError && error.code === 'link_changed'
 // The store's refusal for an owner command, in the words the owner acts on.
 export const ownerRefusalCopy = (
   error: unknown,
@@ -139,6 +144,7 @@ export const ownerRefusalCopy = (
       'This decision is holding automatic handling. Use Resume automatic handling to release it.',
     decision_written: writtenRefusal,
     pinned: 'This field is pinned. Unpin it to withdraw the decision.',
+    link_changed: linkChangedNotice,
   }[error.code]
 }
 // A choice refused because Book matching changed (#1355): the field's offer
@@ -501,6 +507,13 @@ export const useReviewDecisionController = ({
         // offers now, or the case shows it is being checked. Nothing to retry.
         forget(command)
         announce(reviewCaseId, command.destination, offerChanged, offerChanged !== '')
+        if (!active(command.destination)) await returnTo(command.destination)
+        return
+      }
+      if (linkChanged(error)) {
+        // Not retried: the case is prepared again with the new link.
+        forget(command)
+        announce(reviewCaseId, command.destination, linkChangedNotice, true)
         if (!active(command.destination)) await returnTo(command.destination)
         return
       }

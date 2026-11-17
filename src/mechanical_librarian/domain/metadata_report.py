@@ -5636,7 +5636,8 @@ class OwnerLinkFacts:
         }
 
 
-def _owner_link_from_data(value: object) -> OwnerLinkFacts | None:
+def owner_link_facts_from_data(value: object) -> OwnerLinkFacts | None:
+    """Read a report's `owner_link` member, as the report parser does."""
     if value is None:
         return None
     item = _object(
@@ -8719,7 +8720,7 @@ def _report_from_data(value: object) -> MetadataReport:
         None
         if local["cover_recovery"] is None
         else EpubCoverRecovery.from_data(local["cover_recovery"]),
-        _owner_link_from_data(root["owner_link"]),
+        owner_link_facts_from_data(root["owner_link"]),
     )
 
 

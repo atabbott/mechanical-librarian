@@ -14,6 +14,7 @@ import type {
 import { BookMark } from '../components/BookMark'
 import { MediaHealth } from '../components/MediaHealth'
 import { StaleBuildRead } from '../components/StaleBuildRead'
+import { linkTone, rowLinkPhrase } from '../findThisBook'
 import { retryInPlace } from '../focusAfterRetry'
 import { StatusPill } from '../components/StatusPill'
 import { ValueFlags } from '../components/ValueFlags'
@@ -377,6 +378,11 @@ const LibraryWorkRow = ({
             {status}
           </StatusPill>
           {pinned ? <StatusPill>{pinned}</StatusPill> : null}
+          {work.link ? (
+            <StatusPill tone={linkTone(work.link.state)}>
+              {rowLinkPhrase(work.link.state, work.link.provider)}
+            </StatusPill>
+          ) : null}
           {preparation ? (
             <span id={preparationId} className="terminal-preparation-copy">
               {preparation.checkGivenUp ? (

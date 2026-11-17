@@ -144,3 +144,25 @@ def test_failed_outcomes_are_independent_but_all_counts_are_bounded_by_total() -
         _presentation(passage=PreparationPassage(1, 1, 1, 1, 0, 2), total=1)
     with pytest.raises(ValueError, match="presentation is invalid"):
         _presentation(passage=PreparationPassage(3, 1, 1, 1, 1, 0), total=2)
+
+
+def test_a_book_link_is_the_seventh_preparation_trigger() -> None:
+    # The persisted ordinal is the enum position, and the presentation CHECK
+    # admits it (`trigger_ordinal BETWEEN 0 AND 6`).
+    assert PreparationTrigger("book_linked") is PreparationTrigger.BOOK_LINKED
+    assert tuple(PreparationTrigger).index(PreparationTrigger.BOOK_LINKED) == 6
+    assert len(PreparationTrigger) == 7
+    record = PreparationTriggerRecord(PreparationTrigger.BOOK_LINKED, 2, 100, 101)
+    assert record.to_data()["trigger"] == "book_linked"
+
+
+def test_the_presentation_table_admits_a_book_link_trigger_row() -> None:
+    import sqlite3
+
+    from mechanical_librarian.adapters.persistence import schema
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(schema._REVIEW_PREPARATION_PRESENTATION_SQL)
+    text = schema._REVIEW_PREPARATION_PRESENTATION_SQL
+    assert "'matching_changed','book_linked')" in text
+    assert "trigger_ordinal BETWEEN 0 AND 6" in text

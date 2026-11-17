@@ -456,7 +456,7 @@ def test_the_classifier_reference_names_the_listed_edition_rule() -> None:
     assert CLASSIFIER_REFERENCE == cover_identity._CLASSIFIER_REFERENCE
 
 
-def _isbn_lane_report(source: CoverSource) -> MetadataReport:
+def _isbn_lane_report(source: CoverSource, *more: CoverSource) -> MetadataReport:
     isbn = LocalClaim.create(
         kind=ClaimKind.ISBN,
         observed="9780306406157",
@@ -525,7 +525,7 @@ def _isbn_lane_report(source: CoverSource) -> MetadataReport:
                 lanes=(lane,),
             ),
         ),
-        cover_sources=(source,),
+        cover_sources=(source, *more),
     )
 
 
@@ -556,3 +556,72 @@ def test_a_listed_edition_report_binds_its_packet_and_identity_documents() -> No
     assert row["outcome"] == "unknown"
     assert row["reasons"] == sorted(_MET_EXACT)
     assert identity["work_identity_level"] == "identifier"
+
+
+# --- #1477 S26: a cover only the owner's link or its anchor reached ----------
+
+
+@pytest.mark.parametrize(
+    ("reached", "expected"),
+    [
+        pytest.param(("owner_link",), "owner_link_match", id="link-record"),
+        pytest.param(("owner_link_anchor",), "owner_link_anchor_match", id="anchor"),
+        # The linked record's own cover beside an anchor-only one.
+        pytest.param(
+            ("owner_link_anchor", "owner_link"), "owner_link_match", id="both"
+        ),
+    ],
+)
+def test_a_cover_only_the_link_reached_has_its_own_outcome(
+    reached: tuple[str, ...], expected: str
+) -> None:
+    identities = (_ISBN_EDITION, _EDITION)[: len(reached)]
+    by_identity = dict(zip(identities, reached, strict=True))
+    report = _report(*(_candidate(identity=value) for value in identities))
+    sources = tuple(
+        CoverSource(
+            cover_source_id(CoverSourceKind.HARDCOVER, f"hardcover:link:{value}"),
+            CoverSourceKind.HARDCOVER,
+            CoverSourceState.RETRIEVED,
+            CoverArtifact.create(value.encode(), _preview(7), "image/png", 400, 600),
+            provenance=CoverProvenance(
+                "hardcover", CoverDesignation.DEFAULT, _BOOK, value
+            ),
+        )
+        for value in identities
+    )
+    with mock.patch.object(
+        cover_identity,
+        "owner_link_reached",
+        side_effect=lambda _report, _provider, candidate: by_identity[
+            candidate.identity
+        ],
+    ):
+        assert _classify(report, sources) == (
+            expected,
+            ["owner_link_unqualified"],
+            [],
+        )
+    # Control: one record another lane also kept classifies as before.
+    with mock.patch.object(
+        cover_identity,
+        "owner_link_reached",
+        side_effect=lambda _report, _provider, candidate: (
+            None
+            if candidate.identity == identities[0]
+            else by_identity[candidate.identity]
+        ),
+    ):
+        outcome, reasons, _evidence = _classify(report, sources)
+    assert outcome not in {"owner_link_match", "owner_link_anchor_match"}
+    assert "owner_link_unqualified" not in reasons
+
+
+def test_the_classifier_reference_names_the_owner_link_rules() -> None:
+    rules = cover_identity._CLASSIFIER_RULES
+    assert (
+        "owner-link-or-anchor-admitted-records-with-a-link-record:owner-link-match"
+        in rules
+    )
+    assert "owner-link-anchor-admitted-records-only:owner-link-anchor-match" in rules
+    assert not any(rule.endswith("plausible-owner-link-unqualified") for rule in rules)

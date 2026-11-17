@@ -45,6 +45,8 @@ class PreparationTrigger(StrEnum):
     TITLE_RECOVERY = "title_recovery"
     AUTOMATIC_CONFIRMED = "automatic_confirmed"
     MATCHING_CHANGED = "matching_changed"
+    # An owner linked, changed or withdrew a work's book link (#1477).
+    BOOK_LINKED = "book_linked"
 
 
 TERMINAL_PREPARATION_STATES = frozenset(

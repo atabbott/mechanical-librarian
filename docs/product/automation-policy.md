@@ -206,8 +206,9 @@ asked ([ADR-0104](../architecture/decisions/0104-owner-identity-links.md)).
 Values that only the link, or that anchor, brought in are offered for you to
 choose at every Book matching level. They take no part in an automatic choice,
 cover switch or description fill, and never supply an ISBN or ASIN, until the
-link rules pass their own qualification (#1479). The shadow record notes what
-Automatic would have chosen.
+link rules pass their own qualification (#1479). A field set to Automatic
+then reads "Only the book you linked supports this value, so it is left to
+you." The shadow record notes what Automatic would have chosen.
 
 Agreement counts only between independent sources. Several metadata sources
 repeating one upstream record are one source, and so are package metadata and

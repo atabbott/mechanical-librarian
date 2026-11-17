@@ -116,6 +116,52 @@ report's own link facts. Lookups and their diagnostics are value-free like
 every other provider request: no stored identifier, title or creator reaches
 a log, event or diagnostic.
 
+## Owner search
+
+[Find this book](../product/find-this-book.md) sends the owner's typed title
+and authors, ISBN or ASIN to the one source the owner picked, through that
+source's existing client, origin and credential placement. Only the value of
+an existing `limit`, `maxResults`, `num_results` or `fields` parameter
+differs, so a search asks for 11 records and shows at most 10:
+
+- **Hardcover**: the unchanged books document, with the first rung's title
+  spellings and the owner's author names, or the unchanged ISBN document,
+  which keeps its constant limit of six.
+- **Open Library**: `GET /search.json` with `title` and `author`, or
+  `q=isbn:`, and a fixed field list.
+- **Google Books**: the volumes route with the WORK lane's `q`, or `isbn:`.
+  The key travels only in its header.
+- **Inventaire**: one works search, one entities read of the first ten works
+  and one labels read of at most twenty of their authors; for an ISBN, one
+  entities read of that ISBN.
+- **Audible**: one catalog page by title and author, or one product lookup by
+  ASIN, at the marketplace the owner chose from the configured ones only.
+
+No search adds a ladder, a narrowing retry, a pattern operator or an origin.
+Each runs in a fresh bounded session with one attempt per request, no retry
+and a deadline of at most 20 seconds. Before sending, it waits once, at most
+10 seconds, on the same shared pacer preparation uses for that source, and is
+refused as busy if the pacer does not admit it; a source whose recovery entry
+is deferring requests is refused without waiting. A 429 or quota answer is
+reported to the owner with its wait. It may arm only the pacer's in-memory
+burst hold, and it writes no [provider recovery](#provider-recovery) state.
+
+A search neither reads nor writes the provider-answer store, writes no
+report, and keeps no request text or answer anywhere but the session's memory
+for 15 minutes. Results are never evidence. A record that fails its source's
+identity grammar, repeats another, or (on Hardcover) names another book as its
+canonical one is dropped and counted; an oversized answer is unreadable.
+
+A preview fetches a card's cover only from the URL its adapter already admits
+under the cover rules below, on the source's cover pacing, while the
+connection's cover switch is on. It is decoded and re-encoded in the cover
+child and held only in that memory, never in the artifact store. Google Books
+cards have no preview.
+
+The `owner_search` and `owner_link` events carry only closed fields: the
+source, the search kind, the outcome and card counts, or the scope and
+action. No query, title, identity, item or URL reaches them.
+
 ## Provider cover admission
 
 Cover acquisition is report-only and needs the connection's `cover_enabled`.

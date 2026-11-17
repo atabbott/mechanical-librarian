@@ -2199,7 +2199,12 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         ],
     }
     report = SimpleNamespace(
-        audio=None, companion=None, local_claims=(), providers=(), to_data=lambda: data
+        audio=None,
+        companion=None,
+        local_claims=(),
+        providers=(),
+        owner_link=None,
+        to_data=lambda: data,
     )
     cases = InspectCurrentReviewCase(Mock())
     with patch.object(cases, "_read", return_value=(detail, report, ())):
@@ -4540,6 +4545,18 @@ _TWO = [{"kind": "text", "value": "One"}, {"kind": "text", "value": "Two"}]
             (
                 'The current value starts with a credit label such as "Narrated '
                 'by", so it is never confirmed for you.',
+                None,
+            ),
+        ),
+        # Only the owner's link or its anchor reached the value (#1477, S26).
+        (
+            "title",
+            "owner_link_unqualified",
+            None,
+            {"current": _EMPTY, "proposed_values": _TWO},
+            False,
+            (
+                "Only the book you linked supports this value, so it is left to you.",
                 None,
             ),
         ),

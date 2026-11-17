@@ -91,12 +91,21 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     FieldState,
     MetadataReport,
+    ReportValueError,
     TargetDestination,
     TargetFacts,
     TargetField,
     echoed_target_values,
     field_evidence_providers,
+    owner_link_facts_from_data,
     recording_variant_conflict,
+)
+from mechanical_librarian.domain.owner_link import (
+    OwnerLink,
+    OwnerLinkError,
+    OwnerLinkScope,
+    OwnerLinkTarget,
+    link_state,
 )
 from mechanical_librarian.domain.owner_settings import (
     PROVIDER_LABELS,
@@ -143,9 +152,9 @@ REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
     "review-case-detail-v10"
 )
 
-ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v5"]
+ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
 REVIEW_CASE_EVIDENCE_SCHEMA: Final[ReviewCaseEvidenceSchemaVersion] = (
-    "review-case-evidence-v5"
+    "review-case-evidence-v6"
 )
 
 # v2: an owner's clear selects the closed empty value (#1523).
@@ -155,17 +164,19 @@ HUMAN_DECISION_ACK_SCHEMA: Final[HumanDecisionAckSchemaVersion] = (
 )
 ReviewAttentionSchemaVersion = Literal["review-attention-v1"]
 REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v1"
-ReviewCaseHistorySchemaVersion = Literal["review-case-history-v5"]
+# v5: a keep says which write it went back on (#1523); v6: the book link's
+# history events (#1477).
+ReviewCaseHistorySchemaVersion = Literal["review-case-history-v6"]
 REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
-    "review-case-history-v5"
+    "review-case-history-v6"
 )
 
-ReviewLibrarySchemaVersion = Literal["review-library-v8"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v8"
+ReviewLibrarySchemaVersion = Literal["review-library-v9"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v9"
 
-ReviewReportDetailSchemaVersion = Literal["review-report-detail-v6"]
+ReviewReportDetailSchemaVersion = Literal["review-report-detail-v7"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
-    "review-report-detail-v6"
+    "review-report-detail-v7"
 )
 
 # A degraded value with nothing proposed beside it is the current one (#1283).
@@ -217,6 +228,7 @@ _AUTOMATIC_REFUSAL_TEXT = {
     "series_provider_failure_isbn": "An ISBN lookup did not return a usable answer.",
     "series_provider_failure_work": "A title and author lookup did not return a usable answer.",
     "series_provider_failure_asin": "An ASIN lookup did not return a usable answer.",
+    "owner_link_unqualified": "Only the book you linked supports this value, so it is left to you.",
 }
 
 CoverReadObservation = tuple[tuple[str, str], frozenset[tuple[str, str, str, str]]]
@@ -361,6 +373,14 @@ class CurrentReviewCaseSnapshot:
     check_given_up: bool = False
 
 
+# A row's current link and the `owner_link` facts its report records (#1477).
+LibraryRowLink = tuple[OwnerLink, dict[str, object] | None]
+# Whether Find this book is offered on a Library row, from its connection,
+# library, report file format and whether it could not finish (#1477): the
+# owner search's own rule, so the row and the link view cannot disagree.
+FindOffer = Callable[[str, str, str, bool], bool]
+
+
 @dataclass(frozen=True, slots=True)
 class ReviewLibrarySnapshot:
     rows: tuple[
@@ -396,6 +416,9 @@ class ReviewLibrarySnapshot:
     decision_scopes: tuple[DecisionScope | None, ...] = dataclass_field(
         default=(), compare=False, repr=False
     )
+    # #1477: each row's current book link and its report's link facts, or
+    # None for an unlinked work. Empty when the store read none.
+    links: tuple[LibraryRowLink | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -2425,6 +2448,12 @@ class RecordHumanDecision:
             document = self._repository.record_authored_description_decision(
                 candidate_id, binding, digest, self._clock()
             )
+        except HumanDecisionError as error:
+            # `link_changed` (#1477 L9) keeps its own code; every other
+            # refusal of the selection is a stale binding, as before.
+            raise ReviewWebError(
+                "link_changed" if error.code == "link_changed" else "stale"
+            ) from error
         except ValueError as error:
             raise ReviewWebError("stale") from error
         except Exception as error:
@@ -2689,9 +2718,12 @@ class BrowseReviewLibrary:
         cursor: str | None,
         library_labels: LibraryLabels = (),
         now: int = 0,
+        find_offer: FindOffer | None = None,
     ) -> dict[str, object]:
         """One Library page. `now` is the clock the visit boundary is read at:
         a caller with no clock reads the boundary of the visit in progress.
+        `find_offer` says whether Find this book is offered on a row; with
+        none, it is offered on no row (#1477).
         """
         normalized = _review_search(search)
         if type(lens) is not str or lens not in _LIBRARY_LENSES:
@@ -2710,6 +2742,7 @@ class BrowseReviewLibrary:
             )
             items = []
             scopes = snapshot.decision_scopes or (None,) * len(snapshot.rows)
+            links = snapshot.links or (None,) * len(snapshot.rows)
             visible = tuple(
                 zip(snapshot.rows, scopes, snapshot.match_reasons, strict=True)
             )[:bounded_limit]
@@ -2771,6 +2804,8 @@ class BrowseReviewLibrary:
                             else match_reason
                         ),
                         report_facts=unavailable.get(index),
+                        link=_library_link(links[index]),
+                        find_offer=find_offer,
                     )
                 )
         except Exception as error:
@@ -4433,6 +4468,26 @@ _COVER_ONLY_FAILURE_REASON = (
 )
 
 
+# The lanes an owner link was read through (#1477) say what that read found:
+# by the link's outcome where the lane found nothing, and that it read the
+# record where the lane kept one. A link the source could not answer keeps the
+# generic failure reason, which already says so.
+_LINK_LANE_REASONS = {
+    ("admitted", "candidates"): "Read the linked record.",
+    ("missing", "no_match"): "No longer has the linked record.",
+    ("merged", "no_match"): "Merged the linked record into another one.",
+    ("contradicted", "no_match"): (
+        "The linked record no longer matches this work's edition."
+    ),
+}
+# The WORK lane asked with the linked record's title and authors (#1477).
+_ANCHORED_WORK_REASONS = {
+    "candidates": (
+        "Returned possible matches for the linked record's title and authors."
+    ),
+}
+
+
 def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, object]]:
     """Expose only bounded lane state, never diagnostics or queries.
 
@@ -4449,6 +4504,11 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             if lane.adapter_fault
             else _REFUSED_PROVIDER_REASON
             if lane.dispatch == "refused" or lane.identity_refused
+            else _LINK_LANE_REASONS[(lane.link_outcome, lane.status)]
+            if lane.link_outcome is not None
+            and (lane.link_outcome, lane.status) in _LINK_LANE_REASONS
+            else _ANCHORED_WORK_REASONS[lane.status]
+            if lane.anchored and lane.status in _ANCHORED_WORK_REASONS
             else _COVER_ONLY_REASONS.get(lane.status, _COVER_ONLY_FAILURE_REASON)
             if lane.cover_only
             and (
@@ -4468,6 +4528,9 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             # A cover-only lane, which Sources labels by its cover and Library
             # leaves out of a work's match and limit (#1779).
             "cover_only": lane.cover_only,
+            # A WORK lane asked with the owner link's anchor, which Sources
+            # labels by the linked record (#1477).
+            "anchored": lane.anchored,
         }
         for lane in lanes
     ]
@@ -4686,6 +4749,11 @@ def _terminal_library_item(document: str) -> dict[str, object] | None:
                 "dispositions": ["terminal_failure"],
                 "item": item,
                 "library": library,
+                # A work with no report could not finish and cannot be
+                # searched (S7, L4).
+                "find_offered": False,
+                # A work with no report was never searched, so never linked.
+                "link": None,
                 "media_kind": media_kind,
                 "review_case_id": None,
                 "title": title,
@@ -4788,6 +4856,72 @@ def _decided_destinations(
     return decisions, automatic_outcomes
 
 
+OWNER_LINK_VIEW_SCHEMA: Final = "owner-link-view-v1"
+
+
+def owner_link_view(
+    offer: dict[str, object],
+    inputs: tuple[OwnerLink, OwnerLinkTarget, dict[str, object] | None] | None,
+    *,
+    paused: bool,
+    next_retry_at: int | None,
+) -> dict[str, object]:
+    """The selected work's link view (`owner-link-view-v1`, S7, S29, L4).
+
+    `offer` says whether Find this book is offered, from which sources and
+    with what prefill; a Could not finish work is not offered but still
+    shows its link, so it can be withdrawn. `inputs` is the current link,
+    its display snapshot and the current report's link facts.
+    """
+    link: dict[str, object] | None = None
+    if inputs is not None:
+        current, target, facts = inputs
+        try:
+            state = link_state(
+                current,
+                owner_link_facts_from_data(facts),
+                paused=paused,
+                next_retry_at=next_retry_at,
+            )
+        except (OwnerLinkError, ReportValueError) as error:
+            raise ReviewWebError("unavailable") from error
+        link = {
+            "creators": list(target.display_creators),
+            "identifier": None
+            if target.scope is OwnerLinkScope.WORK
+            else target.identity,
+            "link_row_id": current.row_id,
+            "paused": state.paused,
+            "provider": target.provider,
+            "reason": state.reason,
+            "retry_at": state.retry_at,
+            "scope": target.scope.value,
+            "state": state.state,
+            "title": target.display_title,
+        }
+    return {**offer, "link": link, "schema_version": OWNER_LINK_VIEW_SCHEMA}
+
+
+def _library_link(entry: LibraryRowLink | None) -> dict[str, object] | None:
+    """A row's `link: {state, provider}` from its current link and report facts (S29).
+
+    The row says only the state and the linked source; the selected work reads
+    the full link view.
+    """
+    if entry is None:
+        return None
+    link, facts = entry
+    try:
+        return {
+            "state": link_state(
+                link, owner_link_facts_from_data(facts), paused=False
+            ).state,
+            "provider": link.provider,
+        }
+    except (OwnerLinkError, ReportValueError) as error:
+        raise ReviewWebError("unavailable") from error
+
+
 def _library_item(
     case_document: str | None,
     report_document: str,
@@ -4803,6 +4937,8 @@ def _library_item(
     validated: ValidatedDocumentCache | None = None,
     match_state: str | None = None,
     report_facts: LibraryReportFacts | None = None,
+    link: dict[str, object] | None = None,
+    find_offer: FindOffer | None = None,
 ) -> dict[str, object]:
     if case_document is None:
         stopped = _terminal_library_item(report_document)
@@ -4930,6 +5066,17 @@ def _library_item(
         "dispositions": outcomes,
         "item": report.target.item,
         "library": report.target.library,
+        # Whether the header offers Find this book, so it shows its final
+        # entry with the row rather than when the link view answers (#1477).
+        "find_offered": find_offer is not None
+        and find_offer(
+            report.target.connection,
+            report.target.library,
+            report.file.format,
+            terminal_document is not None,
+        ),
+        # The work's book link state, or None when it has none (#1477, S29).
+        "link": link,
         "media_kind": report.file.format,
         "review_case_id": None if case is None else case.review_case_id,
         "title": report.target.current_title or "Untitled",

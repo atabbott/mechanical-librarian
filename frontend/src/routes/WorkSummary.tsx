@@ -26,6 +26,7 @@ import {
 import { authorLine, reportEvidenceUrl } from '../libraryWork'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useReviewContext } from '../router'
+import { FindThisBookEntry } from './FindThisBook'
 
 const chapterSpan = (start: number, end: number) => {
   const clock = (value: number) => {
@@ -198,6 +199,37 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
   )
 }
 
+// A work with no case has no Evidence or History in its header, so its one
+// work action is Find this book or its link (#1477, L1). The link belongs to
+// the report's catalogue address, which the work's own report names.
+function WorkActions({ work, detailUrl }: { work: LibraryWorkView; detailUrl: string }) {
+  const { http } = useReviewContext()
+  const report = useQuery({
+    queryKey: ['library-report', detailUrl],
+    queryFn: (queryContext) =>
+      http.getReportDetail(detailUrl, queryContext.signal, queryWorkClass(queryContext)),
+    staleTime: 15_000,
+    retry: false,
+  })
+  const address = report.data
+    ? { connection: report.data.connection, library: report.data.library, item: report.data.item }
+    : undefined
+  return (
+    <FindThisBookEntry
+      address={address}
+      addressFailed={report.isError && !report.isFetching}
+      readAddress={() => void report.refetch()}
+      row={work}
+      work={work}
+      wrap={(entry) => (
+        <nav className="selected-work-diagnostics" aria-label="Work actions">
+          {entry}
+        </nav>
+      )}
+    />
+  )
+}
+
 export function WorkSummary({ work }: { work: LibraryWorkView }) {
   const summary = work.summary
   const evidenceUrl = reportEvidenceUrl(work)
@@ -212,6 +244,7 @@ export function WorkSummary({ work }: { work: LibraryWorkView }) {
             {mediaKindLabels[work.mediaKind]}
           </p>
         </div>
+        {evidenceUrl ? <WorkActions work={work} detailUrl={evidenceUrl} /> : null}
       </header>
       <p className="library-work-summary-reason" role="status">
         {summary?.reason ?? 'Nothing to decide for this work.'}

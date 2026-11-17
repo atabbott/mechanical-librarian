@@ -44,6 +44,7 @@ from mechanical_librarian.domain.proposal_set import (
     title_strip_series_label,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.reviewer_decision_summary import owner_link_only
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichFieldPreview,
     compile_rich_metadata_preview,
@@ -515,10 +516,17 @@ def _rich_field_outcome(
     catalogue_sha256: str,
     policy_option: str | None = None,
     requested_destination: str | None = None,
+    link_only: bool = False,
 ) -> ShadowFieldOutcome:
     candidate_id = (
         preview.source_candidate_id if preview.outcome == "projected" else None
     )
+    # Shadow-first (#1477, S26): a value only records the owner's link or its
+    # anchor reached decides nothing automatically. The owner may still choose
+    # it; ADR-0092's note names it.
+    would_admit = None
+    if link_only and policy_destination == "automatic" and candidate_id is not None:
+        would_admit, candidate_id = candidate_id, None
     # The acting option is the preview's own unless a recording's tranche
     # identity is the one governing this destination.
     option = preview.option if policy_option is None else policy_option
@@ -544,7 +552,9 @@ def _rich_field_outcome(
         if disposition == "unsupported"
         else "no_eligible_action"
     )
-    if (
+    if would_admit is not None:
+        reason_code = "owner_link_unqualified"
+    elif (
         (requested_destination or policy_destination) == "automatic"
         and disposition in {"abstention", "manual"}
         and preview.reason in _RICH_REFUSAL_REASONS[destination]
@@ -597,6 +607,16 @@ def _rich_field_outcome(
         "qualification_candidate_id": qualification_candidate_id,
         "reason_code": reason_code,
         "rule_id": rule_id,
+        **(
+            {}
+            if would_admit is None
+            else {
+                "would_admit": {
+                    "alternative_reference": would_admit,
+                    "rule": OWNER_LINK_WOULD_ADMIT_RULE,
+                }
+            }
+        ),
     }
     return ShadowFieldOutcome(
         "shadow_outcome_" + _digest(field_data),
@@ -613,6 +633,7 @@ def _rich_field_outcome(
         reason_code,
         rule_id,
         qualification_candidate_id,
+        would_admit,
     )
 
 
@@ -680,6 +701,9 @@ class _RichRouting:
     series_preserved: bool
     subtitle_identity: str | None
     carried_subtitle: object
+    # Rich categories whose projected value cites only records the owner's
+    # link or its anchor reached (#1477, S26).
+    link_only: frozenset[str] = frozenset()
 
 
 def _rich_routing(
@@ -785,6 +809,12 @@ def _rich_routing(
         series_preserved=series_preserved,
         subtitle_identity=subtitle_identity,
         carried_subtitle=carried_subtitle,
+        link_only=frozenset(
+            category
+            for category, value in rich.items()
+            if value.outcome == "projected"
+            and owner_link_only(report, value.source_evidence_references)
+        ),
     )
 
 
@@ -1016,6 +1046,7 @@ def _rich_and_subtitle_outcomes(
                 proposal_id=proposals[destination],
                 catalogue_sha256=catalogue_sha256,
                 policy_option=rich_option,
+                link_only=category in routing.link_only,
             )
         )
     # The subtitle destination has two governing categories. An acting
@@ -1048,6 +1079,7 @@ def _rich_and_subtitle_outcomes(
                     if subtitle_identity is None
                     else subtitle_identity.split(":", 1)[1]
                 ),
+                link_only="subtitle" in routing.link_only,
             )
         )
     elif title_layout_subtitle is not None:

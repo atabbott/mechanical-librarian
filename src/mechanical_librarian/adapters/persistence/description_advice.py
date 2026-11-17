@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Callable
 from typing import Literal
 
+from mechanical_librarian.adapters.persistence.owner_links import owner_link_bound
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -31,6 +32,7 @@ from mechanical_librarian.domain.description_advice import (
     description_document,
     description_qualification_manifest,
 )
+from mechanical_librarian.domain.human_decision import HumanDecisionError
 from mechanical_librarian.domain.metadata_report import MetadataReport
 
 # Whether the case's description field offers the owner a choice: the same
@@ -338,6 +340,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                     raise ValueError("description automatic admission unavailable")
             elif origin != "human":
                 raise ValueError("invalid description authority")
+            elif not owner_link_bound(self._connection, case_id):
+                # The book link changed since the case's report (#1477 L9).
+                raise HumanDecisionError("link_changed")
             elif not choosable:
                 # The review page offers no choice here, so the owner could
                 # neither make this one nor reverse it with Keep current.

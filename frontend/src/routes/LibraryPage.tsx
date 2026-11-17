@@ -404,6 +404,9 @@ export default function LibraryPage({
     (reading && !failed && pendingIdentity !== null && pendingIdentity.id === search.preview
       ? pendingIdentity.identity
       : undefined)
+  // The selected work's Library row: its cover, and whether its header offers
+  // Find this book or shows its link, from the header's first frame (#1477).
+  const selectedRow = currentWorks.find((work) => work.reviewCaseId === selectedReviewCaseId)
   const visibleFields = detail.data?.fields.filter(primaryField) ?? []
   const currentActionableDestinations = visibleFields.map((field) => field.destination)
   const frozenDestinations =
@@ -1245,13 +1248,13 @@ export default function LibraryPage({
               <SelectedWorkHeader
                 search={search}
                 identity={displayedIdentity}
-                cover={
-                  currentWorks.find((work) => work.reviewCaseId === selectedReviewCaseId)?.cover
-                }
+                cover={selectedRow?.cover}
+                row={selectedRow}
                 reviewCaseId={detail.data.id}
                 fields={detail.data.fields}
                 needsYou={attentionFields.length}
                 selectedDestination={selected?.destination}
+                address={detail.data.target}
               />
               {detail.data.comparisonNotices.length ? (
                 <aside className="comparison-notice" aria-label="Provider comparison condition">

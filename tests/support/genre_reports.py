@@ -100,16 +100,18 @@ def publish_genre_case(
     destination: str = "automatic",
     others: str = "ask",
     tags_option: str | None = None,
+    category: str = "genres",
 ):
     """Publish an actual policy, proposal, review case and persisted outcome.
 
     ``tags_option`` replaces the default tags option (off) when given.
+    ``category`` is the policy category ``destination`` governs.
     """
     destinations = {
         name: "unsupported" if name == "explicit" else others
         for name in OPTION_CATALOGUE
     }
-    destinations["genres"] = destination
+    destinations[category] = destination
     options = dict(DEFAULT_OPTIONS) | {"genres": "fill_empty"}
     if tags_option is not None:
         options["tags"] = tags_option

@@ -99,8 +99,8 @@ refused.
 | `bibliographic-relationships-v1` | The allowed title, subtitle and series combinations inside a proposal set and review case |
 | `google-books-html-visible-text-v1` | The inert visible-text projection of Google Books descriptions |
 | `shadow-review-packet-v10` | The deterministic decision packet |
-| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v28` |
-| `deterministic-shadow-decision-policy-v28` | The shadow decision policy |
+| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v29` |
+| `deterministic-shadow-decision-policy-v29` | The shadow decision policy |
 | `shadow-review-action-policy-v5` | Which actions a decision may take |
 | `shadow-outcome-set-v12` | Automatic outcomes; action identities embed the qualification digest ([ADR-0087](../architecture/decisions/0087-operation-bound-qualification-authority.md)) |
 | `value-flag-rules-v1` | The Looks wrong rules: which titles, authors and narrators the Library flags as probably wrong, stored beside each report |
@@ -111,10 +111,10 @@ refused.
 | --- | --- |
 | `human-decision-v6` | An owner decision, including `owner_entered`, `withdraw`, `pin` and `unpin` outcomes; it binds the digest of the field offer it was made in (`offered_alternatives_digest`), may name a closed `cause` (`matching_changed`) for the valueless row Book matching writes, and on a keep names the decision of the write it goes back on (`follows`) |
 | `human-decision-event-v1`, `human-decision-ack-v2` | The decision event and its acknowledgement |
-| `cover-consideration-v10` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back, even one the decoder refused, which has no size or preview, and a larger copy of the current cover's own picture can replace it; it stores the would-admit note, which nothing shows, and how many distinct pictures the stage kept |
-| `cover-identity-report-v3` | Cover identity classification under one Book matching level, with the title-and-author outcome and level reasons |
+| `cover-consideration-v11` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back, even one the decoder refused, which has no size or preview, and a larger copy of the current cover's own picture can replace it; it stores the would-admit note, which nothing shows, and how many distinct pictures the stage kept |
+| `cover-identity-report-v4` | Cover identity classification under one Book matching level, with the title-and-author outcome and level reasons |
 | `cover-policy-v2` | The cover policy, including when a current cover may be replaced and whether an edition's cover is preferred |
-| `cover-policy-report-v5` | Cover policy evaluation, embedding the cover identity report; owner readiness and automatic recommendation are independent, and the measured cover rules' outcome and reason are recorded |
+| `cover-policy-report-v6` | Cover policy evaluation, embedding the cover identity report; owner readiness and automatic recommendation are independent, and the measured cover rules' outcome and reason are recorded |
 | `cover-automatic-decision-v5` | An automatic cover decision, with the measured rule's reason for a replacement and which shadow identity admitted it: one for a confirmed current cover, one for a cover that is not confirmed |
 | `cover-selection-authority-v1`, `cover-selection-authority-v3` | Cover selections: v1 wraps an automatic choice, v3 an owner choice and the switch a Put back undoes |
 | `cover-taste-build-packet-v2` | The closed facts and image transports one taste profile build sends to its model, with the owner's kept rules, the rules the owner removed and the budget left |
@@ -144,8 +144,8 @@ exact schemas of their own and no separate version string.
 
 The owner API is served under `/api/v1`, and each response names its version
 in `schema_version`. The main ones are `review-session-v1`,
-`review-library-v8`, `review-preparation-v2`, `review-case-detail-v10`,
-`review-case-evidence-v5`, `review-report-detail-v6`, `review-case-history-v5`,
+`review-library-v9`, `review-preparation-v2`, `review-case-detail-v10`,
+`review-case-evidence-v6`, `review-report-detail-v7`, `review-case-history-v6`,
 `review-attention-v1` and `continuous-field-activity-v3`. The generated
 [OpenAPI document](review-openapi-v1.json) pins each of them except
 `review-session-v1`, which the server sets.

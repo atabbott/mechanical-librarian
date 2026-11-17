@@ -37,6 +37,7 @@ _TABLES = (
     "metadata_policy_transitions",
     "metadata_policy_resolutions",
     "current_cover_considerations",
+    "owner_links",
 )
 Key = tuple[str, bytes]
 Candidate = tuple[str, str]
@@ -424,6 +425,22 @@ def _bindings(
         dependency("metadata_policy_drafts", row["from_policy_id"])
         dependency("metadata_policy_drafts", row["to_policy_id"])
         candidate("policy_transition", row["transition_id"])
+    elif table == "owner_links":
+        # A link row names its work by the item's latest report, so a new
+        # report for the item projects it again (#1477, U5).
+        dependency(
+            "item_report", row["connection_name"], row["library_name"], row["item_id"]
+        )
+        candidate("owner_link", row["link_row_id"])
+    elif table == "metadata_reports":
+        aliases.add(
+            _key(
+                "item_report",
+                row["connection_name"],
+                row["library_name"],
+                row["item_id"],
+            )
+        )
     elif table == "metadata_policy_drafts":
         aliases.add(_key("isbn_fallback", row["policy_id"]))
     elif table == "metadata_policy_resolutions":

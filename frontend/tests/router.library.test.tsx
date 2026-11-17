@@ -2641,7 +2641,13 @@ describe('Library route', () => {
       'href',
       '/review/case-1?field=title&lens=all&subview=evidence&q=title',
     )
-    expect(screen.getByRole('link', { name: 'History' })).toHaveAttribute(
+    // History lies under More in the work's header (#1477, L1).
+    expect(screen.queryByRole('link', { name: 'History' })).toBeNull()
+    const actions = screen.getByRole('navigation', { name: 'Work actions' })
+    await userEvent
+      .setup()
+      .click(within(actions).getByRole('button', { name: 'More for this work' }))
+    expect(within(actions).getByRole('link', { name: 'History' })).toHaveAttribute(
       'href',
       '/review/case-1?field=title&lens=all&subview=history&q=title',
     )
@@ -2676,6 +2682,7 @@ describe('Library route', () => {
       preparationOutcomes: [
         {
           companionIsbn: false,
+          anchored: false,
           coverOnly: false,
           providerRequests: 1,
           laneKind: 'work' as const,
@@ -2775,6 +2782,7 @@ describe('Library route', () => {
           { endMilliseconds: 1_800_000, ordinal: 1, startMilliseconds: 0, title: 'Chapter One' },
         ],
         chaptersTruncated: false,
+        connection: 'primary',
         coverPresent: true,
         coverSurface: 'container_stream',
         evidence: [
@@ -2837,6 +2845,7 @@ describe('Library route', () => {
         providerSources: [
           {
             companionIsbn: false,
+            anchored: false,
             coverOnly: false,
             providerRequests: 1,
             laneKind: 'asin' as const,
@@ -2999,6 +3008,7 @@ describe('Library route', () => {
       getReportDetail: vi.fn<ReviewHttp['getReportDetail']>(async () => ({
         chapters: [],
         chaptersTruncated: false,
+        connection: 'primary',
         coverPresent: false,
         coverSurface: null,
         evidence: [
@@ -3068,6 +3078,7 @@ describe('Library route', () => {
           return {
             chapters: [],
             chaptersTruncated: false,
+            connection: 'primary',
             coverPresent: false,
             coverSurface: null,
             evidence: [],
@@ -8780,6 +8791,7 @@ describe('Library route', () => {
           preparationOutcomes: [
             {
               companionIsbn: false,
+              anchored: false,
               coverOnly: false,
               providerRequests: 1,
               laneKind: 'work' as const,
@@ -11257,6 +11269,7 @@ describe('Library route', () => {
                   preparationOutcomes: [
                     {
                       companionIsbn: false,
+                      anchored: false,
                       coverOnly: false,
                       providerRequests: 1,
                       laneKind: 'work' as const,
@@ -12383,6 +12396,7 @@ describe('Library route', () => {
       preparationOutcomes: [
         {
           companionIsbn: false,
+          anchored: false,
           coverOnly: false,
           providerRequests: 1,
           laneKind: 'work' as const,
@@ -13915,6 +13929,7 @@ describe('Provider evidence rail', () => {
               status: 'no_match' as const,
               reason: 'No match',
               companionIsbn: false,
+              anchored: false,
               coverOnly: false,
               providerRequests: 1,
             },
@@ -13932,6 +13947,7 @@ describe('Provider evidence rail', () => {
               status: 'unavailable' as const,
               reason: 'Unavailable',
               companionIsbn: false,
+              anchored: false,
               coverOnly: false,
               providerRequests: 1,
             },
@@ -14001,6 +14017,7 @@ describe('Provider evidence rail', () => {
                   status,
                   reason: 'Bounded status',
                   companionIsbn: false,
+                  anchored: false,
                   coverOnly: false,
                   providerRequests: 0,
                 },
@@ -14033,6 +14050,7 @@ describe('Provider evidence rail', () => {
         ? 'Searched for a cover only. Nothing else it returns is compared.'
         : 'Searched for a cover only. No cover came back, and it is not retried.',
     companionIsbn: false,
+    anchored: false,
     coverOnly: true,
     providerRequests: 1,
   })
@@ -14042,6 +14060,7 @@ describe('Provider evidence rail', () => {
     status: 'no_match' as const,
     reason: 'Returned no matching metadata.',
     companionIsbn: false,
+    anchored: false,
     coverOnly: false,
     providerRequests: 1,
   }
@@ -14169,6 +14188,7 @@ it('keeps clear and empty lenses free of provider headers and bounds many lane h
           status: 'no_match' as const,
           reason: 'No match',
           companionIsbn: false,
+          anchored: false,
           coverOnly: false,
           providerRequests: 1,
         })),
@@ -14201,6 +14221,9 @@ it.each(['Evidence', 'History'] as const)(
       http,
     )
     await screen.findByRole('heading', { name: 'Which title should this work use?' })
+    // On Library, History is under More (#1477, L1).
+    if (departure === 'History')
+      await user.click(screen.getByRole('button', { name: 'More for this work' }))
     await user.click(screen.getByRole('link', { name: departure }))
     await screen.findByRole('heading', { name: departure })
     await user.click(
@@ -14697,6 +14720,9 @@ it.each([
     expect(Boolean(screen.queryByText('Choice recorded.'))).toBe(recorded)
     const user = userEvent.setup()
     for (const departure of ['Evidence', 'History']) {
+      // On Library, History is under More (#1477, L1).
+      if (departure === 'History')
+        await user.click(screen.getByRole('button', { name: 'More for this work' }))
       await user.click(screen.getByRole('link', { name: departure }))
       await screen.findByRole('heading', { name: departure })
       await user.click(screen.getByRole('link', { name: 'Back to work' }))

@@ -18,10 +18,12 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
+from typing import cast
 
 from mechanical_librarian.adapters.persistence.review_preparation import (
     mark_preparation_work_fresh,
 )
+from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import canonical_json
 from mechanical_librarian.domain.owner_link import (
@@ -54,6 +56,10 @@ class OwnerLinkStoreError(MetadataReportError):
 
 class OwnerLinkChanged(OwnerLinkStoreError):
     """The item's current link is not the one the caller saw (`link_changed`)."""
+
+
+class OwnerLinkIdempotencyConflict(OwnerLinkStoreError):
+    """A request id already recorded a different request (`idempotency_conflict`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,3 +270,288 @@ def current_owner_link(
     if link.digest != row[5]:
         raise OwnerLinkStoreError("persisted owner link is invalid")
     return link
+
+
+def owner_link_by_request(
+    connection: sqlite3.Connection, request_id: str
+) -> OwnerLinkRow | None:
+    """The row one request recorded, read back for an idempotent replay (S16)."""
+    try:
+        row = connection.execute(
+            f"SELECT {_COLUMNS} FROM owner_links WHERE request_id=?",  # noqa: S608
+            (request_id,),
+        ).fetchone()
+    except sqlite3.Error as error:
+        raise OwnerLinkStoreError("persisted owner link is unavailable") from error
+    return None if row is None else _owner_link_row(row)
+
+
+def owner_link_rows(
+    connection: sqlite3.Connection, item: OwnerLinkItem
+) -> tuple[OwnerLinkRow, ...]:
+    """Every link row of one item, oldest first, each checked as it is read.
+
+    History reads these; a row outside its grammar fails the read closed.
+    """
+    try:
+        rows = connection.execute(
+            f"SELECT {_COLUMNS} FROM owner_links WHERE connection_name=? "  # noqa: S608
+            "AND library_name=? AND item_id=? ORDER BY sequence",
+            (item.connection_name, item.library_name, item.item_id),
+        ).fetchall()
+    except sqlite3.Error as error:
+        raise OwnerLinkStoreError("persisted owner link is unavailable") from error
+    read = tuple(_owner_link_row(row) for row in rows)
+    if [row.sequence for row in read] != list(range(1, len(read) + 1)) or any(
+        row.item != item for row in read
+    ):
+        raise OwnerLinkStoreError("persisted owner link is invalid")
+    return read
+
+
+def current_owner_link_row(
+    connection: sqlite3.Connection, item: OwnerLinkItem
+) -> OwnerLinkRow | None:
+    """The item's current link row with its display snapshot, or `None`."""
+    try:
+        row = connection.execute(
+            f"SELECT {_COLUMNS} FROM current_owner_links WHERE "  # noqa: S608
+            "connection_name=? AND library_name=? AND item_id=?",
+            (item.connection_name, item.library_name, item.item_id),
+        ).fetchone()
+    except sqlite3.Error as error:
+        raise OwnerLinkStoreError("persisted owner link is unavailable") from error
+    return None if row is None else _owner_link_row(row)
+
+
+def _owner_link_row(row: tuple[object, ...]) -> OwnerLinkRow:
+    """One persisted row, refused unless every value reads back in grammar."""
+    try:
+        (
+            link_row_id,
+            connection_name,
+            library_name,
+            item_id,
+            sequence,
+            action,
+            source,
+            medium,
+            scope,
+            provider,
+            identity,
+            title,
+            creators,
+            actor,
+            occurred_at,
+            request_id,
+            request_sha256,
+            digest,
+        ) = row
+        item = OwnerLinkItem(
+            cast(str, connection_name), cast(str, library_name), cast(str, item_id)
+        )
+        chosen = OwnerLinkAction(cast(str, action))
+        target = (
+            None
+            if chosen is OwnerLinkAction.WITHDRAW
+            else OwnerLinkTarget(
+                OwnerLinkScope(cast(str, scope)),
+                cast(str, provider),
+                cast(str, identity),
+                cast(str, title),
+                tuple(json.loads(cast(str, creators))),
+            )
+        )
+        valid = (
+            type(link_row_id) is str
+            and type(sequence) is int
+            and sequence >= 1
+            and source in OWNER_LINK_SOURCES
+            and medium in OWNER_LINK_MEDIA
+            and type(actor) is str
+            and type(occurred_at) is int
+            and occurred_at >= 0
+            and type(request_id) is str
+            and _REQUEST_ID.fullmatch(request_id) is not None
+            and type(request_sha256) is str
+            and _SHA256.fullmatch(request_sha256) is not None
+            and _item_valid(item)
+            and (
+                (
+                    target is None
+                    and (scope, provider, identity, title, creators, digest)
+                    == (None,) * 6
+                )
+                or (
+                    target is not None
+                    and target.provider in LINK_SOURCES_BY_MEDIUM[medium]
+                    and digest
+                    == link_digest(
+                        medium, target.scope, target.identity, target.provider
+                    )
+                )
+            )
+        )
+    except (OwnerLinkError, KeyError, TypeError, ValueError) as error:
+        raise OwnerLinkStoreError("persisted owner link is invalid") from error
+    if not valid:
+        raise OwnerLinkStoreError("persisted owner link is invalid")
+    return OwnerLinkRow(
+        cast(str, link_row_id),
+        item,
+        cast(int, sequence),
+        chosen,
+        cast(str, source),
+        cast(str, medium),
+        target,
+        cast(str, actor),
+        cast(int, occurred_at),
+        cast(str, request_id),
+        cast(str, request_sha256),
+        cast("str | None", digest),
+    )
+
+
+def choose_owner_link(
+    connection: sqlite3.Connection,
+    *,
+    item: OwnerLinkItem,
+    expected_current: str | None,
+    target: OwnerLinkTarget,
+    medium: str,
+    actor: str,
+    occurred_at: int,
+    request_id: str,
+    request_sha256: str,
+    transaction: TransactionScope | None = None,
+) -> tuple[OwnerLinkRow, bool]:
+    """Record a chosen record as the item's link in its own transaction (S16).
+
+    A link when the owner saw none, otherwise a replace of the row they saw.
+    The second value is True when this request was already recorded and the
+    stored row is answered again.
+    """
+    return _write_owner_link(
+        connection,
+        transaction,
+        item=item,
+        action=OwnerLinkAction.LINK
+        if expected_current is None
+        else OwnerLinkAction.REPLACE,
+        expected_current=expected_current,
+        target=target,
+        medium=medium,
+        actor=actor,
+        occurred_at=occurred_at,
+        request_id=request_id,
+        request_sha256=request_sha256,
+    )
+
+
+def withdraw_owner_link(
+    connection: sqlite3.Connection,
+    *,
+    item: OwnerLinkItem,
+    expected_current: str,
+    medium: str,
+    actor: str,
+    occurred_at: int,
+    request_id: str,
+    request_sha256: str,
+    transaction: TransactionScope | None = None,
+) -> tuple[OwnerLinkRow, bool]:
+    """Withdraw the item's current link in its own transaction (S16)."""
+    return _write_owner_link(
+        connection,
+        transaction,
+        item=item,
+        action=OwnerLinkAction.WITHDRAW,
+        expected_current=expected_current,
+        target=None,
+        medium=medium,
+        actor=actor,
+        occurred_at=occurred_at,
+        request_id=request_id,
+        request_sha256=request_sha256,
+    )
+
+
+def _write_owner_link(
+    connection: sqlite3.Connection,
+    transaction: TransactionScope | None,
+    *,
+    item: OwnerLinkItem,
+    action: OwnerLinkAction,
+    expected_current: str | None,
+    target: OwnerLinkTarget | None,
+    medium: str,
+    actor: str,
+    occurred_at: int,
+    request_id: str,
+    request_sha256: str,
+) -> tuple[OwnerLinkRow, bool]:
+    """BEGIN IMMEDIATE, answer a replay from its row, else record and commit.
+
+    The same request id with the same digest answers the stored row; with
+    another digest it is `idempotency_conflict`. Nothing is written by either.
+    """
+    scope = transaction or TransactionScope(connection, "owner_link_write")
+    scope.begin()
+    try:
+        replay = owner_link_by_request(connection, request_id)
+        if replay is not None:
+            if replay.request_sha256 != request_sha256:
+                raise OwnerLinkIdempotencyConflict("owner link request conflicts")
+            scope.commit()
+            return replay, True
+        row = record_owner_link(
+            connection,
+            item=item,
+            action=action,
+            expected_current=expected_current,
+            target=target,
+            source="search",
+            medium=medium,
+            actor=actor,
+            occurred_at=occurred_at,
+            request_id=request_id,
+            request_sha256=request_sha256,
+        )
+        scope.commit()
+    except BaseException:
+        scope.rollback()
+        raise
+    return row, False
+
+
+def owner_link_bound(connection: sqlite3.Connection, review_case_id: str) -> bool:
+    """Whether a case's report binds the item's current link (S27, Q6, L9).
+
+    True when the report's link digest is the current link's, both absent
+    included; a report and a link that disagree in any way, one present and
+    the other absent included, read False. The caller holds the write
+    transaction, so no link write lands between this read and its commit.
+    """
+    try:
+        row = connection.execute(
+            "SELECT json_type(report.document,'$.owner_link'),"
+            "json_extract(report.document,'$.owner_link.digest'),"
+            "(SELECT link.link_digest FROM current_owner_links link "
+            "WHERE link.connection_name=report.connection_name "
+            "AND link.library_name=report.library_name "
+            "AND link.item_id=report.item_id) "
+            "FROM review_cases review JOIN metadata_reports report "
+            "ON report.report_id=review.report_id WHERE review.review_case_id=?",
+            (review_case_id,),
+        ).fetchone()
+    except sqlite3.Error as error:
+        raise OwnerLinkStoreError("persisted owner link is unavailable") from error
+    if row is None:
+        # No such case: its own stale check answers, never this one.
+        return True
+    kind, bound, current = row
+    if kind in {None, "null"}:
+        return current is None
+    if kind != "object" or type(bound) is not str:
+        raise OwnerLinkStoreError("persisted owner link is invalid")
+    return bool(bound == current)

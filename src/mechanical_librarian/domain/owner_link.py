@@ -7,20 +7,24 @@ owner's authority about identity, read again at every preparation; it never
 fills an identifier field and never decides anything by itself.
 
 This module holds the closed vocabularies, the record-identity grammar for
-each scope and source, the link digest the report binds, and the one
-predicate that decides which scopes anchor the other sources' search.
+each scope and source, the link digest the report binds, the one predicate
+that decides which scopes anchor the other sources' search, the owner search
+card with its contradictions and scope eligibility (S15), and the link state
+a work reads (S29).
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from typing import Final
+from typing import Final, Literal, cast
 
+from mechanical_librarian.domain.audio_inspection import AudioInspectionField
 from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_narrator_disjoint,
+    candidate_recording_runtime_veto,
     candidate_runtime_seconds,
     local_claim_runtime_seconds,
 )
@@ -28,18 +32,33 @@ from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
 )
+from mechanical_librarian.domain.field_outcomes import language_identity
 from mechanical_librarian.domain.metadata_report import (
+    ASSERTED_ASIN_BASES,
+    AUDIO_FILE_FORMATS,
+    DURATION_AGREEMENT_BAND_SECONDS,
     OWNER_LINK_CLAIM_BASIS,
+    AudioFacts,
     ClaimKind,
     ClaimScope,
+    FieldState,
     LocalClaim,
+    MetadataReport,
+    OwnerLinkFacts,
     ProviderCandidate,
+    ProviderEvidenceKind,
+    TargetDestination,
+    TargetFacts,
+    TargetFieldState,
     canonical_asin,
     canonical_json,
+    creator_comparison_key,
+    echoed_target_values,
     edition_marketplace_evidence,
     identifier_only_candidate,
     isbn_family,
     manifestation_publication_contradicted,
+    normalize_title,
     recording_variant_conflict,
 )
 
@@ -448,3 +467,632 @@ def owner_link_contradiction(
     if candidate_narrator_disjoint(candidate, local_claims, echoed_narrators):
         return OwnerLinkContradiction.NARRATORS
     return None
+
+
+# Owner search (#1477 S8-S15). A search asks one source for at most ten cards
+# and a sentinel; each card is projected from the source's own record and then
+# judged here against the work's current report, so the confirmation needs no
+# second request. Search results are never evidence and are never persisted.
+
+OwnerSearchLane = Literal["title_authors", "isbn", "asin"]
+OWNER_SEARCH_LANES: Final = ("title_authors", "isbn", "asin")
+# The request asks for one row more than a page; an eleventh row means More.
+OWNER_SEARCH_PAGE: Final = 10
+OWNER_SEARCH_REQUEST_LIMIT: Final = OWNER_SEARCH_PAGE + 1
+MAX_OWNER_SEARCH_AUTHORS: Final = 4
+MAX_CARD_PEOPLE: Final = 10
+
+
+class OwnerSearchFailure(StrEnum):
+    """Why one owner search answered nothing (S11 steps 9 and 11)."""
+
+    RATE_LIMITED = "rate_limited"
+    QUOTA_EXHAUSTED = "quota_exhausted"
+    KEY = "key"
+    UNAVAILABLE = "unavailable"
+    UNREADABLE = "unreadable"
+
+
+class OwnerSearchContradiction(StrEnum):
+    IDENTIFIER = "identifier"
+    COMPILATION = "compilation"
+    LANGUAGE = "language"
+    CREATORS_DISJOINT = "creators_disjoint"
+    RUNTIME = "runtime"
+
+
+class WithheldScopeReason(StrEnum):
+    """Why This edition or This recording is not offered on a card (S15)."""
+
+    NO_ISBN = "no_isbn"
+    # The record states a print format, or an audio one, for its edition.
+    FORMAT_PRINT = "format_print"
+    FORMAT_AUDIO = "format_audio"
+    NO_RUNTIME = "no_runtime"
+    RUNTIME = "runtime"
+    NARRATORS = "narrators"
+    VARIANT = "variant"
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerSearchQuery:
+    """One owner search as its source is asked it, already validated.
+
+    `isbn` is the owner's ISBN as its ISBN-13 family; `marketplace` is the
+    Audible marketplace the search is sent to, and only Audible has one.
+    """
+
+    lane: OwnerSearchLane
+    title: str | None = None
+    authors: tuple[str, ...] = ()
+    isbn: str | None = None
+    asin: str | None = None
+    marketplace: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.lane not in OWNER_SEARCH_LANES
+            or (self.lane == "title_authors")
+            != (self.title is not None and bool(self.authors))
+            or len(self.authors) > MAX_OWNER_SEARCH_AUTHORS
+            or (self.lane == "isbn") != (self.isbn is not None)
+            or (self.lane == "asin") != (self.asin is not None)
+            or (self.isbn is not None and not _isbn13(self.isbn))
+            or (self.asin is not None and canonical_asin(self.asin) != self.asin)
+        ):
+            raise OwnerLinkError("owner search query is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerSearchCover:
+    """Where a card's preview may be fetched: an adapter-admitted URL.
+
+    Process-local: it is held with the search and never sent to the browser.
+    `archive_redirects` is Open Library's one fixed redirect route.
+    """
+
+    url: str
+    archive_redirects: bool = False
+    user_agent: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerSearchRecord:
+    """One result row as its adapter projected it, before it is judged.
+
+    `identity` is the This book identity (S9), or `None` when the record has
+    no lookup identity (a Google Books volume with no ISBN): such a card is
+    shown and cannot be chosen. `isbn` is the edition ISBN-13 the card states
+    when the adapter knows it better than the candidate's claims do.
+    """
+
+    candidate: ProviderCandidate
+    identity: str | None
+    isbn: str | None = None
+    compilation: bool = False
+    cover: OwnerSearchCover | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerSearchAnswer:
+    """What one owner search's single request found, or why it found nothing.
+
+    `requested` is whether a request left the host: only those count against
+    the hourly limit. `dropped` counts rows that failed their projection or
+    identity grammar, and `more` is the sentinel row.
+    """
+
+    records: tuple[OwnerSearchRecord, ...] = ()
+    more: bool = False
+    dropped: int = 0
+    failure: OwnerSearchFailure | None = None
+    retry_after: int | None = None
+    requested: bool = True
+
+    def __post_init__(self) -> None:
+        if (
+            len(self.records) > OWNER_SEARCH_PAGE
+            or not 0 <= self.dropped <= OWNER_SEARCH_REQUEST_LIMIT
+            or (self.failure is not None and (self.records or self.more))
+        ):
+            raise OwnerLinkError("owner search answer is invalid")
+
+
+def owner_search_failure(
+    status: str, category: str, retry_after: float | None = None
+) -> OwnerSearchAnswer:
+    """Name a failed owner search from its provider status and category."""
+    failure = {
+        "rate_limited": OwnerSearchFailure.RATE_LIMITED,
+        "authentication": OwnerSearchFailure.KEY,
+        "authorization": OwnerSearchFailure.KEY,
+        "malformed": OwnerSearchFailure.UNREADABLE,
+        "oversized": OwnerSearchFailure.UNREADABLE,
+        "candidate_limit_exceeded": OwnerSearchFailure.UNREADABLE,
+        "query_limit_exceeded": OwnerSearchFailure.UNREADABLE,
+    }.get(status, OwnerSearchFailure.UNAVAILABLE)
+    if failure is OwnerSearchFailure.RATE_LIMITED and category == "quota_exhausted":
+        failure = OwnerSearchFailure.QUOTA_EXHAUSTED
+    return OwnerSearchAnswer(
+        failure=failure,
+        retry_after=None if retry_after is None else max(1, int(retry_after)),
+    )
+
+
+def owner_search_medium(file_format: str) -> str:
+    """The medium a work is searched and linked as, from its report's file format."""
+    return "audiobook" if file_format in AUDIO_FILE_FORMATS else "ebook"
+
+
+def _target_title_and_authors(
+    target: TargetFacts,
+) -> tuple[str | None, tuple[str, ...]]:
+    """The target's normalized title and authors, each read on its own.
+
+    `target_work_identity_context` names a work only when both are present;
+    the search prefill and the confirmation's contradictions need whichever
+    one the work states, so a work with authors but no title keeps its
+    authors, and a title with no authors keeps its title.
+    """
+    if type(target) is not TargetFacts:
+        return None, ()
+    fields = {value.destination: value for value in target.fields}
+    title_field = fields[TargetDestination.TITLE]
+    title: str | None = None
+    if title_field.state is TargetFieldState.VALUE and type(title_field.value) is str:
+        title = normalize_title(title_field.value) or None
+    authors_field = fields[TargetDestination.AUTHORS]
+    authors: tuple[str, ...] = ()
+    if (
+        authors_field.state is TargetFieldState.VALUE
+        and type(authors_field.value) is tuple
+        and all(type(value) is str for value in authors_field.value)
+    ):
+        normalized = tuple(
+            normalize_title(value)
+            for value in cast("tuple[str, ...]", authors_field.value)
+        )
+        if all(normalized) and len({value.casefold() for value in normalized}) == len(
+            normalized
+        ):
+            authors = normalized
+    return title, authors
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerSearchWork:
+    """What a card is judged against: the work's current report (S15)."""
+
+    medium: str
+    title: str | None
+    authors: tuple[str, ...]
+    isbn: str | None
+    asin: str | None
+    runtime_seconds: int | None
+    library_languages: tuple[str, ...]
+    local_claims: tuple[LocalClaim, ...]
+    audio: AudioFacts | None = None
+    echoed_languages: tuple[str, ...] = ()
+    echoed_narrators: tuple[str, ...] = ()
+
+    @classmethod
+    def from_report(cls, report: MetadataReport) -> OwnerSearchWork:
+        title, authors = _target_title_and_authors(report.target)
+        local = tuple(
+            claim
+            for claim in report.local_claims
+            if claim.state is FieldState.VALID
+            and claim.canonical is not None
+            and claim.basis not in ASSERTED_ASIN_BASES
+        )
+        isbns = {
+            family
+            for claim in local
+            if claim.kind is ClaimKind.ISBN
+            and (family := isbn_family(claim.canonical or "")) is not None
+        }
+        asins = {
+            value
+            for claim in local
+            if claim.kind is ClaimKind.ASIN
+            and (value := canonical_asin(claim.canonical)) is not None
+        }
+        audio = report.audio
+        fields = report.target.fields
+        return cls(
+            owner_search_medium(report.file.format),
+            title,
+            authors,
+            isbns.pop() if len(isbns) == 1 else None,
+            asins.pop() if len(asins) == 1 else None,
+            local_claim_runtime_seconds(report.local_claims),
+            report.library_languages,
+            report.local_claims,
+            audio,
+            echoed_target_values(audio, fields, AudioInspectionField.LANGUAGE),
+            echoed_target_values(audio, fields, AudioInspectionField.CONTRIBUTOR),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerSearchCard:
+    """One card the owner may choose, judged against the work (S9, S15).
+
+    `contradictions` carries each applicable contradiction with the values its
+    line names; `withheld` names why This edition or This recording is not
+    offered. The record identities stay here, server-side: the browser sends
+    only a position and a scope.
+    """
+
+    position: int
+    provider: str
+    title: str
+    subtitle: str | None
+    creators: tuple[str, ...]
+    narrators: tuple[str, ...]
+    year: int | None
+    publisher: str | None
+    language: str | None
+    isbn: str | None
+    asin: str | None
+    runtime_seconds: int | None
+    identity: str | None
+    scopes: tuple[OwnerLinkScope, ...]
+    withheld: tuple[tuple[OwnerLinkScope, WithheldScopeReason], ...] = ()
+    contradictions: tuple[tuple[OwnerSearchContradiction, dict[str, object]], ...] = ()
+    cover: OwnerSearchCover | None = field(default=None, compare=False)
+
+    @property
+    def choosable(self) -> bool:
+        return self.identity is not None
+
+    def target(self, scope: OwnerLinkScope) -> OwnerLinkTarget:
+        """The link target choosing this card as `scope` records."""
+        if scope not in self.scopes or self.identity is None:
+            raise OwnerLinkError("owner link scope is not offered")
+        identity = {
+            OwnerLinkScope.WORK: self.identity,
+            OwnerLinkScope.EDITION: self.isbn,
+            OwnerLinkScope.RECORDING: self.asin,
+        }[scope]
+        return OwnerLinkTarget(
+            scope, self.provider, identity or "", self.title, self.creators
+        )
+
+    def to_data(self) -> dict[str, object]:
+        """The card as the browser reads it: no identity, URL or path."""
+        return {
+            "position": self.position,
+            "title": self.title,
+            "subtitle": self.subtitle,
+            "creators": list(self.creators),
+            "narrators": list(self.narrators),
+            "year": self.year,
+            "publisher": self.publisher,
+            "language": self.language,
+            "isbn": self.isbn,
+            "asin": self.asin,
+            "runtime_seconds": self.runtime_seconds,
+            "choosable": self.choosable,
+            "scopes": [value.value for value in self.scopes],
+            "withheld": [
+                {"scope": scope.value, "reason": reason.value}
+                for scope, reason in self.withheld
+            ],
+            "contradictions": [
+                {"code": code.value, **values} for code, values in self.contradictions
+            ],
+            "preview": self.cover is not None,
+        }
+
+
+def owner_search_cards(
+    provider: str,
+    records: tuple[OwnerSearchRecord, ...],
+    work: OwnerSearchWork,
+) -> tuple[tuple[OwnerSearchCard, ...], int]:
+    """Judge one answer's records into cards, dropping and counting failures.
+
+    A record whose identity fails its grammar, that repeats an earlier
+    record's identity, or that states no title is dropped and counted (S9).
+    """
+    cards: list[OwnerSearchCard] = []
+    seen: set[str] = set()
+    dropped = 0
+    for record in records:
+        try:
+            card = _owner_search_card(provider, len(cards), record, work)
+        except (OwnerLinkError, ValueError):
+            dropped += 1
+            continue
+        if card.identity is not None and card.identity in seen:
+            dropped += 1
+            continue
+        if card.identity is not None:
+            seen.add(card.identity)
+        cards.append(card)
+    return tuple(cards), dropped
+
+
+def _owner_search_card(
+    provider: str, position: int, record: OwnerSearchRecord, work: OwnerSearchWork
+) -> OwnerSearchCard:
+    if record.identity is not None and not record_identity_valid(
+        OwnerLinkScope.WORK, provider, record.identity
+    ):
+        raise OwnerLinkError("owner search identity is invalid")
+    candidate = record.candidate
+    title = _stated(candidate, ClaimKind.TITLE)
+    if title is None:
+        raise OwnerLinkError("owner search card has no title")
+    isbn = record.isbn or next(
+        (
+            family
+            for value in _stated_all(candidate, ClaimKind.ISBN)
+            if (family := isbn_family(value)) is not None
+        ),
+        None,
+    )
+    if isbn is not None and not _isbn13(isbn):
+        raise OwnerLinkError("owner search ISBN is invalid")
+    asin = next(
+        (
+            value
+            for raw in _stated_all(candidate, ClaimKind.ASIN)
+            if (value := canonical_asin(raw)) is not None
+        ),
+        None,
+    )
+    creators = _people(candidate, ClaimKind.CREATOR, None)
+    date = _stated(candidate, ClaimKind.PUBLICATION_DATE)
+    card = OwnerSearchCard(
+        position=position,
+        provider=provider,
+        title=title,
+        subtitle=_stated(candidate, ClaimKind.SUBTITLE),
+        creators=creators,
+        narrators=_people(candidate, ClaimKind.CONTRIBUTOR, "narrator"),
+        year=int(date[:4]) if date is not None and date[:4].isdigit() else None,
+        publisher=_stated(candidate, ClaimKind.PUBLISHER),
+        language=_stated(candidate, ClaimKind.LANGUAGE),
+        isbn=isbn,
+        asin=asin,
+        runtime_seconds=candidate_runtime_seconds(candidate),
+        identity=record.identity,
+        scopes=(),
+        cover=record.cover,
+    )
+    scopes, withheld = _card_scopes(card, candidate, work)
+    return replace(
+        card,
+        scopes=scopes,
+        withheld=withheld,
+        contradictions=_card_contradictions(card, record, work),
+    )
+
+
+def _stated_all(candidate: ProviderCandidate, kind: ClaimKind) -> tuple[str, ...]:
+    return tuple(
+        claim.value
+        for claim in candidate.claims
+        if claim.kind is kind
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+
+
+def _stated(candidate: ProviderCandidate, kind: ClaimKind) -> str | None:
+    values = _stated_all(candidate, kind)
+    return values[0] if values else None
+
+
+def _people(
+    candidate: ProviderCandidate, kind: ClaimKind, role: str | None
+) -> tuple[str, ...]:
+    names: dict[str, str] = {}
+    for claim in candidate.claims:
+        if (
+            claim.kind is kind
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+            and (role is None or claim.role == role)
+        ):
+            names.setdefault(claim.value.casefold(), claim.value)
+    return tuple(names.values())[:MAX_CARD_PEOPLE]
+
+
+def _card_scopes(
+    card: OwnerSearchCard, candidate: ProviderCandidate, work: OwnerSearchWork
+) -> tuple[
+    tuple[OwnerLinkScope, ...], tuple[tuple[OwnerLinkScope, WithheldScopeReason], ...]
+]:
+    """This book always; This edition or This recording only when it passes."""
+    if card.identity is None:
+        return (), ()
+    if work.medium == "ebook" and card.provider in EDITION_LINK_AUTHORITIES:
+        reason = _edition_withheld(card, candidate)
+        scope = OwnerLinkScope.EDITION
+    elif work.medium == "audiobook" and card.provider == "audible_catalog":
+        reason = _recording_withheld(card, candidate, work)
+        scope = OwnerLinkScope.RECORDING
+    else:
+        return (OwnerLinkScope.WORK,), ()
+    if reason is None:
+        return (OwnerLinkScope.WORK, scope), ()
+    return (OwnerLinkScope.WORK,), ((scope, reason),)
+
+
+# An edition format an ebook edition link cannot be (S15: "not print or
+# audio"); print is `manifestation_publication_contradicted`'s own list.
+_AUDIO_EDITION_FORMATS: Final = frozenset(
+    {
+        "audio",
+        "audio book",
+        "audio cassette",
+        "audio cd",
+        "audiobook",
+        "audible audio",
+        "audible audiobook",
+        "mp3 cd",
+    }
+)
+
+
+def _edition_withheld(
+    card: OwnerSearchCard, candidate: ProviderCandidate
+) -> WithheldScopeReason | None:
+    """This edition's check: an ISBN, and a stated format neither print nor audio."""
+    if card.isbn is None or not record_identity_valid(
+        OwnerLinkScope.EDITION, card.provider, card.isbn
+    ):
+        return WithheldScopeReason.NO_ISBN
+    claim = owner_link_claim(OwnerLinkScope.EDITION, None, card.isbn)
+    if claim is not None and manifestation_publication_contradicted(
+        candidate, (claim,)
+    ):
+        return WithheldScopeReason.FORMAT_PRINT
+    if any(
+        evidence.kind is ProviderEvidenceKind.PHYSICAL_FORMAT
+        and evidence.scope is ClaimScope.EDITION
+        and normalize_title(evidence.value).casefold() in _AUDIO_EDITION_FORMATS
+        for evidence in candidate.evidence
+    ):
+        return WithheldScopeReason.FORMAT_AUDIO
+    return None
+
+
+def _recording_withheld(
+    card: OwnerSearchCard, candidate: ProviderCandidate, work: OwnerSearchWork
+) -> WithheldScopeReason | None:
+    """ADR-0088's re-check, as preparation will run it on the linked product."""
+    if card.runtime_seconds is None:
+        return WithheldScopeReason.NO_RUNTIME
+    if candidate_recording_runtime_veto(candidate, work.local_claims, work.audio):
+        return WithheldScopeReason.RUNTIME
+    reason = owner_link_contradiction(
+        OwnerLinkScope.RECORDING,
+        candidate,
+        link_claim=None,
+        local_claims=work.local_claims,
+        work_title=work.title or "",
+        library_languages=work.library_languages,
+        echoed_languages=work.echoed_languages,
+        echoed_narrators=work.echoed_narrators,
+    )
+    return None if reason is None else WithheldScopeReason(reason.value)
+
+
+def _card_contradictions(
+    card: OwnerSearchCard, record: OwnerSearchRecord, work: OwnerSearchWork
+) -> tuple[tuple[OwnerSearchContradiction, dict[str, object]], ...]:
+    """The confirmation's contradiction lines, each only when it applies."""
+    found: list[tuple[OwnerSearchContradiction, dict[str, object]]] = []
+    for name, stated, own in (
+        ("isbn", card.isbn, work.isbn),
+        ("asin", card.asin, work.asin),
+    ):
+        if stated is not None and own is not None and stated != own:
+            found.append(
+                (
+                    OwnerSearchContradiction.IDENTIFIER,
+                    {"identifier": name, "record": stated, "work": own},
+                )
+            )
+    if record.compilation:
+        found.append((OwnerSearchContradiction.COMPILATION, {}))
+    if _language_outside(card.language, work.library_languages):
+        found.append((OwnerSearchContradiction.LANGUAGE, {"language": card.language}))
+    if (
+        card.creators
+        and work.authors
+        and not (
+            {creator_comparison_key(value) for value in card.creators}
+            & {creator_comparison_key(value) for value in work.authors}
+        )
+    ):
+        found.append((OwnerSearchContradiction.CREATORS_DISJOINT, {}))
+    if (
+        work.medium == "audiobook"
+        and card.runtime_seconds is not None
+        and work.runtime_seconds is not None
+        and abs(card.runtime_seconds - work.runtime_seconds)
+        > DURATION_AGREEMENT_BAND_SECONDS
+    ):
+        found.append(
+            (
+                OwnerSearchContradiction.RUNTIME,
+                {"record": card.runtime_seconds, "work": work.runtime_seconds},
+            )
+        )
+    return tuple(found)
+
+
+def _language_outside(language: str | None, library: tuple[str, ...]) -> bool:
+    """A known language outside every declared one; unknown always passes."""
+    stated = None if language is None else language_identity(language)
+    declared = {
+        identity.base
+        for value in library
+        if (identity := language_identity(value)) is not None
+    }
+    return (
+        stated is not None
+        and stated.base != "und"
+        and bool(declared)
+        and stated.base not in declared
+    )
+
+
+# Link state (S29): what a selected work's link reads, derived per work from
+# its current link, its current report's link facts, the paused flag and the
+# next automatic retry recovery has scheduled.
+
+OwnerLinkStateName = Literal[
+    "linked", "preparing", "waiting", "contradicted", "needs_replacing"
+]
+_NEEDS_REPLACING = frozenset(
+    {
+        OwnerLinkOutcome.MISSING,
+        OwnerLinkOutcome.MERGED,
+        OwnerLinkOutcome.SOURCE_DISABLED,
+        OwnerLinkOutcome.MEDIUM_CHANGED,
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerLinkState:
+    state: OwnerLinkStateName
+    reason: str | None = None
+    retry_at: int | None = None
+    paused: bool = False
+
+
+def link_state(
+    link: OwnerLink,
+    facts: OwnerLinkFacts | None,
+    *,
+    paused: bool,
+    next_retry_at: int | None = None,
+) -> OwnerLinkState:
+    """The state of a work's current link (S29).
+
+    `preparing` while no current report binds the link's digest (Q5),
+    whatever the paused flag says; the flag travels so the line can say
+    preparation waits. A report that binds it reads its outcome: `linked`
+    when the record was admitted, `waiting` with recovery's next retry when
+    the source did not answer, `contradicted` with the re-check's reason, and
+    `needs_replacing` with the outcome that makes the link unusable.
+    """
+    if facts is None or facts.digest != link.digest:
+        return OwnerLinkState("preparing", paused=paused)
+    outcome = OwnerLinkOutcome(facts.outcome)
+    if outcome is OwnerLinkOutcome.ADMITTED:
+        return OwnerLinkState("linked", paused=paused)
+    if outcome is OwnerLinkOutcome.UNAVAILABLE:
+        return OwnerLinkState("waiting", retry_at=next_retry_at, paused=paused)
+    if outcome is OwnerLinkOutcome.CONTRADICTED:
+        return OwnerLinkState("contradicted", facts.reason, paused=paused)
+    if outcome in _NEEDS_REPLACING:
+        return OwnerLinkState("needs_replacing", outcome.value, paused=paused)
+    raise OwnerLinkError("owner link outcome is unknown")

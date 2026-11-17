@@ -220,6 +220,38 @@ _AUTOMATIC_SAFETY: Row = {
     (503, "unavailable"): "post-commit",
 }
 
+# Find this book (#1477, `interfaces/web/find_this_book.py`). A search records
+# nothing (S11); its refusals come from `OwnerSearchService.search`, and its
+# 503s are the busy pacer, an unlisted code or a missing service.
+_OWNER_SEARCH: Row = {
+    (404, "work_not_found"): "no-commit",
+    (409, "find_not_offered"): "no-commit",
+    (409, "search_in_flight"): "no-commit",
+    (422, "provider_not_offered"): "no-commit",
+    (422, "title_invalid"): "no-commit",
+    (422, "author_invalid"): "no-commit",
+    (422, "isbn_invalid"): "no-commit",
+    (422, "asin_invalid"): "no-commit",
+    (429, "search_limit"): "no-commit",
+    (429, "provider_deferred"): "no-commit",
+    (502, "search_failed"): "no-commit",
+    (503, "provider_busy"): "no-commit",
+    (503, "unavailable"): "no-commit",
+    (503, "*"): "no-commit",
+}
+# Choose and withdraw (S16): the replay check and every refusal are raised
+# inside `serialized` before `_write_owner_link` commits, or by its own
+# BEGIN IMMEDIATE transaction, which rolls back (`owner_links.py`). After the
+# commit only the event, the swallowed scan request, the live topics and the
+# answer's own validation run; a fault there is the catch-all 503.
+_OWNER_LINK_WRITE: Row = {
+    (404, "work_not_found"): "pre-commit",
+    (409, "link_changed"): "pre-commit",
+    (409, "idempotency_conflict"): "pre-commit",
+    (503, "*"): "pre-commit",
+    (503, "unavailable"): "post-commit",
+}
+
 INVENTORY: dict[tuple[str, str], Row] = {
     # --- session and operations -------------------------------------------
     ("POST", "/api/v1/session/logout"): {
@@ -433,6 +465,15 @@ INVENTORY: dict[tuple[str, str], Row] = {
     # `record_library_visit`: one transaction, then at most one live update
     # after it committed; any failure of either is the same 503 (#1351).
     ("POST", "/api/v1/library/visit"): {(503, "persistence"): "post-commit"},
+    ("POST", "/api/v1/library/find/searches"): _OWNER_SEARCH,
+    ("POST", "/api/v1/library/find/searches/{search_id}/choice"): {
+        **_OWNER_LINK_WRITE,
+        (404, "search_not_found"): "pre-commit",
+        (409, "work_changed"): "pre-commit",
+        (422, "card_not_choosable"): "pre-commit",
+        (422, "scope_not_offered"): "pre-commit",
+    },
+    ("POST", "/api/v1/library/link/withdraw"): _OWNER_LINK_WRITE,
     # --- review preparation -----------------------------------------------------
     ("POST", "/api/v1/review-preparation/dismiss"): _PREPARATION,
     ("POST", "/api/v1/review-preparation/first-boot/acknowledge"): {

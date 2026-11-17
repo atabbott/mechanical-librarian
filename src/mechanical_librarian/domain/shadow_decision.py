@@ -32,7 +32,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v28"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v29"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -75,11 +75,14 @@ _RULE_TABLE = {
     # Shadow-first for the owner's link (#1477, S26): a value every cited
     # record of which only the link or its anchor admitted is never decided
     # automatically; the decision notes what the ungated engine would admit.
+    # The rich metadata fields' Automatic outcome abstains the same way, its
+    # note naming the value the preview projected.
     "owner_link_unqualified": {
         "ineligible": "every_cited_provider_record_owner_link_or_anchor_admitted",
         "reason": "owner_link_unqualified",
         "would_admit": "sole_ungated_candidate",
         "decision_unchanged": "manual",
+        "rich_metadata_automatic": "abstention_would_admit_projected_candidate",
     },
     "scalar_incumbent_title": {
         "sole_eligible_candidate_equals_current": True,

@@ -504,6 +504,47 @@ _PROVIDER_EVENT_FIELDS: dict[str, FieldCheck] = {
 }
 
 
+# Owner search and owner link events (#1477 S17) have their own allow-list:
+# the source, the lane and closed outcomes, and bounded counts. Never the query
+# text, a title, a record identity, an item id, a URL or a path.
+_OWNER_EVENT_FIELDS: dict[str, FieldCheck] = {
+    "event": one_of("owner_search", "owner_link"),
+    "adapter": one_of(
+        "hardcover", "open_library", "google_books", "inventaire", "audible_catalog"
+    ),
+    "lane": one_of("title_authors", "isbn", "asin"),
+    "outcome": one_of(
+        "cards",
+        "work_not_found",
+        "find_not_offered",
+        "provider_not_offered",
+        "title_invalid",
+        "author_invalid",
+        "isbn_invalid",
+        "asin_invalid",
+        "search_in_flight",
+        "search_limit",
+        "provider_deferred",
+        "provider_busy",
+        "search_failed",
+        "recorded",
+        "replayed",
+        "idempotency_conflict",
+        "search_not_found",
+        "card_not_choosable",
+        "scope_not_offered",
+        "work_changed",
+        "link_changed",
+        "failed",
+    ),
+    "cards": bounded_integer(0, 10),
+    "dropped": bounded_integer(0, 11),
+    "more": bounded_integer(0, 1),
+    "scope": one_of("work", "edition", "recording"),
+    "action": one_of("link", "replace", "withdraw"),
+}
+
+
 def emit_provider_events(
     build: Callable[..., Iterable[Mapping[str, object]]], /, **arguments: object
 ) -> None:
@@ -515,13 +556,66 @@ def emit_provider_events(
     dropped whole. Each line is one `write`, which keeps concurrent writers'
     lines whole on a pipe.
     """
+    _emit_events(_PROVIDER_EVENT_FIELDS, build, arguments)
+
+
+def emit_owner_events(
+    build: Callable[..., Iterable[Mapping[str, object]]], /, **arguments: object
+) -> None:
+    """`emit_provider_events`' guard, under the owner events' allow-list."""
+    _emit_events(_OWNER_EVENT_FIELDS, build, arguments)
+
+
+def owner_search_event(
+    *,
+    adapter: str,
+    lane: str,
+    outcome: str,
+    cards: int = 0,
+    dropped: int = 0,
+    more: bool = False,
+) -> tuple[dict[str, object]]:
+    """One owner search's outcome (S17): a closed refusal or `cards`."""
+    return (
+        {
+            "event": "owner_search",
+            "adapter": adapter,
+            "lane": lane,
+            "outcome": outcome,
+            "cards": cards,
+            "dropped": dropped,
+            "more": int(more),
+        },
+    )
+
+
+def owner_link_event(
+    *, adapter: str | None, scope: str | None, action: str, outcome: str
+) -> tuple[dict[str, object]]:
+    """One choose or withdraw's outcome (S17); a withdraw names no source."""
+    return (
+        {
+            "event": "owner_link",
+            "adapter": adapter,
+            "scope": scope,
+            "action": action,
+            "outcome": outcome,
+        },
+    )
+
+
+def _emit_events(
+    fields: Mapping[str, FieldCheck],
+    build: Callable[..., Iterable[Mapping[str, object]]],
+    arguments: Mapping[str, object],
+) -> None:
     try:
         for event in build(**arguments):
             line = (
                 json.dumps(
                     {
                         name: event[name] if check(event[name]) else None
-                        for name, check in _PROVIDER_EVENT_FIELDS.items()
+                        for name, check in fields.items()
                         if name in event
                     },
                     sort_keys=True,

@@ -35,6 +35,12 @@ from mechanical_librarian.application.cover_policy import (
     CoverPolicy,
     adjudicate_cover_policy,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -880,3 +886,186 @@ def test_identifier_level_cover_outcomes_unchanged() -> None:
             level_facts += bool(added)
     # Not vacuous: the level branch ran and spoke for several candidates.
     assert level_facts >= 3
+
+
+# --- #1477 S26: a cover only the owner's link reached --------------------------
+
+
+_LINK_CASES = (
+    # The linked record's own cover: the same book, so no unverified-match
+    # confirmation, yet never selectable, ranked or switched to.
+    ("owner_link", "owner_link_match", "same_book", "linked_book"),
+    # A record only the anchor reached: the linked book's title and author.
+    (
+        "owner_link_anchor",
+        "owner_link_anchor_match",
+        "match_not_confirmed",
+        "linked_title_and_author",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("reached", "outcome", "match_state", "match_reason"),
+    _LINK_CASES,
+    ids=("link", "anchor"),
+)
+def test_a_link_reached_cover_is_an_owner_choice_and_never_automatic(
+    reached: str, outcome: str, match_state: str, match_reason: str
+) -> None:
+    from mechanical_librarian.application.cover_consideration import (
+        _IDENTITY_ELIGIBLE,
+        _validated_cover_consideration,
+    )
+    from mechanical_librarian.interfaces.web.app import _CoverCandidate
+
+    report = _isbn_lane_report(_listed_source(11))
+    case_id = "review_case_" + "c" * 64
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(cover_identity, "owner_link_reached", lambda *_: reached)
+        service = _service(_EXACT)
+        projection = service.ensure(
+            case_id, report.to_json(), {"proposal_id": "review_proposal_" + "d" * 64}
+        )
+        stored = cast("Any", service)._store.current[case_id]
+        # The stored v11 consideration, its policy and identity documents read
+        # back with the new outcome in them.
+        _validated_cover_consideration(stored)
+        (candidate,) = cast("list[dict[str, Any]]", projection["candidates"])
+        assert candidate["identity"]["outcome"] == outcome
+        assert candidate["identity"]["reasons"] == ["owner_link_unqualified"]
+        assert outcome not in _IDENTITY_ELIGIBLE
+        assert candidate["match_state"] == match_state
+        assert candidate["match_reason"] == match_reason
+        assert candidate["manual_eligible"] is True
+        assert candidate["selectable"] is False
+        assert candidate["state"] == "excluded"
+        assert candidate["deterministic_rank"] is None
+        assert candidate["deterministic_rank_key"] is None
+        _CoverCandidate.model_validate(candidate)
+        value = json.loads(stored)
+        policy = json.loads(value["policy_report_document"])
+        assert policy["schema_version"] == COVER_POLICY_REPORT_SCHEMA
+        assert policy["recommended_candidate_reference"] is None
+        assert policy["acceptable_candidate_references"] == []
+        # ADR-0092's note names it under the owner-link rule; it grants nothing.
+        assert value["would_admit"] == {
+            "candidate_reference": candidate["reference"],
+            "rule": "owner_link",
+        }
+        service.validate_decision(
+            case_id,
+            str(projection["consideration_id"]),
+            "accept",
+            {"kind": "cover", "value": candidate["artifact_id"]},
+        )
+    # Control: ungated, the same record is a level match the owner confirms.
+    projection = _service(_EXACT).ensure(
+        case_id, report.to_json(), {"proposal_id": "review_proposal_" + "d" * 64}
+    )
+    (candidate,) = cast("list[dict[str, Any]]", projection["candidates"])
+    assert candidate["identity"]["outcome"] == "title_creator_work_match"
+    assert candidate["match_reason"] == "title_and_author"
+
+
+def test_the_current_cover_from_the_linked_book_names_no_reason() -> None:
+    """The current Audiobookshelf cover can be the linked book's own image: it
+    reads as the same book, unselectable and unranked with no rank key, and,
+    as every current cover, names no match reason (#1477)."""
+    from mechanical_librarian.interfaces.web.app import _CoverCandidate
+
+    listed = _listed_source(11)
+    current = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "abs:current"),
+        CoverSourceKind.ABS,
+        CoverSourceState.RETRIEVED,
+        listed.artifact,
+    )
+    report = _isbn_lane_report(listed, current)
+    case_id = "review_case_" + "c" * 64
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(cover_identity, "owner_link_reached", lambda *_: "owner_link")
+        projection = _service(_EXACT).ensure(
+            case_id, report.to_json(), {"proposal_id": "review_proposal_" + "d" * 64}
+        )
+    (candidate,) = cast("list[dict[str, Any]]", projection["candidates"])
+    assert candidate["incumbent"] is True
+    assert candidate["identity"]["outcome"] == "owner_link_match"
+    assert candidate["match_state"] == "same_book"
+    assert candidate["match_reason"] is None
+    assert candidate["selectable"] is False
+    assert candidate["deterministic_rank"] is None
+    assert candidate["deterministic_rank_key"] is None
+    _CoverCandidate.model_validate(candidate)
+
+
+def test_no_election_takes_an_owner_link_outcome() -> None:
+    """Sentinel: the live election admits only the verified identities, so no
+    switch (ADR-0093) or automatic cover mode (ADR-0095) can bind one."""
+    from mechanical_librarian.application.cover_consideration import (
+        _IDENTITY_ELIGIBLE,
+    )
+    from mechanical_librarian.domain.deterministic_cover_election import (
+        CoverElectionCandidate,
+    )
+
+    assert _IDENTITY_ELIGIBLE == {"verified_manifestation_match", "verified_work_match"}
+    for outcome in ("owner_link_match", "owner_link_anchor_match"):
+        with pytest.raises(ValueError):
+            CoverElectionCandidate(
+                reference="candidate",
+                identity=outcome,
+                identity_citations=(),
+                source_citations=("candidate",),
+                incumbent=False,
+                width=600,
+                height=900,
+                packet_ordinal=0,
+            )
+
+
+def test_the_shadow_election_ranks_the_link_outcomes_as_s26_places_them() -> None:
+    """The linked book's own cover after a verified work match, an anchor-only
+    one with the level match; ties keep the live key's own order."""
+    from mechanical_librarian.application.cover_consideration import _would_admit
+
+    report = cast(
+        "MetadataReport", SimpleNamespace(audio=None, target=_target_with_no_cover())
+    )
+    policy = json.dumps(
+        {"actual_target_state": "known_empty", "recommended_candidate_reference": None}
+    )
+
+    def note(*rows: tuple[str, str, int]) -> object:
+        candidates = [
+            {
+                **_shadow_candidate(reference, incumbent=False, size=size, ordinal=n),
+                "identity": {"outcome": outcome, "reasons": sorted(_MET_EXACT)},
+            }
+            for n, (reference, outcome, size) in enumerate(rows)
+        ]
+        return _would_admit(report, candidates, policy, provider_fetching=False)
+
+    # A smaller linked-book cover outranks a larger level match.
+    assert note(
+        ("level", "title_creator_work_match", 900),
+        ("link", "owner_link_match", 300),
+    ) == {"candidate_reference": "link", "rule": "owner_link"}
+    # An anchor-only cover ties with the level match, so size decides.
+    assert note(
+        ("level", "title_creator_work_match", 300),
+        ("anchor", "owner_link_anchor_match", 900),
+    ) == {"candidate_reference": "anchor", "rule": "owner_link"}
+    assert note(
+        ("level", "title_creator_work_match", 900),
+        ("anchor", "owner_link_anchor_match", 300),
+    ) == {
+        "candidate_reference": "level",
+        "rule": "work_identity:title_and_creator_exact",
+    }
+
+
+def _target_with_no_cover() -> TargetFacts:
+    from tests.unit.test_cover_identity_listed_edition import _target
+
+    return _target()

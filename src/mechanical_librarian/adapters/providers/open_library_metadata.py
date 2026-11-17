@@ -25,8 +25,10 @@ from mechanical_librarian.adapters.providers.sdk import (
     BoundedProviderSession,
     ProviderClocks,
     ProviderResponseFacts,
+    owner_search_page,
     provider_bounds,
     provider_client_lifetime,
+    run_owner_search,
 )
 from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.application.metadata_report import (
@@ -98,7 +100,14 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     validate_observed_title,
 )
-from mechanical_librarian.domain.owner_link import OwnerLinkLookup
+from mechanical_librarian.domain.owner_link import (
+    OWNER_SEARCH_REQUEST_LIMIT,
+    OwnerLinkLookup,
+    OwnerSearchAnswer,
+    OwnerSearchCover,
+    OwnerSearchQuery,
+    OwnerSearchRecord,
+)
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
@@ -123,6 +132,11 @@ _WORK_SEARCH_PROJECTION = "key,author_name,author_key,publisher,publish_date,lan
 # An owner's link is read by its key (#1477, ADR-0104): the work or edition
 # record, one edition of a work, and at most four of the work's authors.
 _LINK_PROJECTION = "link-key-v1"
+# An owner search's card members (#1477 S8): the same search route and
+# parameters, with only the `fields` and `limit` values its own.
+OWNER_CARD_FIELDS = (
+    "key,title,subtitle,author_name,first_publish_year,publisher,language,isbn,cover_i"
+)
 _LINK_EDITIONS_LIMIT = 1
 _LINK_MAX_AUTHORS = 4
 
@@ -938,6 +952,44 @@ class OpenLibraryMetadataProvider:
             return result(ProviderStatus.MALFORMED)
         return result(ProviderStatus.CANDIDATES, (candidate,))
 
+    def owner_search(
+        self, query: OwnerSearchQuery, *, deadline: float
+    ) -> OwnerSearchAnswer:
+        """One owner search of the search route, one attempt (#1477 S8).
+
+        Each work document is a card named by its work key. Only an ISBN
+        search names the card's edition: a title search's document lists
+        every edition's ISBN and so names none of them.
+        """
+        session = self._session.owner_search(
+            _DiscoveryRequestLedger("open_library", "owner-search-v1")
+        )
+        params = (
+            {"title": query.title or "", "author": " ".join(query.authors)}
+            if query.lane == "title_authors"
+            else {"q": f"isbn:{query.isbn}"}
+        )
+
+        def search() -> OwnerSearchAnswer:
+            payload = self._request(
+                OPEN_LIBRARY_SEARCH_URL,
+                params={
+                    **params,
+                    "fields": OWNER_CARD_FIELDS,
+                    "limit": str(OWNER_SEARCH_REQUEST_LIMIT),
+                },
+                deadline=deadline,
+                session=session,
+            )
+            return owner_search_page(
+                payload.get("docs"),
+                lambda doc: _owner_search_record(
+                    self._name, doc, query.isbn, self._cover_user_agent
+                ),
+            )
+
+        return run_owner_search(session, search)
+
     def _reject_schema_members(self, count: int) -> None:
         if count > 0:
             self._schema_rejections = min(
@@ -966,8 +1018,9 @@ class OpenLibraryMetadataProvider:
         deadline: float | None,
         query_retry: bool = False,
         classify: Callable[[ProviderResponseFacts], ProviderFailure] | None = None,
+        session: BoundedProviderSession | None = None,
     ) -> dict[str, Any]:
-        return self._session.request_json(
+        return (session or self._session).request_json(
             url,
             params=params,
             headers={
@@ -978,6 +1031,87 @@ class OpenLibraryMetadataProvider:
             query_retry=query_retry,
             classify=classify or _classify,
         )
+
+
+def _owner_search_record(
+    provider: str, doc: object, isbn: str | None, user_agent: str
+) -> OwnerSearchRecord:
+    """One search document as an owner search card (#1477 S9)."""
+    source = _mapping(doc)
+    work_key = _key(source.get("key"), _WORK_KEY)
+    identity = "open-library-work-" + work_key.removeprefix("/works/")
+    stated = (
+        isbn
+        if isbn is not None and isbn in _search_isbn_families(source.get("isbn"))
+        else None
+    )
+    year = source.get("first_publish_year")
+    values: list[tuple[ClaimKind, object, ClaimScope, str | None]] = [
+        (ClaimKind.TITLE, source.get("title"), ClaimScope.WORK, None),
+        (ClaimKind.SUBTITLE, source.get("subtitle"), ClaimScope.WORK, None),
+        *(
+            (ClaimKind.CREATOR, name, ClaimScope.WORK, "author")
+            for name in _leading_strings(source.get("author_name"))
+        ),
+        *(
+            (kind, listed[0], ClaimScope.WORK, None)
+            for kind, field in (
+                (ClaimKind.PUBLISHER, "publisher"),
+                (ClaimKind.LANGUAGE, "language"),
+            )
+            if (listed := _leading_strings(source.get(field)))
+        ),
+    ]
+    if stated is not None:
+        values.append((ClaimKind.ISBN, stated, ClaimScope.EDITION, None))
+    claims = tuple(
+        _claim(
+            provider,
+            identity,
+            kind,
+            value,
+            scope,
+            "ebook" if kind is ClaimKind.ISBN else "not_applicable",
+            role,
+            (),
+            order,
+            None,
+        )
+        for order, (kind, value, scope, role) in enumerate(values)
+    )
+    if type(year) is int and 1000 <= year < 10_000:
+        date, precision = normalize_date_value(str(year))
+        claims += (
+            ProviderClaim.create(
+                provider=provider,
+                candidate=identity,
+                kind=ClaimKind.PUBLICATION_DATE,
+                value=date,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                raw_order=len(claims),
+                date_event=DateEvent.WORK_FIRST_PUBLICATION,
+                date_precision=precision,
+                date_lexical=str(year),
+                date_confidence=DateLinkConfidence.EXPLICIT,
+            ),
+        )
+    cover = source.get("cover_i")
+    return OwnerSearchRecord(
+        ProviderCandidate(identity, identity, claims),
+        work_key,
+        stated,
+        cover=(
+            OwnerSearchCover(
+                f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/{cover}-L.jpg?default=false",
+                archive_redirects=True,
+                user_agent=user_agent,
+            )
+            if type(cover) is int and cover > 0
+            else None
+        ),
+    )
 
 
 def _classify(facts: ProviderResponseFacts) -> ProviderFailure:
@@ -2251,6 +2385,15 @@ def _optional_string_list(value: object, maximum: int) -> tuple[str, ...]:
         except (ValueError, EvidenceValueError):
             continue
     return tuple(values)
+
+
+def _leading_strings(value: object) -> tuple[str, ...]:
+    """A search list's first valid members; the list itself may be long."""
+    return (
+        _optional_string_list(value[:_MAX_VALUES], _MAX_VALUES)
+        if type(value) is list
+        else ()
+    )
 
 
 def _optional_object_list(value: object, maximum: int) -> list[dict[str, Any]]:

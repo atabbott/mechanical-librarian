@@ -11,10 +11,16 @@ import pytest
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.owner_links import (
     OwnerLinkChanged,
+    OwnerLinkIdempotencyConflict,
     OwnerLinkItem,
     OwnerLinkStoreError,
+    choose_owner_link,
     current_owner_link,
+    current_owner_link_row,
+    owner_link_by_request,
+    owner_link_rows,
     record_owner_link,
+    withdraw_owner_link,
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
     preparation_work_id,
@@ -418,3 +424,122 @@ def test_a_row_the_table_would_refuse_is_refused_before_insert(
         )
     assert type(refused.value) is OwnerLinkStoreError
     assert database.execute("SELECT count(*) FROM owner_links").fetchone() == (0,)
+
+
+# -- The owner's choose and withdraw writes (S16) -----------------------------
+
+
+def _choose(
+    connection: sqlite3.Connection,
+    request: str,
+    *,
+    expected: str | None = None,
+    target: OwnerLinkTarget = WORK,
+    digest: str = "a" * 64,
+):
+    return choose_owner_link(
+        connection,
+        item=ITEM,
+        expected_current=expected,
+        target=target,
+        medium="ebook",
+        actor="owner",
+        occurred_at=1_700_000_100,
+        request_id=request,
+        request_sha256=digest,
+    )
+
+
+def _withdraw(
+    connection: sqlite3.Connection, request: str, expected: str, digest: str = "c" * 64
+):
+    return withdraw_owner_link(
+        connection,
+        item=ITEM,
+        expected_current=expected,
+        medium="ebook",
+        actor="owner",
+        occurred_at=1_700_000_200,
+        request_id=request,
+        request_sha256=digest,
+    )
+
+
+def _count(connection: sqlite3.Connection) -> int:
+    return connection.execute("SELECT COUNT(*) FROM owner_links").fetchone()[0]
+
+
+def test_choose_links_then_replaces_then_withdraw_ends_the_link(
+    database: sqlite3.Connection,
+) -> None:
+    linked, replayed = _choose(database, "request-choose-0001")
+    assert (linked.action, replayed, database.in_transaction) == (
+        OwnerLinkAction.LINK,
+        False,
+        False,
+    )
+    replaced, _ = _choose(
+        database, "request-choose-0002", expected=linked.link_row_id, target=EDITION
+    )
+    assert replaced.action is OwnerLinkAction.REPLACE
+    current = current_owner_link_row(database, ITEM)
+    assert current is not None and current.target == EDITION
+    withdrawn, _ = _withdraw(database, "request-withdraw-01", replaced.link_row_id)
+    assert withdrawn.action is OwnerLinkAction.WITHDRAW and withdrawn.target is None
+    assert current_owner_link_row(database, ITEM) is None
+    assert [row.action for row in owner_link_rows(database, ITEM)] == [
+        OwnerLinkAction.LINK,
+        OwnerLinkAction.REPLACE,
+        OwnerLinkAction.WITHDRAW,
+    ]
+
+
+def test_the_same_request_answers_its_stored_row_and_writes_nothing(
+    database: sqlite3.Connection,
+) -> None:
+    first, _ = _choose(database, "request-choose-0001")
+    # The replay is read first: the link it made is now current, so a fresh
+    # write would refuse as link_changed, and the replay must not.
+    again, replayed = _choose(database, "request-choose-0001")
+    assert (again, replayed, _count(database)) == (first, True, 1)
+    assert owner_link_by_request(database, "request-choose-0001") == first
+    assert owner_link_by_request(database, "request-unknown-01") is None
+
+
+def test_the_same_request_with_another_body_is_a_conflict(
+    database: sqlite3.Connection,
+) -> None:
+    _choose(database, "request-choose-0001")
+    with pytest.raises(OwnerLinkIdempotencyConflict):
+        _choose(database, "request-choose-0001", digest="f" * 64)
+    assert (_count(database), database.in_transaction) == (1, False)
+
+
+def test_a_stale_expected_link_rolls_back_and_writes_nothing(
+    database: sqlite3.Connection,
+) -> None:
+    first, _ = _choose(database, "request-choose-0001")
+    second, _ = _choose(
+        database, "request-choose-0002", expected=first.link_row_id, target=EDITION
+    )
+    with pytest.raises(OwnerLinkChanged):
+        _withdraw(database, "request-withdraw-01", first.link_row_id)
+    with pytest.raises(OwnerLinkChanged):
+        _choose(database, "request-choose-0003")
+    assert (_count(database), database.in_transaction) == (2, False)
+    current = current_owner_link_row(database, ITEM)
+    assert current is not None and current.link_row_id == second.link_row_id
+
+
+def test_a_row_outside_its_grammar_fails_every_read_closed(
+    database: sqlite3.Connection,
+) -> None:
+    # The table admits this row; its digest is not the one its values make.
+    _raw_insert(database)
+    item = OwnerLinkItem("abs", "Books", "item-9")
+    with pytest.raises(OwnerLinkStoreError, match="invalid"):
+        owner_link_rows(database, item)
+    with pytest.raises(OwnerLinkStoreError, match="invalid"):
+        current_owner_link_row(database, item)
+    with pytest.raises(OwnerLinkStoreError, match="invalid"):
+        owner_link_by_request(database, "request-raw-0001")

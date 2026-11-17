@@ -29,8 +29,10 @@ from mechanical_librarian.adapters.providers.sdk import (
     BoundedProviderSession,
     ProviderClocks,
     ProviderResponseFacts,
+    owner_search_page,
     provider_bounds,
     provider_client_lifetime,
+    run_owner_search,
 )
 from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.application.failure_diagnostics import (
@@ -121,8 +123,14 @@ from mechanical_librarian.domain.metadata_report import (
     validate_observed_title,
 )
 from mechanical_librarian.domain.owner_link import (
+    OWNER_SEARCH_PAGE,
     OwnerLinkLookup,
+    OwnerSearchAnswer,
+    OwnerSearchCover,
+    OwnerSearchQuery,
+    OwnerSearchRecord,
     link_record_identity,
+    owner_search_failure,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
@@ -150,6 +158,21 @@ _ISBN_QUERY = (
     "{id title description release_date image{url} contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag_id}} "
     f"tags:tags(where:{{taggings:{{book:{{editions:{{_or:[{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}}}}}}}},order_by:{{id:asc}},limit:{_MAX_TAG_ROWS + 1})"
     "{id tag tag_category{id category}}}"
+)
+# The members an ISBN answer's edition row is read with.
+_EDITION_ROW_KEYS = (
+    "id",
+    "book_id",
+    "isbn_10",
+    "isbn_13",
+    "asin",
+    "title",
+    "subtitle",
+    "release_date",
+    "image",
+    "publisher",
+    "language",
+    "contributions",
 )
 # The books-first search both media's WORK lanes send (#1380, ADR-0056): one
 # constant document whose only inputs are the rung's spelling lists. It reads
@@ -1089,6 +1112,51 @@ class HardcoverMetadataProvider:
             return _EditionStop.FAILED
         return tuple(rows)
 
+    def owner_search(
+        self, query: OwnerSearchQuery, *, deadline: float
+    ) -> OwnerSearchAnswer:
+        """One owner search with an unchanged document, one attempt (#1477 S8).
+
+        A title search sends the books-first document with the first rung's
+        title spellings and the owner's own author names; an ISBN search
+        sends the edition document, whose books keep their constant limit of
+        six (five cards and a sentinel). A book merged into another, whose
+        `canonical_id` names a different book, is dropped.
+        """
+        session = self._session.owner_search(
+            _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
+        )
+
+        def search() -> OwnerSearchAnswer:
+            body: dict[str, object]
+            if query.lane == "title_authors":
+                ladder = work_query_ladder(query.title or "", query.authors)
+                if not ladder:
+                    return OwnerSearchAnswer()
+                titles, _ = hardcover_query_spellings(ladder[0])
+                body = {
+                    "operationName": "BooksByTitleAuthor",
+                    "query": _BOOKS_QUERY,
+                    "variables": {
+                        "titles": list(titles),
+                        "authors": list(query.authors),
+                    },
+                }
+            else:
+                body = {
+                    "operationName": "MetadataEvidenceByIsbn",
+                    "query": _ISBN_QUERY,
+                    "variables": {"isbns": [query.isbn]},
+                }
+            if len(canonical_json(body).encode()) > _MAX_REQUEST_BODY_BYTES:
+                return owner_search_failure("query_limit_exceeded", "")
+            payload = self._request(body, deadline=deadline, session=session)
+            if _has_graphql_errors(payload):
+                raise ProviderFailure(ProviderStatus.UNAVAILABLE)
+            return _owner_search_answer(self._name, payload, query.isbn)
+
+        return run_owner_search(session, search)
+
     def _reject_schema_members(self, count: int) -> None:
         if count > 0:
             self._schema_rejections = min(
@@ -1119,8 +1187,9 @@ class HardcoverMetadataProvider:
         *,
         deadline: float | None,
         query_retry: bool = False,
+        session: BoundedProviderSession | None = None,
     ) -> bytes:
-        return self._session.request(
+        return (session or self._session).request(
             HARDCOVER_URL,
             method="POST",
             content=canonical_json(body).encode(),
@@ -1656,6 +1725,132 @@ def _kept_cover_descriptors(
         json.JSONDecodeError,
     ):
         return ()
+
+
+def _owner_search_answer(
+    provider: str, payload: bytes, isbn: str | None
+) -> OwnerSearchAnswer:
+    """An owner search's books as cards, each named by its book id (S9).
+
+    Each book is read alone, as a books-first search reads one, so a
+    malformed book is dropped and counted rather than failing the answer.
+    An ISBN search's cards state that ISBN as their edition, and a book
+    whose edition of that ISBN the answer lists is projected as that
+    edition: its title, publisher, language and cover, joined to the book
+    whose id the work-scope link records.
+    """
+    source = json.loads(
+        payload.decode("utf-8", "strict"),
+        object_pairs_hook=_unique_object,
+        parse_constant=_reject_number,
+        parse_float=Decimal,
+    )
+    books_query = isbn is None
+    data = _closed(
+        _closed(source, {"data"})["data"],
+        {"books", "tags"} if books_query else {"editions", "books", "tags"},
+    )
+    rejected = _OptionalRejections()
+    tags = _index_tags(
+        data["tags"], _MAX_BOOK_TAG_ROWS if books_query else _MAX_TAG_ROWS, rejected
+    )
+    keys = _book_keys(books_query)
+    editions = {} if isbn is None else _owner_isbn_editions(data["editions"], isbn)
+
+    def project(raw: object) -> OwnerSearchRecord | None:
+        indexed = _index_books([raw], tags, keys, rejected, books_query=books_query)
+        ((book_id, book),) = indexed.items()
+        canonical = book.get("canonical_id")
+        if canonical is not None and canonical != book_id:
+            return None
+        edition = editions.get(book_id)
+        if edition is None:
+            (candidate,) = _book_candidates(provider, indexed, (), rejected, False)
+            url, _ = _cover_url(book["image"])
+        else:
+            candidate = _owner_edition_candidate(provider, edition, book, rejected)
+            url, _ = _cover_url(edition["image"])
+            if url is None:
+                url, _ = _cover_url(book["image"])
+        return OwnerSearchRecord(
+            candidate,
+            str(book_id),
+            isbn,
+            compilation=book.get("compilation") is True,
+            cover=None if url is None else OwnerSearchCover(url),
+        )
+
+    return owner_search_page(
+        data["books"],
+        project,
+        page=OWNER_SEARCH_PAGE if books_query else MAX_CANDIDATES,
+    )
+
+
+def _owner_isbn_editions(rows: object, isbn: str) -> dict[int, dict[str, Any]]:
+    """Each book's first listed edition of the searched ISBN, by book id.
+
+    The edition rows are the answer's own anchors: a row without an edition
+    and book id makes the answer unreadable, as it does the metadata lane.
+    """
+    if type(rows) is not list or len(rows) > MAX_CANDIDATES + 1:
+        raise ValueError("provider rows invalid")
+    family = isbn_family(isbn)
+    found: dict[int, dict[str, Any]] = {}
+    for value in rows:
+        if type(value) is dict and "image" not in value:
+            value = {**value, "image": None}
+        row = _anchored_projection(value, {"id", "book_id"}, set(_EDITION_ROW_KEYS))
+        row = {key: row.get(key) for key in _EDITION_ROW_KEYS}
+        edition_id, book_id = _identifier(row["id"]), _identifier(row["book_id"])
+        row["id"] = edition_id
+        if family is None or book_id in found:
+            continue
+        if family in {
+            isbn_family(row[key])
+            for key in ("isbn_13", "isbn_10")
+            if type(row[key]) is str
+        }:
+            found[book_id] = row
+    return found
+
+
+def _owner_edition_candidate(
+    provider: str,
+    row: dict[str, Any],
+    book: dict[str, Any],
+    rejected: _OptionalRejections,
+) -> ProviderCandidate:
+    """One ISBN card's candidate: the edition's claims, then its book's."""
+    book_id = _identifier(book["id"])
+    identity = f"hardcover-edition-{row['id']:010d}"
+    claims = _edition_claims(provider, identity, row, (), rejected)
+    bindings: list[ProviderIdentityBinding] = []
+    claims.extend(
+        _work_claims(provider, identity, book, (), len(claims), rejected, bindings)
+    )
+    return finalize_candidate_comparisons(
+        ProviderCandidate(
+            identity,
+            f"hardcover-work-{book_id:010d}",
+            tuple(claims),
+            _work_evidence(book),
+            tuple(
+                sorted(
+                    bindings,
+                    key=lambda value: (
+                        value.scope.value,
+                        value.role or "",
+                        value.source_ordinal,
+                        value.identity,
+                        value.claim_reference,
+                    ),
+                )
+            ),
+        ),
+        (),
+        provider,
+    )
 
 
 def _linked_book_canonical(payload: bytes, book: int) -> int | None:

@@ -37,6 +37,7 @@ How the pipeline prepares each work, stage by stage:
   [taste profile](product/cover-taste-profile.md),
   [Library progress](product/library-progress.md),
   [Looks wrong](product/looks-wrong.md),
+  [Find this book](product/find-this-book.md),
   [review keys](product/review-keys.md) and the
   [write plan](product/write-plan.md)
 - [Automation policy](product/automation-policy.md) and

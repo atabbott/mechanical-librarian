@@ -17,6 +17,7 @@ import type {
   DecisionAcknowledgementView,
   LibraryProgressView,
   LibraryView,
+  OwnerLinkView,
   PolicyStateView,
   PreparationView,
   ReviewHttp,
@@ -98,6 +99,9 @@ export const library: LibraryView = {
       preparation: null,
       preparationOutcomes: [],
       valueFlags: [],
+      // Find this book is not offered unless a test says so, as `unofferedLinkView` (#1477).
+      findOffered: false,
+      link: null,
     },
   ],
 }
@@ -356,7 +360,25 @@ export const tasteProfile: TasteProfileView = {
   profile: null,
   versions: [],
 }
+// Find this book is not offered unless a test says so (#1477).
+export const unofferedLinkView: OwnerLinkView = {
+  offered: false,
+  sources: [],
+  prefill: { title: null, authors: [], isbn: null, asin: null },
+  link: null,
+  schema_version: 'owner-link-view-v1',
+}
 export const createHttp = (): ReviewHttp => ({
+  getOwnerLinkView: vi.fn(async () => unofferedLinkView),
+  searchOwnerLink: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  chooseOwnerLink: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  withdrawOwnerLink: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
   getReportDetail: vi.fn(async () => {
     throw new Error('not configured')
   }),

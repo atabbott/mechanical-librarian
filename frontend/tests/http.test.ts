@@ -1353,7 +1353,7 @@ describe('ReviewApiClient', () => {
 
   it('maps only bounded readable diagnostic evidence', async () => {
     const payload = {
-      schema_version: 'review-case-evidence-v5',
+      schema_version: 'review-case-evidence-v6',
       review_case_id: 'case-1',
       missing_lineage_count: 1,
       next_cursor: 'next',
@@ -1369,6 +1369,7 @@ describe('ReviewApiClient', () => {
       source_ledger: [
         {
           companion_isbn: false,
+          anchored: false,
           cover_only: false,
           provider_requests: 1,
           lane_kind: 'work',
@@ -1399,6 +1400,7 @@ describe('ReviewApiClient', () => {
       sourceLedger: [
         {
           companionIsbn: false,
+          anchored: false,
           coverOnly: false,
           providerRequests: 1,
           laneKind: 'work',
@@ -1851,6 +1853,7 @@ describe('ReviewApiClient', () => {
               library_display_name: 'Reading Room',
               media_kind: 'epub',
               item: 'item-1',
+              find_offered: true,
               attention_count: 1,
               attention_state: 'needs_attention',
               detail_url: '/review/case-1',
@@ -1868,6 +1871,7 @@ describe('ReviewApiClient', () => {
               library: 'Books',
               media_kind: 'epub',
               item: 'internal-item-2',
+              link: { state: 'waiting', provider: 'open_library' },
               attention_count: 0,
               attention_state: 'no_attention_needed',
               detail_url: null,
@@ -1878,6 +1882,7 @@ describe('ReviewApiClient', () => {
               preparation_outcomes: [
                 {
                   companion_isbn: false,
+                  anchored: false,
                   cover_only: false,
                   provider_requests: 2,
                   lane_kind: 'isbn',
@@ -1924,6 +1929,8 @@ describe('ReviewApiClient', () => {
       preparation: null,
       preparationOutcomes: [],
       valueFlags: [],
+      findOffered: true,
+      link: null,
     })
     expect(view.works[1]).toEqual({
       id: 'library_work_2',
@@ -1942,6 +1949,7 @@ describe('ReviewApiClient', () => {
       preparationOutcomes: [
         {
           companionIsbn: false,
+          anchored: false,
           coverOnly: false,
           providerRequests: 2,
           laneKind: 'isbn',
@@ -1961,6 +1969,8 @@ describe('ReviewApiClient', () => {
         ],
       },
       valueFlags: [],
+      findOffered: false,
+      link: { state: 'waiting', provider: 'open_library' },
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-2')
     expect(fetchMock).toHaveBeenCalledWith(
@@ -3293,7 +3303,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v8', error: { code: 'busy' } },
+          { schema_version: 'review-library-v9', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3390,6 +3400,10 @@ describe('ReviewApiClient', () => {
     // (#1351); a v7 document lacks them.
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v8' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    // v9 added each row's book link (#1477); a v8 row lacks it.
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v9' }),
     ).resolves.toBeDefined()
   })
 
@@ -4805,7 +4819,7 @@ describe('central response decoding (#1685)', () => {
         missing_lineage_count: 0,
         next_cursor: null,
         review_case_id: 'case-1',
-        schema_version: 'review-case-evidence-v5',
+        schema_version: 'review-case-evidence-v6',
       },
       '/source_ledger',
     ],
@@ -7302,6 +7316,328 @@ describe('logoutOthers', () => {
     await expect(http.logoutOthers()).rejects.toBeInstanceOf(BuildMismatchError)
     expect(fetchMock).not.toHaveBeenCalled()
     expect(mismatch).toHaveBeenCalledOnce()
+  })
+})
+
+describe('the book link wire (#1477)', () => {
+  const address = { connection: 'local', library: 'Books', item: 'item-1' }
+  const answering = (document: unknown, status = 200) => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(document, { status }))
+    return {
+      fetchMock,
+      http: new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'd'.repeat(64) }),
+    }
+  }
+  const linkRow = `owner_link_${'a'.repeat(64)}`
+  const current = (overrides: Record<string, unknown> = {}) => ({
+    creators: ['Frank Herbert'],
+    identifier: null,
+    link_row_id: linkRow,
+    paused: false,
+    provider: 'hardcover',
+    reason: null,
+    retry_at: null,
+    scope: 'work',
+    state: 'linked',
+    title: 'Dune',
+    ...overrides,
+  })
+  const linkView = (overrides: Record<string, unknown> = {}) => ({
+    link: null,
+    offered: true,
+    prefill: { asin: null, authors: ['Frank Herbert'], isbn: null, title: 'Dune' },
+    schema_version: 'owner-link-view-v1',
+    sources: [
+      { lanes: ['title_authors', 'isbn'], marketplaces: null, provider: 'hardcover' },
+      { lanes: ['title_authors', 'asin'], marketplaces: ['us', 'uk'], provider: 'audible_catalog' },
+    ],
+    ...overrides,
+  })
+
+  it('reads the link view at the work’s address only', async () => {
+    const { fetchMock, http } = answering(linkView({ link: current() }))
+    const view = await http.getOwnerLinkView({ ...address, title: 'Dune' } as typeof address)
+    expect(view.link).toMatchObject({ state: 'linked', provider: 'hardcover' })
+    expect(view.sources).toHaveLength(2)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/v1/library/link?connection=local&library=Books&item=item-1',
+    )
+  })
+
+  it.each([
+    ['a work link with an identifier', { link: current({ identifier: '9780441172719' }) }],
+    ['an edition link with none', { link: current({ scope: 'edition' }) }],
+    ['a retry outside waiting', { link: current({ retry_at: 10 }) }],
+    ['a reason linked does not carry', { link: current({ reason: 'format' }) }],
+    ['contradicted with no reason', { link: current({ state: 'contradicted' }) }],
+    [
+      'needs replacing for a contradiction',
+      { link: current({ state: 'needs_replacing', reason: 'runtime' }) },
+    ],
+  ])('refuses %s', async (_name, overrides) => {
+    await expect(
+      answering(linkView(overrides)).http.getOwnerLinkView(address),
+    ).rejects.toMatchObject({ status: 502, code: 'contradictory_owner_link' })
+  })
+
+  it.each([
+    [
+      'marketplaces on another source',
+      [{ lanes: ['isbn'], marketplaces: ['us'], provider: 'hardcover' }],
+    ],
+    [
+      'Audible with no marketplaces',
+      [{ lanes: ['asin'], marketplaces: null, provider: 'audible_catalog' }],
+    ],
+    ['no lanes', [{ lanes: [], marketplaces: null, provider: 'hardcover' }]],
+    ['an ASIN lane off Audible', [{ lanes: ['asin'], marketplaces: null, provider: 'hardcover' }]],
+    ['a lane twice', [{ lanes: ['isbn', 'isbn'], marketplaces: null, provider: 'hardcover' }]],
+    [
+      'a source twice',
+      [
+        { lanes: ['isbn'], marketplaces: null, provider: 'hardcover' },
+        { lanes: ['title_authors'], marketplaces: null, provider: 'hardcover' },
+      ],
+    ],
+  ])('refuses a source with %s', async (_name, sources) => {
+    await expect(
+      answering(linkView({ sources })).http.getOwnerLinkView(address),
+    ).rejects.toMatchObject({ status: 502, code: 'contradictory_owner_link_source' })
+  })
+
+  const searchCard = (overrides: Record<string, unknown> = {}) => ({
+    asin: null,
+    choosable: true,
+    contradictions: [],
+    creators: ['Frank Herbert'],
+    isbn: '9780441172719',
+    language: null,
+    narrators: [],
+    position: 0,
+    preview: false,
+    publisher: null,
+    runtime_seconds: null,
+    scopes: ['work', 'edition'],
+    subtitle: null,
+    title: 'Dune',
+    withheld: [],
+    year: 1965,
+    ...overrides,
+  })
+  const search = (overrides: Record<string, unknown> = {}) => ({
+    cards: [searchCard(), searchCard({ position: 1 })],
+    dropped: 1,
+    lane: 'title_authors',
+    marketplace: null,
+    more: true,
+    provider: 'hardcover',
+    schema_version: 'owner-search-v1',
+    search_id: 'search-1',
+    ...overrides,
+  })
+  const request = {
+    ...address,
+    asin: null,
+    authors: ['Frank Herbert'],
+    isbn: null,
+    lane: 'title_authors' as const,
+    marketplace: null,
+    provider: 'hardcover',
+    title: 'Dune',
+  }
+
+  it('reads a search that answers what was asked', async () => {
+    const { fetchMock, http } = answering(search())
+    const read = await http.searchOwnerLink(request)
+    expect(read).toMatchObject({ search_id: 'search-1', dropped: 1, more: true })
+    expect(read.cards.map((card) => card.position)).toEqual([0, 1])
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['another source', { provider: 'open_library' }],
+    ['another lane', { lane: 'isbn' }],
+    ['a marketplace off Audible', { marketplace: 'us' }],
+    ['cards out of order', { cards: [searchCard({ position: 1 }), searchCard()] }],
+    ['a choosable card without This book', { cards: [searchCard({ scopes: ['edition'] })] }],
+    [
+      'an unchoosable card with a scope',
+      { cards: [searchCard({ choosable: false, scopes: ['edition'] })] },
+    ],
+    [
+      'a scope both offered and withheld',
+      {
+        cards: [searchCard({ withheld: [{ scope: 'edition', reason: 'format_print' }] })],
+      },
+    ],
+  ])('refuses a search with %s', async (_name, overrides) => {
+    const refusal: unknown = await answering(search(overrides))
+      .http.searchOwnerLink(request)
+      .catch((error: unknown) => error)
+    expect(refusal).toMatchObject({ status: 502, code: 'contradictory_owner_search' })
+  })
+
+  it('carries a refusal’s retry time and kind', async () => {
+    const refusal: unknown = await answering(
+      { error: { code: 'source_busy', kind: 'rate_limited', retry_at: 1_800_000_000 } },
+      429,
+    )
+      .http.searchOwnerLink(request)
+      .catch((error: unknown) => error)
+    expect(refusal).toBeInstanceOf(ApiError)
+    expect(refusal).toMatchObject({
+      status: 429,
+      code: 'source_busy',
+      kind: 'rate_limited',
+      retryAt: 1_800_000_000,
+    })
+  })
+
+  it('sends a choice and a withdrawal with their key and reads what they recorded', async () => {
+    const change = (action: string) => ({
+      action,
+      link_row_id: linkRow,
+      scan_requested: true,
+      schema_version: 'owner-link-change-v1',
+    })
+    const chose = answering(change('link'))
+    await expect(
+      chose.http.chooseOwnerLink('search-1', { position: 0, scope: 'work' }, 'key-'.repeat(5)),
+    ).resolves.toMatchObject({ action: 'link' })
+    const [path, init] = chose.fetchMock.mock.calls[0] ?? []
+    expect(path).toBe('/api/v1/library/find/searches/search-1/choice')
+    expect(new Headers(init?.headers).get('idempotency-key')).toBe('key-'.repeat(5))
+    expect(JSON.parse(init?.body as string)).toEqual({ position: 0, scope: 'work' })
+
+    const withdrew = answering(change('withdraw'))
+    await withdrew.http.withdrawOwnerLink(
+      { ...address, title: 'Dune' } as typeof address,
+      linkRow,
+      'key-'.repeat(5),
+    )
+    expect(JSON.parse(withdrew.fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({
+      ...address,
+      link_row_id: linkRow,
+    })
+    const refusal: unknown = await answering(change('link'))
+      .http.withdrawOwnerLink(address, linkRow, 'key-'.repeat(5))
+      .catch((error: unknown) => error)
+    // An unsafe write's contradictory answer leaves its outcome uncertain.
+    expect(refusal).toMatchObject({ name: 'UncertainMutationError' })
+  })
+
+  it('reads a link event in a work’s History', async () => {
+    const item = {
+      kind: 'link_changed',
+      link_row_id: linkRow,
+      occurred_at: 5,
+      provider: 'audible_catalog',
+      review_case_id: 'case-1',
+      schema_version: 'owner-link-history-event-v1',
+      scope: 'recording',
+      title: 'Dune',
+    }
+    expect((await readHistory(caseHistory({ items: [item] }))).items).toEqual([
+      {
+        category: 'owner_link',
+        occurredAt: 5,
+        kind: 'link_changed',
+        provider: 'audible_catalog',
+        scope: 'recording',
+        title: 'Dune',
+      },
+    ])
+  })
+})
+
+describe('a cover from the linked book (#1477)', () => {
+  const read = (candidate: unknown) =>
+    mapCoverConsideration(
+      coverConsideration({
+        candidates: [candidate],
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+        ],
+        policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+        ready: true,
+      }) as Parameters<typeof mapCoverConsideration>[0],
+    )
+  const fromLink = (overrides: Record<string, unknown> = {}) =>
+    coverCandidate({
+      identity: coverIdentity({ outcome: 'owner_link_match' }),
+      match_reason: 'linked_book',
+      match_state: 'same_book',
+      selectable: false,
+      deterministic_rank: null,
+      deterministic_rank_key: null,
+      state: 'excluded',
+      ...overrides,
+    })
+
+  it('reads as the same book, never selectable or ranked', () => {
+    const [mapped] = read(fromLink()).candidates
+    expect(mapped).toMatchObject({
+      matchState: 'same_book',
+      matchReason: 'linked_book',
+      selectable: false,
+      deterministicRank: null,
+      deterministicRankKey: null,
+    })
+  })
+
+  it('reads a title-and-author match through the link as unconfirmed', () => {
+    const [mapped] = read(
+      fromLink({
+        identity: coverIdentity({ outcome: 'owner_link_anchor_match' }),
+        match_reason: 'linked_title_and_author',
+        match_state: 'match_not_confirmed',
+        state: 'excluded',
+      }),
+    ).candidates
+    expect(mapped).toMatchObject({
+      matchState: 'match_not_confirmed',
+      matchReason: 'linked_title_and_author',
+    })
+  })
+
+  it.each([
+    ['selectable', { selectable: true }, 'contradictory_cover_identity'],
+    ['ranked', { deterministic_rank: 1 }, 'contradictory_cover_identity'],
+    [
+      'with a rank key',
+      { deterministic_rank_key: [1, 0, -10000, -100, -100, 1, 'candidate-1'] },
+      'contradictory_cover_identity',
+    ],
+    ['with another reason', { match_reason: null }, 'contradictory_cover_match_reason'],
+  ])('refuses one %s', (_name, overrides, code) => {
+    expect(() => read(fromLink(overrides))).toThrow(expect.objectContaining({ code }))
+  })
+
+  it('reads the current cover from the linked book, unranked and with no reason', () => {
+    const current = fromLink({ incumbent: true, manual_eligible: false, match_reason: null })
+    const view = mapCoverConsideration(
+      coverConsideration({
+        candidates: [current],
+        choice_contexts: [choiceContext()],
+        incumbent: { state: 'available', reference: 'candidate-1' },
+        policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+        ready: true,
+      }) as Parameters<typeof mapCoverConsideration>[0],
+    )
+    expect(view.candidates[0]).toMatchObject({
+      incumbent: true,
+      matchState: 'same_book',
+      selectable: false,
+      deterministicRankKey: null,
+    })
+    expect(view.candidates[0]).not.toHaveProperty('matchReason')
+  })
+
+  it('refuses the linked-book reason on any other cover', () => {
+    expect(() => read(coverCandidate({ match_reason: 'linked_book' }))).toThrow(
+      expect.objectContaining({ code: 'contradictory_cover_match_reason' }),
+    )
   })
 })
 

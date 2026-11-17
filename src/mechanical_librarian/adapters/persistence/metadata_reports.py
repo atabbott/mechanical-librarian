@@ -62,7 +62,17 @@ from mechanical_librarian.adapters.persistence.library_visit import (
 from mechanical_librarian.adapters.persistence.metadata_policy import (
     SQLiteMetadataPolicyRepository,
 )
-from mechanical_librarian.adapters.persistence.owner_links import current_owner_link
+from mechanical_librarian.adapters.persistence.owner_links import (
+    OwnerLinkChanged,
+    OwnerLinkIdempotencyConflict,
+    OwnerLinkItem,
+    OwnerLinkRow,
+    choose_owner_link,
+    current_owner_link,
+    current_owner_link_row,
+    owner_link_by_request,
+    withdraw_owner_link,
+)
 from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     dismiss_preparation_presentation,
@@ -98,6 +108,7 @@ from mechanical_librarian.adapters.persistence.review_scans import (
     SQLiteReviewScanRepository,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _LATEST_PREPARATION_FAILED_SQL,
     _active_generation_automatic_sql,
 )
 from mechanical_librarian.adapters.persistence.reviewer_access import (
@@ -136,6 +147,7 @@ from mechanical_librarian.application.metadata_report import (
     ReportRepository,
 )
 from mechanical_librarian.application.operation_admission import OperationAdmission
+from mechanical_librarian.application.owner_search import OwnerSearchRefused
 from mechanical_librarian.application.review_covers import (
     CoverKey,
     CoverPageSnapshot,
@@ -191,7 +203,7 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
 )
-from mechanical_librarian.domain.owner_link import OwnerLink
+from mechanical_librarian.domain.owner_link import OwnerLink, OwnerLinkTarget
 from mechanical_librarian.domain.owner_settings import MatchingCheck
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationPresentation,
@@ -232,6 +244,17 @@ _COVER_CURRENTNESS_REUSE = DocumentReuse[CoverCurrentnessFacts](
 def cover_currentness_cache() -> ValidatedDocumentCache:
     """A bounded memo of validated currentness facts (ADR-0083, #1237)."""
     return ValidatedDocumentCache(16_384, 8 * 1024 * 1024)
+
+
+@contextmanager
+def _owner_link_refusals() -> Iterator[None]:
+    """Answer the store's two owner refusals in the owner search vocabulary."""
+    try:
+        yield
+    except OwnerLinkChanged as error:
+        raise OwnerSearchRefused("link_changed") from error
+    except OwnerLinkIdempotencyConflict as error:
+        raise OwnerSearchRefused("idempotency_conflict") from error
 
 
 class SQLiteMetadataReportRepository(ConnectionScoped):
@@ -2783,6 +2806,159 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> OwnerLink | None:
         """The item's current owner link, read first by preparation (#1477)."""
         return current_owner_link(self._connection, connection, library, item)
+
+    @local_operation
+    def owner_link_replay(self, request_id: str) -> dict[str, object] | None:
+        """The answer a recorded link request gave, read by its id (S16 step 3)."""
+        row = owner_link_by_request(self._connection, request_id)
+        return None if row is None else self._owner_link_answer(row, True)
+
+    @local_operation
+    def choose_owner_link(
+        self,
+        connection: str,
+        library: str,
+        item: str,
+        *,
+        medium: str,
+        expected_current: str | None,
+        target: OwnerLinkTarget,
+        actor: str,
+        occurred_at: int,
+        request_id: str,
+        request_sha256: str,
+    ) -> dict[str, object]:
+        """Record a chosen link or replace in one write transaction (S16)."""
+        with _owner_link_refusals():
+            row, replayed = choose_owner_link(
+                self._connection,
+                item=OwnerLinkItem(connection, library, item),
+                expected_current=expected_current,
+                target=target,
+                medium=medium,
+                actor=actor,
+                occurred_at=occurred_at,
+                request_id=request_id,
+                request_sha256=request_sha256,
+                transaction=self._transaction("choose_owner_link"),
+            )
+        return self._owner_link_answer(row, replayed)
+
+    @local_operation
+    def withdraw_owner_link(
+        self,
+        connection: str,
+        library: str,
+        item: str,
+        *,
+        medium: str,
+        expected_current: str,
+        actor: str,
+        occurred_at: int,
+        request_id: str,
+        request_sha256: str,
+    ) -> dict[str, object]:
+        """Withdraw the current link in one write transaction (S16)."""
+        with _owner_link_refusals():
+            row, replayed = withdraw_owner_link(
+                self._connection,
+                item=OwnerLinkItem(connection, library, item),
+                expected_current=expected_current,
+                medium=medium,
+                actor=actor,
+                occurred_at=occurred_at,
+                request_id=request_id,
+                request_sha256=request_sha256,
+                transaction=self._transaction("withdraw_owner_link"),
+            )
+        return self._owner_link_answer(row, replayed)
+
+    def _owner_link_answer(
+        self, row: OwnerLinkRow, replayed: bool
+    ) -> dict[str, object]:
+        """What a link write answers, and the work's case to announce."""
+        case = self._connection.execute(
+            "SELECT review_case_id FROM current_review_packages "
+            "WHERE connection_name=? AND library_name=? AND item_id=?",
+            (row.item.connection_name, row.item.library_name, row.item.item_id),
+        ).fetchone()
+        return {
+            "action": row.action.value,
+            "connection": row.item.connection_name,
+            "library": row.item.library_name,
+            "link_row_id": row.link_row_id,
+            "replayed": replayed,
+            "request_sha256": row.request_sha256,
+            "review_case_id": None if case is None else case[0],
+        }
+
+    @local_operation
+    def owner_link_view_inputs(
+        self, connection: str, library: str, item: str
+    ) -> tuple[OwnerLink, OwnerLinkTarget, dict[str, object] | None] | None:
+        """The current link, its display and the current report's link facts.
+
+        `None` when the work has no link. The facts are the `owner_link`
+        member of the work's current report, or `None` when it has none.
+        """
+        row = current_owner_link_row(
+            self._connection, OwnerLinkItem(connection, library, item)
+        )
+        if row is None or row.target is None:
+            return None
+        facts = self._connection.execute(
+            "SELECT json_extract(report.document,'$.owner_link') "
+            "FROM current_review_packages package JOIN metadata_reports report "
+            "ON report.report_id=package.report_id WHERE package.connection_name=? "
+            "AND package.library_name=? AND package.item_id=?",
+            (connection, library, item),
+        ).fetchone()
+        target = row.target
+        return (
+            OwnerLink(
+                row.link_row_id,
+                row.medium,
+                target.scope,
+                target.provider,
+                target.identity,
+            ),
+            target,
+            None if facts is None or facts[0] is None else json.loads(facts[0]),
+        )
+
+    @local_operation
+    def read_owner_search_work(
+        self, connection: str, library: str, item: str
+    ) -> tuple[str, str | None, bool] | None:
+        """One work as an owner search reads it (#1477), or `None`.
+
+        Its current report document, its current link row and whether its
+        latest preparation could not finish, in one statement so the three
+        agree. The link row is the one a choice must still find current.
+        """
+        try:
+            row = self._connection.execute(
+                "SELECT mr.document,(SELECT ol.link_row_id FROM current_owner_links ol "
+                "WHERE ol.connection_name=ml.connection_name "
+                "AND ol.library_name=ml.library_name AND ol.item_id=ml.item_id),"
+                + _LATEST_PREPARATION_FAILED_SQL
+                + " FROM current_review_packages ml "
+                "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
+                "WHERE ml.connection_name=? AND ml.library_name=? AND ml.item_id=?",
+                (connection, library, item),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("owner search work is unavailable") from error
+        if row is None:
+            return None
+        document, link_row_id, failed = row
+        if (
+            type(document) is not str
+            or (link_row_id is not None and type(link_row_id) is not str)
+            or failed not in {0, 1}
+        ):
+            raise MetadataReportError("owner search work is unavailable")
+        return document, link_row_id, bool(failed)
 
     def preview_digest(
         self, report_id: str, artifact_id: str, preview_variant: str

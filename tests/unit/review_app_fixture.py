@@ -22,6 +22,7 @@ from mechanical_librarian.application.operations import (
     SupportExporter,
     TimingRepository,
 )
+from mechanical_librarian.application.owner_search import OwnerSearchService
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.review_application import (
     compose_review_application,
@@ -125,6 +126,7 @@ def create_transport_test_app(
     acknowledge_first_boot: Callable[[], None] | None = None,
     provider_throttling: Callable[[], dict[str, object]] | None = None,
     owner_password: StoreOwnerPassword | None = None,
+    owner_search: OwnerSearchService | None = None,
 ):
     """Wire synthetic store capabilities before creating the HTTP adapter.
 
@@ -178,6 +180,7 @@ def create_transport_test_app(
         first_boot=first_boot,
         acknowledge_first_boot=acknowledge_first_boot,
         provider_throttling=provider_throttling,
+        owner_search=owner_search,
     )
     with patch(
         "mechanical_librarian.interfaces.web.app.ReactAssetLoader",

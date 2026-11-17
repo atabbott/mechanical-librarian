@@ -34,10 +34,27 @@ about the work, and it should steer what preparation reads.
    fresh in the same transaction, so the next scan prepares it again. It
    takes no import ID. A link grants no write authority. It never fills an
    identifier field and never withdraws an owner decision.
-2. **Owner search.** The owner finds the record by searching one source with
-   that source's existing request shape. Results are never evidence and are
-   never stored. The search and its routes come in the owner-facing
-   increment. This decision covers the link and what preparation does with it.
+2. **Owner search.** The owner finds the record from Library's
+   [Find this book](../../product/find-this-book.md) by searching one source
+   the work's library enables, by title and authors, ISBN or, on Audible,
+   ASIN at a configured marketplace. The search uses that source's existing
+   request shape; only the existing limit parameter's value becomes 11, for
+   at most ten cards and a "more" sentinel. It runs with one attempt and no
+   retry, after one wait of at most 10 seconds on the shared pacer. One
+   search runs per session and 30 per source per sliding hour, and a current
+   recovery deferral refuses it. It writes no recovery state, no provider
+   answer and no report
+   ([provider egress](../provider-egress.md#owner-search)). Results are
+   never evidence. They are held in the session's memory for 15 minutes and
+   discarded by a new search, logout or restart. Each card carries the
+   scopes it offers and its contradictions with the work's current report.
+   Choose records from the server's retained card under an idempotency key,
+   and refuses when the work's catalogue identity or its current link
+   changed since the search. Withdraw names the current row. After the
+   commit the scan is requested with trigger `book_linked`. While a case's
+   report binds another link than the current one, every owner decision on
+   the case is refused `link_changed` until preparation records a new report
+   ([security](../security.md#find-this-book)).
 3. **Direct lookups.** Preparation reads the linked record by its key before
    any search, on a `link` lane, under the provider session's usual limits:
    - Hardcover: the constant `BookById` document.
@@ -110,9 +127,21 @@ about the work, and it should steer what preparation reads.
      manual with the closed reason `owner_link_unqualified`. It carries
      ADR-0092's would-admit note, the alternative the ungated engine selects,
      and the shadow outcome records the note under the rule `owner_link`.
+   - The rich fields' Automatic outcome (series, genres, tags, description
+     fill, subtitle fill, ISBN and ASIN) abstains the same way when the value
+     it would write cites only such records: reason `owner_link_unqualified`,
+     the note naming the projected value. No `automatic_decisions` row is
+     minted, so the scheduler writes nothing, and the field reads "Only the
+     book you linked supports this value, so it is left to you." The
+     installed qualifier's link phase found anchor-admitted Hardcover genres
+     decided and written before this gate (#1477).
    - A cover all of whose records were kept only through the link or its
-     anchor is at most `plausible_match`, with reason `owner_link_unqualified`.
-     So no ADR-0093 switch and no ADR-0095 automatic mode can bind it.
+     anchor reads `owner_link_match` when one of them is the link lane's own,
+     and `owner_link_anchor_match` otherwise, with reason
+     `owner_link_unqualified`. Neither is eligible for automatic selection, so
+     no ADR-0093 switch and no ADR-0095 automatic mode can bind it. The owner
+     may choose either; an anchor match needs the unverified-match
+     confirmation.
    - Automatic description admission (ADR-0099) abstains for a report that
      holds such a record.
    - ISBN and ASIN proposals never cite such a record. Identifier fields keep
@@ -141,17 +170,29 @@ about the work, and it should steer what preparation reads.
    preparation runs the anchor it reads then. No cross-provider
    fan-out runs inside the successor. Stored answers are reused as usual
    (ADR-0101). A timed re-search (ADR-0102) of a linked work uses the anchor.
-9. **Privacy and logging.** Operational events gain only the closed phase and
-   lane kind `link`. No identity, title, creator or query reaches a log, event
-   or diagnostic
-   ([data privacy](../data-privacy.md#what-is-retained)).
+9. **Privacy and logging.** Operational events gain the closed phase and
+   lane kind `link`, and two events with their own allow-lists:
+   `owner_search` (source, search kind, outcome, card, dropped and more
+   counts) and `owner_link` (source, scope, action, outcome). No identity,
+   title, creator, query, item ID or URL reaches a log, event or diagnostic.
+   Search text, results and previews stay in server memory for the session
+   that searched; a preview is never written to disk or the artifact store.
+   Live updates publish only the existing topics
+   ([data privacy](../data-privacy.md#what-is-never-retained)).
 10. **Versions; clean rebuild.** `metadata-report-v82` adds `owner_link`.
     `fixed-conservative-v48` covers the identifier rule.
-    `deterministic-shadow-decision-policy-v28`, `shadow-review-packet-v10`
+    `deterministic-shadow-decision-policy-v29` (v28 gated the decision
+    engine, v29 the rich fields' Automatic outcome too), `shadow-review-packet-v10`
     (the candidate summary's `owner_link_only`) and `shadow-outcome-set-v12`
-    cover the gate and its note. `cover-identity-report-v3` covers the cover
-    cap. The application database gains `owner_links` and
-    `current_owner_links`. Every earlier application database is rejected
+    cover the gate and its note. `cover-identity-report-v4`,
+    `cover-policy-report-v6` and `cover-consideration-v11` carry the two
+    cover outcomes. `review-library-v9` (the row's link state, whether it offers
+    Find this book, and the `link` lane kind), `review-report-detail-v7` and `review-case-evidence-v6`
+    (`anchored` lanes) and `review-case-history-v6` (link events) carry them
+    to the owner; `owner-search-v1`, `owner-link-view-v1` and
+    `owner-link-history-event-v1` are new. The application database gains
+    `owner_links` and `current_owner_links`, and the preparation trigger
+    check admits `book_linked`. Every earlier application database is rejected
     before mutation and needs a clean rebuild
     ([ADR-0013](0013-pre-release-clean-schema.md)).
 
@@ -162,14 +203,12 @@ about the work, and it should steer what preparation reads.
 - Nothing a link admits writes anything on its own until #1479 qualifies the
   link rules. Until then the owner decides, and the shadow record shows what
   would have been decided.
-- The cover identity outcomes `owner_link_match` and `owner_link_anchor_match`,
-  which the plan named, are not added yet. They reach the review wire and the
-  human decision document, so they come with the owner-facing increment. Until
-  then a link-only cover is capped at `plausible_match`.
-- Increment 1 changes nothing the owner sees: no route, no Library, History or
-  Activity change, and no response-shape version moves. The link lane kind is
-  kept off the review wire's lane vocabulary until the owner-facing increment
-  can record a link.
+- A link-only cover is shown with its own match outcome and stays outside
+  automatic selection.
+- The owner sees each link in Library, History and Activity, and the review
+  wire names the `link` lane and marks the anchored WORK lane.
+- Until preparation reads a changed link, the case it changed cannot be
+  decided. While preparation is paused, that lasts until it resumes.
 
 ## Alternatives considered
 

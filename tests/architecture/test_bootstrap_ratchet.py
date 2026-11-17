@@ -93,8 +93,12 @@ CEILING = {
     # and one keyword argument at each review application. 3368 since #1494
     # passed the recovery store's answered sources to the throttling read: one
     # argument. 3370 since #1523 passed the scan's time to admission: one
-    # parameter and one argument.
-    "composition.py": 3370,
+    # parameter and one argument. 3427 since #1477 composed each generation's
+    # owner search: one constructor of the service on the pipeline's own pacers
+    # and adapter factory, the pacers built once and passed to the pipeline,
+    # and one keyword argument at each review application; and kept owner
+    # search's hourly counts on the activation, one argument to each service.
+    "composition.py": 3427,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer.
     "contained_reviewer.py": 142,
@@ -106,8 +110,9 @@ DEF_COUNT = {
     # since PR 1c's Codex taste binding and its runner; 114 since #1385's
     # _OfflineSessionStore.end_review_sessions_except; 115 since #1385's
     # sign-out refusal, _OfflineSessionStore.end_other_review_sessions
-    # (2026-11-15).
-    "composition.py": 115,
+    # (2026-11-15); 116 since #1477's _compose_owner_search, a one-call
+    # constructor.
+    "composition.py": 116,
     # 7 since PR 1c's run_taste_build_reviewer and its dispatch recorder.
     "contained_reviewer.py": 7,
 }
@@ -126,7 +131,8 @@ RESIDUAL: dict[str, int | None] = {
     # Builds a store generation at setup completion or a Settings change and
     # swaps it in; it calls compose_store_runtime_generation, so it stays here.
     # 121 since #1385 gave it the live owner verifier its generations share.
-    _C + "_StoreRuntimeActivation": 121,
+    # 123 since #1477 gave it the owner search limits its generations share.
+    _C + "_StoreRuntimeActivation": 123,
     # Builds each configured library's Audiobookshelf target, capability
     # observer and guarded application from adapters: construction only.
     _C + "compose_continuous_guarded_application": 97,
@@ -142,8 +148,9 @@ RESIDUAL: dict[str, int | None] = {
     # 202 since #1372 passed the taste build's wake as the background lane;
     # 203 since it leases that lane's repository and closes it on stop; 216
     # since #1064 opens the provider-response store and closes it on stop;
-    # 217 since #1523 passes the scan's time to admission.
-    _C + "create_review_pipeline": 217,
+    # 217 since #1523 passes the scan's time to admission; 219 since #1477
+    # accepts the generation's pacers its owner search shares.
+    _C + "create_review_pipeline": 219,
     # Wires recovery to the built pipeline; catches an adapter error type.
     # 96 since #1064 passes the response store to the retry constructor.
     _C + "_provider_recovery_wiring": 96,
@@ -158,13 +165,17 @@ RESIDUAL: dict[str, int | None] = {
     # 247 since #1372 passed the taste build service to the review application.
     # 253 since #1385 read the owner verifier from the activation's holder.
     # 256 since #1336 passed the write plan's export reader to it.
-    _C + "compose_store_runtime_generation": 256,
+    # 266 since #1477 built the pacers once for the pipeline and the owner
+    # search, and passed the owner search to it. 267 since #1477 passed it the
+    # activation's owner search limits.
+    _C + "compose_store_runtime_generation": 267,
     _C + "_compose_setup_runtime_generation": 145,
     # Server entry. Its file-authority branch still duplicates
     # compose_store_runtime_generation: the residual A-U4 kept.
     # 360 since #1372 passed the taste build service to the review application.
     # 363 since #1336 passed the write plan's export reader to it.
-    _C + "run_review_server": 363,
+    # 373 since #1477 built the pacers once and passed the owner search to it.
+    _C + "run_review_server": 373,
     # Constructs the Codex device-auth manager, which tests replace on
     # composition, and the reviewer access around it.
     # 168 since #1372 passed the taste profile daily limit; 182 since PR 1c

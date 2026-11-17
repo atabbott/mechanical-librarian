@@ -37,6 +37,7 @@ from mechanical_librarian.application.metadata_policy import (
     PolicyTransition,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.owner_search import OwnerSearchRefused
 from mechanical_librarian.application.review_covers import (
     CoverKey,
     CoverPageSnapshot,
@@ -312,6 +313,21 @@ class FakeReviewRepository:
             raise self.library_visit_moves
         self.library_visits.append((listing, now))
         return self.library_visit_moves
+
+    # Find this book (#1477): the double holds no links. A view reads none and
+    # a write is refused as the store refuses an unknown work; the real store
+    # is proved in `test_find_this_book_routes.py`.
+    def owner_link_replay(self, request_id: str) -> dict[str, object] | None:
+        return None
+
+    def owner_link_view_inputs(self, connection: str, library: str, item: str) -> None:
+        return None
+
+    def choose_owner_link(self, *args: object, **kwargs: object) -> dict[str, object]:
+        raise OwnerSearchRefused("work_not_found")
+
+    def withdraw_owner_link(self, *args: object, **kwargs: object) -> dict[str, object]:
+        raise OwnerSearchRefused("work_not_found")
 
     def review_case_ready_at(self, review_case_id: str) -> int | None:
         if review_case_id != self.case.review_case_id:

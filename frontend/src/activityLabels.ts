@@ -17,6 +17,10 @@ const ledgerStateLabels: Readonly<Record<string, string>> = {
   withdraw: 'Recorded',
   completed: 'Completed',
   unavailable: 'Unavailable',
+  // A book link the owner made, changed or withdrew (#1477).
+  linked: 'Linked',
+  link_changed: 'Link changed',
+  link_withdrawn: 'Link withdrawn',
 }
 // A change stopped only by a lost connection is still waiting to be prepared
 // again, so it reads as waiting rather than as a stopped stale (#1402). One
