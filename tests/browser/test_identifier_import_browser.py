@@ -35,7 +35,10 @@ from tests.browser.text_size import set_root_text
 _ORIGIN = "https://react-platform.invalid"
 _SETTINGS = f"{_ORIGIN}/settings?group=libraries"
 _ACTIVITY = f"{_ORIGIN}/activity?eventType=all&rangeDays=30&page=1&pageSize=25"
-_PREVIEWS = "/api/v1/libraries/primary/ebooks/identifier-previews"
+# One library holding both ebooks and audiobooks, so ISBN and ASIN rows sit
+# side by side.
+_LIBRARY, _LIBRARY_LABEL = "household-books", "Household books"
+_PREVIEWS = f"/api/v1/libraries/primary/{_LIBRARY}/identifier-previews"
 _PREVIEW_ID = "4YDGHS-aBmRjDIJPP4PX4HpKc56D-QaSl_0CahS6atc"
 _IMPORT = "identifier_import_" + "a" * 64
 _KEY = re.compile(r"^[\x21-\x7e]{16,128}$")
@@ -146,7 +149,7 @@ def _import_event(occurred_at: int) -> dict[str, Any]:
         "field_label": "Links",
         "identifier_import_id": _IMPORT,
         "policy_changes": [],
-        "library": "ebooks",
+        "library": _LIBRARY,
         "note": None,
         "occurred_at": occurred_at,
         "origin": "human",
@@ -230,6 +233,15 @@ def _serve(page: Page, served: _Served) -> None:
                     "schema_version": "identifier-import-v1",
                 },
             )
+        elif path == "/api/v1/settings" and request.method == "GET":
+            settings = cast("dict[str, Any]", rich_payload(request.url))
+            (library,) = settings["document"]["libraries"]
+            library |= {
+                "name": _LIBRARY,
+                "display_name": _LIBRARY_LABEL,
+                "media_kind": "book",
+            }
+            _fulfill(route, settings)
         elif path == "/api/v1/activity" and request.method == "GET":
             payload = cast("dict[str, Any]", rich_payload(request.url))
             events = payload["events"]
@@ -278,7 +290,7 @@ def _open_import(page: Page) -> Locator:
     page.get_by_role("button", name="Import identifiers").click()
     sheet = _sheet(page)
     expect(
-        sheet.get_by_role("heading", name="Import identifiers for ebooks")
+        sheet.get_by_role("heading", name=f"Import identifiers for {_LIBRARY_LABEL}")
     ).to_be_focused()
     return sheet
 
@@ -293,7 +305,7 @@ def _choose(sheet: Locator, data: bytes = _FILE) -> None:
 def _previewed(sheet: Locator) -> None:
     _choose(sheet)
     sheet.get_by_role("button", name="Preview", exact=True).click()
-    expect(sheet.get_by_text("20 rows: 15 will be linked, 5 will not.")).to_be_focused()
+    expect(sheet.get_by_text("20 rows in the file.")).to_be_focused()
 
 
 def _import_details(page: Page) -> Locator:
@@ -302,7 +314,10 @@ def _import_details(page: Page) -> Locator:
         "button", name=re.compile(r"^Details for Links, Identifiers file")
     ).click()
     return page.get_by_role(
-        "button", name=re.compile(r"^Withdraw this import, Identifiers file, ebooks")
+        "button",
+        name=re.compile(
+            rf"^Withdraw this import, Identifiers file, ({_LIBRARY}|{_LIBRARY_LABEL})"
+        ),
     )
 
 
@@ -321,7 +336,9 @@ def test_each_saved_library_ends_with_import_identifiers_and_back_returns_focus(
         entry.click()
         sheet = _sheet(page)
         expect(
-            sheet.get_by_role("heading", name="Import identifiers for ebooks")
+            sheet.get_by_role(
+                "heading", name=f"Import identifiers for {_LIBRARY_LABEL}"
+            )
         ).to_be_focused()
         # The sheet takes the list's place; the list is not on the page.
         expect(page.get_by_role("button", name="Import identifiers")).to_have_count(0)
@@ -349,14 +366,18 @@ def test_a_file_is_previewed_as_text_and_linked_under_one_idempotency_key(
         # others will not.
         expect(sheet.get_by_text("2 match no work")).to_be_visible()
         expect(sheet.get_by_text("0 repeat an earlier row")).to_have_count(0)
+        # Will be linked is counted on the switch and the button, not as a chip.
+        expect(sheet.get_by_text("15 will be linked", exact=True)).to_have_count(0)
         expect(sheet.get_by_text("The Lantern Keeper's Year")).to_be_visible()
         sheet.get_by_role("button", name="Not linked (5)").click()
         expect(
             sheet.get_by_text("This is an ASIN, and an ebook needs an ISBN")
         ).to_be_visible()
         sheet.get_by_role("button", name="Link 15 works").click()
-        expect(sheet.get_by_role("status")).to_contain_text("Linked 15 works.")
-        expect(sheet.get_by_role("status")).to_be_focused()
+        expect(sheet.locator(".identifier-import-success")).to_contain_text(
+            "Linked 15 works."
+        )
+        expect(sheet.locator(".identifier-import-success")).to_be_focused()
         imports = [r for r in served.requests if r[0].endswith("/import")]
         assert len(imports) == 1
         assert _KEY.match(imports[0][1]["idempotency-key"])
@@ -375,9 +396,7 @@ def test_a_preview_the_library_changed_after_says_so_and_previews_again(
         _previewed(sheet)
         sheet.get_by_role("button", name="Link 15 works").click()
         alert = sheet.get_by_role("alert")
-        expect(alert).to_have_text(
-            "This library's works changed after the preview. Preview the file again."
-        )
+        expect(alert).to_have_text("This library's works changed after the preview.")
         expect(alert).to_be_focused()
         served.imported = (
             200,
@@ -389,9 +408,7 @@ def test_a_preview_the_library_changed_after_says_so_and_previews_again(
             },
         )
         sheet.get_by_role("button", name="Preview again").click()
-        expect(
-            sheet.get_by_text("20 rows: 15 will be linked, 5 will not.")
-        ).to_be_focused()
+        expect(sheet.get_by_text("20 rows in the file.")).to_be_focused()
         assert [path for path, _, _ in served.requests].count(_PREVIEWS) == 2
     finally:
         page.close()
@@ -448,9 +465,7 @@ def test_the_keyboard_reaches_the_file_chooser_preview_and_link_in_order(
         page.keyboard.press("Tab")
         expect(sheet.get_by_role("button", name="Preview", exact=True)).to_be_focused()
         page.keyboard.press("Enter")
-        expect(
-            sheet.get_by_text("20 rows: 15 will be linked, 5 will not.")
-        ).to_be_focused()
+        expect(sheet.get_by_text("20 rows in the file.")).to_be_focused()
     finally:
         page.close()
 
@@ -485,7 +500,9 @@ def test_every_state_reads_whole_at_each_width_and_text_size(
         assert page.evaluate(_NO_SIDEWAYS_SCROLL), "not linked scrolls sideways"
         sheet.get_by_role("button", name="Will be linked (15)").click()
         sheet.get_by_role("button", name="Link 15 works").click()
-        expect(sheet.get_by_role("status")).to_contain_text("Linked 15 works.")
+        expect(sheet.locator(".identifier-import-success")).to_contain_text(
+            "Linked 15 works."
+        )
         assert page.evaluate(_NO_SIDEWAYS_SCROLL), "success scrolls sideways"
         withdraw = _import_details(page)
         set_root_text(page, text)
