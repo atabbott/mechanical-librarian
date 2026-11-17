@@ -220,6 +220,8 @@ Search state is held only in process memory, keyed by a digest of the session
 token, under a 256-bit random search ID, for 15 minutes. A new search replaces
 it, and logout, a settings change or a restart discards it. A foreign search
 and an expired one get the same `search_not_found`. Results are text only.
+The per-session and per-source limits are held for the whole process, so a
+settings change keeps them and only a restart clears them.
 
 A preview is served only to the session that owns the search, only for a
 position on that search's cards, and refused when `Sec-Fetch-Site` is present

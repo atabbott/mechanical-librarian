@@ -222,6 +222,15 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
             assert later["owner_password_change"] is owner_password
             assert later["verify_password"] == owner_password.verify
             assert not owner_password.verify("a later snapshot's password")
+            # Each generation builds its own owner search, on the process's one
+            # set of hourly counts, so a Settings save resets no limit (#1477).
+            first, second = (
+                call.kwargs["owner_search"]
+                for call in compose_application.call_args_list
+            )
+            assert first is not second
+            assert first._limits is activation.owner_search_limits
+            assert second._limits is activation.owner_search_limits
 
     # Every generation's session checks read the one live verifier it was
     # given, and a standalone generation gets one of its own.

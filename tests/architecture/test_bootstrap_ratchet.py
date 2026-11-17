@@ -95,8 +95,9 @@ CEILING = {
     # argument. 3420 since #1477 composed each generation's owner search: one
     # constructor of the service on the pipeline's own pacers and adapter
     # factory, the pacers built once and passed to the pipeline, and one
-    # keyword argument at each review application.
-    "composition.py": 3420,
+    # keyword argument at each review application. 3425 since #1477 kept owner
+    # search's hourly counts on the activation, one argument to each service.
+    "composition.py": 3425,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer.
     "contained_reviewer.py": 142,
@@ -129,7 +130,8 @@ RESIDUAL: dict[str, int | None] = {
     # Builds a store generation at setup completion or a Settings change and
     # swaps it in; it calls compose_store_runtime_generation, so it stays here.
     # 121 since #1385 gave it the live owner verifier its generations share.
-    _C + "_StoreRuntimeActivation": 121,
+    # 123 since #1477 gave it the owner search limits its generations share.
+    _C + "_StoreRuntimeActivation": 123,
     # Builds each configured library's Audiobookshelf target, capability
     # observer and guarded application from adapters: construction only.
     _C + "compose_continuous_guarded_application": 97,
@@ -162,8 +164,9 @@ RESIDUAL: dict[str, int | None] = {
     # 253 since #1385 read the owner verifier from the activation's holder.
     # 256 since #1336 passed the write plan's export reader to it.
     # 266 since #1477 built the pacers once for the pipeline and the owner
-    # search, and passed the owner search to it.
-    _C + "compose_store_runtime_generation": 266,
+    # search, and passed the owner search to it. 267 since #1477 passed it the
+    # activation's owner search limits.
+    _C + "compose_store_runtime_generation": 267,
     _C + "_compose_setup_runtime_generation": 145,
     # Server entry. Its file-authority branch still duplicates
     # compose_store_runtime_generation: the residual A-U4 kept.

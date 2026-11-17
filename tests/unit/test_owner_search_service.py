@@ -25,6 +25,7 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.application.owner_search import (
     SEARCH_TTL_SECONDS,
     SEARCHES_PER_HOUR,
+    OwnerSearchLimits,
     OwnerSearchRefused,
     OwnerSearchRequest,
     OwnerSearchResult,
@@ -205,6 +206,7 @@ def _harness(
     *,
     providers: tuple[ProviderConnectionConfiguration, ...] = _PROVIDERS,
     preview: Callable[[OwnerSearchCover], bytes] = lambda _: b"preview-bytes",
+    limits: OwnerSearchLimits | None = None,
 ) -> _Harness:
     clocks = _Clocks()
     source = _Source(
@@ -230,6 +232,7 @@ def _harness(
         fetch_preview=fetch,
         clock=lambda: clocks.wall,
         monotonic=lambda: clocks.mono,
+        limits=limits,
     )
     return _Harness(service, clocks, source, works, pacer, fetched, throttling)
 
@@ -417,6 +420,111 @@ def test_thirty_requests_an_hour_per_source() -> None:
     harness.clocks.mono += 3600
     harness.service.search(TOKEN, _request())
     assert len(harness.source.queries) == SEARCHES_PER_HOUR + 1
+
+
+def _fill_the_hour_but_one(harness: _Harness) -> float:
+    """Send 29 unpaced searches; return when the first was counted."""
+    first = harness.clocks.wall + 1
+    for _ in range(SEARCHES_PER_HOUR - 1):
+        harness.clocks.advance(1)
+        harness.service.search(TOKEN, _request(provider="inventaire"))
+    return first
+
+
+def test_two_sessions_at_once_cannot_pass_the_hourly_limit() -> None:
+    # Inventaire has no pacer here, so only the hourly limit can refuse.
+    harness = _harness()
+    first = _fill_the_hour_but_one(harness)
+    inner: list[OwnerSearchRefused] = []
+
+    def concurrent(_: OwnerSearchQuery) -> OwnerSearchAnswer:
+        if not inner:
+            # The thirtieth search holds the last slot while its request is out.
+            inner.append(
+                _refusal(
+                    lambda: harness.service.search(
+                        OTHER, _request(provider="inventaire")
+                    )
+                )
+            )
+        return OwnerSearchAnswer((_record("/works/OL1W"),))
+
+    harness.source.answer = concurrent
+    harness.service.search(TOKEN, _request(provider="inventaire"))
+    assert [refusal.code for refusal in inner] == ["search_limit"]
+    assert inner[0].retry_at == int(first) + 3600
+    assert len(harness.source.queries) == SEARCHES_PER_HOUR
+    assert (
+        _refusal(
+            lambda: harness.service.search(OTHER, _request(provider="inventaire"))
+        ).code
+        == "search_limit"
+    )
+
+
+def test_a_held_slot_whose_search_sent_nothing_is_given_back() -> None:
+    harness = _harness()
+    _fill_the_hour_but_one(harness)
+    inner: list[str] = []
+
+    def unsent(_: OwnerSearchQuery) -> OwnerSearchAnswer:
+        inner.append(
+            _refusal(
+                lambda: harness.service.search(OTHER, _request(provider="inventaire"))
+            ).code
+        )
+        return OwnerSearchAnswer(
+            failure=OwnerSearchFailure.UNAVAILABLE, requested=False
+        )
+
+    harness.source.answer = unsent
+    assert (
+        _refusal(
+            lambda: harness.service.search(TOKEN, _request(provider="inventaire"))
+        ).code
+        == "search_failed"
+    )
+    assert inner == ["search_limit"]
+    # The slot it held is free again and leaves no count: one more is sent,
+    # and only then is the hour full.
+    harness.source.answer = lambda _: OwnerSearchAnswer((_record("/works/OL1W"),))
+    harness.service.search(OTHER, _request(provider="inventaire"))
+    assert (
+        _refusal(
+            lambda: harness.service.search(OTHER, _request(provider="inventaire"))
+        ).code
+        == "search_limit"
+    )
+
+
+def test_the_hourly_count_and_in_flight_rule_outlive_a_new_generation() -> None:
+    # A Settings save builds a new service on the process's limits (#1477).
+    limits = OwnerSearchLimits()
+    harness = _harness(limits=limits)
+    _fill_the_hour_but_one(harness)
+    successor = _harness(limits=limits)
+    inner: list[str] = []
+
+    def across(_: OwnerSearchQuery) -> OwnerSearchAnswer:
+        # The same session, mid-search in the old generation, is still in
+        # flight in the new one.
+        inner.append(
+            _refusal(
+                lambda: successor.service.search(TOKEN, _request(provider="inventaire"))
+            ).code
+        )
+        return OwnerSearchAnswer((_record("/works/OL1W"),))
+
+    harness.source.answer = across
+    harness.service.search(TOKEN, _request(provider="inventaire"))
+    assert inner == ["search_in_flight"]
+    assert (
+        _refusal(
+            lambda: successor.service.search(OTHER, _request(provider="inventaire"))
+        ).code
+        == "search_limit"
+    )
+    assert successor.source.queries == []
 
 
 def test_a_search_that_sent_nothing_does_not_count_toward_the_hour() -> None:

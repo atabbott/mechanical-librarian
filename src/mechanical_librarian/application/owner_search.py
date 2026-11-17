@@ -256,6 +256,49 @@ class OwnerLinkChoice:
     target: OwnerLinkTarget
 
 
+class OwnerSearchLimits:
+    """The one-at-a-time rule and the hourly counts, for the whole process.
+
+    The composition root owns one and gives it to every runtime generation, so
+    a settings change, which builds a new service, resets neither (S11 steps
+    7 and 8). A search takes its slot here under one lock, before anything is
+    sent, so concurrent sessions cannot together pass the hourly limit; the
+    slot becomes a count only once its request is sent, and is given back
+    otherwise.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._in_flight: set[str] = set()
+        self._sent: dict[str, deque[float]] = {}
+        self._reserved: dict[str, int] = {}
+
+    def admit(self, session: str, adapter: str, now: float) -> None:
+        """Steps 7 and 8, decided and reserved together, or refused."""
+        with self._lock:
+            if session in self._in_flight:
+                raise OwnerSearchRefused("search_in_flight")
+            sent = self._sent.setdefault(adapter, deque())
+            while sent and now - sent[0] >= _HOUR:
+                sent.popleft()
+            reserved = self._reserved.get(adapter, 0)
+            over = len(sent) + reserved - SEARCHES_PER_HOUR
+            if over >= 0:
+                # The earliest a slot frees if every reserved search is sent.
+                frees = sent[over] + _HOUR if over < len(sent) else now + _HOUR
+                raise OwnerSearchRefused("search_limit", retry_at=math.ceil(frees))
+            self._reserved[adapter] = reserved + 1
+            self._in_flight.add(session)
+
+    def settle(self, session: str, adapter: str, requested: bool, now: float) -> None:
+        """End an admitted search: count it if its request was sent."""
+        with self._lock:
+            self._reserved[adapter] -= 1
+            if requested:
+                self._sent.setdefault(adapter, deque()).append(now)
+            self._in_flight.discard(session)
+
+
 class OwnerSearchService:
     """Admit, send and hold owner searches for one runtime generation.
 
@@ -263,7 +306,7 @@ class OwnerSearchService:
     per call from this generation's configuration (L7); `pacers` are the
     shared pacers the running preparation uses (S12); `throttling` is the
     generation's provider-throttling read, the rows recovery deferrals come
-    from.
+    from. `limits` outlives the generation; its search memory does not.
     """
 
     def __init__(
@@ -278,6 +321,7 @@ class OwnerSearchService:
         clock: Callable[[], float],
         monotonic: Callable[[], float],
         memory: SessionMemory[OwnerSearchState] | None = None,
+        limits: OwnerSearchLimits | None = None,
     ) -> None:
         self._configuration = configuration
         self._works = works
@@ -289,8 +333,7 @@ class OwnerSearchService:
         self._monotonic = monotonic
         self._memory = memory or SessionMemory(SEARCH_TTL_SECONDS, clock)
         self._lock = threading.Lock()
-        self._in_flight: set[str] = set()
-        self._sent: dict[str, deque[float]] = {}
+        self._limits = limits or OwnerSearchLimits()
 
     @property
     def memory(self) -> SessionMemory[OwnerSearchState]:
@@ -404,29 +447,15 @@ class OwnerSearchService:
     ) -> OwnerSearchResult:
         adapter = source.provider.adapter
         session = _session_key(session_token)
-        with self._lock:
-            # Steps 7 and 8, decided together so two searches cannot both pass.
-            if session in self._in_flight:
-                raise OwnerSearchRefused("search_in_flight")
-            now = self._clock()
-            sent = self._sent.setdefault(adapter, deque())
-            while sent and now - sent[0] >= _HOUR:
-                sent.popleft()
-            if len(sent) >= SEARCHES_PER_HOUR:
-                raise OwnerSearchRefused(
-                    "search_limit", retry_at=math.ceil(sent[0] + _HOUR)
-                )
-            self._in_flight.add(session)
+        self._limits.admit(session, adapter, self._clock())
+        requested = False
         try:
             self._require_not_deferred(subject.library, adapter)
             self._wait_for_pacer(adapter)
             answer = self._send(source, query)
-            if answer.requested:
-                with self._lock:
-                    self._sent.setdefault(adapter, deque()).append(self._clock())
+            requested = answer.requested
         finally:
-            with self._lock:
-                self._in_flight.discard(session)
+            self._limits.settle(session, adapter, requested, self._clock())
         return self._hold(session_token, subject, source, query, answer)
 
     def _require_not_deferred(self, library: str, adapter: str) -> None:

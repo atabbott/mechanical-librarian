@@ -206,6 +206,7 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.owner_search import (
+    OwnerSearchLimits,
     OwnerSearchService,
     OwnerSearchWorks,
 )
@@ -424,6 +425,8 @@ class _StoreRuntimeActivation:
         self.validated_documents = ValidatedDocumentCache()
         # So do validated cover currentness facts (#1237).
         self.cover_currentness = cover_currentness_cache()
+        # And owner search's hourly counts and one-at-a-time rule (#1477).
+        self.owner_search_limits = OwnerSearchLimits()
 
     @property
     def dispatcher(self) -> MutableRuntimeDispatcher:
@@ -2232,8 +2235,10 @@ def _compose_owner_search(
     pacers: _ProviderPacers,
     provider_recovery: SQLiteProviderRecoveryStore,
     retry: Literal["available", "managed_by_file"],
+    limits: OwnerSearchLimits | None = None,
 ) -> OwnerSearchService:
     """Owner search on the pipeline's own pacers and adapters (#1477 L7)."""
+    # `limits` is the process's, so a settings change keeps the hourly counts.
     return OwnerSearchService(
         configuration=configuration,
         works=repository,
@@ -2250,6 +2255,7 @@ def _compose_owner_search(
         fetch_preview=fetch_owner_preview,
         clock=time.time,
         monotonic=time.monotonic,
+        limits=limits,
     )
 
 
@@ -2484,6 +2490,7 @@ def compose_store_runtime_generation(
                     pacers,
                     provider_recovery,
                     "available",
+                    None if activation is None else activation.owner_search_limits,
                 ),
             )
             review_app = create_review_app(review_application, review)
