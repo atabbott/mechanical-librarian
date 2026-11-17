@@ -493,7 +493,7 @@ the ring, takes the Archive Teal Wash with a 2px inner accent edge, and says
 "Your choice" in words; a recommendation is stated in its label, not by a wash.
 Keyboard focus is a 3px focus-colour outline drawn inside the choice. Automatic,
 resolved, or stale fields must not present a false choice. A choice that is refused or not confirmed is
-said in Correction Red right under the choices, with its Try the same decision again or Reload current
+said in Correction Red right under the choices, in Works and in Covers, with its Try the same decision again or Reload current
 case, and the page scrolls just far enough to show it. Field tabs name their status in words (Needs you,
 Decided, Pinned, Automatic, Optional, No change), never by a glyph.
 
@@ -507,7 +507,10 @@ one card naming them all, and the merged count is said apart from unavailable
 candidates. Each card is one frame around the cover and its Evidence link, and
 the frame carries hover, recommended and chosen states. Above 1024px the
 current cover takes the first of four equal columns, the same size as the other
-covers and level with them. Off-screen cover images load lazily.
+covers and level with them. In Covers' picks the cards are shuffled for each
+work in one grid, the current cover is marked rather than first, and no
+recommendation is shown; above 1024px up to four cards of at most 15rem share
+a row, so each card's choice line is in the first screen. Off-screen cover images load lazily.
 
 ### Cover Observation Evidence
 

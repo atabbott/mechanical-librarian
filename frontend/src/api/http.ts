@@ -35,8 +35,11 @@ type AttentionDto = ResponseSchema<'_AttentionResponse'>
 export type CoversView = ResponseSchema<'_CoversResponse'>
 export type CoverWorkView = CoversView['items'][number]
 export type CoverTab = CoversView['view']
-// Taste profile is a Covers tab with no page of books (#1372).
-export type CoversTab = CoverTab | 'taste'
+// Taste profile is a Covers tab with no page of books (#1372). Picks is the
+// calibration screen, reached only from Start; it is never a shown tab.
+export type CoversTab = CoverTab | 'taste' | 'picks'
+// The works calibration offers now, in the order to pick (#1372 PR 3).
+export type CoverCalibrationView = ResponseSchema<'_CoverCalibrationResponse'>
 export type TasteProfileView = ResponseSchema<'_TasteProfileResponse'>
 export type TasteBuildFailure = NonNullable<NonNullable<TasteProfileView['build']>['failure']>
 export type TasteSection = ResponseSchema<'_TasteRule'>['section']
@@ -1440,6 +1443,11 @@ export interface ReviewHttp {
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
   ): Promise<CoversView>
+  /** Covers → picks: up to 25 works whose cover the owner can pick now. */
+  getCoverCalibration(
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<CoverCalibrationView>
   /** Covers → Taste profile: the profile in use, its versions and build. */
   getTasteProfile(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<TasteProfileView>
   /** Try again after the failed build `buildId`; it counts against the daily limit. */
@@ -2008,6 +2016,9 @@ export class ReviewApiClient implements ReviewHttp {
     if (at.cursor) p.set('cursor', at.cursor)
     if (at.cover) p.set('cover', at.cover)
     return await this.read(`/api/v1/covers?${p}`, signal, workClass)
+  }
+  async getCoverCalibration(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return await this.read('/api/v1/covers/calibration', signal, workClass)
   }
   async getTasteProfile(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapTasteProfile(await this.read('/api/v1/covers/taste', signal, workClass))

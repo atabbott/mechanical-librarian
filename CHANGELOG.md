@@ -214,6 +214,8 @@ brackets are GitHub issues.
 - **Clean rebuild required.** You can edit, add and remove taste profile
   rules. Your rules stay as you wrote them through rebuilds, and rules you
   removed are not written again (#1372).
+- Covers offers 25 guided picks while no taste profile exists, and explains
+  itself on a first visit (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when

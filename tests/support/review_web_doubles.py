@@ -40,6 +40,7 @@ from mechanical_librarian.application.metadata_policy import (
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.owner_search import OwnerSearchRefused
 from mechanical_librarian.application.review_covers import (
+    CalibrationRow,
     CoverKey,
     CoverPageSnapshot,
     CoverView,
@@ -1128,6 +1129,10 @@ class FakeReviewRepository:
         # suite reads them from real reports (tests/unit/test_review_covers.py).
         del view, limit, after, review_case_id
         return CoverPageSnapshot((), {"decide": 0, "kept": 0, "switched": 0, "all": 0})
+
+    def read_cover_calibration(self) -> tuple[CalibrationRow, ...]:
+        # As read_review_covers: no cover groups, so nothing to pick.
+        return ()
 
     def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]:
         del plan_id

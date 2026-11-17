@@ -458,6 +458,10 @@ export const createHttp = (): ReviewHttp => ({
     schema_version: 'review-covers-v1' as const,
     view,
   })),
+  getCoverCalibration: vi.fn(async () => ({
+    items: [],
+    schema_version: 'review-cover-calibration-v1' as const,
+  })),
   getTasteProfile: vi.fn(async () => tasteProfile),
   retryTasteBuild: vi.fn(async () => tasteProfile),
   editTasteRule: vi.fn(async () => tasteProfile),

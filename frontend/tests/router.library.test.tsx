@@ -2537,6 +2537,19 @@ describe('Library route', () => {
     expect(normalizeLibrarySearch({ lens: 'hostile', q: 'x'.repeat(129) })).toEqual({ lens: 'all' })
   })
 
+  it("keeps Covers' internal picks tab and drops an unknown one (#1372 PR 3)", () => {
+    expect(normalizeLibrarySearch({ lens: 'all', view: 'covers', tab: 'picks' })).toEqual({
+      lens: 'all',
+      view: 'covers',
+      tab: 'picks',
+    })
+    expect(normalizeLibrarySearch({ lens: 'all', view: 'covers', tab: 'calibrate' })).toEqual({
+      lens: 'all',
+      view: 'covers',
+      tab: 'decide',
+    })
+  })
+
   it.each(['needs_attention', 'no_attention_needed'] as const)(
     'keeps primary Library navigation active for the %s lens',
     async (lens) => {

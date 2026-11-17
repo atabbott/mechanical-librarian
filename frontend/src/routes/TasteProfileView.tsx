@@ -20,8 +20,9 @@ import type {
 import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
 import { formatClock, formatDay } from '../dates'
+import { picksSaved, tasteQuery } from '../coverPicks'
 import { focusAfterRetry } from '../focusAfterRetry'
-import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useRequiredQuery as useQuery } from '../queryWork'
 import { routeFailureCopy } from '../routeFailure'
 import { useReviewContext } from '../router'
 
@@ -37,8 +38,6 @@ const sectionHeadings = {
   trade_offs: 'How you trade them off',
   keep_or_switch: 'When to keep or switch',
 } satisfies Record<Rule['section'], string>
-// A build running or polled at this pace until it ends.
-const buildingPollMilliseconds = 5_000
 const lostCopy = 'No answer came back. Check whether the taste profile is being written.'
 
 const failureCopy = (
@@ -100,22 +99,31 @@ function useWaitsUntil(retryAfter: number | null): boolean {
   return waiting
 }
 
-function EmptyLine({ view }: { view: TasteProfile }) {
+// No profile yet: the picks saved so far, and the way to make the rest
+// (#1372 PR 3).
+function EmptyLine({ view, onStart }: { view: TasteProfile; onStart: () => void }) {
   return (
-    <p>
-      Mechanical Librarian writes it once you have chosen 25 covers in{' '}
-      <Link to="/library" search={{ lens: 'all', view: 'covers', tab: 'decide' }}>
-        To decide
-      </Link>
-      . You have chosen {String(view.chosen)}.
-    </p>
+    <>
+      {view.chosen > 0 ? <p>{picksSaved(view.chosen, view.required)}</p> : null}
+      <button type="button" className="button-primary" onClick={onStart}>
+        Start 25 picks
+      </button>
+    </>
   )
 }
 
 // The build's state, said once: with no profile yet it is the region's
 // content under its heading, and while a first profile is written that line
 // is the heading itself (#1372, prototype).
-function BuildState({ view }: { view: TasteProfile }) {
+function BuildState({
+  view,
+  onStart,
+  focusBuild,
+}: {
+  view: TasteProfile
+  onStart: () => void
+  focusBuild: boolean
+}) {
   const { http } = useReviewContext()
   const cache = useQueryClient()
   const region = useRef<HTMLElement>(null)
@@ -133,6 +141,13 @@ function BuildState({ view }: { view: TasteProfile }) {
   })
   const waiting = useWaitsUntil(build?.failure ? build.retry_after : null)
   const first = view.profile === null
+  // After the 25th pick, Covers opens here with focus on the build's state.
+  useEffect(() => {
+    if (focusBuild) region.current?.focus()
+  }, [focusBuild])
+  // 25 picks count and the next schedule check, within a minute, starts the
+  // first build: it is said as written already (S8).
+  const due = first && build === null && view.configured && view.chosen >= view.required
   const heading = first ? <h2 id="taste-empty">No taste profile yet</h2> : null
   if (!view.configured)
     return first ? (
@@ -145,31 +160,32 @@ function BuildState({ view }: { view: TasteProfile }) {
         <NotConfigured />
       </div>
     )
-  if (build === null)
+  if (build === null && !due)
     return first ? (
-      <section className="taste-empty" aria-labelledby="taste-empty">
+      <section ref={region} tabIndex={-1} className="taste-empty" aria-labelledby="taste-empty">
         {heading}
-        <EmptyLine view={view} />
+        <EmptyLine view={view} onStart={onStart} />
       </section>
     ) : null
-  if (build.failure === null)
-    return (
-      <section
-        ref={region}
-        tabIndex={-1}
-        className={first ? 'taste-build taste-building' : 'taste-build'}
-        role="status"
-      >
-        {first ? (
-          <>
-            <span className="taste-spinner" aria-hidden="true" />
-            <h2>Writing your taste profile</h2>
-          </>
-        ) : (
-          <p>Writing your taste profile</p>
-        )}
-      </section>
-    )
+  const writing = (
+    <section
+      ref={region}
+      tabIndex={-1}
+      className={first ? 'taste-build taste-building' : 'taste-build'}
+      role="status"
+    >
+      {first ? (
+        <>
+          <span className="taste-spinner" aria-hidden="true" />
+          <h2>Writing your taste profile</h2>
+        </>
+      ) : (
+        <p>Writing your taste profile</p>
+      )}
+    </section>
+  )
+  if (build === null) return writing
+  if (build.failure === null) return writing
   const error = retry.error
   return (
     <section
@@ -700,16 +716,16 @@ function Versions({ view }: { view: TasteProfile }) {
   )
 }
 
-export default function TasteProfileView() {
+export default function TasteProfileView({
+  onStart,
+  focusBuild = false,
+}: {
+  /** Start 25 picks: Covers opens its picks. */
+  onStart: () => void
+  focusBuild?: boolean
+}) {
   const { http } = useReviewContext()
-  const read = useQuery({
-    queryKey: ['covers', 'taste'] as const,
-    queryFn: (context) => http.getTasteProfile(context.signal, queryWorkClass(context)),
-    refetchInterval: (query) =>
-      query.state.data?.build?.failure === null ? buildingPollMilliseconds : false,
-    staleTime: 15_000,
-    retry: false,
-  })
+  const read = useQuery(tasteQuery(http))
   if (read.isPending) return <p role="status">Loading taste profile…</p>
   const failure = read.isError ? (
     <div className="covers-failure" role="alert">
@@ -726,7 +742,7 @@ export default function TasteProfileView() {
   return (
     <div className="taste-profile">
       {failure}
-      <BuildState view={view} />
+      <BuildState view={view} onStart={onStart} focusBuild={focusBuild} />
       <Profile view={view} />
     </div>
   )

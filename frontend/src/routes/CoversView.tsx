@@ -1,33 +1,47 @@
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import type { UseQueryResult } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter } from '@tanstack/react-router'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 
-import { ApiError, refusalCopy, uncertainWriteOutcome } from '../api/http'
+import { ApiError } from '../api/http'
 import type {
   CoverTab,
   CoversTab,
   CoversView as CoversPage,
   CoverWorkView,
   DecisionCommand,
+  TasteProfileView as TasteProfileRead,
 } from '../api/http'
-import { useCoverPrepareFailure } from '../coverChoices'
+import {
+  bookSearch,
+  byline,
+  coverCommand,
+  coverField,
+  failureOf,
+  retainedCandidate,
+  staleCopy,
+  submitCover,
+} from '../coverDecision'
+import type { Failure, Outcome } from '../coverDecision'
+import { tasteQuery } from '../coverPicks'
 import { formatClock } from '../dates'
-import { submitDecisionCase } from '../decisionEcho'
-import type { ChoiceProgress, ReviewField } from '../fieldDecision'
-import { coverFaultCodes, coverFaultLabel, coverReasonLine, mediaKindLabels } from '../labels'
+import type { ReviewField } from '../fieldDecision'
+import { coverFaultCodes, coverFaultLabel, coverReasonLine } from '../labels'
 import {
   invalidateForegroundQueries,
   queryWorkClass,
   useRequiredQuery as useQuery,
 } from '../queryWork'
-import { ownerRefusalCopy, requestKey } from '../reviewDecisionController'
 import { routeFailureCopy } from '../routeFailure'
 import { detailQuery, libraryRoute, usePreparation, useReviewContext } from '../router'
 import { Dropdown } from '../components/Dropdown'
 import { LibraryViewSwitch } from '../components/LibraryViewSwitch'
 import { StatusPill } from '../components/StatusPill'
-import { LibraryCoverChoices } from './FieldDecisionCover'
+import { CoverCalibration } from './CoverCalibration'
+import type { CalibrationEnd } from './CoverCalibration'
+import { CoverComparison } from './CoverComparison'
+import { CalibrationStart, CoversWalkthrough } from './CoversIntro'
 import TasteProfileView from './TasteProfileView'
 
 // Library's Covers view (#1633, #1363): every book's cover, grouped by what it
@@ -65,18 +79,11 @@ const emptyCopy = {
   // All holds every work under review, so it is empty only when Works is.
   all: 'No works yet.',
 } satisfies Record<CoverTab, string>
-const staleCopy = "This work's covers changed since the page loaded. Nothing was changed."
-const lostCopy =
-  'No answer came back. Check whether your choice was recorded before choosing again.'
-const refusedCopy = 'Your choice was not recorded. Choose again.'
-const question = 'Which cover should this work use?'
 // The width at and below which an open book replaces the list.
 const compactQuery = '(max-width: 1024px)'
 const wide = () =>
   typeof window.matchMedia === 'function' && !window.matchMedia(compactQuery).matches
 
-const byline = (work: CoverWorkView) =>
-  [work.authors.join(', '), mediaKindLabels[work.media_kind]].filter(Boolean).join(' · ')
 const size = (cover: { width: number; height: number }) =>
   `${String(cover.width)} × ${String(cover.height)} px`
 const audiobook = (work: CoverWorkView) => ['m4b', 'm4a', 'mp3', 'audio'].includes(work.media_kind)
@@ -112,11 +119,9 @@ const switchedLead = (seconds: number, now: Date) => {
       ? `Switched automatically, yesterday at ${clock}.`
       : `Switched automatically, ${dayMonth(seconds)}, ${clock}.`
 }
-const bookSearch = (reviewCaseId: string) => ({ lens: 'all' as const, preview: reviewCaseId })
 const focusLater = (find: () => HTMLElement | null | undefined) =>
   requestAnimationFrame(() => find()?.focus({ preventScroll: false }))
 
-type Outcome = 'switched' | 'kept' | 'changed' | 'put_back' | 'skipped'
 const outcomeCopy = (outcome: Outcome, title: string) =>
   ({
     switched: `Switched ${title}.`,
@@ -138,72 +143,6 @@ const putBackPending = new Set(['planned', 'claimed', 'applying', 'reconciling',
 /** A Put back whose write found the cover changed in Audiobookshelf first. */
 const putBackRefused = (work: CoverWorkView) =>
   work.switched?.put_back?.state === 'stale' && work.switched.put_back.failure === 'target_changed'
-/** The original an automatic switch replaced, while it can still be put back (#1363). */
-const retainedCandidate = (field: ReviewField | undefined) =>
-  field?.coverConsideration?.candidates.find(
-    (candidate) => candidate.candidateKind === 'retained' && candidate.selectable,
-  )
-type Failure = { kind: 'stale' } | { kind: 'message'; text: string }
-const failureOf = (error: unknown, field: ReviewField | undefined): Failure =>
-  error instanceof ApiError && error.code === 'stale'
-    ? { kind: 'stale' }
-    : uncertainWriteOutcome(error)
-      ? { kind: 'message', text: lostCopy }
-      : { kind: 'message', text: ownerRefusalCopy(error, field) ?? refusalCopy(error, refusedCopy) }
-
-// The book's own decision command, exactly as its page sends it.
-const coverCommand = (
-  field: ReviewField,
-  outcome: 'accept' | 'keep_current',
-  selectedValue: NonNullable<DecisionCommand['selectedValue']> | null,
-): DecisionCommand => ({
-  destination: 'cover',
-  outcome,
-  proposalId: field.proposalId,
-  selectedValue,
-  targetFingerprint: field.targetFingerprint,
-  offerDigest: field.offerDigest,
-  idempotencyKey: requestKey(),
-  ...(field.coverConsideration
-    ? {
-        considerationId: field.coverConsideration.id,
-        coverConfirmation: {
-          expected_selection_id: field.currentCoverSelectionId ?? null,
-          confirm_unverified_match:
-            outcome === 'accept' &&
-            field.coverConsideration.candidates.some(
-              (candidate) =>
-                candidate.artifactId === selectedValue?.value &&
-                candidate.matchState === 'match_not_confirmed',
-            ),
-        },
-      }
-    : {}),
-})
-const coverField = (fields: readonly ReviewField[] | undefined) =>
-  fields?.find((field) => field.destination === 'cover')
-/**
- * Send the book's decision and adopt the case its acknowledgement confirms
- * into the exact case read, as the book's own page does, so a later choice
- * answers the selection this one made. With no confirmed case the read is
- * renewed instead of trusted.
- */
-const submitCover = async (
-  http: ReturnType<typeof useReviewContext>['http'],
-  queryClient: ReturnType<typeof useReviewContext>['queryClient'],
-  reviewCaseId: string,
-  command: DecisionCommand,
-) => {
-  const { confirmed } = await submitDecisionCase(queryClient, reviewCaseId, () =>
-    http.recordDecision(reviewCaseId, command),
-  )
-  if (!confirmed)
-    void invalidateForegroundQueries(queryClient, {
-      queryKey: ['review-case', reviewCaseId],
-      exact: true,
-    })
-}
-
 /**
  * A cover preview, or the state in its place: "No cover" for an empty cover
  * field, "Image unavailable" for one the library holds but could not be read
@@ -255,155 +194,6 @@ function CoverImage({
 function CoverStateText({ work }: { work: CoverWorkView }) {
   if (work.cover) return null
   return <span className="sr-only">{work.unreadable_cover ? 'Image unavailable' : 'No cover'}</span>
-}
-
-function CoverComparison({
-  work,
-  onRecorded,
-  onReplaced,
-  onSkip,
-  onBack,
-}: {
-  work: CoverWorkView
-  onRecorded: (outcome: Outcome) => void
-  /** The book's case was replaced; the view follows it to its successor. */
-  onReplaced: (reviewCaseId: string) => void
-  onSkip?: () => void
-  onBack?: () => void
-}) {
-  const { http, queryClient } = useReviewContext()
-  const detail = useQuery(detailQuery(http, work.review_case_id))
-  const field = coverField(detail.data?.fields)
-  const prepareFailure = useCoverPrepareFailure(work.review_case_id)
-  const [progress, setProgress] = useState<ChoiceProgress>(null)
-  const [failure, setFailure] = useState<Failure | null>(null)
-  const [evidence, setEvidence] = useState<ReadonlySet<string>>(new Set())
-  const heading = useRef<HTMLHeadingElement>(null)
-  const reloadButton = useRef<HTMLButtonElement>(null)
-  useEffect(() => heading.current?.focus(), [work.review_case_id])
-  useEffect(() => {
-    if (failure?.kind === 'stale') reloadButton.current?.focus()
-  }, [failure])
-  // Reload keeps this book: a rescan that replaced its case is followed to
-  // the successor, otherwise the same case is read again.
-  const reload = async () => {
-    setFailure(null)
-    setProgress(null)
-    const successor = await http.getCaseSuccessor(work.review_case_id).catch(() => null)
-    void invalidateForegroundQueries(queryClient, { queryKey: ['covers'] })
-    if (successor && successor !== work.review_case_id) {
-      onReplaced(successor)
-      return
-    }
-    await invalidateForegroundQueries(queryClient, {
-      queryKey: ['review-case', work.review_case_id],
-    })
-    heading.current?.focus()
-  }
-  const choose = (
-    outcome: DecisionCommand['outcome'],
-    value?: DecisionCommand['selectedValue'],
-  ) => {
-    if (!field || (outcome !== 'accept' && outcome !== 'keep_current')) return
-    const command = coverCommand(field, outcome, value ?? null)
-    setFailure(null)
-    setProgress({ command, phase: 'recording' })
-    submitCover(http, queryClient, work.review_case_id, command).then(
-      () => {
-        setProgress({ command, phase: 'confirmed' })
-        onRecorded(
-          outcome === 'keep_current'
-            ? 'kept'
-            : value?.value !== undefined && value.value === retainedCandidate(field)?.artifactId
-              ? 'put_back'
-              : work.group === 'auto'
-                ? 'changed'
-                : 'switched',
-        )
-      },
-      (error: unknown) => {
-        const next = failureOf(error, field)
-        // A refused stale choice leaves nothing marked as chosen.
-        setProgress(next.kind === 'stale' ? null : { command, phase: 'failed' })
-        setFailure(next)
-      },
-    )
-  }
-  const count = field?.coverConsideration?.candidates.length ?? 0
-  return (
-    <section className="covers-comparison" aria-labelledby={`covers-book-${work.review_case_id}`}>
-      {onBack ? (
-        <button className="covers-back" type="button" onClick={onBack}>
-          Back to works
-        </button>
-      ) : null}
-      <header>
-        <h2 id={`covers-book-${work.review_case_id}`} ref={heading} tabIndex={-1}>
-          {work.title}
-        </h2>
-        <p>
-          {byline(work)}
-          {count ? ` · ${count === 1 ? '1 cover' : `${String(count)} covers`}` : ''}
-        </p>
-        <Link to="/library" search={bookSearch(work.review_case_id)}>
-          Open in Works
-        </Link>
-      </header>
-      {failure?.kind === 'stale' ? (
-        <div className="covers-failure" role="alert">
-          <p>{staleCopy}</p>
-          <button ref={reloadButton} type="button" onClick={() => void reload()}>
-            Reload
-          </button>
-        </div>
-      ) : failure ? (
-        <p className="covers-failure" role="alert">
-          {failure.text}
-        </p>
-      ) : null}
-      {detail.isPending ? (
-        <p role="status">Loading covers…</p>
-      ) : field ? (
-        <LibraryCoverChoices
-          reviewCaseId={work.review_case_id}
-          mediaKind={work.media_kind}
-          field={field}
-          disabled={progress?.phase === 'recording'}
-          progress={progress}
-          expandedEvidence={evidence}
-          revealEvidence={(key) =>
-            setEvidence((current) => {
-              const next = new Set(current)
-              if (!next.delete(key)) next.add(key)
-              return next
-            })
-          }
-          choose={choose}
-          prepareFailure={prepareFailure}
-          question={question}
-          {...(work.group === 'auto'
-            ? {
-                currentLabel: 'Current cover · changed automatically',
-                keepLabel: 'Keep current cover · changed automatically',
-              }
-            : {})}
-          coversLink={false}
-        />
-      ) : detail.isError ? (
-        <div className="covers-failure" role="alert">
-          <p>{routeFailureCopy(detail.error).message}</p>
-          <button type="button" onClick={() => void reload()}>
-            Reload
-          </button>
-        </div>
-      ) : null}
-      {onSkip ? (
-        <button className="covers-skip" type="button" onClick={onSkip}>
-          Skip for now
-        </button>
-      ) : null}
-    </section>
-  )
 }
 
 const reasonLine = (work: CoverWorkView) =>
@@ -857,14 +647,18 @@ function revealTab(row: HTMLElement, tab: Element) {
     row.scrollLeft += box.right + tabRingRoom - bounds.right
 }
 
-export default function CoversView() {
-  const search = libraryRoute.useSearch()
-  const navigate = useNavigate({ from: '/library' })
-  const { http } = useReviewContext()
-  const queryClient = useQueryClient()
-  // Taste profile has no page of books; To decide's page keeps the counts.
-  const taste = search.tab === 'taste'
-  const tab: CoverTab = search.tab === undefined || search.tab === 'taste' ? 'decide' : search.tab
+/** The row of Covers tabs with each tab's count, and Taste profile. */
+function CoverTabs({
+  tab,
+  taste,
+  counts,
+  onChange,
+}: {
+  tab: CoverTab
+  taste: boolean
+  counts: CoversPage['counts'] | undefined
+  onChange: (next: CoversTab) => void
+}) {
   // On a phone the tabs are one row that scrolls sideways; the selected tab
   // is brought into that row's view without scrolling the page. The router
   // restores the row's old scroll position once a navigation has rendered,
@@ -878,9 +672,50 @@ export default function CoversView() {
   useEffect(revealSelectedTab, [tab, taste])
   const router = useRouter()
   useEffect(() => router.subscribe('onRendered', revealSelectedTab), [router])
-  // As Works says it: only a confirmed snapshot with no library names the
-  // way to fill the list.
-  const noLibraryConnected = usePreparation().data?.libraries.length === 0
+  return (
+    <nav
+      ref={tabsRef}
+      className="covers-tabs"
+      aria-label="Cover views"
+      // Chromium scrolls a focused tab into the row only when it is fully
+      // hidden, so a partly hidden tab reached with Tab is brought in here.
+      onFocus={(event) => revealTab(event.currentTarget, event.target)}
+    >
+      {(Object.keys(tabLabels) as CoverTab[]).map((value) => (
+        <button
+          key={value}
+          type="button"
+          aria-pressed={!taste && value === tab}
+          onClick={() => {
+            if (taste || value !== tab) onChange(value)
+          }}
+        >
+          {tabLabels[value]} <strong>{counts ? String(counts[value]) : '…'}</strong>
+        </button>
+      ))}
+      <button
+        type="button"
+        aria-pressed={taste}
+        onClick={() => {
+          if (!taste) onChange('taste')
+        }}
+      >
+        Taste profile
+      </button>
+    </nav>
+  )
+}
+
+/**
+ * One tab's books: its pages, its counts read again after each decision, the
+ * open book, and the decided books kept where they were.
+ */
+function useCoverQueue(tab: CoverTab, inList: boolean, setNotice: (notice: string | null) => void) {
+  const search = libraryRoute.useSearch()
+  const navigate = useNavigate({ from: '/library' })
+  const router = useRouter()
+  const { http } = useReviewContext()
+  const queryClient = useQueryClient()
   const pages = useInfiniteQuery({
     queryKey: ['covers', tab] as const,
     queryFn: (context) =>
@@ -895,7 +730,6 @@ export default function CoversView() {
     staleTime: 15_000,
     retry: false,
   })
-  const [notice, setNotice] = useState<string | null>(null)
   const [done, setDone] = useState<Readonly<Record<string, Outcome>>>({})
   // Counts are read again after each decision, else the newest page's
   // count. The rows on screen stay as they were, with the decided ones
@@ -917,15 +751,6 @@ export default function CoversView() {
     (liveCounts?.tab === tab && liveCounts.pageAt === pages.dataUpdatedAt
       ? liveCounts.counts
       : undefined) ?? pages.data?.pages.at(-1)?.counts
-  // Switched rows by the reason they were switched; fills only under All
-  // (#1363 Q14). Component state, not a URL parameter.
-  const [show, setShow] = useState('all')
-  const faults = coverFaultCodes.flatMap((code) => {
-    const first = works.find((work) => work.group === 'auto' && work.switched?.reason === code)
-    const label = first ? coverFaultLabel(code, audiobook(first)) : null
-    return label === null ? [] : [{ value: code, label }]
-  })
-  const shown = faults.some((fault) => fault.value === show) ? show : 'all'
   const selectedId = search.cover
   const listed = works.find((work) => work.review_case_id === selectedId)
   // A linked book past the loaded pages is read on its own.
@@ -962,19 +787,6 @@ export default function CoversView() {
         !works.some((work) => work.review_case_id === id && putBackRefused(work)),
     ),
   )
-  const firstOpen = ordered.find((work) => marked[work.review_case_id] === undefined)
-  // A selection the tab no longer holds is dropped, so a phone never shows
-  // neither the list nor a book.
-  useEffect(() => {
-    if (!taste && selectedId && !listed && linked.isSuccess && linked.data.items.length === 0)
-      select(undefined, true)
-  })
-  // On a wide screen To decide and Kept open their first undecided book
-  // beside the list, so the first tap already chooses.
-  useEffect(() => {
-    if (!taste && !selectedId && (tab === 'decide' || tab === 'kept') && firstOpen && wide())
-      select(firstOpen.review_case_id, true)
-  })
   // Each decision asks for the counts again. Only the newest read is shown:
   // a newer request cancels the answer of an older one, and a later read of
   // the first page replaces it.
@@ -1002,7 +814,7 @@ export default function CoversView() {
   // or tab: the outcome is still recorded, but only the book still open
   // moves on, so a slow answer never takes over the comparison in use.
   const stillShown = (work: CoverWorkView) => {
-    const current = router.state.location.search as { tab?: CoverTab; cover?: string }
+    const current = router.state.location.search as { tab?: CoversTab; cover?: string }
     return (current.tab ?? 'decide') === tab && current.cover === work.review_case_id
   }
   // After a choice or a skip the next book opens, so one tap moves on.
@@ -1033,10 +845,19 @@ export default function CoversView() {
     setNotice(null)
     select(reviewCaseId, true)
   }
-  const changeTab = (next: CoversTab) => {
-    setNotice(null)
-    void navigate({ search: { lens: 'all', view: 'covers', tab: next } })
-  }
+  const firstOpen = ordered.find((work) => marked[work.review_case_id] === undefined)
+  // A selection the tab no longer holds is dropped, so a phone never shows
+  // neither the list nor a book.
+  useEffect(() => {
+    if (inList && selectedId && !listed && linked.isSuccess && linked.data.items.length === 0)
+      select(undefined, true)
+  })
+  // On a wide screen To decide and Kept open their first undecided book
+  // beside the list, so the first tap already chooses.
+  useEffect(() => {
+    if (inList && !selectedId && (tab === 'decide' || tab === 'kept') && firstOpen && wide())
+      select(firstOpen.review_case_id, true)
+  })
   const showMore = () => {
     const first = works.length
     void pages
@@ -1047,14 +868,233 @@ export default function CoversView() {
         ),
       )
   }
-  const comparison = (work: CoverWorkView, queue: boolean) => (
+  return {
+    pages,
+    works,
+    counts,
+    selectedId,
+    listed,
+    linked,
+    selected,
+    select,
+    ordered,
+    marked,
+    advance,
+    replaced,
+    showMore,
+  }
+}
+
+/** To decide and Kept: the list beside the open book, with an entry at its top. */
+function CoverQueue({
+  ordered,
+  works,
+  selected,
+  marked,
+  select,
+  entry,
+  comparison,
+}: {
+  ordered: readonly CoverWorkView[]
+  works: readonly CoverWorkView[]
+  selected: CoverWorkView | undefined
+  marked: Readonly<Record<string, Outcome>>
+  select: (id: string) => void
+  entry: ReactNode
+  comparison: (work: CoverWorkView) => ReactNode
+}) {
+  return (
+    <div className="covers-queue">
+      <div className="covers-queue-list">
+        {entry}
+        {groupOrder
+          .filter((group) => ordered.some((work) => work.group === group))
+          .map((group) => {
+            const members = ordered.filter((work) => work.group === group)
+            return (
+              <section key={group} aria-label={groupLabels[group]}>
+                <h2>
+                  {groupLabels[group]} <span>{String(members.length)}</span>
+                </h2>
+                <ul>
+                  {members.map((work) => (
+                    <QueueItem
+                      key={work.review_case_id}
+                      work={work}
+                      index={works.indexOf(work)}
+                      selected={work.review_case_id === selected?.review_case_id}
+                      done={marked[work.review_case_id] !== undefined}
+                      onSelect={() => select(work.review_case_id)}
+                    />
+                  ))}
+                </ul>
+              </section>
+            )
+          })}
+      </div>
+      {selected ? comparison(selected) : null}
+    </div>
+  )
+}
+
+/** Switched's rows, which the owner can show by the reason they were switched. */
+function SwitchedList({
+  works,
+  marked,
+  selectedId,
+  select,
+  advance,
+  replaced,
+}: {
+  works: readonly CoverWorkView[]
+  marked: Readonly<Record<string, Outcome>>
+  selectedId: string | undefined
+  select: (id: string | undefined) => void
+  advance: (work: CoverWorkView, outcome: Outcome) => void
+  replaced: (reviewCaseId: string) => void
+}) {
+  // Switched rows by the reason they were switched; fills only under All
+  // (#1363 Q14). Component state, not a URL parameter.
+  const [show, setShow] = useState('all')
+  const faults = coverFaultCodes.flatMap((code) => {
+    const first = works.find((work) => work.group === 'auto' && work.switched?.reason === code)
+    const label = first ? coverFaultLabel(code, audiobook(first)) : null
+    return label === null ? [] : [{ value: code, label }]
+  })
+  const shown = faults.some((fault) => fault.value === show) ? show : 'all'
+  return (
+    <>
+      {faults.length ? (
+        <div className="covers-show">
+          <span aria-hidden="true">Show</span>
+          <Dropdown
+            ariaLabel="Show"
+            compact
+            value={shown}
+            options={[{ value: 'all', label: 'All' }, ...faults]}
+            onChange={setShow}
+          />
+        </div>
+      ) : null}
+      <ul className="covers-switched">
+        {works
+          .filter((work) => shown === 'all' || work.switched?.reason === shown)
+          .map((work, index) => (
+            <SwitchedRow
+              key={work.review_case_id}
+              work={work}
+              index={index}
+              done={marked[work.review_case_id]}
+              open={selectedId === work.review_case_id}
+              onOpen={() =>
+                select(selectedId === work.review_case_id ? undefined : work.review_case_id)
+              }
+              onRecorded={(outcome) => advance(work, outcome)}
+              onReplaced={replaced}
+            />
+          ))}
+      </ul>
+    </>
+  )
+}
+
+/** Whether To decide offers picks: a taste model, no profile, fewer than 25 picks. */
+const picksDue = (taste: TasteProfileRead) =>
+  taste.configured && taste.profile === null && taste.chosen < taste.required
+
+/** Covers' picks in the tabs' place, once the taste read says where the owner is. */
+function CoverPicks({
+  taste,
+  onEnd,
+}: {
+  taste: UseQueryResult<TasteProfileRead>
+  onEnd: (end: CalibrationEnd) => void
+}) {
+  const navigate = useNavigate({ from: '/library' })
+  // Picks open only as Start offers them (S9): a typed or kept link while no
+  // taste model is set up, a profile exists or 25 picks count goes back to
+  // To decide. Judged on the first read only, so the 25th pick still ends here.
+  const [admitted, setAdmitted] = useState<boolean | null>(null)
+  if (admitted === null && taste.data) setAdmitted(picksDue(taste.data))
+  useEffect(() => {
+    if (admitted === false)
+      void navigate({ replace: true, search: { lens: 'all', view: 'covers', tab: 'decide' } })
+  }, [admitted, navigate])
+  return admitted === false ? null : taste.data ? (
+    <CoverCalibration
+      taste={taste.data}
+      // Only a read that answered counts: a failed one keeps the old count.
+      tasteReadAt={taste.dataUpdatedAt}
+      countFailure={taste.errorUpdatedAt > taste.dataUpdatedAt ? taste.error : null}
+      onRecount={() => void taste.refetch()}
+      onEnd={onEnd}
+    />
+  ) : taste.isError ? (
+    <div className="covers-failure" role="alert">
+      <p>{routeFailureCopy(taste.error).message}</p>
+      <button type="button" onClick={() => void taste.refetch()}>
+        Reload
+      </button>
+    </div>
+  ) : (
+    <p role="status">Loading covers…</p>
+  )
+}
+
+export default function CoversView() {
+  const search = libraryRoute.useSearch()
+  const navigate = useNavigate({ from: '/library' })
+  const { http } = useReviewContext()
+  // Taste profile and picks have no page of books; To decide's page keeps the
+  // counts.
+  const taste = search.tab === 'taste'
+  const picks = search.tab === 'picks'
+  const tab: CoverTab =
+    search.tab === undefined || search.tab === 'taste' || search.tab === 'picks'
+      ? 'decide'
+      : search.tab
+  const inList = !taste && !picks
+  // As Works says it: only a confirmed snapshot with no library names the
+  // way to fill the list.
+  const noLibraryConnected = usePreparation().data?.libraries.length === 0
+  const [notice, setNotice] = useState<string | null>(null)
+  const queue = useCoverQueue(tab, inList, setNotice)
+  const { pages, works, selectedId, listed, linked, selected, select, ordered, marked } = queue
+  // While no taste profile exists, To decide offers 25 picks (#1372 S9).
+  const tasteRead = useQuery(tasteQuery(http))
+  const profileDue = tasteRead.data !== undefined && picksDue(tasteRead.data)
+  const offerPicks = inList && tab === 'decide' && profileDue
+  const startRef = useRef<HTMLButtonElement>(null)
+  // After picks end on To decide, focus stays on Start rather than the book
+  // that opens beside the list; the next book the owner opens takes it.
+  const [holdFocus, setHoldFocus] = useState(false)
+  const [focusBuild, setFocusBuild] = useState(false)
+  const changeTab = (next: CoversTab) => {
+    setNotice(null)
+    setHoldFocus(false)
+    setFocusBuild(false)
+    void navigate({ search: { lens: 'all', view: 'covers', tab: next } })
+  }
+  const endPicks = (end: CalibrationEnd) => {
+    if (end.kind === 'done') {
+      setFocusBuild(true)
+      void navigate({ replace: true, search: { lens: 'all', view: 'covers', tab: 'taste' } })
+      return
+    }
+    setNotice(end.text)
+    setHoldFocus(true)
+    void navigate({ replace: true, search: { lens: 'all', view: 'covers', tab: 'decide' } })
+    focusLater(() => startRef.current)
+  }
+  const comparison = (work: CoverWorkView, inQueue: boolean) => (
     <CoverComparison
       key={work.review_case_id}
       work={work}
-      onRecorded={(outcome) => advance(work, outcome)}
-      onReplaced={replaced}
-      {...(queue
-        ? { onSkip: () => advance(work, 'skipped'), onBack: () => select(undefined) }
+      onRecorded={(outcome) => queue.advance(work, outcome)}
+      onReplaced={queue.replaced}
+      focusTitle={!holdFocus}
+      {...(inQueue
+        ? { onSkip: () => queue.advance(work, 'skipped'), onBack: () => select(undefined) }
         : {})}
     />
   )
@@ -1077,8 +1117,11 @@ export default function CoversView() {
       {comparison(work, false)}
     </div>
   )
+  const entry = offerPicks ? (
+    <CalibrationStart startRef={startRef} onStart={() => changeTab('picks')} />
+  ) : null
   return (
-    <div className={`covers-page${selected ? ' has-selection' : ''}`}>
+    <div className={`covers-page${selected && inList ? ' has-selection' : ''}`}>
       <header className="library-header">
         <div className="library-title">
           <h1 data-route-focus tabIndex={-1}>
@@ -1087,42 +1130,24 @@ export default function CoversView() {
           <LibraryViewSwitch view="covers" />
         </div>
       </header>
-      <nav
-        ref={tabsRef}
-        className="covers-tabs"
-        aria-label="Cover views"
-        // Chromium scrolls a focused tab into the row only when it is fully
-        // hidden, so a partly hidden tab reached with Tab is brought in here.
-        onFocus={(event) => revealTab(event.currentTarget, event.target)}
-      >
-        {(Object.keys(tabLabels) as CoverTab[]).map((value) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={!taste && value === tab}
-            onClick={() => {
-              if (taste || value !== tab) changeTab(value)
-            }}
-          >
-            {tabLabels[value]} <strong>{counts ? String(counts[value]) : '…'}</strong>
-          </button>
-        ))}
-        <button
-          type="button"
-          aria-pressed={taste}
-          onClick={() => {
-            if (!taste) changeTab('taste')
-          }}
-        >
-          Taste profile
-        </button>
-      </nav>
-      {taste ? <TasteProfileView /> : null}
+      {picks ? (
+        <CoverPicks taste={tasteRead} onEnd={endPicks} />
+      ) : (
+        <CoverTabs tab={tab} taste={taste} counts={queue.counts} onChange={changeTab} />
+      )}
+      {taste ? (
+        <TasteProfileView onStart={() => changeTab('picks')} focusBuild={focusBuild} />
+      ) : null}
+      {offerPicks ? (
+        <CoversWalkthrough startRef={startRef} onStart={() => changeTab('picks')} />
+      ) : null}
       <p className="covers-notice" role="status">
         {notice}
       </p>
-      {selected && !listed && tab !== 'decide' && tab !== 'kept' ? closable(selected) : null}
-      {selectedId && !listed && linked.isError ? (
+      {selected && !listed && inList && tab !== 'decide' && tab !== 'kept'
+        ? closable(selected)
+        : null}
+      {inList && selectedId && !listed && linked.isError ? (
         <div className="covers-failure" role="alert">
           <p>{routeFailureCopy(linked.error).message}</p>
           <button type="button" onClick={() => void linked.refetch()}>
@@ -1130,7 +1155,7 @@ export default function CoversView() {
           </button>
         </div>
       ) : null}
-      <div className="covers-list" hidden={taste}>
+      <div className="covers-list" hidden={!inList}>
         {pages.isPending ? (
           <p role="status">Loading covers…</p>
         ) : pages.isError ? (
@@ -1141,52 +1166,31 @@ export default function CoversView() {
             </button>
           </div>
         ) : works.length === 0 ? (
-          <p className="covers-empty">
-            {tab === 'all' && noLibraryConnected ? (
-              <>
-                No works yet. Add a library in{' '}
-                <Link to="/settings" search={{ group: 'libraries' }}>
-                  Settings
-                </Link>
-                .
-              </>
-            ) : (
-              emptyCopy[tab]
-            )}
-          </p>
-        ) : tab === 'switched' ? (
           <>
-            {faults.length ? (
-              <div className="covers-show">
-                <span aria-hidden="true">Show</span>
-                <Dropdown
-                  ariaLabel="Show"
-                  compact
-                  value={shown}
-                  options={[{ value: 'all', label: 'All' }, ...faults]}
-                  onChange={setShow}
-                />
-              </div>
-            ) : null}
-            <ul className="covers-switched">
-              {works
-                .filter((work) => shown === 'all' || work.switched?.reason === shown)
-                .map((work, index) => (
-                  <SwitchedRow
-                    key={work.review_case_id}
-                    work={work}
-                    index={index}
-                    done={marked[work.review_case_id]}
-                    open={selectedId === work.review_case_id}
-                    onOpen={() =>
-                      select(selectedId === work.review_case_id ? undefined : work.review_case_id)
-                    }
-                    onRecorded={(outcome) => advance(work, outcome)}
-                    onReplaced={replaced}
-                  />
-                ))}
-            </ul>
+            {entry}
+            <p className="covers-empty">
+              {tab === 'all' && noLibraryConnected ? (
+                <>
+                  No works yet. Add a library in{' '}
+                  <Link to="/settings" search={{ group: 'libraries' }}>
+                    Settings
+                  </Link>
+                  .
+                </>
+              ) : (
+                emptyCopy[tab]
+              )}
+            </p>
           </>
+        ) : tab === 'switched' ? (
+          <SwitchedList
+            works={works}
+            marked={marked}
+            selectedId={selectedId}
+            select={select}
+            advance={queue.advance}
+            replaced={queue.replaced}
+          />
         ) : tab === 'all' ? (
           <CoverWall
             works={works}
@@ -1196,43 +1200,26 @@ export default function CoversView() {
             panel={closable}
           />
         ) : (
-          <div className="covers-queue">
-            <div className="covers-queue-list">
-              {groupOrder
-                .filter((group) => ordered.some((work) => work.group === group))
-                .map((group) => {
-                  const members = ordered.filter((work) => work.group === group)
-                  return (
-                    <section key={group} aria-label={groupLabels[group]}>
-                      <h2>
-                        {groupLabels[group]} <span>{String(members.length)}</span>
-                      </h2>
-                      <ul>
-                        {members.map((work) => (
-                          <QueueItem
-                            key={work.review_case_id}
-                            work={work}
-                            index={works.indexOf(work)}
-                            selected={work.review_case_id === selected?.review_case_id}
-                            done={marked[work.review_case_id] !== undefined}
-                            onSelect={() => select(work.review_case_id)}
-                          />
-                        ))}
-                      </ul>
-                    </section>
-                  )
-                })}
-            </div>
-            {selected ? comparison(selected, true) : null}
-          </div>
+          <CoverQueue
+            ordered={ordered}
+            works={works}
+            selected={selected}
+            marked={marked}
+            select={(id) => {
+              setHoldFocus(false)
+              select(id)
+            }}
+            entry={entry}
+            comparison={(work) => comparison(work, true)}
+          />
         )}
       </div>
-      {!taste && pages.hasNextPage ? (
+      {inList && pages.hasNextPage ? (
         <button
           className="covers-more"
           type="button"
           disabled={pages.isFetchingNextPage}
-          onClick={showMore}
+          onClick={queue.showMore}
         >
           Show more covers
         </button>

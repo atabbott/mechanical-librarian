@@ -430,11 +430,18 @@ describe('review keys', () => {
   })
 
   it('shows no badges and takes no key in the Covers view', async () => {
-    renderRoute('/library?lens=all&view=covers')
-    await screen.findByRole('heading', { level: 1, name: 'Library' })
-    expect(document.documentElement.dataset.reviewKeys).toBeUndefined()
-    await press('?')
-    expect(document.querySelector('dialog')).toBeNull()
+    // The first-visit picks introduction is a dialog too; it is seen here so
+    // only a key help dialog could appear.
+    document.cookie = 'ml_covers_intro=seen; Path=/'
+    try {
+      renderRoute('/library?lens=all&view=covers')
+      await screen.findByRole('heading', { level: 1, name: 'Library' })
+      expect(document.documentElement.dataset.reviewKeys).toBeUndefined()
+      await press('?')
+      expect(document.querySelector('dialog')).toBeNull()
+    } finally {
+      document.cookie = 'ml_covers_intro=; Path=/; Max-Age=0'
+    }
   })
 
   it('J and K step through the field tabs, focus the tab and update the URL', async () => {

@@ -1645,6 +1645,40 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .covers-queue-pills { display:flex; flex-wrap:wrap; grid-column:2; gap:.35rem; }
   .covers-queue-pills > .covers-queue-hold { grid-column:auto; }
 }
+/* Covers' picks (#1372 PR 3). The Start entry is the first block of To decide's
+   list (A2); the picks' bar stands in the tabs row's place, unframed (C2); the
+   walkthrough is the first review guide's dialog at a reading width (B3). */
+.covers-picks-start { display:grid; gap:.6rem; justify-items:start; margin:0 0 1rem; padding:1rem; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.covers-picks-start p { margin:0; font-family:Georgia,'Times New Roman',serif; font-size:1.05rem; font-weight:700; }
+/* Start spans the entry inside its padding, to draw the eye (owner, 2026-11-17). */
+.covers-picks-start > .button-primary { justify-self:stretch; }
+.covers-picks-start-head { display:flex; align-items:center; justify-content:space-between; gap:.5rem 1rem; width:100%; }
+.covers-picks-hide { flex:none; min-height:44px; padding:0 .75rem; border-color:transparent; background:transparent; color:var(--soft); }
+.covers-picks-hide:hover { color:var(--ink); border-color:var(--line); }
+.covers-picks { display:grid; gap:.75rem; min-width:0; }
+.covers-picks-bar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.5rem 1.25rem; min-height:44px; margin-bottom:.25rem; }
+.covers-picks-bar h2 { margin:0; font:700 1.45rem/1.2 Georgia,'Times New Roman',serif; letter-spacing:-.015em; }
+.covers-picks-bar h2:focus { outline:none; }
+.covers-picks-progress { display:flex; align-items:center; gap:.75rem; font-size:.82rem; font-weight:700; font-variant-numeric:tabular-nums; }
+.covers-picks-meter { display:block; width:8rem; height:6px; overflow:hidden; border-radius:99px; background:var(--line); }
+.covers-picks-meter span { display:block; height:100%; background:var(--accent-strong); }
+.covers-picks .covers-comparison > header h3 { flex-basis:100%; margin:0; font:700 1.2rem/1.25 Georgia,'Times New Roman',serif; }
+.covers-picks .covers-comparison > header h3:focus { outline:none; }
+/* Above 1024px up to four cards share a row, each at most 15rem wide, so every
+   card's choice line shows in the first screen; narrower, the strip applies. */
+@media (min-width:1025px) { .covers-picks .library-cover-layout { grid-template-columns:repeat(auto-fill, minmax(min(11rem, 100%), 15rem)); max-width:calc(4 * 15rem + 3 * 10px); } }
+dialog.first-review-guide.covers-intro { width:min(34rem,calc(100vw - 2rem)); }
+.covers-intro-body { display:grid; gap:.5rem; padding:24px 28px 16px; }
+.covers-intro-body p { max-width:60ch; margin:0; line-height:1.5; }
+.covers-intro-body .covers-intro-count { color:var(--soft); font-size:.8125rem; font-weight:650; font-variant-numeric:tabular-nums; }
+.taste-empty .button-primary { margin-top:.75rem; }
+@media (max-width:760px) {
+  .covers-picks-progress { flex:1 1 100%; }
+  .covers-picks-meter { flex:1 1 auto; width:auto; }
+  /* A full-width sheet, as the first review guide is. */
+  dialog.first-review-guide.covers-intro { width:100%; }
+}
+
 /* Covers → Taste profile (#1372), after the prototype: the meta in one row,
    numbered rules in bordered lists at a readable measure, versions as a panel. */
 .taste-profile { display:grid; gap:1.25rem; min-width:0; }
