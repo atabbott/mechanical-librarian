@@ -111,7 +111,9 @@ def _work(
         # has one has a review case behind it.
         "detail_kind": "case" if case else None,
         "dispositions": dispositions,
-        # No cohort work is linked to a book (#1477).
+        # Every cohort work may be searched, as its link view says, except one
+        # that could not finish (#1477, L4); none is linked to a book.
+        "find_offered": preparation is None,
         "link": None,
         "preparation": preparation,
         "preparation_outcomes": preparation_outcomes or [],

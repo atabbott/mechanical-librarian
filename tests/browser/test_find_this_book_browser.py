@@ -6,8 +6,10 @@ searches one source, shows its cards (with the results it could not show and
 whether there are more), confirms a record with what contradicts it, and
 links the work with one request that carries an Idempotency-Key. The link's
 pill opens the link view, where Change searches again and Withdraw asks
-first. More holds History. Every state keeps the field tabs where they were,
-and reads whole at 320 pixels with 200% text in both themes.
+first. More holds History. The header's entry comes with the Library row, so
+it is there in the header's first frame and the link view is read only to
+open the dialog. Find this book and its pill keep the field tabs where they
+were, and every state reads whole at 320 pixels with 200% text in both themes.
 
 The served shell and cohort are `_serve_cohort`'s; the owner-link reads and
 writes are answered here on top, in the wire shapes the server sends.
@@ -274,6 +276,18 @@ def _serve(page: Page, served: _Served) -> None:
         if path == "/api/v1/library" and request.method == "GET":
             payload = cast("dict[str, Any]", rich_payload(request.url))
             for work in payload["items"]:
+                # The row says what the work's link view says, as the server's
+                # row and view do: the header shows its entry from the row.
+                view = served.views.get(work["item"], served.view)
+                work["find_offered"] = view["offered"]
+                work["link"] = (
+                    None
+                    if view["link"] is None
+                    else {
+                        "state": view["link"]["state"],
+                        "provider": view["link"]["provider"],
+                    }
+                )
                 for chosen in (_NOT_MATCHED, _COULD_NOT_FINISH):
                     if work["work_id"] == chosen["work_id"]:
                         work["detail_kind"] = "report"
@@ -377,9 +391,26 @@ def _dialog(page: Page) -> Locator:
 
 
 def _open_case(page: Page, url: str = _CASE_URL) -> None:
-    with page.expect_response(lambda r: urlsplit(r.url).path == "/api/v1/library/link"):
-        page.goto(url)
+    page.goto(url)
     page.locator(".field-filmstrip").wait_for()
+
+
+# Every state the Work actions nav is committed in, before it is painted: the
+# number of its actions and whether the link view had been read by then.
+_WATCH_ACTIONS = """() => {
+  window.__workActions = []
+  const seen = () => {
+    const nav = document.querySelector('nav[aria-label="Work actions"]')
+    if (!nav) return
+    const names = Array.from(
+      nav.querySelectorAll(':scope > a, :scope > button, :scope > div > button.work-action'),
+      (node) => node.textContent.trim(),
+    )
+    const last = window.__workActions.at(-1)
+    if (last === undefined || last.join('|') !== names.join('|')) window.__workActions.push(names)
+  }
+  new MutationObserver(seen).observe(document, { childList: true, subtree: true })
+}"""
 
 
 def _open_find(page: Page) -> Locator:
@@ -404,22 +435,32 @@ def test_a_case_work_and_a_not_matched_work_offer_find_this_book_and_could_not_f
     served = _Served(views={_COULD_NOT_FINISH["item"]: _view(offered=False)})
     page = _page(browser, served)
     try:
+        page.add_init_script(f"({_WATCH_ACTIONS})()")
         _open_case(page)
         find = _actions(page).get_by_role("button", name="Find this book", exact=True)
         expect(find).to_be_visible()
         expect(find).to_have_attribute("aria-haspopup", "dialog")
-
-        with page.expect_response(
-            lambda r: urlsplit(r.url).path == "/api/v1/library/link"
-        ) as read:
-            page.goto(_work_url(_NOT_MATCHED))
-        assert parse_qs(urlsplit(read.value.url).query)["item"] == [
-            _NOT_MATCHED["item"]
+        # The entry is in the nav's first committed state, before any paint,
+        # and nothing read the link view to decide it (#1477).
+        assert page.evaluate("() => window.__workActions") == [
+            ["Evidence", "Find this book", "More"]
         ]
+        assert served.link_reads == 0
+
+        page.goto(_work_url(_NOT_MATCHED))
         expect(page.get_by_role("heading", name="Plato", exact=True)).to_be_visible()
         find = _actions(page).get_by_role("button", name="Find this book", exact=True)
         expect(find).to_be_visible()
-        find.click()
+        assert page.evaluate("() => window.__workActions") == [["Find this book"]]
+        assert served.link_reads == 0
+        with page.expect_response(
+            lambda r: urlsplit(r.url).path == "/api/v1/library/link"
+        ) as read:
+            find.click()
+        assert parse_qs(urlsplit(read.value.url).query)["item"] == [
+            _NOT_MATCHED["item"]
+        ]
+        assert served.link_reads == 1
         expect(
             _dialog(page).get_by_role("heading", name="Find this book")
         ).to_be_focused()
@@ -427,13 +468,7 @@ def test_a_case_work_and_a_not_matched_work_offer_find_this_book_and_could_not_f
         expect(_dialog(page)).to_have_count(0)
         expect(find).to_be_focused()
 
-        with page.expect_response(
-            lambda r: urlsplit(r.url).path == "/api/v1/library/link"
-        ) as read:
-            page.goto(_work_url(_COULD_NOT_FINISH))
-        assert parse_qs(urlsplit(read.value.url).query)["item"] == [
-            _COULD_NOT_FINISH["item"]
-        ]
+        page.goto(_work_url(_COULD_NOT_FINISH))
         expect(
             page.get_by_role("heading", name="Catalogue-only work", exact=True)
         ).to_be_visible()
@@ -442,6 +477,7 @@ def test_a_case_work_and_a_not_matched_work_offer_find_this_book_and_could_not_f
         )
         expect(page.get_by_role("button", name="Find this book")).to_have_count(0)
         expect(_actions(page)).to_have_count(0)
+        assert served.link_reads == 1
     finally:
         page.close()
 
@@ -783,15 +819,6 @@ _DIALOG_FITS = """() => {
 }"""
 _FITS = {"dialog": True, "body": True, "inside": True}
 _SCHEMES = pytest.mark.parametrize("scheme", ["light", "dark"], ids=["light", "dark"])
-# The author row of the search form is wider than the dialog at 320 pixels
-# with 200% text: `.find-book-author` is a grid item of the Authors fieldset
-# with the default `min-width: auto`, so the Author 1 input keeps its
-# intrinsic width (about 513 px against a 241 px column).
-_AUTHOR_ROW_OVERFLOWS = pytest.mark.xfail(
-    strict=True,
-    reason="#1477 product defect: the Find this book author row overflows the"
-    " dialog body at 320 px with 200% text",
-)
 
 
 @_SCHEMES
@@ -828,6 +855,9 @@ def test_320_pixels_with_200_percent_text_reads_whole_in_the_header_confirmation
         expect(pill).to_be_visible()
         assert page.evaluate(_NO_SIDEWAYS_SCROLL), "pill"
         pill.click()
+        # The link view is read when the pill is pressed, so the dialog opens
+        # once it answers.
+        expect(_dialog(page).get_by_role("heading", name="Book link")).to_be_focused()
         assert page.evaluate(_DIALOG_FITS) == _FITS, "link view"
         _dialog(page).get_by_role("button", name="Withdraw the link").click()
         assert page.evaluate(_DIALOG_FITS) == _FITS, "withdraw question"
@@ -836,7 +866,6 @@ def test_320_pixels_with_200_percent_text_reads_whole_in_the_header_confirmation
         page.close()
 
 
-@_AUTHOR_ROW_OVERFLOWS
 @_SCHEMES
 def test_320_pixels_with_200_percent_text_reads_whole_in_the_search_form_and_results(
     browser: Browser, scheme: str
@@ -861,14 +890,6 @@ _FIELD_TAB_Y = """() => {
   const box = document.querySelector('.field-filmstrip').getBoundingClientRect()
   return box.top + window.scrollY
 }"""
-# At 1440 the cohort's case-1 title is long enough that Evidence, Find this
-# book and More wrap below the title while Evidence and More alone do not:
-# the field tabs sit 61 px higher on a work that is not offered.
-_ACTIONS_WRAP_AT_1440 = pytest.mark.xfail(
-    strict=True,
-    reason="#1477 product defect: at 1440 the field tabs move up 61 px on a"
-    " work that is not offered, because the header actions no longer wrap",
-)
 
 
 def _field_tab_ys(browser: Browser, width: int, text: str = "") -> dict[str, float]:
@@ -904,26 +925,15 @@ def _field_tab_ys(browser: Browser, width: int, text: str = "") -> dict[str, flo
     return measured
 
 
-@pytest.mark.parametrize(
-    ("width", "text"),
-    [
-        pytest.param(1440, "", marks=_ACTIONS_WRAP_AT_1440, id="1440"),
-        pytest.param(390, "", id="390"),
-    ],
-)
-def test_the_field_tabs_stay_put_whether_the_work_is_linked_or_not_offered(
-    browser: Browser, width: int, text: str
+@pytest.mark.parametrize("width", [1440, 390], ids=["1440", "390"])
+def test_the_field_tabs_stay_put_whether_the_work_is_linked_and_rise_only_when_not_offered(
+    browser: Browser, width: int
 ) -> None:
-    measured = _field_tab_ys(browser, width, text)
-    assert measured["linked"] == measured["not-linked"] == measured["not-offered"], (
-        measured
-    )
-
-
-def test_the_field_tabs_stay_put_between_find_this_book_and_its_pill(
-    browser: Browser,
-) -> None:
-    """While the 1440 comparison above is held by its defect, Find this book
-    and the pill that replaces it still hold the tabs still at 1440."""
-    measured = _field_tab_ys(browser, 1440)
+    """Find this book and the pill that replaces it hold the tabs still. A work
+    that is not offered has one action fewer, so its tabs may sit higher (at
+    1440 the cohort's long case-1 title wraps three actions but not two), and
+    never lower. Each state is the header's first and only one: the row says
+    which, so nothing moves after load (#1477)."""
+    measured = _field_tab_ys(browser, width)
     assert measured["linked"] == measured["not-linked"], measured
+    assert measured["not-offered"] <= measured["not-linked"], measured
