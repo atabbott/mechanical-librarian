@@ -45,6 +45,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.owner_search import OwnerSearchService
 from mechanical_librarian.application.review_pipeline import PreparationTrigger
+from mechanical_librarian.application.review_web import OWNER_LINK_VIEW_SCHEMA
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -431,7 +432,7 @@ def test_the_view_offers_the_work_and_names_no_link_until_one_is_chosen(
             "asin": None,
         },
         "link": None,
-        "schema_version": "owner-link-view-v1",
+        "schema_version": OWNER_LINK_VIEW_SCHEMA,
     }
     assert "title_authors" in view["sources"][0]["lanes"]
     choice = live.choose(_searched(live)).json()
@@ -445,6 +446,7 @@ def test_the_view_offers_the_work_and_names_no_link_until_one_is_chosen(
         "reason": None,
         "retry_at": None,
         "scope": "work",
+        "source": "search",
         "state": "preparing",
         "title": "Current title",
     }
@@ -474,6 +476,7 @@ def test_the_library_row_says_what_the_view_says_before_and_after_a_link(
     assert row()["find_offered"] is view["offered"] is True
     assert row()["link"] == {
         "state": view["link"]["state"],
+        "source": view["link"]["source"],
         "provider": view["link"]["provider"],
     }
 
@@ -860,3 +863,81 @@ def test_a_withdraw_body_outside_its_shape_is_refused(
 ) -> None:
     answer = live.post(WITHDRAW, body, key="withdraw-request-01")
     assert answer.status_code == 422, answer.text
+
+
+# -- A link named by an identifiers file (#1478) ---------------------------------
+
+FILE_IMPORT = "identifier_import_" + "d" * 64
+
+
+def _link_from_a_file(live: _Live) -> str:
+    """A file link: its import recorded it with no source and no title."""
+    connection = live.repository._connection
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute(
+        "INSERT INTO identifier_imports(import_id,connection_name,library_name,"
+        "row_count,will_link,already_linked,no_item,ambiguous,invalid_identifier,"
+        "wrong_medium,repeated,conflicting,unreadable,actor,created_at,request_id,"
+        "request_sha256,preview_digest) VALUES(?,?,?,1,1,0,0,0,0,0,0,0,0,'owner',?,"
+        "'import-request-0001',?,?)",
+        (FILE_IMPORT, CONNECTION, LIBRARY, NOW, "a" * 64, "b" * 64),
+    )
+    row = record_owner_link(
+        connection,
+        item=OwnerLinkItem(CONNECTION, LIBRARY, ITEM),
+        action=OwnerLinkAction.LINK,
+        expected_current=None,
+        target=OwnerLinkTarget(OwnerLinkScope.EDITION, None, "9780306406157", None),
+        source="file",
+        medium="ebook",
+        actor="owner",
+        occurred_at=NOW,
+        request_id="identifier_import_link_" + "e" * 64,
+        request_sha256="a" * 64,
+        import_id=FILE_IMPORT,
+    )
+    connection.execute("COMMIT")
+    return row.link_row_id
+
+
+def test_a_file_link_reads_on_every_link_surface(live: _Live) -> None:
+    linked = _link_from_a_file(live)
+    view = live.client.get(VIEW)
+    assert view.status_code == 200, view.text
+    assert view.json()["link"] == {
+        "creators": [],
+        "identifier": "9780306406157",
+        "link_row_id": linked,
+        "paused": False,
+        "provider": None,
+        "reason": None,
+        "retry_at": None,
+        "scope": "edition",
+        "source": "file",
+        "state": "preparing",
+        "title": None,
+    }
+    (row,) = live.client.get("/api/v1/library?lens=all").json()["items"]
+    assert row["link"] == {"state": "preparing", "source": "file", "provider": None}
+    # History's file variant is read through the store in test_owner_link_history.
+
+
+def test_find_this_book_changes_and_withdraws_a_file_link(live: _Live) -> None:
+    linked = _link_from_a_file(live)
+    changed = live.choose(_searched(live))
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["action"] == "replace"
+    assert live.client.get(VIEW).json()["link"]["source"] == "search"
+    withdrawn = live.withdraw(changed.json()["link_row_id"])
+    assert withdrawn.status_code == 200, withdrawn.text
+    assert live.client.get(VIEW).json()["link"] is None
+    assert [action for action, _ in live.rows()] == ["link", "replace", "withdraw"]
+    assert live.rows()[0][1].startswith("identifier_import_link_")
+    assert linked != changed.json()["link_row_id"]
+
+
+def test_find_this_book_withdraws_a_file_link_directly(live: _Live) -> None:
+    linked = _link_from_a_file(live)
+    withdrawn = live.withdraw(linked)
+    assert withdrawn.status_code == 200, withdrawn.text
+    assert live.client.get(VIEW).json()["link"] is None

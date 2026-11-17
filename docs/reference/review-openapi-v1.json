@@ -7330,8 +7330,20 @@
       },
       "_HistoryOwnerLinkItem": {
         "additionalProperties": false,
-        "description": "A book link the owner made, changed or withdrew (#1477, S31).\n\nA withdrawal names the link it withdrew.",
+        "description": "A book link the owner made, changed or withdrew (#1477, S31).\n\nA withdrawal names the link it withdrew. A file link (#1478) names its\nISBN or ASIN and no source or title; `with_import` marks the rows an\nidentifiers file import made, its links and its Withdraw this import.",
         "properties": {
+          "identifier": {
+            "anyOf": [
+              {
+                "maxLength": 13,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identifier"
+          },
           "kind": {
             "enum": [
               "linked",
@@ -7353,22 +7365,29 @@
             "type": "integer"
           },
           "provider": {
-            "enum": [
-              "audible_catalog",
-              "google_books",
-              "hardcover",
-              "inventaire",
-              "open_library"
+            "anyOf": [
+              {
+                "enum": [
+                  "audible_catalog",
+                  "google_books",
+                  "hardcover",
+                  "inventaire",
+                  "open_library"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Provider",
-            "type": "string"
+            "title": "Provider"
           },
           "review_case_id": {
             "title": "Review Case Id",
             "type": "string"
           },
           "schema_version": {
-            "const": "owner-link-history-event-v1",
+            "const": "owner-link-history-event-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -7381,14 +7400,34 @@
             "title": "Scope",
             "type": "string"
           },
-          "title": {
-            "maxLength": 512,
-            "minLength": 1,
-            "title": "Title",
+          "source": {
+            "enum": [
+              "search",
+              "file"
+            ],
+            "title": "Source",
             "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "with_import": {
+            "title": "With Import",
+            "type": "boolean"
           }
         },
         "required": [
+          "identifier",
           "kind",
           "link_row_id",
           "occurred_at",
@@ -7396,7 +7435,9 @@
           "review_case_id",
           "schema_version",
           "scope",
-          "title"
+          "source",
+          "title",
+          "with_import"
         ],
         "title": "_HistoryOwnerLinkItem",
         "type": "object"
@@ -7524,7 +7565,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v6",
+            "const": "review-case-history-v7",
             "title": "Schema Version",
             "type": "string"
           }
@@ -7779,14 +7820,29 @@
         "description": "A row's book link state and source; the selected work reads the rest (#1477).",
         "properties": {
           "provider": {
-            "enum": [
-              "audible_catalog",
-              "google_books",
-              "hardcover",
-              "inventaire",
-              "open_library"
+            "anyOf": [
+              {
+                "enum": [
+                  "audible_catalog",
+                  "google_books",
+                  "hardcover",
+                  "inventaire",
+                  "open_library"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Provider",
+            "title": "Provider"
+          },
+          "source": {
+            "enum": [
+              "search",
+              "file"
+            ],
+            "title": "Source",
             "type": "string"
           },
           "state": {
@@ -7803,6 +7859,7 @@
         },
         "required": [
           "state",
+          "source",
           "provider"
         ],
         "title": "_LibraryLink",
@@ -8008,7 +8065,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v9",
+            "const": "review-library-v10",
             "title": "Schema Version",
             "type": "string"
           }
@@ -8889,15 +8946,22 @@
             "type": "boolean"
           },
           "provider": {
-            "enum": [
-              "audible_catalog",
-              "google_books",
-              "hardcover",
-              "inventaire",
-              "open_library"
+            "anyOf": [
+              {
+                "enum": [
+                  "audible_catalog",
+                  "google_books",
+                  "hardcover",
+                  "inventaire",
+                  "open_library"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Provider",
-            "type": "string"
+            "title": "Provider"
           },
           "reason": {
             "anyOf": [
@@ -8942,6 +9006,14 @@
             "title": "Scope",
             "type": "string"
           },
+          "source": {
+            "enum": [
+              "search",
+              "file"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
           "state": {
             "enum": [
               "linked",
@@ -8954,15 +9026,23 @@
             "type": "string"
           },
           "title": {
-            "maxLength": 512,
-            "minLength": 1,
-            "title": "Title",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           }
         },
         "required": [
           "link_row_id",
           "scope",
+          "source",
           "provider",
           "title",
           "creators",
@@ -9086,7 +9166,7 @@
       },
       "_OwnerLinkView": {
         "additionalProperties": false,
-        "description": "The selected work's offer and link (`owner-link-view-v1`).",
+        "description": "The selected work's offer and link (`owner-link-view-v2`).",
         "properties": {
           "link": {
             "anyOf": [
@@ -9106,7 +9186,7 @@
             "$ref": "#/components/schemas/_OwnerLinkPrefill"
           },
           "schema_version": {
-            "const": "owner-link-view-v1",
+            "const": "owner-link-view-v2",
             "title": "Schema Version",
             "type": "string"
           },

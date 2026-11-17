@@ -18,7 +18,7 @@ const view = (link: OwnerLinkCurrent | null, offered = true): OwnerLinkView => (
     : [],
   prefill: { title: 'A Book', authors: ['Ada Example'], isbn: null, asin: null },
   link,
-  schema_version: 'owner-link-view-v1',
+  schema_version: 'owner-link-view-v2',
 })
 const openLink = async (http: ReviewHttp, pill: string) => {
   const user = userEvent.setup()
@@ -195,7 +195,14 @@ describe('the works list', () => {
       getLibrary: vi.fn(async () => ({
         ...library,
         works: [
-          { ...first, link: { state: 'contradicted' as const, provider: 'hardcover' as const } },
+          {
+            ...first,
+            link: {
+              state: 'contradicted' as const,
+              source: 'search' as const,
+              provider: 'hardcover' as const,
+            },
+          },
         ],
       })),
     }
@@ -215,7 +222,14 @@ describe('the works list', () => {
       getLibrary: vi.fn(async () => ({
         ...library,
         works: [
-          { ...first, link: { state: 'waiting' as const, provider: 'open_library' as const } },
+          {
+            ...first,
+            link: {
+              state: 'waiting' as const,
+              source: 'search' as const,
+              provider: 'open_library' as const,
+            },
+          },
         ],
       })),
     }

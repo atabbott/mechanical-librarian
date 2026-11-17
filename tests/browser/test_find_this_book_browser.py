@@ -28,7 +28,10 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import pytest
 from playwright.sync_api import Browser, Locator, Page, Route, expect, sync_playwright
 
-from mechanical_librarian.application.review_web import REVIEW_REPORT_DETAIL_SCHEMA
+from mechanical_librarian.application.review_web import (
+    OWNER_LINK_VIEW_SCHEMA,
+    REVIEW_REPORT_DETAIL_SCHEMA,
+)
 from tests.browser.fidelity_cohort import rich_payload, synthetic_preview
 from tests.browser.test_react_platform_artifact import _serve_cohort
 from tests.browser.text_size import set_root_text
@@ -100,7 +103,7 @@ def _view(
             "isbn": None,
             "title": "Dune",
         },
-        "schema_version": "owner-link-view-v1",
+        "schema_version": OWNER_LINK_VIEW_SCHEMA,
         "sources": _SOURCES if offered else [],
     }
 

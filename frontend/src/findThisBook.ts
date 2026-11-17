@@ -28,8 +28,9 @@ export type WorkAction = (typeof WORK_ACTIONS)[number]
 export const ownerLinkKey = (address: WorkAddress) =>
   ['library', 'link', address.connection, address.library, address.item] as const
 
-export const sourceName = (provider: OwnerLinkProvider) =>
-  settingsVocabulary.provider_labels[provider]
+// A link from an identifiers file names no source (#1478): its sources read it.
+export const sourceName = (provider: OwnerLinkProvider | null) =>
+  provider === null ? 'its sources' : settingsVocabulary.provider_labels[provider]
 
 // The Audible marketplaces as the owner reads them: the store's own domain.
 const marketplaceDomains: Readonly<Record<string, string>> = {
@@ -53,7 +54,7 @@ export const laneLabels = {
 } as const satisfies Record<OwnerSearchLane, string>
 
 // Header pill (L2) and the works list's status phrase.
-export const pillText = (state: OwnerLinkState, provider: OwnerLinkProvider) =>
+export const pillText = (state: OwnerLinkState, provider: OwnerLinkProvider | null) =>
   ({
     linked: `Linked on ${sourceName(provider)}`,
     preparing: 'Linked, preparing',
@@ -61,7 +62,7 @@ export const pillText = (state: OwnerLinkState, provider: OwnerLinkProvider) =>
     contradicted: 'Link contradicted',
     needs_replacing: 'Link needs replacing',
   })[state]
-export const rowLinkPhrase = (state: OwnerLinkState, provider: OwnerLinkProvider) =>
+export const rowLinkPhrase = (state: OwnerLinkState, provider: OwnerLinkProvider | null) =>
   ({
     linked: 'Linked',
     preparing: 'Linked, preparing',
@@ -291,7 +292,7 @@ export const uncertainLinkCopy =
   'No answer came back. Check whether the work is linked before choosing again.'
 export const refusalFor = (
   error: unknown,
-  provider: OwnerLinkProvider,
+  provider: OwnerLinkProvider | null,
   action: 'search' | 'choose' | 'withdraw',
   now: Date,
 ): Refusal => {

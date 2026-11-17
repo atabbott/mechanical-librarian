@@ -1871,7 +1871,7 @@ describe('ReviewApiClient', () => {
               library: 'Books',
               media_kind: 'epub',
               item: 'internal-item-2',
-              link: { state: 'waiting', provider: 'open_library' },
+              link: { state: 'waiting', source: 'search', provider: 'open_library' },
               attention_count: 0,
               attention_state: 'no_attention_needed',
               detail_url: null,
@@ -1970,7 +1970,7 @@ describe('ReviewApiClient', () => {
       },
       valueFlags: [],
       findOffered: false,
-      link: { state: 'waiting', provider: 'open_library' },
+      link: { state: 'waiting', source: 'search', provider: 'open_library' },
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-2')
     expect(fetchMock).toHaveBeenCalledWith(
@@ -3303,7 +3303,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v9', error: { code: 'busy' } },
+          { schema_version: 'review-library-v10', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3403,7 +3403,7 @@ describe('ReviewApiClient', () => {
     ).rejects.toMatchObject(refused('const@/schema_version'))
     // v9 added each row's book link (#1477); a v8 row lacks it.
     await expect(
-      readLibrary({ ...page, schema_version: 'review-library-v9' }),
+      readLibrary({ ...page, schema_version: 'review-library-v10' }),
     ).resolves.toBeDefined()
   })
 
@@ -7338,6 +7338,7 @@ describe('the book link wire (#1477)', () => {
     reason: null,
     retry_at: null,
     scope: 'work',
+    source: 'search',
     state: 'linked',
     title: 'Dune',
     ...overrides,
@@ -7346,7 +7347,7 @@ describe('the book link wire (#1477)', () => {
     link: null,
     offered: true,
     prefill: { asin: null, authors: ['Frank Herbert'], isbn: null, title: 'Dune' },
-    schema_version: 'owner-link-view-v1',
+    schema_version: 'owner-link-view-v2',
     sources: [
       { lanes: ['title_authors', 'isbn'], marketplaces: null, provider: 'hardcover' },
       { lanes: ['title_authors', 'asin'], marketplaces: ['us', 'uk'], provider: 'audible_catalog' },
@@ -7528,23 +7529,58 @@ describe('the book link wire (#1477)', () => {
 
   it('reads a link event in a work’s History', async () => {
     const item = {
+      identifier: 'B000000001',
       kind: 'link_changed',
       link_row_id: linkRow,
       occurred_at: 5,
       provider: 'audible_catalog',
       review_case_id: 'case-1',
-      schema_version: 'owner-link-history-event-v1',
+      schema_version: 'owner-link-history-event-v2',
       scope: 'recording',
+      source: 'search',
       title: 'Dune',
+      with_import: false,
     }
     expect((await readHistory(caseHistory({ items: [item] }))).items).toEqual([
       {
         category: 'owner_link',
         occurredAt: 5,
         kind: 'link_changed',
+        source: 'search',
+        withImport: false,
+        identifier: 'B000000001',
         provider: 'audible_catalog',
         scope: 'recording',
         title: 'Dune',
+      },
+    ])
+  })
+
+  it('reads a file link event, which names no source or title (#1478)', async () => {
+    const item = {
+      identifier: '9780441172719',
+      kind: 'linked',
+      link_row_id: linkRow,
+      occurred_at: 5,
+      provider: null,
+      review_case_id: 'case-1',
+      schema_version: 'owner-link-history-event-v2',
+      scope: 'edition',
+      source: 'file',
+      title: null,
+      with_import: true,
+    }
+    expect((await readHistory(caseHistory({ items: [item] }))).items).toEqual([
+      {
+        category: 'owner_link',
+        occurredAt: 5,
+        kind: 'linked',
+        source: 'file',
+        withImport: true,
+        identifier: '9780441172719',
+        provider: null,
+        scope: 'edition',
+        title: null,
       },
     ])
   })

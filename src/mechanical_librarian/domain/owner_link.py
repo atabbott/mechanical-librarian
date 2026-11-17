@@ -198,8 +198,7 @@ def record_identity_valid(
         if scope is OwnerLinkScope.EDITION:
             return _isbn13(identity)
         return (
-            scope is OwnerLinkScope.RECORDING
-            and canonical_asin(identity) == identity
+            scope is OwnerLinkScope.RECORDING and canonical_asin(identity) == identity
         )
     if provider not in OWNER_LINK_PROVIDERS:
         return False

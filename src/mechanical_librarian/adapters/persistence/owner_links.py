@@ -46,8 +46,10 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _COLUMNS = (
     "link_row_id,connection_name,library_name,item_id,sequence,action,source,"
     "medium,scope,provider,record_identity,display_title,display_creators,actor,"
-    "occurred_at,request_id,request_sha256,link_digest"
+    "occurred_at,request_id,request_sha256,link_digest,import_id"
 )
+# An identifiers file import (#1478), which a file row is recorded under.
+IMPORT_ID = re.compile(r"identifier_import_[0-9a-f]{64}")
 
 
 class OwnerLinkStoreError(MetadataReportError):
@@ -85,6 +87,30 @@ class OwnerLinkRow:
     request_id: str
     request_sha256: str
     link_digest: str | None
+    # The identifiers file import that made this row (#1478): a file link, or
+    # a withdrawal made by Withdraw this import. `None` for every other row.
+    import_id: str | None = None
+
+
+def _source_valid(
+    source: object, target: OwnerLinkTarget | None, medium: str, import_id: object
+) -> bool:
+    """A row's source agrees with its import and its target's source (#1478).
+
+    A search row names a source the medium can link and no import; a file
+    row names its import and, unless it withdraws, no source.
+    """
+    if source == "file":
+        return (
+            type(import_id) is str
+            and IMPORT_ID.fullmatch(import_id) is not None
+            and (target is None or target.provider is None)
+        )
+    return (
+        source == "search"
+        and import_id is None
+        and (target is None or target.provider in LINK_SOURCES_BY_MEDIUM[medium])
+    )
 
 
 def _item_valid(item: OwnerLinkItem) -> bool:
@@ -112,12 +138,14 @@ def record_owner_link(
     occurred_at: int,
     request_id: str,
     request_sha256: str,
+    import_id: str | None = None,
 ) -> OwnerLinkRow:
     """Append one link, replace or withdraw row and mark the work fresh.
 
     `expected_current` is the current link row the caller decided against, or
     `None` when it saw no link; any other current row refuses `link_changed`.
-    The caller owns the transaction, which must already be open.
+    A `file` row names the identifiers file import it is recorded under
+    (#1478). The caller owns the transaction, which must already be open.
     """
     if not connection.in_transaction:
         raise OwnerLinkStoreError("owner link needs an open transaction")
@@ -136,9 +164,8 @@ def record_owner_link(
         or type(request_sha256) is not str
         or _SHA256.fullmatch(request_sha256) is None
         or not _item_valid(item)
-        or (
-            target is not None and target.provider not in LINK_SOURCES_BY_MEDIUM[medium]
-        )
+        or not _source_valid(source, target, medium, import_id)
+        or (source == "file" and action is OwnerLinkAction.REPLACE)
     ):
         raise OwnerLinkStoreError("owner link row is invalid")
     if (expected_current is None) != (action is OwnerLinkAction.LINK):
@@ -157,7 +184,9 @@ def record_owner_link(
         "action": action.value,
         "actor": actor,
         "connection_name": item.connection_name,
-        "display_creators": None if target is None else list(target.display_creators),
+        "display_creators": None
+        if target is None or target.provider is None
+        else list(target.display_creators),
         "display_title": None if target is None else target.display_title,
         "item_id": item.item_id,
         "library_name": item.library_name,
@@ -171,6 +200,7 @@ def record_owner_link(
         "scope": None if target is None else target.scope.value,
         "sequence": sequence,
         "source": source,
+        **({} if import_id is None else {"import_id": import_id}),
     }
     row_id = (
         "owner_link_"
@@ -181,7 +211,7 @@ def record_owner_link(
     try:
         connection.execute(
             f"INSERT INTO owner_links({_COLUMNS}) "  # noqa: S608 - fixed column list
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 row_id,
                 item.connection_name,
@@ -196,13 +226,14 @@ def record_owner_link(
                 values["record_identity"],
                 values["display_title"],
                 None
-                if target is None
-                else json.dumps(list(target.display_creators), ensure_ascii=False),
+                if values["display_creators"] is None
+                else json.dumps(values["display_creators"], ensure_ascii=False),
                 actor,
                 occurred_at,
                 request_id,
                 request_sha256,
                 digest,
+                import_id,
             ),
         )
     except sqlite3.IntegrityError as error:
@@ -227,6 +258,7 @@ def record_owner_link(
         request_id,
         request_sha256,
         digest,
+        import_id,
     )
 
 
@@ -346,6 +378,7 @@ def _owner_link_row(row: tuple[object, ...]) -> OwnerLinkRow:
             request_id,
             request_sha256,
             digest,
+            import_id,
         ) = row
         item = OwnerLinkItem(
             cast(str, connection_name), cast(str, library_name), cast(str, item_id)
@@ -356,10 +389,10 @@ def _owner_link_row(row: tuple[object, ...]) -> OwnerLinkRow:
             if chosen is OwnerLinkAction.WITHDRAW
             else OwnerLinkTarget(
                 OwnerLinkScope(cast(str, scope)),
-                cast(str, provider),
+                cast("str | None", provider),
                 cast(str, identity),
-                cast(str, title),
-                tuple(json.loads(cast(str, creators))),
+                cast("str | None", title),
+                () if creators is None else tuple(json.loads(cast(str, creators))),
             )
         )
         valid = (
@@ -368,6 +401,8 @@ def _owner_link_row(row: tuple[object, ...]) -> OwnerLinkRow:
             and sequence >= 1
             and source in OWNER_LINK_SOURCES
             and medium in OWNER_LINK_MEDIA
+            and _source_valid(source, target, medium, import_id)
+            and (target is None or (creators is None) == (target.provider is None))
             and type(actor) is str
             and type(occurred_at) is int
             and occurred_at >= 0
@@ -384,7 +419,6 @@ def _owner_link_row(row: tuple[object, ...]) -> OwnerLinkRow:
                 )
                 or (
                     target is not None
-                    and target.provider in LINK_SOURCES_BY_MEDIUM[medium]
                     and digest
                     == link_digest(
                         medium, target.scope, target.identity, target.provider
@@ -409,7 +443,28 @@ def _owner_link_row(row: tuple[object, ...]) -> OwnerLinkRow:
         cast(str, request_id),
         cast(str, request_sha256),
         cast("str | None", digest),
+        cast("str | None", import_id),
     )
+
+
+def current_owner_link_items(
+    connection: sqlite3.Connection, connection_name: str, library_name: str
+) -> frozenset[str]:
+    """The item IDs of one library that have a current link of any source.
+
+    Safe inside the caller's transaction (#1478).
+    """
+    try:
+        rows = connection.execute(
+            "SELECT item_id FROM current_owner_links "
+            "WHERE connection_name=? AND library_name=?",
+            (connection_name, library_name),
+        ).fetchall()
+    except sqlite3.Error as error:
+        raise OwnerLinkStoreError("persisted owner link is unavailable") from error
+    if any(type(row[0]) is not str for row in rows):
+        raise OwnerLinkStoreError("persisted owner link is invalid")
+    return frozenset(row[0] for row in rows)
 
 
 def choose_owner_link(

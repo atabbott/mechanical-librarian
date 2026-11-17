@@ -95,6 +95,7 @@ from mechanical_librarian.application.review_web import (
     AutomaticWithheldCondition,
     HumanDecisionAckSchemaVersion,
     OwnerCredential,
+    OwnerLinkHistoryEventSchemaVersion,
     OwnerVerifierStore,
     ReviewAttentionSchemaVersion,
     ReviewCaseDetailSchemaVersion,
@@ -1429,17 +1430,30 @@ _OwnerLinkScope = Literal["work", "edition", "recording"]
 class _HistoryOwnerLinkItem(_ClosedModel):
     """A book link the owner made, changed or withdrew (#1477, S31).
 
-    A withdrawal names the link it withdrew.
+    A withdrawal names the link it withdrew. A file link (#1478) names its
+    ISBN or ASIN and no source or title; `with_import` marks the rows an
+    identifiers file import made, its links and its Withdraw this import.
     """
 
+    identifier: str | None = Field(max_length=13)
     kind: Literal["linked", "link_changed", "link_withdrawn"]
     link_row_id: str = Field(pattern=r"^owner_link_[0-9a-f]{64}$")
     occurred_at: _Instant
-    provider: _OwnerLinkProvider
+    provider: _OwnerLinkProvider | None
     review_case_id: str
-    schema_version: Literal["owner-link-history-event-v1"]
+    schema_version: OwnerLinkHistoryEventSchemaVersion
     scope: _OwnerLinkScope
-    title: str = Field(min_length=1, max_length=512)
+    source: Literal["search", "file"]
+    title: str | None = Field(min_length=1, max_length=512)
+    with_import: bool
+
+    @model_validator(mode="after")
+    def _a_file_link_names_no_source(self) -> Self:
+        if (self.source == "file") != (self.provider is None) or (
+            self.provider is None
+        ) != (self.title is None):
+            raise ValueError("owner link source is inconsistent")
+        return self
 
 
 class _HistoryResponse(_ClosedModel):
@@ -1859,8 +1873,17 @@ class _LibraryLink(_ClosedModel):
     """A row's book link state and source; the selected work reads the rest (#1477)."""
 
     state: Literal["linked", "preparing", "waiting", "contradicted", "needs_replacing"]
+    # How the link was made: chosen from a source, or named by an identifiers
+    # file (#1478), which names no source.
+    source: Literal["search", "file"]
     # The linked source, so a waiting row can say which source it waits for.
-    provider: _OwnerLinkProvider
+    provider: _OwnerLinkProvider | None
+
+    @model_validator(mode="after")
+    def _a_file_link_names_no_source(self) -> Self:
+        if (self.source == "file") != (self.provider is None):
+            raise ValueError("owner link source is inconsistent")
+        return self
 
 
 class _LibraryWork(_ClosedModel):

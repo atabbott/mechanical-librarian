@@ -366,7 +366,7 @@ export const unofferedLinkView: OwnerLinkView = {
   sources: [],
   prefill: { title: null, authors: [], isbn: null, asin: null },
   link: null,
-  schema_version: 'owner-link-view-v1',
+  schema_version: 'owner-link-view-v2',
 }
 export const createHttp = (): ReviewHttp => ({
   getOwnerLinkView: vi.fn(async () => unofferedLinkView),

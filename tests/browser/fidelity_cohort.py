@@ -27,6 +27,7 @@ from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
 )
 from mechanical_librarian.application.review_web import (
+    OWNER_LINK_VIEW_SCHEMA,
     REVIEW_CASE_DETAIL_SCHEMA,
     REVIEW_CASE_EVIDENCE_SCHEMA,
     REVIEW_CASE_HISTORY_SCHEMA,
@@ -2429,7 +2430,7 @@ def _owner_link_view(query: dict[str, list[str]]) -> dict[str, object]:
         "link": None,
         "offered": True,
         "prefill": {"asin": None, "authors": [], "isbn": None, "title": None},
-        "schema_version": "owner-link-view-v1",
+        "schema_version": OWNER_LINK_VIEW_SCHEMA,
         "sources": [
             {
                 "lanes": ["title_authors", "isbn"],

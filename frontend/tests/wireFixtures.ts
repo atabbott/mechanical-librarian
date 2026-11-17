@@ -316,7 +316,7 @@ export const caseHistory = (overrides: Overrides = {}) => ({
   items: [],
   next_cursor: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-history-v6',
+  schema_version: 'review-case-history-v7',
   ...overrides,
 })
 
@@ -432,7 +432,7 @@ export const library = (overrides: Overrides = {}) => ({
   page: 1,
   previous_cursor: null,
   query: null,
-  schema_version: 'review-library-v9',
+  schema_version: 'review-library-v10',
   ...overrides,
 })
 

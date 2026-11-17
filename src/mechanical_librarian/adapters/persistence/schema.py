@@ -1056,8 +1056,66 @@ _OWNER_LINK_IDENTITY_SQL = (
     "OR (scope='work' AND medium='ebook' AND provider='google_books' AND length(record_identity)=13 "
     "AND record_identity NOT GLOB '*[^0-9]*') "
     "OR (scope='work' AND medium='audiobook' AND provider='audible_catalog' AND length(record_identity)=10 "
+    "AND record_identity NOT GLOB '*[^0-9A-Z]*') "
+    # #1478: a file link names an edition's ISBN-13 or a recording's ASIN and no source.
+    "OR (provider IS NULL AND scope='edition' AND medium='ebook' AND length(record_identity)=13 "
+    "AND record_identity NOT GLOB '*[^0-9]*') "
+    "OR (provider IS NULL AND scope='recording' AND medium='audiobook' AND length(record_identity)=10 "
     "AND record_identity NOT GLOB '*[^0-9A-Z]*')"
 )
+_IMPORT_ID_CHECK = (
+    "typeof(import_id)='text' AND length(import_id)=82 AND import_id GLOB 'identifier_import_*' "
+    "AND substr(import_id,19) NOT GLOB '*[^0-9a-f]*'"
+)
+_IMPORT_COUNT = (
+    "INTEGER NOT NULL CHECK(typeof({0})='integer' AND {0} BETWEEN 0 AND 5000)"
+)
+_IMPORT_COUNTS = (
+    "already_linked",
+    "no_item",
+    "ambiguous",
+    "invalid_identifier",
+    "wrong_medium",
+    "repeated",
+    "conflicting",
+    "unreadable",
+)
+# #1478: one identifiers file import, recorded with the links it made in one
+# transaction. Its counts add up to the file's rows; nothing of the file
+# itself is kept. Append-only: withdrawal is a `withdrawn` event.
+_IDENTIFIER_IMPORTS_SQL = (
+    "CREATE TABLE identifier_imports ("
+    "import_id TEXT PRIMARY KEY NOT NULL CHECK(" + _IMPORT_ID_CHECK + "), "
+    "connection_name TEXT NOT NULL CHECK(typeof(connection_name)='text' AND length(CAST(connection_name AS BLOB)) BETWEEN 1 AND 128), "
+    "library_name TEXT NOT NULL CHECK(typeof(library_name)='text' AND length(CAST(library_name AS BLOB)) BETWEEN 1 AND 128), "
+    "row_count INTEGER NOT NULL CHECK(typeof(row_count)='integer' AND row_count BETWEEN 1 AND 5000), "
+    "will_link INTEGER NOT NULL CHECK(typeof(will_link)='integer' AND will_link BETWEEN 1 AND 5000), "
+    + "".join(f"{name} {_IMPORT_COUNT.format(name)}, " for name in _IMPORT_COUNTS)
+    + "actor TEXT NOT NULL CHECK(typeof(actor)='text' AND length(CAST(actor AS BLOB)) BETWEEN 1 AND 128), "
+    "created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer' AND created_at>=0), "
+    "request_id TEXT NOT NULL UNIQUE CHECK(typeof(request_id)='text' AND length(CAST(request_id AS BLOB)) BETWEEN 16 AND 128), "
+    "request_sha256 TEXT NOT NULL CHECK(typeof(request_sha256)='text' AND length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'), "
+    "preview_digest TEXT NOT NULL UNIQUE CHECK(typeof(preview_digest)='text' AND length(preview_digest)=64 AND preview_digest NOT GLOB '*[^0-9a-f]*'), "
+    "CHECK(will_link+" + "+".join(_IMPORT_COUNTS) + "=row_count))"
+)
+_IDENTIFIER_IMPORT_EVENTS_SQL = (
+    "CREATE TABLE identifier_import_events ("
+    "event_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(event_id)='text' AND length(event_id)=88 AND event_id GLOB 'identifier_import_event_*' AND substr(event_id,25) NOT GLOB '*[^0-9a-f]*'), "
+    "import_id TEXT NOT NULL REFERENCES identifier_imports(import_id) CHECK("
+    + _IMPORT_ID_CHECK
+    + "), "
+    "kind TEXT NOT NULL CHECK(kind IN ('imported','withdrawn')), "
+    "occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer' AND occurred_at>=0), "
+    "actor TEXT NOT NULL CHECK(typeof(actor)='text' AND length(CAST(actor AS BLOB)) BETWEEN 1 AND 128), "
+    "affected INTEGER NOT NULL CHECK(typeof(affected)='integer' AND affected BETWEEN 1 AND 5000), "
+    "request_id TEXT NOT NULL UNIQUE CHECK(typeof(request_id)='text' AND length(CAST(request_id AS BLOB)) BETWEEN 16 AND 128), "
+    "request_sha256 TEXT NOT NULL CHECK(typeof(request_sha256)='text' AND length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'), "
+    "UNIQUE(import_id,kind))"
+)
+_IDENTIFIER_IMPORT_NO_UPDATE_SQL = "CREATE TRIGGER identifier_imports_no_update BEFORE UPDATE ON identifier_imports BEGIN SELECT RAISE(ABORT, 'identifier imports are append-only'); END"
+_IDENTIFIER_IMPORT_NO_DELETE_SQL = "CREATE TRIGGER identifier_imports_no_delete BEFORE DELETE ON identifier_imports BEGIN SELECT RAISE(ABORT, 'identifier imports are append-only'); END"
+_IDENTIFIER_IMPORT_EVENT_NO_UPDATE_SQL = "CREATE TRIGGER identifier_import_events_no_update BEFORE UPDATE ON identifier_import_events BEGIN SELECT RAISE(ABORT, 'identifier import events are append-only'); END"
+_IDENTIFIER_IMPORT_EVENT_NO_DELETE_SQL = "CREATE TRIGGER identifier_import_events_no_delete BEFORE DELETE ON identifier_import_events BEGIN SELECT RAISE(ABORT, 'identifier import events are append-only'); END"
 _OWNER_LINKS_SQL = (
     "CREATE TABLE owner_links ("
     "link_row_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(link_row_id)='text' AND link_row_id GLOB 'owner_link_[0-9a-f]*' AND length(link_row_id)=75 AND substr(link_row_id,12) NOT GLOB '*[^0-9a-f]*'), "
@@ -1066,7 +1124,7 @@ _OWNER_LINKS_SQL = (
     "item_id TEXT NOT NULL CHECK(typeof(item_id)='text' AND length(CAST(item_id AS BLOB)) BETWEEN 1 AND 512), "
     "sequence INTEGER NOT NULL CHECK(typeof(sequence)='integer' AND sequence>=1), "
     "action TEXT NOT NULL CHECK(action IN ('link','replace','withdraw')), "
-    "source TEXT NOT NULL CHECK(source IN ('search')), "
+    "source TEXT NOT NULL CHECK(source IN ('search','file')), "
     "medium TEXT NOT NULL CHECK(medium IN ('ebook','audiobook')), "
     "scope TEXT CHECK(scope IS NULL OR scope IN ('work','edition','recording')), "
     "provider TEXT CHECK(provider IS NULL OR provider IN ('hardcover','open_library','google_books','inventaire','audible_catalog')), "
@@ -1078,8 +1136,14 @@ _OWNER_LINKS_SQL = (
     "request_id TEXT NOT NULL UNIQUE CHECK(typeof(request_id)='text' AND length(CAST(request_id AS BLOB)) BETWEEN 16 AND 128), "
     "request_sha256 TEXT NOT NULL CHECK(typeof(request_sha256)='text' AND length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'), "
     "link_digest TEXT CHECK(link_digest IS NULL OR (typeof(link_digest)='text' AND length(link_digest)=64 AND link_digest NOT GLOB '*[^0-9a-f]*')), "
+    "import_id TEXT REFERENCES identifier_imports(import_id) CHECK(import_id IS NULL OR ("
+    + _IMPORT_ID_CHECK
+    + ")), "
     "CHECK(action<>'withdraw' OR (scope IS NULL AND provider IS NULL AND record_identity IS NULL AND display_title IS NULL AND display_creators IS NULL AND link_digest IS NULL)), "
     "CHECK(action='withdraw' OR source<>'search' OR (scope IS NOT NULL AND provider IS NOT NULL AND record_identity IS NOT NULL AND display_title IS NOT NULL AND display_creators IS NOT NULL AND link_digest IS NOT NULL)), "
+    "CHECK((source='file')=(import_id IS NOT NULL)), "
+    "CHECK(source<>'file' OR action IN ('link','withdraw')), "
+    "CHECK(action='withdraw' OR source<>'file' OR (scope IN ('edition','recording') AND provider IS NULL AND display_title IS NULL AND display_creators IS NULL AND record_identity IS NOT NULL AND link_digest IS NOT NULL)), "
     "CHECK(record_identity IS NULL OR " + _OWNER_LINK_IDENTITY_SQL + "), "
     "UNIQUE(connection_name,library_name,item_id,sequence))"
 )
@@ -1103,6 +1167,7 @@ _OWNER_LINK_SEQUENCE_SQL = (
 )
 _OWNER_LINK_NO_UPDATE_SQL = "CREATE TRIGGER owner_links_no_update BEFORE UPDATE ON owner_links BEGIN SELECT RAISE(ABORT, 'owner links are append-only'); END"
 _OWNER_LINK_NO_DELETE_SQL = "CREATE TRIGGER owner_links_no_delete BEFORE DELETE ON owner_links BEGIN SELECT RAISE(ABORT, 'owner links are append-only'); END"
+_OWNER_LINKS_IMPORT_INDEX_SQL = "CREATE INDEX owner_links_import ON owner_links(import_id) WHERE import_id IS NOT NULL"
 _CURRENT_OWNER_LINKS_SQL = (
     "CREATE VIEW current_owner_links AS SELECT link.* FROM owner_links link "
     "WHERE link.action<>'withdraw' AND link.sequence=(SELECT MAX(other.sequence) "
@@ -2027,10 +2092,17 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_NO_DELETE_SQL)
     _create_attention_facts(connection)
     connection.execute(_LIBRARY_VISIT_SQL)
+    connection.execute(_IDENTIFIER_IMPORTS_SQL)
+    connection.execute(_IDENTIFIER_IMPORT_NO_UPDATE_SQL)
+    connection.execute(_IDENTIFIER_IMPORT_NO_DELETE_SQL)
+    connection.execute(_IDENTIFIER_IMPORT_EVENTS_SQL)
+    connection.execute(_IDENTIFIER_IMPORT_EVENT_NO_UPDATE_SQL)
+    connection.execute(_IDENTIFIER_IMPORT_EVENT_NO_DELETE_SQL)
     connection.execute(_OWNER_LINKS_SQL)
     connection.execute(_OWNER_LINK_SEQUENCE_SQL)
     connection.execute(_OWNER_LINK_NO_UPDATE_SQL)
     connection.execute(_OWNER_LINK_NO_DELETE_SQL)
+    connection.execute(_OWNER_LINKS_IMPORT_INDEX_SQL)
     connection.execute(_CURRENT_OWNER_LINKS_SQL)
     connection.commit()
 
@@ -2276,6 +2348,27 @@ def _decision_and_field_effect_objects() -> tuple[tuple[str, str, str | None], .
         ("trigger", "owner_links_no_update", _OWNER_LINK_NO_UPDATE_SQL),
         ("trigger", "owner_links_no_delete", _OWNER_LINK_NO_DELETE_SQL),
         ("view", "current_owner_links", _CURRENT_OWNER_LINKS_SQL),
+        ("index", "owner_links_import", _OWNER_LINKS_IMPORT_INDEX_SQL),
+        ("table", "identifier_imports", _IDENTIFIER_IMPORTS_SQL),
+        ("index", "sqlite_autoindex_identifier_imports_1", None),
+        ("index", "sqlite_autoindex_identifier_imports_2", None),
+        ("index", "sqlite_autoindex_identifier_imports_3", None),
+        ("trigger", "identifier_imports_no_update", _IDENTIFIER_IMPORT_NO_UPDATE_SQL),
+        ("trigger", "identifier_imports_no_delete", _IDENTIFIER_IMPORT_NO_DELETE_SQL),
+        ("table", "identifier_import_events", _IDENTIFIER_IMPORT_EVENTS_SQL),
+        ("index", "sqlite_autoindex_identifier_import_events_1", None),
+        ("index", "sqlite_autoindex_identifier_import_events_2", None),
+        ("index", "sqlite_autoindex_identifier_import_events_3", None),
+        (
+            "trigger",
+            "identifier_import_events_no_update",
+            _IDENTIFIER_IMPORT_EVENT_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "identifier_import_events_no_delete",
+            _IDENTIFIER_IMPORT_EVENT_NO_DELETE_SQL,
+        ),
         ("table", "field_effect_suspensions", _FIELD_EFFECT_SUSPENSIONS_SQL),
         ("table", "field_effect_actions", _FIELD_EFFECT_ACTIONS_SQL),
         ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),

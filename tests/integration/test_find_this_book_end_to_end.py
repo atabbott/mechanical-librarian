@@ -57,7 +57,10 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.application.owner_search import OwnerSearchService
 from mechanical_librarian.application.review_pipeline import PreparationTrigger
-from mechanical_librarian.application.review_web import BrowseReviewLibrary
+from mechanical_librarian.application.review_web import (
+    OWNER_LINK_HISTORY_EVENT_SCHEMA,
+    BrowseReviewLibrary,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderQueryKind,
@@ -376,7 +379,11 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
         (CONNECTION, LIBRARY, PreparationTrigger.BOOK_LINKED)
     ]
     # Until the scan prepares it, the link is waiting on its preparation.
-    assert world.row()["link"] == {"state": "preparing", "provider": "hardcover"}
+    assert world.row()["link"] == {
+        "state": "preparing",
+        "source": "search",
+        "provider": "hardcover",
+    }
     link = world.get(view)["link"]
     assert (link["title"], link["provider"], link["scope"], link["state"]) == (
         LINKED_TITLE,
@@ -388,7 +395,7 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
     assert [
         (item["kind"], item["title"], item["provider"])
         for item in history
-        if item.get("schema_version") == "owner-link-history-event-v1"
+        if item.get("schema_version") == OWNER_LINK_HISTORY_EVENT_SCHEMA
     ] == [("linked", LINKED_TITLE, "hardcover")]
     (linked,) = world.activity()
     assert (linked["change"], linked["work_label"]) == (
@@ -412,7 +419,11 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
         lens="all", search=None, limit=50, cursor=None
     )
     (row,) = [item for item in page["items"] if item["item"] == ITEM]
-    assert row["link"] == {"state": "linked", "provider": "hardcover"}
+    assert row["link"] == {
+        "state": "linked",
+        "source": "search",
+        "provider": "hardcover",
+    }
     assert world.get(view)["link"]["state"] == "linked"
 
     # The owner withdraws it later; the work is prepared again without it.

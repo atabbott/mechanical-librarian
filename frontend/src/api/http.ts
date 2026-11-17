@@ -672,7 +672,9 @@ export interface LibraryWorkView {
 }
 export interface LibraryLinkView {
   state: OwnerLinkState
-  provider: OwnerLinkProvider
+  /** `file` for a link from an identifiers file, which names no source (#1478). */
+  source: 'search' | 'file'
+  provider: OwnerLinkProvider | null
 }
 export interface LibraryCounts {
   attention: number
@@ -1031,9 +1033,14 @@ export type HistoryItemView = (
       // withdrawal names the link it ended.
       category: 'owner_link'
       kind: OwnerLinkHistoryKind
-      provider: OwnerLinkProvider
+      // A link from an identifiers file names no source and no title, only
+      // its identifier (#1478).
+      source: 'search' | 'file'
+      withImport: boolean
+      identifier: string | null
+      provider: OwnerLinkProvider | null
       scope: OwnerLinkScope
-      title: string
+      title: string | null
     }
 ) & { occurredAt: number | null }
 export interface HistoryView {
@@ -3186,7 +3193,10 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
       ...(item.cover === null ? {} : { cover: mapLibraryCover(item.cover) }),
       valueFlags: item.value_flags.map(mapValueFlag),
       findOffered: item.find_offered,
-      link: item.link === null ? null : { state: item.link.state, provider: item.link.provider },
+      link:
+        item.link === null
+          ? null
+          : { state: item.link.state, source: item.link.source, provider: item.link.provider },
     }
   }),
 })
@@ -3508,11 +3518,14 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
     }
   if (item.schema_version === 'matching-changed-history-event-v1')
     return { category: 'matching_changed', occurredAt, destination: item.destination }
-  if (item.schema_version === 'owner-link-history-event-v1')
+  if (item.schema_version === 'owner-link-history-event-v2')
     return {
       category: 'owner_link',
       occurredAt,
       kind: item.kind,
+      source: item.source,
+      withImport: item.with_import,
+      identifier: item.identifier,
       provider: item.provider,
       scope: item.scope,
       title: item.title,

@@ -99,20 +99,32 @@ def _store(tmp_path: Path) -> Path:
 def _link(path: Path, library: str, medium: str, target: OwnerLinkTarget) -> None:
     """Record the owner's link through the store, in its own transaction."""
     connection = sqlite3.connect(path, isolation_level=None)
+    # A target with no source is a file link (#1478), recorded under an import.
+    import_id = None if target.provider is not None else "identifier_import_" + "f" * 64
     try:
         connection.execute("BEGIN IMMEDIATE")
+        if import_id is not None:
+            connection.execute(
+                "INSERT INTO identifier_imports(import_id,connection_name,"
+                "library_name,row_count,will_link,already_linked,no_item,ambiguous,"
+                "invalid_identifier,wrong_medium,repeated,conflicting,unreadable,"
+                "actor,created_at,request_id,request_sha256,preview_digest) "
+                "VALUES(?,?,?,1,1,0,0,0,0,0,0,0,0,'owner',1,'import-request-0001',?,?)",
+                (import_id, CONNECTION, library, "a" * 64, "b" * 64),
+            )
         record_owner_link(
             connection,
             item=OwnerLinkItem(CONNECTION, library, ITEM),
             action=OwnerLinkAction.LINK,
             expected_current=None,
             target=target,
-            source="search",
+            source="search" if import_id is None else "file",
             medium=medium,
             actor="owner",
             occurred_at=1_700_000_000,
             request_id="request-0000000001",
             request_sha256="a" * 64,
+            import_id=import_id,
         )
         connection.execute("COMMIT")
     finally:
@@ -452,8 +464,37 @@ def _open_library(
 def test_an_edition_link_is_asked_on_its_own_lane_and_re_checked(
     tmp_path: Path, physical_format: str, outcome: str, reason: str | None
 ) -> None:
+    _assert_edition_link(tmp_path, EDITION_LINK, physical_format, outcome, reason)
+
+
+def test_a_file_edition_link_prepares_as_a_search_link_to_the_same_isbn(
+    tmp_path: Path,
+) -> None:
+    """An identifiers file's link (#1478) is the same lookup (A12)."""
+    searched = _assert_edition_link(
+        tmp_path / "search", EDITION_LINK, "eBook", "admitted", None
+    )
+    filed = _assert_edition_link(
+        tmp_path / "file",
+        OwnerLinkTarget(OwnerLinkScope.EDITION, None, ISBN, None),
+        "eBook",
+        "admitted",
+        None,
+    )
+    assert filed.owner_link is not None and searched.owner_link is not None
+    assert filed.owner_link.to_data() == searched.owner_link.to_data()
+
+
+def _assert_edition_link(
+    tmp_path: Path,
+    target: OwnerLinkTarget,
+    physical_format: str,
+    outcome: str,
+    reason: str | None,
+) -> MetadataReport:
+    tmp_path.mkdir(mode=0o700, exist_ok=True)
     path = _store(tmp_path)
-    _link(path, "ebooks", "ebook", EDITION_LINK)
+    _link(path, "ebooks", "ebook", target)
     queries: list[str] = []
     report = _prepare_ebook(
         path,
@@ -497,6 +538,7 @@ def test_an_edition_link_is_asked_on_its_own_lane_and_re_checked(
     assert facts.anchor == (
         (LINKED_TITLE, (LINKED_AUTHOR,)) if outcome == "admitted" else None
     )
+    return report
 
 
 def _audnexus(runtime_minutes: int | None) -> AudnexusMetadataProvider:
@@ -530,13 +572,17 @@ def _audnexus(runtime_minutes: int | None) -> AudnexusMetadataProvider:
     )
 
 
-def _recording_report(tmp_path: Path, minutes: int | None) -> MetadataReport:
+def _recording_report(
+    tmp_path: Path, minutes: int | None, *, provider: str | None = "audible_catalog"
+) -> MetadataReport:
     path = _store(tmp_path)
     _link(
         path,
         "audio",
         "audiobook",
-        OwnerLinkTarget(OwnerLinkScope.RECORDING, "audible_catalog", ASIN, "A"),
+        OwnerLinkTarget(
+            OwnerLinkScope.RECORDING, provider, ASIN, None if provider is None else "A"
+        ),
     )
     selected = TargetFile("a" * 64, "book.m4b", "m4b")
     snapshot = TargetSnapshot(
@@ -606,6 +652,18 @@ def test_a_recording_link_is_re_checked_against_the_files_runtime(
         assert owner_link_admission(report, "audnexus", member.edition_identity) == (
             "owner_link"
         )
+
+
+def test_a_file_recording_link_prepares_as_a_search_link_to_the_same_asin(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "search").mkdir(mode=0o700)
+    (tmp_path / "file").mkdir(mode=0o700)
+    searched = _recording_report(tmp_path / "search", 970)
+    filed = _recording_report(tmp_path / "file", 970, provider=None)
+    assert filed.owner_link is not None and searched.owner_link is not None
+    assert filed.owner_link.outcome == "admitted"
+    assert filed.owner_link.to_data() == searched.owner_link.to_data()
 
 
 def test_an_identifier_is_never_proposed_from_a_record_only_the_link_kept(

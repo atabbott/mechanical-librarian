@@ -62,6 +62,7 @@ from mechanical_librarian.adapters.persistence.transactions import (
     local_operation,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_web import OWNER_LINK_HISTORY_EVENT_SCHEMA
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
@@ -96,7 +97,7 @@ from mechanical_librarian.domain.human_decision import (
     pinned_field_fingerprint,
     target_value,
 )
-from mechanical_librarian.domain.owner_link import OwnerLinkAction
+from mechanical_librarian.domain.owner_link import OwnerLinkAction, OwnerLinkScope
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
@@ -257,7 +258,7 @@ def _automatic_decision_documents(
         raise MetadataReportError("automatic decision is unavailable") from error
 
 
-# History's word for each link row (owner-link-history-event-v1).
+# History's word for each link row (owner-link-history-event-v2).
 _OWNER_LINK_HISTORY_KINDS = {
     OwnerLinkAction.LINK: "linked",
     OwnerLinkAction.REPLACE: "link_changed",
@@ -1746,7 +1747,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
         """History's book link events for the case's work (#1477, S31).
 
         Every link row of the work, newest first; a withdrawal names the
-        link it withdrew. A row outside its grammar fails the read closed.
+        link it withdrew. A file link (#1478) names its ISBN or ASIN and no
+        source or title; `with_import` marks a row an identifiers file import
+        made, its link or its Withdraw this import. A row outside its grammar
+        fails the read closed.
         """
         item = self._connection.execute(
             "SELECT report.connection_name,report.library_name,report.item_id "
@@ -1774,14 +1778,19 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     row.sequence,
                     "link:" + row.link_row_id,
                     {
+                        "identifier": None
+                        if target.scope is OwnerLinkScope.WORK
+                        else target.identity,
                         "kind": _OWNER_LINK_HISTORY_KINDS[row.action],
                         "link_row_id": row.link_row_id,
                         "occurred_at": row.occurred_at,
                         "provider": target.provider,
                         "review_case_id": review_case_id,
-                        "schema_version": "owner-link-history-event-v1",
+                        "schema_version": OWNER_LINK_HISTORY_EVENT_SCHEMA,
                         "scope": target.scope.value,
+                        "source": target.source,
                         "title": target.display_title,
+                        "with_import": row.import_id is not None,
                     },
                 )
             )

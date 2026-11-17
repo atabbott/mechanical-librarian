@@ -98,6 +98,9 @@ from mechanical_librarian.application.operation_admission import OperationAdmiss
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
+from mechanical_librarian.application.review_web import (
+    OWNER_LINK_HISTORY_EVENT_SCHEMA,
+)
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.bootstrap.composition import (
     compose_continuous_guarded_application,
@@ -4364,7 +4367,7 @@ def _owner_link_withdrawal(
             entry["kind"]
             for entry in history.json().get("items", [])
             if type(entry) is dict
-            and entry.get("schema_version") == "owner-link-history-event-v1"
+            and entry.get("schema_version") == OWNER_LINK_HISTORY_EVENT_SCHEMA
         ],
     }
 
