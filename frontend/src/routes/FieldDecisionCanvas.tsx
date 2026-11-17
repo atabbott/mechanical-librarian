@@ -142,18 +142,25 @@ export function FieldDecisionCanvas({
   const failureLine = useRef<HTMLParagraphElement>(null)
   // A line that arrives below the window is brought just into view, so a
   // choice that changed nothing never looks as if nothing happened.
-  // Only a line that arrives while the field is shown: a canvas that mounts
-  // after the page's own Reload leaves focus to the page's retry handling.
+  // Focus is taken only by a line that arrives while the field is shown: a
+  // canvas that mounts after the page's own Reload leaves focus to the page.
+  // The flag resets on unmount, so StrictMode's second mount is a mount too.
   const shown = useRef(false)
+  useEffect(
+    () => () => {
+      shown.current = false
+    },
+    [],
+  )
   useEffect(() => {
     const line = failureLine.current
     const arrived = shown.current
     shown.current = true
-    if (!arrived || !choiceFailure || !line) return
+    if (!choiceFailure || !line) return
     line.scrollIntoView({ block: 'nearest' })
     // A retry that fails without one to offer again takes its button away:
     // the line holds the focus it had, never the page body.
-    if (document.activeElement === null || document.activeElement === document.body)
+    if (arrived && (document.activeElement === null || document.activeElement === document.body))
       line.focus({ preventScroll: true })
   }, [choiceFailure, choiceStatus.text])
   const pinBusy = controller.recording || controller.checking || controller.reloadRequired

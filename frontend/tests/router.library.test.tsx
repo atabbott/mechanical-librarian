@@ -14621,6 +14621,50 @@ it('returns focus to the work after the page’s Reload current case reads it', 
   await waitFor(() => expect(document.activeElement).toHaveAttribute('data-route-focus'))
 })
 
+it('brings the lock’s line into view when the owner is returned to the field they left', async () => {
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const http = createHttp()
+  let decided = false
+  http.getCaseDetail = vi.fn(async () => {
+    if (decided) throw new Error('current case refresh unavailable')
+    return { ...authored, id: 'case-1' }
+  })
+  let answer: () => void = () => undefined
+  http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(
+    () =>
+      new Promise((resolve) => {
+        answer = () => {
+          decided = true
+          resolve({
+            schema_version: 'description-selection-ack-v1',
+            decision_id: `human_decision_${'a'.repeat(64)}`,
+            advised: true,
+            invalidation_sequences: [],
+            confirmation: { status: 'unavailable' },
+          })
+        }
+      }),
+  )
+  const scrolled = vi.mocked(Element.prototype.scrollIntoView)
+  const { router } = renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent.setup().click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  await waitFor(() => expect(http.recordDecision).toHaveBeenCalled())
+  // The owner moves on while the choice records.
+  await router.navigate({
+    to: '/library',
+    search: (search: Record<string, unknown>) => ({ ...search, field: 'title' }),
+  } as never)
+  await screen.findByRole('heading', { name: 'Title' })
+  scrolled.mockClear()
+  answer()
+  const line = await screen.findByText(/could not be reloaded/u)
+  await waitFor(() => expect(scrolled.mock.contexts).toContain(line))
+})
+
 it('keeps focus on the failure line when a retry gets no answer and takes its button away', async () => {
   const authored = readCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
