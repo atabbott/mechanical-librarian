@@ -158,6 +158,7 @@ const companionRow = (
   reason: string,
 ): ProviderOutcomeView => ({
   companionIsbn: true,
+  anchored: false,
   coverOnly: false,
   providerRequests: 1,
   laneKind: 'isbn',
@@ -175,6 +176,7 @@ const companionRows = [
 const reportDetail = (overrides: Partial<ReportDetailView> = {}): ReportDetailView => ({
   chapters: [],
   chaptersTruncated: false,
+  connection: 'primary',
   coverPresent: false,
   coverSurface: null,
   evidence: [],
@@ -291,6 +293,7 @@ const coverOnlyRow = (
   reason: string,
 ): ProviderOutcomeView => ({
   companionIsbn: false,
+  anchored: false,
   coverOnly: true,
   providerRequests: 1,
   laneKind: 'work',

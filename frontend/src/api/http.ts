@@ -252,6 +252,8 @@ export interface ProviderOutcomeView {
   coverOnly: boolean
   providerRequests: number
   laneKind: ProviderQueryKind
+  /** A title and author lane searched with the linked record's own title and authors (#1477). */
+  anchored: boolean
   provider: string
   reason: string
   status: ProviderStatus
@@ -316,7 +318,7 @@ export type TargetFieldState = (typeof TARGET_FIELD_STATES)[number]
 // read, `audio` (an audiobook) or `unknown`.
 export const MEDIA_KINDS = ['epub', 'm4b', 'm4a', 'mp3', 'audio', 'unknown'] as const
 export type MediaKind = (typeof MEDIA_KINDS)[number]
-export const PROVIDER_QUERY_KINDS = ['isbn', 'work', 'asin', 'discovery', 'none'] as const
+export const PROVIDER_QUERY_KINDS = ['isbn', 'work', 'asin', 'discovery', 'none', 'link'] as const
 export type ProviderQueryKind = (typeof PROVIDER_QUERY_KINDS)[number]
 export const PROVIDER_STATUSES = [
   'disabled',
@@ -613,6 +615,8 @@ export interface ReportDetailView {
   coverSurface: AudioSurface | null
   evidence: readonly ReportEvidenceView[]
   evidenceTruncated: boolean
+  /** The work's Audiobookshelf connection, which addresses its book link (#1477). */
+  connection: string
   item: string
   library: string
   libraryDisplayName?: string
@@ -658,6 +662,8 @@ export interface LibraryWorkView {
   cover?: LibraryCoverView
   /** What looks wrong with the current values, one finding per rule (#1334). */
   valueFlags: readonly ValueFlagView[]
+  /** The state of the work's book link, or null when it has none (#1477). */
+  link: OwnerLinkState | null
 }
 export interface LibraryCounts {
   attention: number
@@ -843,8 +849,11 @@ export interface CoverCandidateView {
    * A proposed cover from the matched book; the recording stays unconfirmed
    * (#1642). `title_and_author`: from a record Book matching counts as the same
    * book by title and author; the match stays unconfirmed (#1355).
+   * `linked_book`: from the record the owner linked the work to;
+   * `linked_title_and_author`: same title and author as that record, still
+   * unconfirmed (#1477).
    */
-  matchReason?: 'matched_book' | 'title_and_author'
+  matchReason?: 'matched_book' | 'title_and_author' | 'linked_book' | 'linked_title_and_author'
   observation: CoverObservationView | null
   originalSha256: string
   ordinal: number
@@ -992,10 +1001,41 @@ export type HistoryItemView = (
       supersedesAutomatic: boolean
     }
   | { category: 'transition'; outcome: TransitionOutcome; reason: string }
+  | {
+      // A book link the owner made, changed or withdrew (#1477). A
+      // withdrawal names the link it ended.
+      category: 'owner_link'
+      kind: OwnerLinkHistoryKind
+      provider: OwnerLinkProvider
+      scope: OwnerLinkScope
+      title: string
+    }
 ) & { occurredAt: number | null }
 export interface HistoryView {
   items: readonly HistoryItemView[]
   nextCursor?: string
+}
+// Find this book (#1477). The link view, a search's cards and what a choose or
+// withdraw recorded are read as decoded; the mappers below add the checks the
+// schema cannot state.
+export type OwnerLinkView = ResponseSchema<'_OwnerLinkView'>
+export type OwnerLinkCurrent = NonNullable<OwnerLinkView['link']>
+export type OwnerLinkSource = OwnerLinkView['sources'][number]
+export type OwnerLinkProvider = OwnerLinkSource['provider']
+export type OwnerSearchLane = OwnerLinkSource['lanes'][number]
+export type OwnerLinkScope = OwnerLinkCurrent['scope']
+export type OwnerLinkState = OwnerLinkCurrent['state']
+export type OwnerLinkReason = NonNullable<OwnerLinkCurrent['reason']>
+export type OwnerSearchView = ResponseSchema<'_OwnerSearchResponse'>
+export type OwnerSearchCard = OwnerSearchView['cards'][number]
+export type OwnerLinkChange = ResponseSchema<'_OwnerLinkChange'>
+export type OwnerLinkHistoryKind = ResponseSchema<'_HistoryOwnerLinkItem'>['kind']
+export type OwnerSearchRequest = Schema<'_OwnerSearchBody'>
+/** The catalogue address a book link belongs to. Never shown on the page. */
+export interface WorkAddress {
+  connection: string
+  library: string
+  item: string
 }
 export type PreparationView = ResponseSchema<'_PreparationResponse'>
 // The preparation controls `preparationAction` sends, under
@@ -1456,6 +1496,27 @@ export interface ReviewHttp {
   logout(signal?: AbortSignal): Promise<void>
   changePassword(value: PasswordChange, signal?: AbortSignal): Promise<void>
   logoutOthers(signal?: AbortSignal): Promise<void>
+  /** Whether Find this book is offered for a work, and its current link (#1477). */
+  getOwnerLinkView(
+    address: WorkAddress,
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<OwnerLinkView>
+  /** Ask one source; the cards stay with the server, which hands back positions. */
+  searchOwnerLink(request: OwnerSearchRequest, signal?: AbortSignal): Promise<OwnerSearchView>
+  /** Link the work to one card of the search; the key is reused when the same attempt is retried. */
+  chooseOwnerLink(
+    searchId: string,
+    choice: { position: number; scope: OwnerLinkScope },
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<OwnerLinkChange>
+  withdrawOwnerLink(
+    address: WorkAddress,
+    linkRowId: string,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<OwnerLinkChange>
 }
 
 export interface CsrfTokenStore {
@@ -1477,6 +1538,10 @@ export class ApiError extends Error {
     // Why a refusal applies, where the code has reasons: `offer_changed` says
     // whether the work waits for its check or the field's offer changed (#1355).
     readonly reason: string | null = null,
+    // When a refused search may be asked again, and which way it failed
+    // (`review-error-v1`, #1477).
+    readonly retryAt: number | null = null,
+    readonly kind: string | null = null,
   ) {
     super(`Review API request failed (${String(status)}: ${code})`)
     this.name = 'ApiError'
@@ -2293,6 +2358,69 @@ export class ReviewApiClient implements ReviewHttp {
     await this.mutate('/api/v1/session/logout-others', undefined, signal)
   }
 
+  async getOwnerLinkView(
+    address: WorkAddress,
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ) {
+    const { connection, library, item } = address
+    const p = new URLSearchParams({ connection, library, item })
+    return mapOwnerLinkView(await this.read(`/api/v1/library/link?${p}`, signal, workClass))
+  }
+  // A search writes nothing the owner keeps, so an unreadable answer is a 502;
+  // it is never sent twice, because a second request counts against the hour.
+  async searchOwnerLink(request: OwnerSearchRequest, signal?: AbortSignal) {
+    return this.mutate(
+      '/api/v1/library/find/searches',
+      request,
+      signal,
+      undefined,
+      'POST',
+      false,
+      true,
+      (value) => mapOwnerSearch(value, request),
+    )
+  }
+  async chooseOwnerLink(
+    searchId: string,
+    choice: { position: number; scope: OwnerLinkScope },
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ) {
+    return this.mutate(
+      `/api/v1/library/find/searches/${encodeURIComponent(searchId)}/choice`,
+      choice,
+      signal,
+      { 'idempotency-key': idempotencyKey },
+      'POST',
+      false,
+      false,
+      (value) => mapOwnerLinkChange(value, choice.scope === 'work' ? null : 'link'),
+    )
+  }
+  async withdrawOwnerLink(
+    address: WorkAddress,
+    linkRowId: string,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ) {
+    return this.mutate(
+      '/api/v1/library/link/withdraw',
+      {
+        connection: address.connection,
+        library: address.library,
+        item: address.item,
+        link_row_id: linkRowId,
+      },
+      signal,
+      { 'idempotency-key': idempotencyKey },
+      'POST',
+      false,
+      false,
+      (value) => mapOwnerLinkChange(value, 'withdraw'),
+    )
+  }
+
   // Recording a use twice is the same use, so a CSRF renewal sends it again.
   async recordLibraryVisit(listing: LibraryListing | null, signal?: AbortSignal) {
     await this.mutate('/api/v1/library/visit', { listing }, signal, undefined, 'POST', true)
@@ -2767,6 +2895,7 @@ const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => (
   coverOnly: value.cover_only,
   providerRequests: value.provider_requests,
   laneKind: value.lane_kind,
+  anchored: value.anchored,
   provider: value.provider,
   reason: value.reason,
   status: value.status,
@@ -2920,6 +3049,7 @@ export const mapReportDetail = (value: ReportDetailDto): ReportDetailView => ({
     value: claim.value,
   })),
   evidenceTruncated: value.evidence_truncated,
+  connection: value.connection,
   item: value.item,
   library: value.library,
   libraryDisplayName: value.library_display_name ?? value.library,
@@ -3026,6 +3156,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
             },
       ...(item.cover === null ? {} : { cover: mapLibraryCover(item.cover) }),
       valueFlags: item.value_flags.map(mapValueFlag),
+      link: item.link === null ? null : item.link.state,
     }
   }),
 })
@@ -3329,6 +3460,15 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
     }
   if (item.schema_version === 'matching-changed-history-event-v1')
     return { category: 'matching_changed', occurredAt, destination: item.destination }
+  if (item.schema_version === 'owner-link-history-event-v1')
+    return {
+      category: 'owner_link',
+      occurredAt,
+      kind: item.kind,
+      provider: item.provider,
+      scope: item.scope,
+      title: item.title,
+    }
   // What is left is the preview event.
   return {
     category: 'preview',
@@ -3345,6 +3485,70 @@ export const mapHistory = (value: HistoryDto): HistoryView => ({
   items: value.items.map(mapHistoryItem),
   ...(value.next_cursor ? { nextCursor: value.next_cursor } : {}),
 })
+
+// Each link state carries only the reason its line names (S29).
+const linkReasonsByState: Readonly<Record<OwnerLinkState, readonly (OwnerLinkReason | null)[]>> = {
+  linked: [null],
+  preparing: [null],
+  waiting: [null],
+  contradicted: ['format', 'runtime', 'narrators', 'variant'],
+  needs_replacing: ['missing', 'merged', 'source_disabled', 'medium_changed'],
+}
+// The checks the link view's schema cannot state: a work link names no
+// identifier and a narrower one does, only waiting carries a retry, only
+// Audible has marketplaces, and the lanes are the source's own.
+export const mapOwnerLinkView = (value: OwnerLinkView): OwnerLinkView => {
+  const { link } = value
+  if (
+    link !== null &&
+    ((link.scope === 'work') !== (link.identifier === null) ||
+      (link.retry_at !== null && link.state !== 'waiting') ||
+      !linkReasonsByState[link.state].includes(link.reason))
+  )
+    throw new ApiError(502, 'contradictory_owner_link')
+  for (const source of value.sources)
+    if (
+      (source.provider === 'audible_catalog') !== (source.marketplaces !== null) ||
+      source.lanes.length === 0 ||
+      (source.lanes.includes('asin') && source.provider !== 'audible_catalog') ||
+      new Set(source.lanes).size !== source.lanes.length
+    )
+      throw new ApiError(502, 'contradictory_owner_link_source')
+  if (new Set(value.sources.map((source) => source.provider)).size !== value.sources.length)
+    throw new ApiError(502, 'contradictory_owner_link_source')
+  return value
+}
+// A search answers the source and lane it was asked; its cards are numbered
+// in order, a card that cannot be chosen offers no scope, one that can always
+// offers This book, and a withheld scope is never also offered.
+export const mapOwnerSearch = (
+  value: OwnerSearchView,
+  request: Pick<OwnerSearchRequest, 'provider' | 'lane'>,
+): OwnerSearchView => {
+  if (
+    value.provider !== request.provider ||
+    value.lane !== request.lane ||
+    (value.marketplace !== null) !== (value.provider === 'audible_catalog') ||
+    value.cards.some(
+      (card, index) =>
+        card.position !== index ||
+        card.choosable !== card.scopes.includes('work') ||
+        (!card.choosable && card.scopes.length > 0) ||
+        card.withheld.some((withheld) => card.scopes.includes(withheld.scope)),
+    )
+  )
+    throw new ApiError(502, 'contradictory_owner_search')
+  return value
+}
+// A withdraw answers a withdrawal; a choose answers a link or its replacement.
+const mapOwnerLinkChange = (
+  value: OwnerLinkChange,
+  expected: 'withdraw' | 'link' | null,
+): OwnerLinkChange => {
+  if ((expected === 'withdraw') !== (value.action === 'withdraw'))
+    throw new ApiError(502, 'contradictory_owner_link_change')
+  return value
+}
 
 const mapChoiceContexts = (
   value: readonly ChoiceContextDto[],
@@ -3480,10 +3684,13 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     const expectedMatchState =
       identity.outcome === 'verified_manifestation_match'
         ? 'same_edition'
-        : identity.outcome === 'verified_work_match'
+        : identity.outcome === 'verified_work_match' || identity.outcome === 'owner_link_match'
           ? 'same_book'
           : 'match_not_confirmed'
     const confirmed = expectedMatchState !== 'match_not_confirmed'
+    // A cover from the linked book reads as the same book but is never
+    // selectable or ranked: only the owner may choose it (#1477).
+    const linkedBook = identity.outcome === 'owner_link_match'
     // Why a proposed cover contradicts the book (#1790); the incumbent never
     // carries one.
     const contradiction = incumbent
@@ -3518,13 +3725,24 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
       (confirmed &&
         incumbent &&
         (selectable || deterministicRank !== null || deterministicRankKey === null)) ||
-      (confirmed && !incumbent && deterministicRankKey === null)
+      (linkedBook &&
+        !incumbent &&
+        (selectable || deterministicRank !== null || deterministicRankKey !== null)) ||
+      (confirmed && !incumbent && !linkedBook && deterministicRankKey === null)
     )
       throw new ApiError(502, 'contradictory_cover_identity')
     // match-reason. Display only: the identity, selection and rank checks
     // above are unchanged.
     const matchReason = candidate.match_reason
     if (matchReason !== null && (incumbent || identity.outcome === 'conflict'))
+      throw new ApiError(502, 'contradictory_cover_match_reason')
+    // A linked-book reason names exactly the outcome it came from (#1477).
+    if (
+      !incumbent &&
+      ((matchReason === 'linked_book') !== linkedBook ||
+        (matchReason === 'linked_title_and_author') !==
+          (identity.outcome === 'owner_link_anchor_match'))
+    )
       throw new ApiError(502, 'contradictory_cover_match_reason')
     // A larger copy is never the current cover and always confirmed (#1363).
     if (candidate.candidate_kind === 'larger_copy' && (incumbent || !confirmed))
@@ -3668,6 +3886,8 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
       (candidate) =>
         candidate.matchState !== 'match_not_confirmed' &&
         !candidate.incumbent &&
+        // A cover from the linked book is never selectable (#1477).
+        candidate.identity?.outcome !== 'owner_link_match' &&
         candidate.selectable !== policyOwnerReady,
     ) ||
     (providerFetching === ready && acceptable.length > 0) ||
@@ -3731,5 +3951,9 @@ const structuredError = async (response: Response) => {
     response.status,
     value.error.code,
     typeof value.error.reason === 'string' ? value.error.reason : null,
+    typeof value.error.retry_at === 'number' && Number.isInteger(value.error.retry_at)
+      ? value.error.retry_at
+      : null,
+    typeof value.error.kind === 'string' ? value.error.kind : null,
   )
 }

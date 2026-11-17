@@ -187,6 +187,7 @@ export const lookupLabels = {
   asin: 'ASIN lookup',
   discovery: 'Search',
   none: 'No lookup',
+  link: 'Linked record',
 } satisfies Record<ProviderQueryKind, string>
 
 // The ISBN lane an audiobook's companion EPUB planned (#1723). An audiobook
@@ -194,10 +195,20 @@ export const lookupLabels = {
 // every status.
 export const companionIsbnLookupLabel = 'ISBN lookup (EPUB in this folder)'
 
+// The title and author lane a book link anchors searches with the linked
+// record's own title and authors (#1477).
+export const anchoredLookupLabel = 'Search with the linked record'
+
 export const sourceLookupLabel = (source: {
   laneKind: ProviderQueryKind
   companionIsbn: boolean
-}): string => (source.companionIsbn ? companionIsbnLookupLabel : lookupLabels[source.laneKind])
+  anchored: boolean
+}): string =>
+  source.companionIsbn
+    ? companionIsbnLookupLabel
+    : source.anchored && source.laneKind === 'work'
+      ? anchoredLookupLabel
+      : lookupLabels[source.laneKind]
 
 // The server's closed lane status is an audit token, not something an owner can
 // read: `candidates` and `candidate_limit_exceeded` differ by one word and mean

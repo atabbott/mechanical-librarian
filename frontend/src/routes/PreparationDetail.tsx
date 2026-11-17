@@ -65,6 +65,7 @@ const preparationTriggerCopy: Record<
   title_recovery: 'Title recovery requested',
   automatic_confirmed: 'Started when Automatic was turned on',
   matching_changed: 'Started when Book matching was saved',
+  book_linked: 'Started when a book link changed',
 }
 // A request accepted once is just how the run began; a number there would be
 // noise on every ordinary run. Repeats are the case worth counting, so only
@@ -80,6 +81,7 @@ const preparationRepeatedTriggerCopy: Record<
   title_recovery: 'Title recovery requested',
   automatic_confirmed: 'Automatic turned on',
   matching_changed: 'Book matching saved',
+  book_linked: 'Book link changed',
 }
 const preparationTriggerLine = (trigger: PreparationPresentation['triggers'][number]) =>
   trigger.accepted_count > 1 && trigger.trigger !== 'initial_setup'

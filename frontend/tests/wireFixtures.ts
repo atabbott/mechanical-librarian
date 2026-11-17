@@ -35,7 +35,7 @@ export const reportDetail = (overrides: Overrides = {}) => ({
   provider_evidence: [],
   provider_evidence_truncated: false,
   report_id: `report_${'a'.repeat(64)}`,
-  schema_version: 'review-report-detail-v6',
+  schema_version: 'review-report-detail-v7',
   audiobook_review_scope: null,
   recording_admission_basis: null,
   recording_identity_basis: null,
@@ -315,7 +315,7 @@ export const caseHistory = (overrides: Overrides = {}) => ({
   items: [],
   next_cursor: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-history-v4',
+  schema_version: 'review-case-history-v5',
   ...overrides,
 })
 
@@ -399,6 +399,7 @@ export const libraryWork = (overrides: Overrides = {}) => ({
   item: 'item-1',
   library: 'Books',
   library_display_name: null,
+  link: null,
   media_kind: 'epub',
   pinned_count: 0,
   preparation: null,
@@ -429,7 +430,7 @@ export const library = (overrides: Overrides = {}) => ({
   page: 1,
   previous_cursor: null,
   query: null,
-  schema_version: 'review-library-v8',
+  schema_version: 'review-library-v9',
   ...overrides,
 })
 
