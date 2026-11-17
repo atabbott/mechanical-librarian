@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { OwnerLinkCurrent, OwnerLinkView, ReviewHttp } from '../src/api/http'
 import { ApiError } from '../src/api/http'
-import { pillText, rowLinkPhrase, stateLine } from '../src/findThisBook'
+import { pillText, rowLinkPhrase, stateLine, unusedLinkLine } from '../src/findThisBook'
 import { createHttp, library, renderRoute } from './fixtures'
 import { linked, withLinkView } from './findThisBookFixtures'
 
@@ -42,12 +42,12 @@ describe('the pill and the link view', () => {
     [
       linked({ state: 'preparation_failed' }),
       'Link not used yet',
-      'Preparation could not finish, so the link is not used yet.',
+      'Preparation could not finish, so the book link is not used yet.',
     ],
     [
       linked({ state: 'preparation_failed', paused: true }),
       'Link not used yet',
-      'Preparation could not finish, so the link is not used yet.',
+      'Preparation could not finish, so the book link is not used yet.',
     ],
     [
       linked({ state: 'waiting' }),
@@ -219,12 +219,30 @@ describe('the pill and the link view', () => {
     const { dialog } = await openLink(http, 'Link not used yet')
     expect(
       within(dialog).getByText(
-        'Preparation could not finish, so the link is not used yet. Scan this library again to retry it.',
+        'Preparation could not finish, so the book link is not used yet. Scan this library again to retry it.',
       ),
     ).toHaveClass('book-link-state', 'is-notice')
     expect(within(dialog).queryByRole('button', { name: 'Change the link' })).toBeNull()
     expect(within(dialog).getByRole('button', { name: 'Withdraw the link' })).toBeVisible()
     expect(rowLinkPhrase('preparation_failed', 'hardcover')).toBe('Link not used yet')
+  })
+
+  it('says an unused link in the row’s own words, Could not finish or a check that gave up', () => {
+    const preparation = { checkGivenUp: false, recovery: 'Scan this library again to retry it.' }
+    expect(unusedLinkLine(preparation, null)).toBe(
+      'Preparation could not finish, so the book link is not used yet. Scan this library again to retry it.',
+    )
+    expect(
+      unusedLinkLine({ ...preparation, checkGivenUp: true }, 'Save Book matching again to retry.'),
+    ).toBe(
+      'Could not be checked against the new Book matching setting, so the book link is not used yet. Save Book matching again to retry.',
+    )
+    expect(unusedLinkLine({ ...preparation, checkGivenUp: true }, null)).toBe(
+      'Could not be checked against the new Book matching setting, so the book link is not used yet.',
+    )
+    expect(unusedLinkLine(null, null)).toBe(
+      'Preparation could not finish, so the book link is not used yet.',
+    )
   })
 
   it('offers Withdraw only on a Could not finish work that is linked (L4)', async () => {
@@ -272,5 +290,60 @@ describe('the works list', () => {
     const row = await screen.findByRole('button', { name: /^A Book\./u })
     const pill = within(row.closest('li') ?? row).getByText('Linked, waiting for Open Library')
     expect(pill).toHaveClass('status-pill', 'is-notice')
+  })
+})
+
+describe('a choice refused because the link changed (#1941)', () => {
+  const failedPreparation = {
+    attempt: 1,
+    checkGivenUp: false,
+    diagnosticReference: 'prep-0123456789abcdef',
+    mediaHealth: [],
+    provider: 'hardcover-main',
+    reason: 'A source stopped without a usable answer.',
+    recovery: 'Scan this library again to retry it.',
+    recoveryAttempt: 0,
+    stage: 'provider' as const,
+    status: 'provider' as const,
+  }
+  const refusedWith = async (state: 'preparing' | 'preparation_failed') => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({
+        ...library,
+        works: library.works.map((work) => ({
+          ...work,
+          link: { state, provider: 'hardcover' as const },
+          ...(state === 'preparation_failed' ? { preparation: failedPreparation } : {}),
+        })),
+      })),
+      recordDecision: vi.fn<ReviewHttp['recordDecision']>(async () => {
+        throw new ApiError(409, 'link_changed')
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1', http)
+    await user.click(await screen.findByRole('radio', { name: 'Choose proposed value: New title' }))
+    return http
+  }
+
+  it('asks to choose again once preparation has used the link', async () => {
+    const http = await refusedWith('preparing')
+    expect(
+      await screen.findByText(
+        'Not recorded. The book link changed. Choose again when preparation has used the link.',
+      ),
+    ).toBeVisible()
+    expect(http.recordDecision).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives the row’s next step when the preparation could not finish', async () => {
+    const http = await refusedWith('preparation_failed')
+    expect(
+      await screen.findByText(
+        'Not recorded. Preparation could not finish, so the book link is not used yet. Scan this library again to retry it.',
+      ),
+    ).toBeVisible()
+    expect(http.recordDecision).toHaveBeenCalledTimes(1)
   })
 })

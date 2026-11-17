@@ -16,6 +16,7 @@ import type {
   OwnerSearchView,
   WorkAddress,
 } from '../api/http'
+import { useBookMatchingRetry } from '../bookMatchingRetry'
 import { Button } from '../components/Button'
 import { Dropdown } from '../components/Dropdown'
 import { SegmentedControl } from '../components/SegmentedControl'
@@ -41,6 +42,7 @@ import {
   scopeButtons,
   sourceName,
   uncertainLinkCopy,
+  unusedLinkLine,
   withheldLines,
 } from '../findThisBook'
 import type { Refusal } from '../findThisBook'
@@ -229,9 +231,7 @@ export function FindThisBookEntry({
           address={address}
           work={work}
           view={data}
-          recovery={
-            row?.preparation && !row.preparation.checkGivenUp ? row.preparation.recovery : undefined
-          }
+          preparation={row?.preparation ?? null}
           start={open}
           refresh={async () => {
             const read = await view.refetch()
@@ -271,7 +271,7 @@ function FindThisBookDialog({
   address,
   work,
   view,
-  recovery,
+  preparation,
   start,
   refresh,
   close,
@@ -279,13 +279,14 @@ function FindThisBookDialog({
   address: WorkAddress
   work: FindWork
   view: OwnerLinkView
-  /** The Library row's next step when the work could not finish. */
-  recovery: string | undefined
+  /** The Library row's Could not finish, which gives a link no preparation read its next step. */
+  preparation: LibraryWorkView['preparation']
   start: 'link' | 'form'
   refresh: () => Promise<void>
   close: (said?: string) => void
 }) {
   const { http } = useReviewContext()
+  const givenUp = useBookMatchingRetry(http)
   const dialog = useRef<HTMLDialogElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const medium = mediumOf(work.mediaKind)
@@ -453,7 +454,7 @@ function FindThisBookDialog({
             medium={medium}
             canChange={view.offered}
             now={new Date()}
-            recovery={recovery}
+            unused={unusedLinkLine(preparation, givenUp.answered ? givenUp.retry : null)}
             onChange={() => {
               setRefusal(null)
               setStep({ at: 'form' })

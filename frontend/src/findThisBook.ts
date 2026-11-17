@@ -13,7 +13,9 @@ import type {
   OwnerSearchView,
   WorkAddress,
 } from './api/http'
+import type { LibraryWorkView } from './api/http'
 import { ApiError, uncertainWriteOutcome } from './api/http'
+import { givenUpCopy } from './bookMatchingRetry'
 import { formatRunningTime, formatWhen } from './dates'
 import { languageName } from './labels'
 
@@ -118,15 +120,35 @@ const replacingReason = (link: OwnerLinkCurrent, mediaKind: 'ebook' | 'audiobook
   }
 }
 /**
- * The state line under the link, or null for a link that holds. `recovery` is
- * the next step the work's Library row gives for a preparation that could not
- * finish, when the row is at hand.
+ * Why a link no preparation has read is not used yet, and the one step to take,
+ * in the words the work's Library row uses (#1941): Could not finish with the
+ * row's next step, or a Book matching check that gave up with its retry. With
+ * no row at hand it says only what happened.
+ */
+export const unusedLinkLine = (
+  preparation:
+    | Pick<NonNullable<LibraryWorkView['preparation']>, 'checkGivenUp' | 'recovery'>
+    | null
+    | undefined,
+  givenUpRetry: string | null,
+) => {
+  const cause = preparation?.checkGivenUp
+    ? givenUpCopy.replace(/\.$/u, '')
+    : 'Preparation could not finish'
+  const step = preparation ? (preparation.checkGivenUp ? givenUpRetry : preparation.recovery) : null
+  return [`${cause}, so the book link is not used yet.`, step].filter(Boolean).join(' ')
+}
+
+/**
+ * The state line under the link, or null for a link that holds. `unused` is
+ * the line for a link no preparation has read after one could not finish,
+ * from `unusedLinkLine` when the work's row is at hand.
  */
 export const stateLine = (
   link: OwnerLinkCurrent,
   mediaKind: 'ebook' | 'audiobook',
   now: Date,
-  recovery?: string,
+  unused?: string,
 ) => {
   const source = sourceName(link.provider)
   switch (link.state) {
@@ -136,10 +158,8 @@ export const stateLine = (
       return link.paused
         ? 'Preparation is paused. The link is used when it resumes.'
         : 'Preparing this work with the link.'
-    case 'preparation_failed': {
-      const line = 'Preparation could not finish, so the link is not used yet.'
-      return recovery ? `${line} ${recovery}` : line
-    }
+    case 'preparation_failed':
+      return unused ?? unusedLinkLine(null, null)
     case 'waiting':
       return link.retry_at === null
         ? `${source} did not answer. The link is used once it does.`
