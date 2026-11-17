@@ -1252,3 +1252,53 @@ def test_an_ebook_with_no_included_audio_has_no_audio(audio_files: object) -> No
     )
 
     assert (entry.has_ebook, entry.has_audio, entry.format) == (True, False, "epub")
+
+
+def test_a_preparable_item_keeps_its_own_path_within_the_library() -> None:
+    """Identifiers file path rows match the item's folder, not its media file."""
+    audio_mount = MediaMountConfiguration("audiobooks", "/media", "/library", True)
+    summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+    audio = {
+        **_audio_item([_audio_record("part-1.m4b")]),
+        "relPath": "Ada/Recorded title",
+        "path": "/library/Ada/Recorded title",
+        "isFile": False,
+    }
+    entry = catalogue_entry("primary", _library("audio"), audio_mount, summary, audio)
+    assert (entry.eligible, entry.item_path) == (True, "Ada/Recorded title")
+    # An item that states no folder keeps none.
+    plain = catalogue_entry(
+        "primary",
+        _library("audio"),
+        audio_mount,
+        summary,
+        _audio_item([_audio_record()]),
+    )
+    assert (plain.eligible, plain.item_path) == (True, None)
+    ebook_mount = MediaMountConfiguration("books", "/library", "/media", True)
+    ebook = {**_item(), "relPath": "books", "isFile": False}
+    ebook["media"] = {
+        "metadata": {"title": "Title", "authors": [{"name": "Ada"}]},
+        "ebookFile": {
+            "ebookFormat": "epub",
+            "ino": "inode",
+            "metadata": {"relPath": "title.epub", "size": 7},
+        },
+    }
+    entry = catalogue_entry("primary", _library(), ebook_mount, summary, ebook)
+    assert (entry.eligible, entry.service_path, entry.item_path) == (
+        True,
+        "books/title.epub",
+        "books",
+    )
+    # Not preparable: no path is kept.
+    unmounted = catalogue_entry("primary", _library(), None, summary, ebook)
+    assert unmounted.item_path is None
+    moved = catalogue_entry(
+        "primary",
+        _library("audio"),
+        audio_mount,
+        summary,
+        {**audio, "relPath": "Moved", "path": "/library/Moved"},
+    )
+    assert moved.item_path == "Moved"

@@ -127,7 +127,7 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `catalogue-v2` | The catalogue database at `/data/catalogue.sqlite3` ([Catalogue](../operations/catalogue.md)) |
+| `catalogue-v3` | The catalogue database at `/data/catalogue.sqlite3` ([Catalogue](../operations/catalogue.md)) |
 | `audio-inspection-v6` | The isolated audio inspection protocol |
 | `epub-inspection-v3` | The isolated EPUB inspection protocol |
 | `batch-manifest-v5` | Source-only foreground evidence batches ([Ebook evidence batches](../operations/ebook-evidence-batches.md)) |

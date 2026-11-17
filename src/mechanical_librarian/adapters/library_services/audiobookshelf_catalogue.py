@@ -15,6 +15,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_cover_path im
 )
 from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
     EbookLocation,
+    item_relative_path,
     normalize_ebook_location,
 )
 from mechanical_librarian.application.catalogue import (
@@ -465,7 +466,22 @@ def _entry(
         format_value,
         mount_name,
         source_fingerprint,
+        _item_path(detail, mount if classification == "singular-supported" else None),
     )
+
+
+def _item_path(
+    detail: dict[str, Any], mount: MediaMountConfiguration | None
+) -> str | None:
+    """A preparable item's own path within its library, matched by an
+    identifiers file (#1478). An item whose coordinates do not read keeps
+    none; that never changes its classification."""
+    if mount is None:
+        return None
+    try:
+        return item_relative_path(detail, mount.service_path)
+    except ValueError:
+        return None
 
 
 def _companion_fingerprint(

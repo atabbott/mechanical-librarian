@@ -40,6 +40,7 @@ def _entry(
     title: str = "Title",
     author: str = "Author",
     path: str = "book.epub",
+    item_path: str | None = None,
 ) -> CatalogueEntry:
     return CatalogueEntry(
         "primary",
@@ -56,6 +57,7 @@ def _entry(
         path,
         "epub",
         "books",
+        item_path=item_path,
     )
 
 
@@ -596,3 +598,25 @@ def test_library_admission_missing_then_available_and_drift_requires_reopen() ->
             (0, "main", "")
         ]
         connection.close()
+
+
+def test_item_path_round_trips_and_stays_out_of_the_source_fingerprint() -> None:
+    """The item's own path (#1478) is kept for identifiers files only."""
+    assert (
+        _entry(item_path="Shelf/Book").source_fingerprint == _entry().source_fingerprint
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "catalogue.sqlite"
+        repository = open_catalogue(path, create=True)
+        stored = (_entry(item_path="Shelf/Book"), _entry("item-2"))
+        repository.acquire_refresh()
+        generation = repository.publish("a" * 64, stored)
+        assert repository.inspect("a" * 64) == stored
+        key = ("primary", "books", "library-id", "item-1")
+        assert repository.current_entry(generation, "a" * 64, key) == stored[0]
+        assert repository.latest_entry("a" * 64, key) == stored[0]
+        with pytest.raises(sqlite3.IntegrityError):
+            repository._connection.execute(
+                "UPDATE catalogue_entries SET item_path='' WHERE item_id='item-1'"
+            )
+        repository.close()

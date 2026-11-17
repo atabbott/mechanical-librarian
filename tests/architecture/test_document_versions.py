@@ -276,7 +276,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.adapters.persistence.catalogue",
         "CATALOGUE_SCHEMA",
-        "catalogue-v2",
+        "catalogue-v3",
     ),
     ("scripts.cold_start_report", "COLD_START_REPORT_SCHEMA", "cold-start-report-v10"),
     (

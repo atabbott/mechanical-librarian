@@ -61,6 +61,10 @@ class CatalogueEntry:
     format: str | None = None
     mount: str | None = None
     source_fingerprint: str | None = None
+    # The item's own path within its library (Audiobookshelf `relPath`), kept
+    # only to match an identifiers file's path rows (#1478). Not part of the
+    # source fingerprint: a path is never preparation input.
+    item_path: str | None = None
 
     def __post_init__(self) -> None:
         if self.source_fingerprint is None:
