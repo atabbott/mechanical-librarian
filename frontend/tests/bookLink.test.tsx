@@ -18,7 +18,7 @@ const view = (link: OwnerLinkCurrent | null, offered = true): OwnerLinkView => (
     : [],
   prefill: { title: 'A Book', authors: ['Ada Example'], isbn: null, asin: null },
   link,
-  schema_version: 'owner-link-view-v2',
+  schema_version: 'owner-link-view-v3',
 })
 const openLink = async (http: ReviewHttp, pill: string) => {
   const user = userEvent.setup()

@@ -458,7 +458,11 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
     )
     failed.close()
     assert world.row()["preparation"] is not None
-    assert world.row()["link"] == {"state": "linked", "provider": "hardcover"}
+    assert world.row()["link"] == {
+        "state": "linked",
+        "source": "search",
+        "provider": "hardcover",
+    }
     assert world.get(view)["link"]["state"] == "linked"
     failed = sqlite3.connect(world.path, isolation_level=None)
     failed.execute(

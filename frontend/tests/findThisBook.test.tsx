@@ -34,7 +34,7 @@ const offered: OwnerLinkView = {
   ],
   prefill: { title: 'A Book', authors: ['Ada Example'], isbn: null, asin: null },
   link: null,
-  schema_version: 'owner-link-view-v2',
+  schema_version: 'owner-link-view-v3',
 }
 const audible: OwnerLinkView = {
   ...offered,

@@ -153,7 +153,7 @@ class _OwnerLinkCurrent(_Closed):
 
 
 class _OwnerLinkView(_Closed):
-    """The selected work's offer and link (`owner-link-view-v2`)."""
+    """The selected work's offer and link (`owner-link-view-v3`)."""
 
     offered: bool
     sources: list[_OwnerLinkSource] = Field(max_length=5)

@@ -179,8 +179,8 @@ OWNER_LINK_HISTORY_EVENT_SCHEMA: Final[OwnerLinkHistoryEventSchemaVersion] = (
 )
 
 # v10: a row's link says how it was made, and a file link names no source (#1478).
-ReviewLibrarySchemaVersion = Literal["review-library-v10"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v10"
+ReviewLibrarySchemaVersion = Literal["review-library-v11"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v11"
 
 ReviewReportDetailSchemaVersion = Literal["review-report-detail-v7"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
@@ -4865,8 +4865,8 @@ def _decided_destinations(
 
 
 # v2: a file link (#1478) names no source and keeps no title.
-OwnerLinkViewSchemaVersion = Literal["owner-link-view-v2"]
-OWNER_LINK_VIEW_SCHEMA: Final[OwnerLinkViewSchemaVersion] = "owner-link-view-v2"
+OwnerLinkViewSchemaVersion = Literal["owner-link-view-v3"]
+OWNER_LINK_VIEW_SCHEMA: Final[OwnerLinkViewSchemaVersion] = "owner-link-view-v3"
 
 
 def owner_link_view(
@@ -4876,7 +4876,7 @@ def owner_link_view(
     paused: bool,
     next_retry_at: int | None,
 ) -> dict[str, object]:
-    """The selected work's link view (`owner-link-view-v2`, S7, S29, L4).
+    """The selected work's link view (`owner-link-view-v3`, S7, S29, L4).
 
     `offer` says whether Find this book is offered, from which sources and
     with what prefill; a Could not finish work is not offered but still
