@@ -39,7 +39,7 @@ const reviewerView: ReviewerAccessView = {
   judge_mapping: null,
   judge_metadata: null,
   judge_daily_requests: 5_000,
-  judge_recommendations: [],
+  judge_recommendations: ['openai/gpt-6-luna'],
   cover_metadata: null,
   cost_evidence: { models: [] },
   revision: 3,

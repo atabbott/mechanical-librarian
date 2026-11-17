@@ -320,9 +320,9 @@ class ReviewerAccessView(_Closed):
     judge_mapping: ReviewerTaskSelection | None = None
     judge_metadata: CoverModelMetadata | None = None
     judge_daily_requests: Annotated[StrictInt, Field(ge=1, le=50_000)] = 5_000
-    # No measured judge model is confirmed in the live catalogue yet, so the
-    # owner picks one (#1372 PR 4, Q7).
-    judge_recommendations: tuple[_OpenRouterModel, ...] = ()
+    # The measured judge (#1372 issue contract Q4, settled R5): the cover
+    # reviewer's measured model.
+    judge_recommendations: tuple[_OpenRouterModel, ...] = ("openai/gpt-6-luna",)
     description: ReviewerEngineStatus | None = None
     openrouter_key_configured: StrictBool
     codex: ReviewerEngineStatus

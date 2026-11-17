@@ -1693,7 +1693,7 @@ def test_judge_model_is_tested_selected_opened_and_cleared_on_openrouter():
         engine="openrouter", model="example/vision"
     )
     assert view.judge_metadata is not None
-    assert view.judge_recommendations == ()
+    assert view.judge_recommendations == ("openai/gpt-6-luna",)
     assert operations.current_taste_judge_model() == "example/vision"
     assert operations.current_taste_build_model() is None
     engine, model, profile, client = operations.open_taste_judge()
