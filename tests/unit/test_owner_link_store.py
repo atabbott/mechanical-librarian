@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.adapters.persistence import schema
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.owner_links import (
     OwnerLinkChanged,
@@ -34,6 +35,7 @@ from mechanical_librarian.domain.owner_link import (
     OwnerLinkScope,
     OwnerLinkTarget,
 )
+from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 
 ITEM = OwnerLinkItem("abs", "Books", "item-1")
 WORK = OwnerLinkTarget(OwnerLinkScope.WORK, "open_library", "/works/OL1W", "A Title")
@@ -739,6 +741,20 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
             "DROP TABLE owner_links;"
             "DROP TABLE identifier_import_events;"
             "DROP TABLE identifier_imports;"
+            # The taste judge's tables, its request task and reviewer-access-v6
+            # came later (#1372 PR 4).
+            "DROP TABLE cover_taste_verdicts;"
+            "DROP TABLE cover_taste_judgements;"
+            "DROP TABLE reviewer_task_requests;"
+            "DROP TABLE reviewer_access;"
+            + schema._COVER_TASTE_TABLES["reviewer_task_requests"].replace(
+                "('cover_taste_build','cover_taste_judge')", "('cover_taste_build')"
+            )
+            + ";"
+            + schema._REVIEWER_ACCESS_SQL.replace(
+                f"'{REVIEWER_ACCESS_SCHEMA}'", "'reviewer-access-v5'"
+            )
+            + ";"
             + fixture["review_store"]["owner_links_sql"]
             + ";"
             + "".join(sql + ";" for (sql,) in kept)
