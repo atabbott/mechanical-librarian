@@ -479,7 +479,8 @@ def _item_path(
     if mount is None:
         return None
     try:
-        return item_relative_path(detail, mount.service_path)
+        # An item at the mount's root has no path of its own ("" or None).
+        return item_relative_path(detail, mount.service_path) or None
     except ValueError:
         return None
 

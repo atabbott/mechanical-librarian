@@ -1302,3 +1302,26 @@ def test_a_preparable_item_keeps_its_own_path_within_the_library() -> None:
         {**audio, "relPath": "Moved", "path": "/library/Moved"},
     )
     assert moved.item_path == "Moved"
+
+
+def test_an_item_at_the_mount_root_keeps_no_path_and_the_catalogue_publishes(
+    tmp_path: Path,
+) -> None:
+    """An item whose folder is the mount root has no path of its own: it keeps
+    `None`, not "", so one such item cannot fail the whole publish (#1478)."""
+    audio_mount = MediaMountConfiguration("audiobooks", "/media", "/library", True)
+    summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+    rooted = {
+        **_audio_item([_audio_record("part-1.m4b")]),
+        "path": "/library/",
+        "isFile": False,
+    }
+    entry = catalogue_entry("primary", _library("audio"), audio_mount, summary, rooted)
+    assert entry.item_path is None
+    repository = open_catalogue(tmp_path / "catalogue.sqlite", create=True)
+    try:
+        repository.acquire_refresh()
+        repository.publish("a" * 64, (entry,))
+        assert repository.inspect("a" * 64) == (entry,)
+    finally:
+        repository.close()
