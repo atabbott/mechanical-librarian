@@ -332,6 +332,36 @@ def test_inventaire_isbn_search_is_one_read_of_the_isbn() -> None:
     assert (answer.records[0].identity, answer.records[0].isbn) == ("wd:Q1", ISBN)
 
 
+def test_inventaire_title_search_names_a_work_by_its_own_label() -> None:
+    # A work with no title claim is named by its label, as preparation names
+    # it, and its author by the labels read; the card is kept, not dropped.
+    work = {
+        "uri": "wd:Q1",
+        "claims": {"wdt:P50": ["wd:Q900"]},
+        "labels": {"en": "The actual book"},
+    }
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if str(request.url.copy_with(query=None)) == INVENTAIRE_SEARCH_URL:
+            return _json({"results": [{"type": "works", "uri": "wd:Q1"}]})
+        if request.url.params.get_list("uris") == ["wd:Q900"]:
+            return _json(
+                {"entities": {"wd:Q900": {"uri": "wd:Q900", "labels": {"en": "Ada"}}}}
+            )
+        return _json({"entities": {"wd:Q1": work}})
+
+    provider, _ = _inventaire(answer)
+    found = _search(provider, TITLE)
+    cards, dropped = owner_search_cards(
+        "inventaire",
+        found.records,
+        OwnerSearchWork("ebook", "Current title", ("Ada",), None, None, None, (), ()),
+    )
+    assert dropped == 0
+    (card,) = cards
+    assert (card.title, card.creators) == ("The actual book", ("Ada",))
+
+
 # -- Audible ----------------------------------------------------------------
 
 

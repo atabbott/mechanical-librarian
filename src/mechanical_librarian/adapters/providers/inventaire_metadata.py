@@ -873,7 +873,7 @@ class InventaireMetadataProvider:
             uris = [_owner_row_uri(row) for row in rows[:OWNER_SEARCH_PAGE]]
             wanted = tuple(dict.fromkeys(uri for uri in uris if uri is not None))
             works = self._owner_entities(session, wanted, _ENTITY_ATTRIBUTES, deadline)
-            labels = self._owner_author_labels(session, works, deadline)
+            labels = self._owner_labels(session, works, deadline)
 
             def project(uri: str | None) -> OwnerSearchRecord | None:
                 work = None if uri is None else works.get(uri)
@@ -960,13 +960,22 @@ class InventaireMetadataProvider:
                 admitted[uri] = entity
         return admitted
 
-    def _owner_author_labels(
+    def _owner_labels(
         self,
         session: BoundedProviderSession,
         works: dict[str, dict[str, Any]],
         deadline: float,
     ) -> dict[str, str]:
-        """The authors' labels, from one optional read; a failure names none."""
+        """The works' own labels, then their authors' from one optional read.
+
+        A work with no title claim is named by its label, as preparation's
+        `_resolve_labels` names it; a failed authors read names no author.
+        """
+        labels: dict[str, str] = {}
+        for uri, work in works.items():
+            label = _optional_entity_label(work, lambda _count: None)
+            if label is not None:
+                labels[uri] = label
         authors: list[str] = []
         for work in works.values():
             try:
@@ -979,8 +988,7 @@ class InventaireMetadataProvider:
         try:
             entities = self._owner_entities(session, wanted, ("labels",), deadline)
         except (ProviderFailure, TypeError, ValueError):
-            return {}
-        labels: dict[str, str] = {}
+            return labels
         for uri, entity in entities.items():
             label = _optional_entity_label(entity, lambda _count: None)
             if label is not None:
