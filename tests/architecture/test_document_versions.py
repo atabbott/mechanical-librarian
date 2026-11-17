@@ -45,7 +45,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "POLICY_SCHEMA_VERSION",
         "metadata-policy-profile-v3",
     ),
-    ("mechanical_librarian.application.configuration", "CONFIG_SCHEMA", "config-v12"),
+    ("mechanical_librarian.application.configuration", "CONFIG_SCHEMA", "config-v13"),
     (
         "mechanical_librarian.domain.owner_settings",
         "OWNER_SETTINGS_SCHEMA",
@@ -100,7 +100,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.reviewer_access",
         "REVIEWER_ACCESS_VIEW_SCHEMA",
-        "reviewer-access-view-v5",
+        "reviewer-access-view-v6",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -175,7 +175,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.reviewer_access",
         "REVIEWER_ACCESS_SCHEMA",
-        "reviewer-access-v5",
+        "reviewer-access-v6",
     ),
     (
         "mechanical_librarian.application.cover_packet_semantics",

@@ -31,8 +31,8 @@ from mechanical_librarian.domain.validation import (
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-ConfigSchemaVersion = Literal["config-v12"]
-CONFIG_SCHEMA: Final[ConfigSchemaVersion] = "config-v12"
+ConfigSchemaVersion = Literal["config-v13"]
+CONFIG_SCHEMA: Final[ConfigSchemaVersion] = "config-v13"
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _CONTACT_EMAIL = re.compile(
@@ -140,6 +140,8 @@ class ReviewWebConfiguration:
     work_identity: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER
     # The taste profile builder's durable daily request ceiling (#1372 R4).
     cover_taste_build_daily_requests: int = 8
+    # The taste judge's durable daily request ceiling (#1372 PR 4, Q6).
+    cover_taste_judge_daily_requests: int = 5_000
 
     def __post_init__(self) -> None:
         if (
@@ -196,6 +198,8 @@ class ReviewWebConfiguration:
             or type(self.work_identity) is not WorkIdentityLevel
             or type(self.cover_taste_build_daily_requests) is not int
             or not 1 <= self.cover_taste_build_daily_requests <= 100
+            or type(self.cover_taste_judge_daily_requests) is not int
+            or not 1 <= self.cover_taste_judge_daily_requests <= 50_000
         ):
             raise ConfigurationError("review web configuration is invalid")
         try:

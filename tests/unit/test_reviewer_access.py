@@ -202,6 +202,19 @@ def test_taste_build_takes_either_engine_with_prices_only_for_openrouter() -> No
     )
     assert codex.cover_taste_build == CodexTaskSelection(engine="codex")
     assert codex.taste_metadata is None
+    # The judge is a separate task on either engine (#1372 PR 4, A1).
+    judge = ReviewerAccessDocument.model_validate(
+        {
+            "schema_version": REVIEWER_ACCESS_SCHEMA,
+            "revision": 1,
+            "cover_taste_build": {"engine": "codex"},
+            "cover_taste_judge": {"engine": "openrouter", "model": "example/vision"},
+            "judge_metadata": _TASTE_PRICES,
+        }
+    )
+    assert judge.cover_taste_judge == OpenRouterTaskSelection(
+        engine="openrouter", model="example/vision"
+    )
     for refused in (
         {"cover_taste_build": {"engine": "codex"}, "taste_metadata": _TASTE_PRICES},
         {"cover_taste_build": {"engine": "codex", "model": "gpt-5.6-sol"}},
@@ -217,7 +230,18 @@ def test_taste_build_takes_either_engine_with_prices_only_for_openrouter() -> No
             "cover_taste_build": {"engine": "openrouter", "model": "example/other"},
             "taste_metadata": _TASTE_PRICES,
         },
-        {"cover_taste_judge": {"engine": "openrouter", "model": "example/vision"}},
+        # The judge's prices are its own: never the builder's model's.
+        {
+            "cover_taste_build": {"engine": "openrouter", "model": "example/vision"},
+            "cover_taste_judge": {"engine": "codex"},
+            "judge_metadata": _TASTE_PRICES,
+        },
+        {
+            "cover_taste_judge": {"engine": "openrouter", "model": "example/other"},
+            "judge_metadata": _TASTE_PRICES,
+        },
+        {"cover_taste_judge": {"engine": "codex", "model": "gpt-5.6-sol"}},
+        {"cover_taste_suggest": {"engine": "codex"}},
     ):
         with pytest.raises(ValidationError):
             ReviewerAccessDocument.model_validate(

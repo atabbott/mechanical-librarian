@@ -136,7 +136,7 @@ def _built(
     root: Path,
     decisions: int = 25,
     *,
-    codex: Callable[[bytes, AdmittedTasteBuildRequest], str] | None = None,
+    codex: Callable[[bytes, Any], str] | None = None,
     daily_limit: int = 8,
 ) -> Iterator[_Built]:
     """Select OpenRouter for the taste build, or Codex answering through `codex`."""

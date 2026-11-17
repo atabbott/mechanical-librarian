@@ -1383,6 +1383,57 @@
             "title": "Free Tier Caveat",
             "type": "string"
           },
+          "judge_daily_requests": {
+            "default": 5000,
+            "maximum": 50000.0,
+            "minimum": 1.0,
+            "title": "Judge Daily Requests",
+            "type": "integer"
+          },
+          "judge_mapping": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "codex": "#/components/schemas/CodexTaskSelection",
+                    "openrouter": "#/components/schemas/OpenRouterTaskSelection"
+                  },
+                  "propertyName": "engine"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CodexTaskSelection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OpenRouterTaskSelection"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Judge Mapping"
+          },
+          "judge_metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoverModelMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "judge_recommendations": {
+            "default": [],
+            "items": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$",
+              "type": "string"
+            },
+            "title": "Judge Recommendations",
+            "type": "array"
+          },
           "mapping": {
             "anyOf": [
               {
@@ -1431,8 +1482,8 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "reviewer-access-view-v5",
-            "default": "reviewer-access-view-v5",
+            "const": "reviewer-access-view-v6",
+            "default": "reviewer-access-view-v6",
             "title": "Schema Version",
             "type": "string"
           },
@@ -8860,7 +8911,8 @@
             "enum": [
               "cover_observation",
               "description_rewrite",
-              "cover_taste_build"
+              "cover_taste_build",
+              "cover_taste_judge"
             ],
             "title": "Task",
             "type": "string"
@@ -13285,7 +13337,8 @@
             "enum": [
               "cover_observation",
               "description_rewrite",
-              "cover_taste_build"
+              "cover_taste_build",
+              "cover_taste_judge"
             ],
             "title": "Task",
             "type": "string"
@@ -22806,6 +22859,121 @@
           }
         ],
         "summary": "Test Description Model"
+      }
+    },
+    "/api/v1/reviewer-access/judge-model/test": {
+      "post": {
+        "description": "Observe the suggestion model's image input and prices (#1372 PR 4).",
+        "operationId": "test_judge_model_api_v1_reviewer_access_judge_model_test_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_OpenRouterWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverModelMetadata"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Test Judge Model"
       }
     },
     "/api/v1/reviewer-access/openrouter": {

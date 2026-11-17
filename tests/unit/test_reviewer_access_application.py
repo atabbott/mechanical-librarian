@@ -130,6 +130,10 @@ class _OpenRouter:
         self.calls.append(("taste", self.model))
         raise RuntimeError("typed provider failure")
 
+    def run_taste_judge(self, *_args):
+        self.calls.append(("judge", self.model))
+        raise RuntimeError("typed provider failure")
+
     def close(self):
         self.calls.append(("close", self.model))
 
@@ -1664,3 +1668,86 @@ def test_codex_taste_replies_count_usage_and_map_schema_failure_to_no_result():
     with pytest.raises(ReviewerAccessApplicationError) as other:
         client.run_taste_build(b"other-profile", object())  # type: ignore[arg-type]  # reason: as above
     assert other.value.code == "access_changed"
+
+
+def test_judge_model_is_tested_selected_opened_and_cleared_on_openrouter():
+    """The taste judge is its own OpenRouter task beside the build (#1372 PR 4)."""
+    operations, _, calls, _ = _operations()
+    cover = operations.configure_openrouter(
+        expected_revision=1, api_key="saved-secret", model="example/a"
+    )
+    assert operations.current_taste_judge_model() is None
+    with pytest.raises(ReviewerAccessApplicationError) as missing:
+        operations.open_taste_judge()
+    assert missing.value.code == "not_configured"
+    tested = operations.test_taste_model("", "example/vision", "cover_taste_judge")
+    assert tested.model == "example/vision"
+    view = operations.configure_openrouter(
+        expected_revision=cover.revision,
+        api_key="",
+        model="example/vision",
+        task="cover_taste_judge",
+    )
+    assert view.taste_mapping is None
+    assert view.judge_mapping == OpenRouterTaskSelection(
+        engine="openrouter", model="example/vision"
+    )
+    assert view.judge_metadata is not None
+    assert view.judge_recommendations == ()
+    assert operations.current_taste_judge_model() == "example/vision"
+    assert operations.current_taste_build_model() is None
+    engine, model, profile, client = operations.open_taste_judge()
+    assert (engine, model) == ("openrouter", "example/vision")
+    assert b"openrouter-taste-judge-profile-v1" in profile
+    client.close()
+
+    class BuildOnly(_OpenRouter):
+        run_taste_judge = None  # type: ignore[assignment]
+
+    operations._openrouter_factory = lambda key, model: BuildOnly(key, model, calls)
+    with pytest.raises(ReviewerAccessApplicationError) as unable:
+        operations.open_taste_judge()
+    assert unable.value.code == "unreachable"
+    assert calls[-1] == ("close", "example/vision")
+    without = operations.select_none(
+        expected_revision=view.revision, task="cover_taste_judge"
+    )
+    assert without.judge_mapping is None and without.judge_metadata is None
+    assert without.mapping == view.mapping
+    again = operations.configure_openrouter(
+        expected_revision=without.revision,
+        api_key="",
+        model="example/vision",
+        task="cover_taste_judge",
+    )
+    cleared = operations.clear_openrouter(expected_revision=again.revision)
+    assert cleared.judge_mapping is None and cleared.judge_metadata is None
+    assert operations.current_taste_judge_model() is None
+
+
+def test_codex_judge_runs_through_the_taste_binding_and_sign_in_changes_clear_it():
+    """A Codex judgement reuses the contained taste runner; a schema failure is
+    a reply with no text, and start or clear Codex drops the judge's Codex
+    selection (#1372 PR 4)."""
+    operations, _auth, openrouter, _codex = _operations(auth_state="usable")
+    selected = operations.select_codex(expected_revision=1, task="cover_taste_judge")
+    assert selected.judge_mapping == CodexTaskSelection(engine="codex")
+    assert selected.taste_mapping is None
+    assert operations.current_taste_judge_model() == "gpt-5.4"
+    runs = _codex_taste(
+        operations,
+        ['{"decision":"abstain"}', ContainedReviewerError("malformed_output")],
+    )
+    engine, model, profile, client = operations.open_taste_judge()
+    assert (engine, model, profile) == ("codex", "gpt-5.4", b"codex-profile")
+    request = object()
+    reply = client.run_taste_judge(profile, request)  # type: ignore[arg-type]  # reason: the fake runner never reads the request
+    assert (reply.text, reply.usage_reported) == ('{"decision":"abstain"}', True)
+    malformed = client.run_taste_judge(profile, request)  # type: ignore[arg-type]  # reason: as above
+    assert (malformed.text, malformed.usage_reported) == (None, True)
+    assert [run[1] for run in runs] == [request, request]
+    assert openrouter == []
+
+    access, _started = operations.start_codex(expected_revision=selected.revision)
+    assert access.judge_mapping is None
+    assert operations._repository.read()[0].cover_taste_judge is None

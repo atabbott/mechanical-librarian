@@ -349,8 +349,10 @@ INVENTORY: dict[tuple[str, str], Row] = {
     # Price and disclosure probes never write (`test_description_model`,
     # `describe_contained_description`).
     ("POST", "/api/v1/reviewer-access/description-model/test"): _REVIEWER_NO_COMMIT,
-    # `ReviewerAccessOperations.test_taste_model` probes and stores nothing.
+    # `ReviewerAccessOperations.test_taste_model` probes and stores nothing,
+    # for the taste build and the taste judge alike.
     ("POST", "/api/v1/reviewer-access/taste-model/test"): _REVIEWER_NO_COMMIT,
+    ("POST", "/api/v1/reviewer-access/judge-model/test"): _REVIEWER_NO_COMMIT,
     (
         "POST",
         "/api/v1/reviewer-access/description-model/contained",

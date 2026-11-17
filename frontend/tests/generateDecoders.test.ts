@@ -119,7 +119,7 @@ describe('the real review API document', () => {
     const emitted = Object.entries(responseDecoders).flatMap(([key, statuses]) =>
       Object.keys(statuses).map((status) => `${key} ${status}`),
     )
-    expect(emitted).toHaveLength(81)
+    expect(emitted).toHaveLength(82)
     expect(new Set(emitted)).toEqual(expected)
     expect(emitted.some((key) => key.startsWith('POST /api/v1/operations/support/export'))).toBe(
       false,
