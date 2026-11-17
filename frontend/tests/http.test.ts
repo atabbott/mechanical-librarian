@@ -7023,6 +7023,17 @@ describe('taste profile decoder (#1372)', () => {
       code: 'invalid_taste_metadata',
     })
   })
+
+  it('refuses a reviewer-access answer without the judge members', async () => {
+    // Every answer carries them; a stub without them fails the read whole.
+    const rest = Object.fromEntries(
+      Object.entries(reviewerAccessPayload()).filter(([key]) => !key.startsWith('judge_')),
+    )
+    await expect(readReviewerAccess(rest)).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_response',
+    })
+  })
 })
 
 describe('Library progress (#1335)', () => {

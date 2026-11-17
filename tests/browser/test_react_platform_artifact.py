@@ -222,6 +222,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                             "taste_metadata": None,
                             "taste_daily_requests": 8,
                             "taste_recommendations": ["anthropic/claude-sonnet-5.5"],
+                            "judge_mapping": None,
+                            "judge_metadata": None,
+                            "judge_daily_requests": 5000,
+                            "judge_recommendations": ["openai/gpt-6-luna"],
                         }
                     ),
                 )
