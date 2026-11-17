@@ -2257,7 +2257,7 @@ def test_verified_human_choice_can_be_corrected_on_the_same_current_case(
         idempotency_key="verified-replacement-keep-0001",
         occurred_at=24,
     )
-    repository.record_human_decision(correction)
+    correction = HumanDecision.from_json(repository.record_human_decision(correction))
     source = repository.field_effect_authority_source(correction)
     assert source["pre_value"] == selected["value"]
     assert source["decision_value"] == {"kind": selected["kind"], "value": original}

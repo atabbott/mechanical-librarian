@@ -916,7 +916,8 @@ _HUMAN_DECISIONS_SQL = (
     "OR (outcome='owner_entered' AND json_type(selected_value_document,'$.value')='null')), "
     # Only a keep names the write it goes back on, frozen when it is
     # recorded (ADR-0105).
-    "CHECK(json_type(document,'$.follows')='null' OR (outcome='keep_current' "
+    "CHECK(json_valid(document)=0 OR json_type(document,'$.follows')='null' "
+    "OR (outcome='keep_current' "
     "AND json_type(document,'$.follows')='text')))"
 )
 # Browse, counts and detail ask for a case's decisions per destination, and the

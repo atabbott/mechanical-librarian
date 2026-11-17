@@ -654,6 +654,22 @@ def _lookups(
         idempotency_key="pending-field-effect-lookup-later",
         occurred_at=earlier.occurred_at + 1,
     )
+    # A keep reads the write frozen with it (#1523), so History asks its
+    # question of a later accept.
+    proposal = next(
+        value for value in case.proposals if value["proposal_id"] == earlier.proposal_id
+    )
+    accept = HumanDecision.create(
+        case,
+        proposal_id=earlier.proposal_id,
+        target_fingerprint=earlier.target_fingerprint,
+        destination=earlier.destination,
+        actor="owner",
+        outcome="accept",
+        selected_value=proposal["result"]["alternatives"][0]["value"],
+        idempotency_key="pending-field-effect-lookup-history",
+        occurred_at=earlier.occurred_at + 2,
+    )
     connection.execute(
         "INSERT INTO field_effect_authorities(decision_id,current,updated_at,document) "
         "VALUES(?,1,0,'{}')",
@@ -672,7 +688,10 @@ def _lookups(
             "SELECT 1 FROM field_effects WHERE rowid IN",
         ),
         "history": (
-            lambda: repository.get_review_case_history(case_id, 20),
+            lambda: (
+                repository.record_human_decision(accept),
+                repository.get_review_case_history(case_id, 20),
+            ),
             "SELECT earlier.decision_id,earlier.ordinal",
         ),
         "authority": (
@@ -695,9 +714,9 @@ def _lookups(
         }
     (ordinal,) = connection.execute(
         "SELECT ordinal FROM human_decisions WHERE decision_id=?",
-        (later.decision_id,),
+        (accept.decision_id,),
     ).fetchone()
-    # History asks once per event; keep the later decision's question.
+    # History asks once per event; keep the accept's question.
     traced["history"] = {
         statement
         for statement in traced["history"]
