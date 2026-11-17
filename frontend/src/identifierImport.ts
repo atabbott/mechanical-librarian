@@ -40,8 +40,8 @@ const countWords: Readonly<Record<IdentifierCountKey, readonly [string, string]>
 export const countOrder = Object.keys(countWords) as readonly IdentifierCountKey[]
 export const countPhrase = (key: IdentifierCountKey, value: number) =>
   `${number(value)} ${countWords[key][value === 1 ? 1 : 0]}`
-export const summaryLine = (preview: Pick<IdentifierPreviewView, 'rows' | 'counts'>) =>
-  `${number(preview.rows)} ${preview.rows === 1 ? 'row' : 'rows'}: ${number(preview.counts.will_link)} will be linked, ${number(preview.rows - preview.counts.will_link)} will not.`
+export const summaryLine = (preview: Pick<IdentifierPreviewView, 'rows'>) =>
+  `${number(preview.rows)} ${preview.rows === 1 ? 'row' : 'rows'} in the file.`
 
 export const reasonCopy: Readonly<Record<IdentifierRefusedRow['reason'], string>> = {
   no_item: 'Matches no work in this library',
@@ -54,18 +54,20 @@ export const reasonCopy: Readonly<Record<IdentifierRefusedRow['reason'], string>
   conflicting: 'Another row gives this work a different identifier',
   already_linked: 'Already linked. Change the link from the work in Library.',
   row_shape: 'Needs two values separated by one tab',
-  row_too_long: 'Longer than 4,096 bytes',
+  row_too_long: 'Longer than 4 KiB',
 }
 
 export const formatText =
-  'The first line is `item` or `path`, a tab, then `identifier`. Each line after it names one work, by its Audiobookshelf item ID or its path in the library. Then comes a tab and the ISBN of an ebook or the ASIN of an audiobook.'
+  "The first line is `item` or `path`, a tab, then `identifier`. Each line after it names one work by its path or Audiobookshelf item ID, then a tab, then the ebook's ISBN or the audiobook's ASIN."
 export const formatExample = ['path\tidentifier', 'Fantasy/The Hollow Crown\t9780306406157']
 
-const libraryUnreadable = "This library's works could not be read. Try again in a minute."
-/** Why a file was refused before or at its preview, by the server's code. */
-export const fileRefusalCopy = (code: string) =>
+export const fileTooLargeCopy = 'This file is over 1 MiB. Split it and import each part.'
+/** Why a file was refused before or at its preview, for the server's own
+ * file and library refusals; any other failure reads as the app's route
+ * failures do. */
+export const fileRefusalCopy = (code: string): string | undefined =>
   ({
-    body_too_large: 'This file is over 1 MiB. Split it and import each part.',
+    body_too_large: fileTooLargeCopy,
     file_encoding: 'This file is not UTF-8 text. Save it as UTF-8 and choose it again.',
     file_control_character:
       'This file has a control character. Save it as plain text and choose it again.',
@@ -73,16 +75,16 @@ export const fileRefusalCopy = (code: string) =>
     file_too_many_rows: 'This file has more than 5,000 rows. Split it and import each part.',
     file_no_rows: 'This file has no rows after its first line.',
     library_not_found: 'This library is not in the saved settings. Reload the page.',
-  })[code] ?? libraryUnreadable
+    library_unreadable: "This library's works could not be read. Try again in a minute.",
+  })[code]
 
-export const staleCopy = "This library's works changed after the preview. Preview the file again."
-export const closedCopy = 'This preview is no longer open. Preview the file again.'
+export const staleCopy = "This library's works changed after the preview."
+export const closedCopy = 'This preview is no longer open.'
 export const importedCopy = 'This preview was already imported. Its import is in Activity.'
 export const checkingImportCopy =
   'No answer came back for the import. Checking whether it was recorded…'
 export const notRecordedCopy = 'The import was not recorded.'
-export const notRecordedClosedCopy =
-  'The import was not recorded, and the preview has closed. Preview the file again.'
+export const notRecordedClosedCopy = 'The import was not recorded, and the preview has closed.'
 export const uncheckedCopy =
   'No answer came back, and Mechanical Librarian could not check the import. Check Activity before importing this file again.'
 

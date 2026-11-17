@@ -8,6 +8,7 @@ import {
   type IdentifierPreviewView,
   type ReviewHttp,
 } from '../src/api/http'
+import { routeFailureCopy } from '../src/routeFailure'
 import { activity, createHttp, renderRoute } from './fixtures'
 import { view } from './settingsFixtures'
 
@@ -150,12 +151,76 @@ describe('Import identifiers in Settings › Libraries', () => {
     expect(http.previewIdentifiers).toHaveBeenCalledWith('home', 'a-very_long-library-name', file())
   })
 
+  it.each([
+    ['a server fault', new ApiError(503, 'unavailable')],
+    ['a failure that is not the server’s', new TypeError('upload file changed')],
+  ])('reads %s as the app’s other failures, not as an unreadable library', async (_n, error) => {
+    const http = createHttp()
+    http.previewIdentifiers = vi.fn(async () => {
+      throw error
+    })
+    const user = await openImport(http)
+    await choose(user)
+    const refusal = await screen.findByRole('alert')
+    expect(refusal).toHaveTextContent(routeFailureCopy(error).message)
+    expect(refusal).not.toHaveTextContent("This library's works could not be read.")
+  })
+
+  it('takes the same file again once it has been chosen', async () => {
+    const http = createHttp()
+    const user = await openImport(http)
+    const input = screen.getByLabelText<HTMLInputElement>('Choose file')
+    await user.upload(input, file())
+    // Cleared, so choosing the same file again (changed on disk) fires again.
+    expect(input.value).toBe('')
+    expect(screen.getByText('ids.tsv')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Preview' })).toBeEnabled()
+  })
+
+  it('shows each format example line as its own block', async () => {
+    const http = createHttp()
+    await openImport(http)
+    const lines = document.querySelectorAll('.identifier-import-example > code')
+    expect([...lines].map((line) => line.textContent)).toEqual([
+      'path\tidentifier',
+      'Fantasy/The Hollow Crown\t9780306406157',
+    ])
+  })
+
+  it('keeps the Settings sections in place while the works are linked', async () => {
+    const http = createHttp()
+    let release: () => void = () => undefined
+    http.previewIdentifiers = vi.fn(async () => demo())
+    http.importIdentifiers = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof imported>>((resolve) => {
+          release = () => resolve(imported())
+        }),
+    )
+    const user = await openImport(http)
+    await choose(user)
+    await user.click(await screen.findByRole('button', { name: 'Link 15 works' }))
+    const sections = screen.getByRole('navigation', { name: 'Settings sections' })
+    await waitFor(() =>
+      within(sections)
+        .getAllByRole('button')
+        .forEach((button) => expect(button).toBeDisabled()),
+    )
+    release()
+    await screen.findByText(/^Linked 15 works\./u)
+    await waitFor(() =>
+      within(sections)
+        .getAllByRole('button')
+        .forEach((button) => expect(button).toBeEnabled()),
+    )
+  })
+
   it('previews the issue’s 20 rows: counts that are not zero, and both lists', async () => {
     const http = createHttp()
     http.previewIdentifiers = vi.fn(async () => demo())
     const user = await openImport(http)
     await choose(user)
-    const summary = await screen.findByText('20 rows: 15 will be linked, 5 will not.')
+    const summary = await screen.findByText('20 rows in the file.')
     expect(summary).toHaveFocus()
     expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toContain(
       '2 match no work',
@@ -166,7 +231,7 @@ describe('Import identifiers in Settings › Libraries', () => {
         .getAllByRole('listitem')
         .map((item) => item.textContent),
     ).toEqual([
-      '15 will be linked',
+      // Will be linked is counted on the switch and the Link button only.
       '2 match no work',
       '1 matches more than one work',
       '1 has an identifier that is not an ISBN or ASIN',
@@ -215,7 +280,7 @@ describe('Import identifiers in Settings › Libraries', () => {
     http.previewIdentifiers = vi.fn(async () => preview(0, [{ row: 2, reason: 'row_shape' }]))
     const user = await openImport(http)
     await choose(user)
-    expect(await screen.findByText('1 row: 0 will be linked, 1 will not.')).toBeVisible()
+    expect(await screen.findByText('1 row in the file.')).toBeVisible()
     expect(screen.getByText('1 could not be read')).toBeVisible()
     expect(screen.getByText('No rows can be linked.')).toBeVisible()
     expect(screen.queryByRole('button', { name: /^Link/u })).toBeNull()
@@ -240,13 +305,8 @@ describe('Import identifiers in Settings › Libraries', () => {
   })
 
   it.each([
-    [
-      'preview_stale',
-      409,
-      "This library's works changed after the preview. Preview the file again.",
-      true,
-    ],
-    ['preview_not_found', 404, 'This preview is no longer open. Preview the file again.', true],
+    ['preview_stale', 409, "This library's works changed after the preview.", true],
+    ['preview_not_found', 404, 'This preview is no longer open.', true],
     [
       'preview_imported',
       409,
@@ -270,7 +330,7 @@ describe('Import identifiers in Settings › Libraries', () => {
     if (!again) return expect(previewAgain).toBeNull()
     if (previewAgain === null) throw new Error('Expected Preview again')
     await user.click(previewAgain)
-    expect(await screen.findByText('20 rows: 15 will be linked, 5 will not.')).toHaveFocus()
+    expect(await screen.findByText('20 rows in the file.')).toHaveFocus()
     expect(http.previewIdentifiers).toHaveBeenCalledTimes(2)
   })
 
@@ -406,6 +466,34 @@ describe('Withdraw this import in Activity', () => {
     expect(within(row).getByText('12')).toBeVisible()
     await user.click(within(row).getByRole('button', { name: /^Withdraw this import/u }))
     expect(within(row).getByText(/^Withdraw 12 links from this import\?/u)).toBeVisible()
+  })
+
+  it('puts Still linked after Not linked, and drops it once none remain', async () => {
+    const http = createHttp()
+    let current = status(12)
+    http.getIdentifierImport = vi.fn(async () => current)
+    http.withdrawIdentifierImport = vi.fn(async () => ({
+      import_id: importId,
+      withdrawn: 12,
+      scan_requested: true,
+      schema_version: 'identifier-import-withdrawal-v1' as const,
+    }))
+    const { user, row } = await openDetails(http)
+    await within(row).findByText('Still linked')
+    expect([...row.querySelectorAll('dt')].map((term) => term.textContent)).toEqual([
+      'Rows in the file',
+      'Linked',
+      'Not linked',
+      'Still linked',
+    ])
+    const live = within(row).getByRole('status')
+    await user.click(within(row).getByRole('button', { name: /^Withdraw this import/u }))
+    current = status(0, true)
+    await user.click(within(row).getByRole('button', { name: 'Withdraw links' }))
+    // The same status region, its text changed.
+    await waitFor(() => expect(live).toHaveTextContent('Withdrew 12 links.'))
+    expect(live).toHaveFocus()
+    await waitFor(() => expect(within(row).queryByText('Still linked')).toBeNull())
   })
 
   it.each([

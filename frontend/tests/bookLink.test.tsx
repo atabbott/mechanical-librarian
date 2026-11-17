@@ -306,7 +306,8 @@ describe('a link from an identifiers file (#1478)', () => {
     expect(
       within(dialog).getByText('Linked to ISBN 9780441172719 from an identifiers file'),
     ).toBeVisible()
-    expect(within(dialog).getByText('As this edition, ISBN 9780441172719')).toBeVisible()
+    // The line above names the ISBN; the scope line does not repeat it.
+    expect(within(dialog).getByText('As this edition', { exact: true })).toBeVisible()
     expect(within(dialog).getByRole('button', { name: 'Change the link' })).toBeVisible()
     await user.click(within(dialog).getByRole('button', { name: 'Withdraw the link' }))
     expect(

@@ -7875,6 +7875,18 @@ describe('the identifiers file wire (#1478)', () => {
     expect(init?.body).toBe(file)
   })
 
+  it('reads a row that blank lines pushed past line 5,001', async () => {
+    const pushed = preview({ refused: [{ row: 1_048_577, reason: 'no_item' }] })
+    await expect(
+      client(Response.json(pushed)).http.previewIdentifiers('abs', 'books', file),
+    ).resolves.toMatchObject({ refused: [{ row: 1_048_577 }] })
+    await expect(
+      client(
+        Response.json(preview({ refused: [{ row: 1_048_578, reason: 'no_item' }] })),
+      ).http.previewIdentifiers('abs', 'books', file),
+    ).rejects.toMatchObject({ status: 502 })
+  })
+
   it('sends a preview again once after a CSRF renewal, with the renewed token', async () => {
     const { fetchMock, http, keys } = client(challenge(), Response.json(preview()))
     await http.previewIdentifiers('abs', 'books', file)

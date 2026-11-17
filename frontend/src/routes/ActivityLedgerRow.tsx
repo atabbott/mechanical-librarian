@@ -1,9 +1,12 @@
 import { useMutation } from '@tanstack/react-query'
-import { useRef, useState, type ReactNode } from 'react'
+import { Fragment, useRef, useState, type ReactNode } from 'react'
 import { BuildMismatchError } from '../api/http'
 import type { ActivityEventView, ActivityTransitionView } from '../api/http'
 import { categoryLabel, noteDetail, noteLabel, stateLabel } from '../activityLabels'
-import { IdentifierImportWithdrawal } from '../components/IdentifierImportWithdrawal'
+import {
+  IdentifierImportStillLinked,
+  IdentifierImportWithdrawal,
+} from '../components/IdentifierImportWithdrawal'
 import { RecordedTime } from '../components/RecordedTime'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatWhen } from '../dates'
@@ -369,12 +372,18 @@ export function ActivityEventRow({
           ) : null}
           <dl>
             {event.evidence.map((item) => (
-              <div key={item.label}>
-                <dt>{item.label}</dt>
-                <dd>
-                  {language && item.label.endsWith(' value') ? languages(item.value) : item.value}
-                </dd>
-              </div>
+              <Fragment key={item.label}>
+                <div>
+                  <dt>{item.label}</dt>
+                  <dd>
+                    {language && item.label.endsWith(' value') ? languages(item.value) : item.value}
+                  </dd>
+                </div>
+                {/* An import's links still current, beside what it linked (#1478). */}
+                {event.identifier_import_id && item.label === 'Not linked' ? (
+                  <IdentifierImportStillLinked importId={event.identifier_import_id} />
+                ) : null}
+              </Fragment>
             ))}
           </dl>
           {/* Only an identifiers file import's own row names it (#1478). */}

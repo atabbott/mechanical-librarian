@@ -1,5 +1,5 @@
-// An identifiers file's preview (#1478): the summary, the counts that are not
-// zero, then one of its two lists, 100 rows at a time.
+// An identifiers file's preview (#1478): the summary, why rows will not be
+// linked, then one of its two lists, 100 rows at a time.
 import { useRef, useState } from 'react'
 import type { ReactNode, Ref } from 'react'
 
@@ -15,6 +15,8 @@ import {
 import { SegmentedControl } from './SegmentedControl'
 
 const page = 100
+// Will be linked is counted on the switch and the Link button, not here.
+const notLinkedKeys = countOrder.filter((key) => key !== 'will_link')
 const number = (value: number) => value.toLocaleString('en-US')
 
 // Show more moves focus to the first row it adds.
@@ -75,13 +77,15 @@ export function IdentifierImportPreview({
       <p className="identifier-import-summary" tabIndex={-1} ref={ref}>
         {summaryLine(preview)}
       </p>
-      <ul className="identifier-import-counts">
-        {countOrder
-          .filter((key) => preview.counts[key] > 0)
-          .map((key) => (
-            <li key={key}>{countPhrase(key, preview.counts[key])}</li>
-          ))}
-      </ul>
+      {notLinked > 0 ? (
+        <ul className="identifier-import-counts" aria-label="Why rows will not be linked">
+          {notLinkedKeys
+            .filter((key) => preview.counts[key] > 0)
+            .map((key) => (
+              <li key={key}>{countPhrase(key, preview.counts[key])}</li>
+            ))}
+        </ul>
+      ) : null}
       <SegmentedControl
         label="Rows"
         value={view}

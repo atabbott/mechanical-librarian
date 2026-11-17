@@ -2154,7 +2154,9 @@ dialog.find-book-dialog::backdrop { background:rgb(23 32 30 / .42); }
 .identifier-import-file p { max-width:62ch; margin:0; color:var(--soft); font-size:.8125rem; line-height:1.5; }
 .identifier-import-flow code { padding:0; background:none; color:inherit; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-weight:400; }
 /* The example wraps on a phone rather than scroll sideways. */
-.identifier-import-example { margin:0; padding:.55rem .7rem; border:1px solid var(--line); border-radius:.45rem; background:var(--surface-strong); color:var(--ink); font:.8125rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:2; }
+.identifier-import-example { margin:0; padding:.55rem .7rem; border:1px solid var(--line); border-radius:.45rem; background:var(--surface-strong); color:var(--ink); font:.8125rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; display:grid; gap:.15rem; }
+/* Each example line is its own block: a line that wraps hangs under its start, so the identifier never reads as a line of its own. */
+.identifier-import-example > code { display:block; padding-left:1.5rem; text-indent:-1.5rem; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:2; }
 .identifier-import-actions { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
 .identifier-import-status { margin:0; color:var(--soft); font-weight:650; }
 .identifier-import-refusal { margin:0; padding:.6rem .75rem; border:1px solid var(--danger); border-radius:.45rem; color:var(--danger); background:var(--danger-soft); font-weight:650; overflow-wrap:anywhere; }
@@ -2164,7 +2166,6 @@ dialog.find-book-dialog::backdrop { background:rgb(23 32 30 / .42); }
 .identifier-import-summary { margin:0; font-size:1.05rem; font-weight:750; }
 .identifier-import-counts { display:flex; flex-wrap:wrap; gap:.35rem; margin:0; padding:0; list-style:none; }
 .identifier-import-counts li { padding:.2rem .6rem; border:1px solid var(--line-strong); border-radius:.85rem; background:var(--surface); font-size:.8125rem; overflow-wrap:anywhere; }
-.identifier-import-counts li:first-child { border-color:var(--accent); color:var(--accent-strong); background:var(--accent-soft); font-weight:700; }
 .identifier-import-preview .cm-segmented { max-width:28rem; }
 .identifier-import-preview .cm-segmented button { font-size:.8125rem; }
 .identifier-import-list { display:grid; min-width:0; margin:0; padding:0; border:1px solid var(--line); border-radius:.5rem; background:var(--surface); list-style:none; }
@@ -2194,3 +2195,5 @@ dialog.find-book-dialog::backdrop { background:rgb(23 32 30 / .42); }
 .identifier-withdrawal-confirm p:focus { outline:none; }
 .identifier-withdrawal-confirm > div { display:flex; flex-wrap:wrap; gap:.5rem; }
 .identifier-withdrawal-status { margin:.6rem 0 0; padding-top:.65rem; border-top:1px solid var(--line); font-weight:650; }
+.identifier-withdrawal-status.is-empty { margin:0; padding:0; border:0; }
+.identifier-withdrawal.is-loading { min-height:2.75rem; box-sizing:content-box; }

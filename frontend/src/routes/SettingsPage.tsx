@@ -458,6 +458,8 @@ const SettingsEditor = ({
   const [libraryPage, setLibraryPage] = useState(0)
   // The saved library whose identifiers file import is open, in the list's place.
   const [importingName, setImporting] = useState<string | null>(null)
+  // While an import is being linked, the section menu cannot leave it.
+  const [importBusy, setImportBusy] = useState(false)
   const [focusTarget, setFocusTarget] = useState<string | null>(null)
   const statusTarget = useRef<HTMLParagraphElement>(null)
   // Set once a save meets a newer build: no later save can succeed in this tab.
@@ -723,6 +725,7 @@ const SettingsEditor = ({
       <div className="settings-compact-sections">
         <Dropdown
           ariaLabel="Settings section"
+          disabled={importBusy}
           value={active}
           options={sections.map((section) => ({
             value: section.id,
@@ -742,6 +745,7 @@ const SettingsEditor = ({
             <button
               type="button"
               key={section.id}
+              disabled={importBusy}
               aria-current={active === section.id ? 'page' : undefined}
               aria-describedby={`settings-${section.id}-changes`}
               onClick={() => void navigate({ search: { group: section.id } })}
@@ -985,6 +989,7 @@ const SettingsEditor = ({
                 connection={importing.connection}
                 library={importing.name}
                 label={importing.display_name ?? importing.name}
+                onBusy={setImportBusy}
                 onBack={() => {
                   setImporting(null)
                   setFocusTarget(`library.${importing.name}.identifier_import`)

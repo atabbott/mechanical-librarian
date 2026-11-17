@@ -89,12 +89,17 @@ export const linkLine = (link: OwnerLinkCurrent) =>
   link.provider === null
     ? `Linked to ${linkName(link)} from an identifiers file`
     : `Linked to ${linkName(link)}${byCreators(link.creators)} on ${sourceName(link.provider)}`
-export const scopeLine = (link: Pick<OwnerLinkCurrent, 'scope' | 'identifier'>) =>
+// A file link's line above already names its identifier (#1478).
+export const scopeLine = (link: Pick<OwnerLinkCurrent, 'scope' | 'identifier' | 'provider'>) =>
   link.scope === 'work'
     ? 'As this book'
     : link.scope === 'edition'
-      ? `As this edition, ISBN ${link.identifier ?? ''}`
-      : `As this recording, ASIN ${link.identifier ?? ''}`
+      ? link.provider === null
+        ? 'As this edition'
+        : `As this edition, ISBN ${link.identifier ?? ''}`
+      : link.provider === null
+        ? 'As this recording'
+        : `As this recording, ASIN ${link.identifier ?? ''}`
 
 // A link from an identifiers file names no source, so its lines say what any
 // of the library's sources found (#1478).

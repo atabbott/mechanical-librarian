@@ -6,13 +6,14 @@ import { Link } from '@tanstack/react-router'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode, Ref } from 'react'
 
-import { ApiError, BuildMismatchError, refusalCopy, sessionRefreshedCopy } from '../api/http'
+import { ApiError, BuildMismatchError, CsrfRenewedError, sessionRefreshedCopy } from '../api/http'
 import type { IdentifierPreviewView } from '../api/http'
 import {
   checkingImportCopy,
   closedCopy,
   fileLimitBytes,
   fileRefusalCopy,
+  fileTooLargeCopy,
   formatExample,
   formatText,
   importedCopy,
@@ -23,6 +24,7 @@ import {
   staleCopy,
   uncheckedCopy,
 } from '../identifierImport'
+import { routeFailureCopy } from '../routeFailure'
 import { useReviewContext } from '../router'
 import { Button } from './Button'
 import { IdentifierImportPreview } from './IdentifierImportPreview'
@@ -33,6 +35,7 @@ const Quoted = ({ text }: { text: string }) =>
   text.split('`').map((part, index) => (index % 2 ? <code key={index}>{part}</code> : part))
 
 type Step =
+  // `refusal` is the line to show, or 'build' for a stale browser build.
   | { kind: 'file'; refusal?: string }
   | { kind: 'checking' }
   | { kind: 'preview'; preview: IdentifierPreviewView; key: string; notice?: string }
@@ -89,20 +92,24 @@ function IdentifierImportFlow({
     setStep(next)
   }
   const preview = async (chosen: File) => {
-    if (chosen.size > fileLimitBytes) return show({ kind: 'file', refusal: 'body_too_large' })
+    if (chosen.size > fileLimitBytes) return show({ kind: 'file', refusal: fileTooLargeCopy })
     setStep({ kind: 'checking' })
     try {
       const result = await http.previewIdentifiers(connection, library, chosen)
       show({ kind: 'preview', preview: result, key: newKey() })
     } catch (error) {
+      // The server's own file and library refusals say what to do; any other
+      // failure (a file changed on disk since it was chosen, the network)
+      // reads as the app's other failures do.
       show({
         kind: 'file',
         refusal:
           error instanceof BuildMismatchError
             ? 'build'
-            : error instanceof ApiError
-              ? refusalCopy(error, error.code)
-              : 'unavailable',
+            : error instanceof CsrfRenewedError
+              ? sessionRefreshedCopy
+              : ((error instanceof ApiError ? fileRefusalCopy(error.code) : undefined) ??
+                routeFailureCopy(error).message),
       })
     }
   }
@@ -156,7 +163,11 @@ function IdentifierImportFlow({
         type="file"
         accept=".tsv,.txt,text/plain,text/tab-separated-values"
         aria-describedby={formatId}
-        onChange={(event) => setFile(event.currentTarget.files?.[0] ?? null)}
+        onChange={(event) => {
+          setFile(event.currentTarget.files?.[0] ?? null)
+          // Choosing the same file again, after it was changed, fires again.
+          event.currentTarget.value = ''
+        }}
       />
       <label htmlFor={inputId} className="identifier-import-choose">
         <span className="button-secondary">Choose file</span>
@@ -165,24 +176,36 @@ function IdentifierImportFlow({
       <p id={formatId}>
         <Quoted text={formatText} />
       </p>
-      <pre className="identifier-import-example">{formatExample.join('\n')}</pre>
+      <div className="identifier-import-example">
+        {formatExample.map((line) => (
+          <code key={line}>{line}</code>
+        ))}
+      </div>
     </div>
+  )
+  // One live region, first in every step and always there, so only its text
+  // changes and each change is announced.
+  const live = (
+    <p className="sr-only" role="status">
+      {step.kind === 'checking' ? 'Checking the file…' : step.kind === 'linking' ? 'Linking…' : ''}
+    </p>
   )
   if (step.kind === 'file' || step.kind === 'checking') {
     const checking = step.kind === 'checking'
     const refusal = step.kind === 'file' ? step.refusal : undefined
     return (
       <div className="identifier-import-flow">
+        {live}
         {refusal === 'build' ? (
           <StaleBuildRead lead="The file was not checked." />
         ) : refusal ? (
           <Line className="identifier-import-refusal" role="alert" target={focusLine}>
-            <Quoted text={refusal === sessionRefreshedCopy ? refusal : fileRefusalCopy(refusal)} />
+            <Quoted text={refusal} />
           </Line>
         ) : null}
         {chooser}
         {checking ? (
-          <p className="identifier-import-status" role="status">
+          <p className="identifier-import-status" aria-hidden="true">
             Checking the file…
           </p>
         ) : null}
@@ -205,6 +228,7 @@ function IdentifierImportFlow({
     const count = step.preview.counts.will_link
     return (
       <div className="identifier-import-flow">
+        {live}
         {step.kind === 'preview' && step.notice ? (
           <Line className="identifier-import-refusal" role="alert" target={focusLine}>
             {step.notice}
@@ -215,11 +239,6 @@ function IdentifierImportFlow({
           ref={step.kind === 'preview' && step.notice ? undefined : focusLine}
         />
         {count === 0 ? <p className="identifier-import-status">No rows can be linked.</p> : null}
-        {linking ? (
-          <p className="sr-only" role="status">
-            Linking…
-          </p>
-        ) : null}
         <div className="identifier-import-actions">
           {count > 0 ? (
             <Button
@@ -241,6 +260,7 @@ function IdentifierImportFlow({
   if (step.kind === 'refused')
     return (
       <div className="identifier-import-flow">
+        {live}
         {step.text === 'build' ? (
           <StaleBuildRead lead="The file was not imported." />
         ) : (
@@ -278,6 +298,7 @@ function IdentifierImportFlow({
     )
   return (
     <div className="identifier-import-flow">
+      {live}
       <Line className="identifier-import-success" role="status" target={focusLine}>
         {linkedWorks(step.linked)}. They are prepared again in the library&apos;s next scan. To undo
         the import, withdraw it in <ActivityLink />.
@@ -298,15 +319,22 @@ export function IdentifierImportSheet({
   library,
   label,
   onBack,
+  onBusy,
 }: {
   connection: string
   library: string
   label: string
   onBack: () => void
+  /** Whether a request is running, for the page's own way out. */
+  onBusy?: (busy: boolean) => void
 }) {
   const heading = useRef<HTMLHeadingElement>(null)
   const [busy, setBusy] = useState(false)
   useEffect(() => heading.current?.focus(), [])
+  useEffect(() => {
+    onBusy?.(busy)
+    return () => onBusy?.(false)
+  }, [busy, onBusy])
   return (
     <section className="identifier-import-sheet" aria-labelledby="identifier-import-heading">
       <div className="identifier-import-back">
