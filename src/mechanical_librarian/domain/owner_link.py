@@ -104,7 +104,9 @@ class OwnerLinkContradiction(StrEnum):
     VARIANT = "variant"
 
 
-OWNER_LINK_SOURCES: Final = frozenset({"search"})
+# `search`: chosen from a source's record (#1477); `file`: named by its ISBN or
+# ASIN in an identifiers file (#1478), with no source and no display snapshot.
+OWNER_LINK_SOURCES: Final = frozenset({"search", "file"})
 OWNER_LINK_MEDIA: Final = frozenset({"ebook", "audiobook"})
 OWNER_LINK_PROVIDERS: Final = frozenset(
     {"hardcover", "open_library", "google_books", "inventaire", "audible_catalog"}
@@ -183,10 +185,23 @@ def owner_asin(value: object) -> str:
 
 
 def record_identity_valid(
-    scope: OwnerLinkScope, provider: str, identity: object
+    scope: OwnerLinkScope, provider: str | None, identity: object
 ) -> bool:
-    """Whether `identity` follows the closed grammar of its scope and source."""
-    if type(identity) is not str or provider not in OWNER_LINK_PROVIDERS:
+    """Whether `identity` follows the closed grammar of its scope and source.
+
+    A file link names no source (`provider` None): only an edition's ISBN-13
+    or a recording's ASIN can be named that way.
+    """
+    if type(identity) is not str:
+        return False
+    if provider is None:
+        if scope is OwnerLinkScope.EDITION:
+            return _isbn13(identity)
+        return (
+            scope is OwnerLinkScope.RECORDING
+            and canonical_asin(identity) == identity
+        )
+    if provider not in OWNER_LINK_PROVIDERS:
         return False
     if scope is OwnerLinkScope.EDITION:
         return provider in EDITION_LINK_AUTHORITIES and _isbn13(identity)
@@ -208,7 +223,7 @@ def _isbn13(value: str) -> bool:
 
 
 def link_digest(
-    medium: str, scope: OwnerLinkScope, identity: str, provider: str
+    medium: str, scope: OwnerLinkScope, identity: str, provider: str | None
 ) -> str:
     """SHA-256 of the link's canonical identity (S5).
 
@@ -222,18 +237,23 @@ def link_digest(
         "scope": scope.value,
     }
     if scope is OwnerLinkScope.WORK:
-        value["provider"] = provider
+        value["provider"] = provider or ""
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
 class OwnerLinkTarget:
-    """What one link or replace row records: the record and its snapshot."""
+    """What one link or replace row records: the record and its snapshot.
+
+    A file link (#1478) names no source and keeps no snapshot: `provider` and
+    `display_title` are both `None`, with no creators, and only an edition or
+    a recording can be named that way.
+    """
 
     scope: OwnerLinkScope
-    provider: str
+    provider: str | None
     identity: str
-    display_title: str
+    display_title: str | None
     display_creators: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -241,6 +261,14 @@ class OwnerLinkTarget:
             self.scope, self.provider, self.identity
         ):
             raise OwnerLinkError("owner link target is invalid")
+        if self.provider is None or self.display_title is None:
+            if (self.provider, self.display_title, self.display_creators) != (
+                None,
+                None,
+                (),
+            ):
+                raise OwnerLinkError("owner link display is invalid")
+            return
         try:
             validate_projection_text(
                 self.display_title, "link title", MAX_DISPLAY_CHARACTERS
@@ -254,6 +282,11 @@ class OwnerLinkTarget:
                 validate_projection_text(value, "link creator", MAX_DISPLAY_CHARACTERS)
         except EvidenceValueError as error:
             raise OwnerLinkError("owner link display is invalid") from error
+
+    @property
+    def source(self) -> str:
+        """`file` for a link named by an identifiers file, else `search`."""
+        return "file" if self.provider is None else "search"
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,7 +346,8 @@ class OwnerLink:
     row_id: str
     medium: str
     scope: OwnerLinkScope
-    provider: str
+    # `None` for a file link (#1478), which names no source.
+    provider: str | None
     identity: str
 
     def __post_init__(self) -> None:
@@ -329,6 +363,11 @@ class OwnerLink:
     @property
     def digest(self) -> str:
         return link_digest(self.medium, self.scope, self.identity, self.provider)
+
+    @property
+    def source(self) -> str:
+        """`file` for a link named by an identifiers file, else `search`."""
+        return "file" if self.provider is None else "search"
 
     @property
     def lookup(self) -> OwnerLinkLookup:
