@@ -29,10 +29,14 @@ if (!base) throw new Error('workspace fixture requires a title field')
 const control = (value: Partial<OwnerControlView>): OwnerControlView => ({
   entry: null,
   subset: null,
+  names: null,
+  clear: false,
+  current: null,
   withdraw: null,
   ...value,
 })
 const entry = control({
+  current: 'THE SILENT ORCHARD (Disc 2)',
   entry: {
     maxCharacters: 512,
     suggestions: [
@@ -98,7 +102,7 @@ const owner = (fields: () => readonly Field[], record?: ReviewHttp['recordDecisi
           { ...detail, id: caseId },
           {
             invalidation_sequences: [],
-            schema_version: 'review-decision-v1',
+            schema_version: 'human-decision-ack-v2' as const,
             actor: 'owner',
             application: 'apply',
             application_reason: null,
@@ -176,10 +180,11 @@ describe('owner-entered values', () => {
     expect(count).toHaveTextContent('')
     const record = within(panel).getByRole('button', { name: 'Record this value' })
     await user.click(record)
-    expect(within(panel).getByRole('alert')).toHaveTextContent('Enter a value first.')
+    expect(within(panel).getByRole('alert')).toHaveTextContent('Enter a title.')
     expect(http.recordDecision).not.toHaveBeenCalled()
     await user.type(input, '  The   Silent Orchard ')
-    expect(count).toHaveTextContent('of 512 characters')
+    // The count is said only once the value is too long (#1523).
+    expect(count).toHaveTextContent('')
     await user.click(record)
     await user.click(within(panel).getByRole('button', { name: 'Recording…' }))
     expect(http.recordDecision).toHaveBeenCalledTimes(1)
@@ -241,6 +246,8 @@ describe('owner-entered values', () => {
       proposalId: 'proposal-genres',
       targetFingerprint: 'fingerprint-genres',
       ownerControl: control({
+        current: ['Drama'],
+        clear: true,
         subset: {
           maxItems: 32,
           options: [
@@ -254,7 +261,7 @@ describe('owner-entered values', () => {
     const http = owner(() => [genres])
     renderRoute('/library?lens=all&preview=case-1&field=genres', http)
     const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
-    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     const group = within(panel).getByRole('group', { name: 'Choose genres' })
     const boxes = within(group).getAllByRole('checkbox')
     expect(boxes.map((box) => box.closest('label')?.textContent)).toEqual([
@@ -464,6 +471,7 @@ describe('choosing the previous value again', () => {
     currentValue: 'The Silent Orchard',
     currentRaw: 'The Silent Orchard',
     ownerControl: control({
+      current: 'The Silent Orchard',
       entry: {
         maxCharacters: 512,
         suggestions: [{ rule: 'previous', value: 'THE SILENT ORCHARD (Disc 2)' }],
@@ -504,6 +512,8 @@ describe('choosing the previous value again', () => {
       currentRaw: ['Fantasy'],
       proposedValues: [],
       ownerControl: control({
+        current: ['Fantasy'],
+        clear: true,
         subset: {
           maxItems: 32,
           options: [
@@ -516,7 +526,7 @@ describe('choosing the previous value again', () => {
     const http = owner(() => [genres])
     renderRoute('/library?lens=all&preview=case-1&field=genres', http)
     const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
-    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     const group = within(panel).getByRole('group', { name: 'Choose genres' })
     expect(
       within(group)
@@ -887,6 +897,8 @@ describe('owner review fixes', () => {
       destination: 'genres' as const,
       currentRaw: ['Drama'],
       ownerControl: control({
+        current: ['Drama'],
+        clear: true,
         subset: {
           maxItems: 32,
           options: [{ value: 'Drama', current: true, proposed: false, previous: false }],
@@ -898,10 +910,10 @@ describe('owner review fixes', () => {
       owner(() => [genres]),
     )
     const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
-    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     expect(within(panel).getByRole('checkbox', { name: /Drama/u })).toHaveFocus()
     await user.keyboard('{Escape}')
-    expect(within(panel).getByRole('button', { name: 'Choose genres' })).toHaveFocus()
+    expect(within(panel).getByRole('button', { name: 'Change' })).toHaveFocus()
   })
 
   it('S2 ties a refusal to the input it is about', async () => {
@@ -911,7 +923,7 @@ describe('owner review fixes', () => {
     const input = within(panel).getByRole('textbox', { name: 'Your value for Title' })
     await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
     expect(input).toHaveAttribute('aria-invalid', 'true')
-    expect(input).toHaveAccessibleDescription(/Enter a value first\./u)
+    expect(input).toHaveAccessibleDescription(/Enter a title\./u)
     expect(within(panel).getAllByRole('alert')).toHaveLength(1)
     await user.keyboard('{Escape}')
     expect(within(panel).getByRole('button', { name: 'Enter a value' })).toHaveFocus()
@@ -927,6 +939,8 @@ describe('owner review fixes', () => {
       currentRaw: ['Drama'],
       proposedValues: [{ kind: 'list', value: ['Fantasy'] }],
       ownerControl: control({
+        current: ['Drama'],
+        clear: true,
         subset: {
           maxItems: 32,
           options: [
@@ -940,7 +954,7 @@ describe('owner review fixes', () => {
     const http = owner(() => fields)
     renderRoute('/library?lens=all&preview=case-1&field=genres', http)
     const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
-    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     await user.click(within(panel).getByRole('checkbox', { name: /Fantasy/u }))
     fields = [
       {
@@ -1093,7 +1107,7 @@ describe('a pin on each value', () => {
             { ...detail, id: caseId },
             {
               invalidation_sequences: [],
-              schema_version: 'review-decision-v1',
+              schema_version: 'human-decision-ack-v2' as const,
               actor: 'owner',
               application: 'apply',
               application_reason: null,
@@ -1706,7 +1720,7 @@ describe('a pin in the No change panel', () => {
             { ...detail, id: caseId },
             {
               invalidation_sequences: [],
-              schema_version: 'review-decision-v1',
+              schema_version: 'human-decision-ack-v2' as const,
               actor: 'owner',
               application: 'apply',
               application_reason: null,

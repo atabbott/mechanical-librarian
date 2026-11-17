@@ -179,7 +179,9 @@ def _current_case_with_completed_work(path: Path, report: MetadataReport | None 
     return repository, report, old, admitted["review_case_id"]
 
 
-def _human_decision(repository, case_id: str, idempotency_key: str) -> HumanDecision:
+def _human_decision(
+    repository, case_id: str, idempotency_key: str, *, accept: bool = False
+) -> HumanDecision:
     case = ReviewCase.create_from_data(
         json.loads(repository.get_review_case(case_id))["case"]
     )
@@ -194,8 +196,10 @@ def _human_decision(repository, case_id: str, idempotency_key: str) -> HumanDeci
         target_fingerprint=case.target_fingerprint,
         destination=proposal["destination"],
         actor="owner",
-        outcome="keep_current",
-        selected_value=None,
+        outcome="accept" if accept else "keep_current",
+        selected_value=proposal["result"]["alternatives"][0]["value"]
+        if accept
+        else None,
         idempotency_key=idempotency_key,
         occurred_at=24,
     )
@@ -2154,7 +2158,9 @@ def test_field_effect_authority_requires_exact_published_checkpoint(
     state_path: Path,
 ) -> None:
     repository, _, _, case_id = _current_case_with_completed_work(state_path)
-    decision = _human_decision(repository, case_id, "checkpoint-authority-0001")
+    decision = _human_decision(
+        repository, case_id, "checkpoint-authority-0001", accept=True
+    )
     repository.record_human_decision(decision)
     assert (
         repository.field_effect_authority_source(decision)["review_case_id"] == case_id
@@ -2251,7 +2257,7 @@ def test_verified_human_choice_can_be_corrected_on_the_same_current_case(
         idempotency_key="verified-replacement-keep-0001",
         occurred_at=24,
     )
-    repository.record_human_decision(correction)
+    correction = HumanDecision.from_json(repository.record_human_decision(correction))
     source = repository.field_effect_authority_source(correction)
     assert source["pre_value"] == selected["value"]
     assert source["decision_value"] == {"kind": selected["kind"], "value": original}
@@ -2346,7 +2352,11 @@ def test_field_effect_authority_rejects_a_non_list_fields_projection(
 ) -> None:
     """Reject a malformed projection before iterating it, not while."""
     repository, _, _, case_id = _current_case_with_completed_work(state_path)
-    decision = _human_decision(repository, case_id, "fields-projection-0001")
+    # An accept binds its own value; a keep with no write to go back from
+    # binds nothing (#1523), so it cannot show where the projection is read.
+    decision = _human_decision(
+        repository, case_id, "fields-projection-0001", accept=True
+    )
     repository.record_human_decision(decision)
     assert (
         repository.field_effect_authority_source(decision)["review_case_id"] == case_id

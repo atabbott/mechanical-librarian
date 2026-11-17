@@ -546,6 +546,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda row: self._validate_shadow_outcome_row(row)
             ),
             previous_field_values=self._field_effect_activity._previous_field_values,
+            written_field_values=self._field_effect_activity._written_field_values,
+            human_predecessor=self._field_effect_activity._human_predecessor,
+            followed_write=self._field_effect_activity._followed_write,
         )
         self._review_projections = SQLiteReviewProjectionRepository(
             connection,
@@ -612,6 +615,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
             previous_field_values=self._field_effect_activity._previous_field_values,
+            written_field_values=self._field_effect_activity._written_field_values,
         )
         self.bind_operation_admission(None)
 
@@ -859,6 +863,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._field_effect_activity.previous_field_values(
             connection, library, work_id
         )
+
+    def written_field_values(
+        self, review_case_id: str
+    ) -> tuple[tuple[str, object], ...]:
+        return self._field_effect_activity.written_field_values(review_case_id)
 
     def grant_field_effect_consents(
         self,
@@ -1731,11 +1740,16 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def get_proposal(self, proposal_set_id: str) -> str:
         return self._proposal_sets.get_proposal(proposal_set_id)
 
-    def admit_review_case(self, proposal_set: ProposalSet) -> str:
-        return self._review_cases.admit_review_case(proposal_set)
+    def admit_review_case(
+        self, proposal_set: ProposalSet, *, now: int | None = None
+    ) -> str:
+        return self._review_cases.admit_review_case(proposal_set, now=now)
 
     def review_case_exists(self, review_case_id: str) -> bool:
         return self._review_cases.review_case_exists(review_case_id)
+
+    def review_case_kept(self, review_case_id: str) -> bool:
+        return self._review_cases.review_case_kept(review_case_id)
 
     def current_review_case_successor(self, review_case_id: str) -> str | None:
         return self._review_cases.current_review_case_successor(review_case_id)

@@ -236,6 +236,7 @@ export function RecordedFieldObservations({
 export function MetadataChoice({
   advice,
   automatic = false,
+  beforeChange = false,
   retainedAdvice = false,
   context,
   current,
@@ -256,6 +257,8 @@ export function MetadataChoice({
   advice?: ReviewField['descriptionAdvice']
   // The selected badge names Automatic when the pick is Automatic's (#1765).
   automatic?: boolean
+  // The value the case read before its own write, never called current (#1523).
+  beforeChange?: boolean
   retainedAdvice?: boolean
   context: ChoiceContextView | undefined
   current: boolean
@@ -297,6 +300,10 @@ export function MetadataChoice({
         : ''
   const hasEvidence = Boolean(context && (context.evidence.length || context.limitations.length))
   const valueId = useId()
+  const kind = advice ? 'advised' : current ? 'current' : 'proposed'
+  const choiceName = beforeChange
+    ? `Choose the ${longDescription ? 'description before your change' : `value before your change: ${value}`}`
+    : `Choose ${kind} ${longDescription ? 'description' : `value: ${value}`}`
   // A pin carried from an earlier case marks a card no decision of this case chose.
   const badge = selected
     ? `${automatic ? 'Automatic’s choice' : 'Your choice'}${pinned ? ' · Pinned' : ''}`
@@ -316,7 +323,7 @@ export function MetadataChoice({
       <button
         type="button"
         className="value-choice choice-select"
-        aria-label={`Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} ${longDescription ? 'description' : `value: ${value}`}`}
+        aria-label={choiceName}
         {...radio}
         disabled={disabled}
         // Choosing the pinned value again would record a new decision and end the pin.
@@ -333,7 +340,9 @@ export function MetadataChoice({
           <i className="review-key-space" />
           <wbr className="review-key-break" />
           {longDescription
-            ? `Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} description`
+            ? beforeChange
+              ? 'Choose the description before your change'
+              : `Choose ${kind} description`
             : value}
         </strong>
         {rationale ? <span>{rationale}</span> : null}

@@ -65,6 +65,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_CASE_COUNT_SQL,
     _CURRENT_REVIEW_FROM_SQL,
     _LATEST_PREPARATION_FAILED_SQL,
+    _LATEST_VERIFIED_WRITE_SQL,
     _LIBRARY_ATTENTION_SQL,
     _NOT_MATCHED_REASON_SQL,
     _PIN_CHANGED_SQL,
@@ -118,6 +119,7 @@ from mechanical_librarian.domain.review_browse import (
     require_admitted_lineage,
 )
 from mechanical_librarian.domain.review_case import (
+    KEPT_CASE_SECONDS,
     ReviewAdmissionIncompatibleError,
     ReviewAdmissionResult,
     ReviewAdmissionStaleError,
@@ -229,9 +231,17 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         self.catalogue: CatalogueReadAdmission | None = None
 
     @local_operation
-    def admit_review_case(self, proposal_set: ProposalSet) -> str:
-        """Atomically bind one exact current ProposalSet to its target lineage."""
-        if type(proposal_set) is not ProposalSet:
+    def admit_review_case(
+        self, proposal_set: ProposalSet, *, now: int | None = None
+    ) -> str:
+        """Atomically bind one exact current ProposalSet to its target lineage.
+
+        Only the pipeline passes ``now``: with it, a work written in the last
+        30 days keeps its case though nothing is left to decide (#1523).
+        """
+        if type(proposal_set) is not ProposalSet or (
+            now is not None and (type(now) is not int or now < 0)
+        ):
             raise MetadataReportError("review admission failed")
         owns_transaction = not self._connection.in_transaction
         transaction = self._transaction("admit_review_case")
@@ -262,17 +272,26 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             # or a policy activation retiring it for its successor. Leaving
             # Automatic reactivates the unchanged policy, so that successor is
             # this same proposal set, admitted again as its same case (#1568).
-            if (
-                prior is not None
-                and prior[0] == proposal_set.proposal_set_id
-                and self._connection.execute(
-                    "SELECT actor FROM review_case_transitions WHERE transition_id=?",
-                    # ``prior`` is None exactly when ``validated`` is None, so
-                    # reaching here proves the pointer was found.
+            # Nor is a case kept for a recent write replayed once that write
+            # is 30 days old: the same proposal set then retires it (#1523).
+            recent = now is not None and self._written_since(
+                lineage, now - KEPT_CASE_SECONDS
+            )
+            if prior is not None and prior[0] == proposal_set.proposal_set_id:
+                # ``prior`` is None exactly when ``validated`` is None, so
+                # reaching here proves the pointer was found.
+                actor, reason = self._connection.execute(
+                    "SELECT actor,reason FROM review_case_transitions "
+                    "WHERE transition_id=?",
                     (cast(_ReviewPointer, validated)[3],),
                 ).fetchone()
-                not in {("review-preparation-v1",), ("policy-activation-v1",)}
-            ):
+                replays = actor not in {
+                    "review-preparation-v1",
+                    "policy-activation-v1",
+                } and not (now is not None and not recent and reason == "recent_write")
+            else:
+                replays = False
+            if replays:
                 if self._binding is not None:
                     self._binding.require_current()
                 transaction.commit()
@@ -284,7 +303,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 return _admission_json(
                     replay_status, cast(_ReviewPointer, validated)[2]
                 )
-            if not is_actionable(proposal_set):
+            kept = recent and not is_actionable(proposal_set)
+            if not kept and not is_actionable(proposal_set):
                 outcome = self._record_nonactionable_admission(
                     proposal_set,
                     report,
@@ -318,6 +338,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 prior_case_id,
                 case.review_case_id,
                 outcome,
+                "recent_write" if kept else "actionable",
                 owns_transaction,
             )
             if self._binding is not None:
@@ -342,6 +363,13 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         except BaseException:
             transaction.rollback()
             raise
+
+    def _written_since(self, lineage: tuple[str, str, str], since: int) -> bool:
+        """Whether the work's latest verified write is later than ``since``."""
+        latest = self._connection.execute(
+            _LATEST_VERIFIED_WRITE_SQL, lineage
+        ).fetchone()[0]
+        return latest is not None and latest > since
 
     def _verified_admission_sources(
         self, proposal_set: ProposalSet
@@ -599,6 +627,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         prior_case_id: str | None,
         review_case_id: str,
         outcome: str,
+        reason: str,
         owns_transaction: bool,
     ) -> None:
         """Write the admitted or superseded transition and its pointers."""
@@ -610,7 +639,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             outcome,
             prior_case_id,
             review_case_id,
-            "actionable",
+            reason,
         )
         self._connection.execute(
             "INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -624,7 +653,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 proposal_set.proposal_set_id,
                 report.report_id,
                 outcome,
-                "actionable",
+                reason,
             ),
         )
         self._connection.execute(
@@ -667,6 +696,24 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             raise MetadataReportError(
                 "review case availability is unavailable"
             ) from error
+
+    @local_operation
+    def review_case_kept(self, review_case_id: str) -> bool:
+        """Whether the case is current only for its work's recent write (#1523)."""
+        try:
+            return (
+                self._connection.execute(
+                    "SELECT 1 FROM current_review_case_lineages pointer "
+                    "JOIN review_case_transitions transition "
+                    "ON transition.transition_id=pointer.transition_id "
+                    "WHERE pointer.review_case_id=? "
+                    "AND transition.reason='recent_write'",
+                    (review_case_id,),
+                ).fetchone()
+                is not None
+            )
+        except sqlite3.Error as error:
+            raise MetadataReportError("review case is unavailable") from error
 
     @local_operation
     def current_review_case_successor(self, review_case_id: str) -> str | None:

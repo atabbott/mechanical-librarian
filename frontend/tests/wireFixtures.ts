@@ -113,6 +113,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
   notices: [],
   offer_digest: 'd'.repeat(64),
   owner_control: null,
+  written_by_case: false,
   pin: null,
   pin_control: null,
   preservation_only: false,
@@ -136,7 +137,7 @@ export const caseDetail = (overrides: Overrides = {}) => ({
   recording_admission_basis: null,
   recording_identity_basis: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-detail-v9',
+  schema_version: 'review-case-detail-v10',
   target: targetIdentity(),
   writes_consented: false,
   ...overrides,
@@ -315,7 +316,7 @@ export const caseHistory = (overrides: Overrides = {}) => ({
   items: [],
   next_cursor: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-history-v4',
+  schema_version: 'review-case-history-v5',
   ...overrides,
 })
 
@@ -325,7 +326,7 @@ export const decisionAcknowledgement = (overrides: Overrides = {}) => ({
   ...decisionProjection({ destination: 'title' }),
   confirmation: { case: caseDetail(), status: 'confirmed' },
   invalidation_sequences: [],
-  schema_version: 'review-decision-v1',
+  schema_version: 'human-decision-ack-v2' as const,
   ...overrides,
 })
 

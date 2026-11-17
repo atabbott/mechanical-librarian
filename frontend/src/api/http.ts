@@ -783,6 +783,9 @@ export interface ReviewFieldView {
   corroborationSources: readonly string[]
   descriptionAdvice?: DescriptionAdviceView | null
   ownerControl?: OwnerControlView | null
+  // This case's own write set the field, so what the case read before it is
+  // no longer the library's value (#1523).
+  writtenByCase?: boolean
   // An owner pin on the field with the value it keeps: in force, waiting for
   // the chosen value to be read back, or changed. And whether a pin or an
   // unpin is accepted now (ADR-0085, Amendment 2): a pin is available, or
@@ -803,6 +806,13 @@ export interface OwnerControlView {
     maxItems: number
     options: readonly { value: string; current: boolean; proposed: boolean; previous: boolean }[]
   } | null
+  // Names entry, one per line: authors, and narrators on an audiobook (#1523).
+  names: { maxItems: number; maxCharacters: number; previous: readonly string[] | null } | null
+  // An emptied field records a clear here (#1523).
+  clear: boolean
+  // What owner entry compares with: on the case that wrote the field, the
+  // written value (#1523).
+  current: string | readonly string[] | null
   withdraw: 'available' | 'automatic_hold' | 'in_progress' | 'written' | null
 }
 export interface CoverObservationView {
@@ -931,7 +941,13 @@ export interface EvidenceView {
 }
 export interface HistoryValueView {
   kind: string
-  value: string | boolean | readonly string[] | readonly { name: string; sequence: string | null }[]
+  // `null` only for an owner's clear, whose kind is `empty` (#1523).
+  value:
+    | string
+    | boolean
+    | readonly string[]
+    | readonly { name: string; sequence: string | null }[]
+    | null
 }
 export type HistoryItemView = (
   | {
@@ -1283,7 +1299,8 @@ export interface DecisionCommand {
   destination: string
   outcome: DecisionOutcome
   proposalId: string
-  selectedValue?: Schema<'_ProposedValue'> | null
+  // An owner's clear is the closed empty value (#1523).
+  selectedValue?: Schema<'_ProposedValue'> | Schema<'_EmptyValue'> | null
   targetFingerprint: string
   offerDigest: string
   idempotencyKey: string
@@ -2773,6 +2790,9 @@ const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => (
 })
 // Formats any target or proposed value. It throws nothing: a value decoded
 // to `unknown` reads as unavailable rather than as a shape to decode.
+// An owner's clear carries no value; it reads as what happened (#1523).
+export const CLEARED_TEXT = 'Cleared'
+export const isClear = (value: { kind: string } | null | undefined) => value?.kind === 'empty'
 export const displayValue = (value: unknown): string =>
   value === null
     ? 'Unavailable'
@@ -3186,6 +3206,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   descriptionAdvice:
     field.description_advice === null ? null : mapDescriptionAdvice(field.description_advice),
   ownerControl: field.owner_control === null ? null : mapOwnerControl(field.owner_control),
+  writtenByCase: field.written_by_case,
   pin: field.pin,
   pinControl: field.pin_control,
   coverConsideration:
@@ -3194,7 +3215,14 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   currentCoverSelectionId: field.current_cover_selection_id,
 })
 
-const mapOwnerControl = ({ entry, subset, withdraw }: OwnerControlDto): OwnerControlView => ({
+const mapOwnerControl = ({
+  entry,
+  subset,
+  names,
+  clear,
+  current,
+  withdraw,
+}: OwnerControlDto): OwnerControlView => ({
   entry:
     entry === null
       ? null
@@ -3214,6 +3242,16 @@ const mapOwnerControl = ({ entry, subset, withdraw }: OwnerControlDto): OwnerCon
             previous,
           })),
         },
+  names:
+    names === null
+      ? null
+      : {
+          maxItems: names.max_items,
+          maxCharacters: names.max_characters,
+          previous: names.previous,
+        },
+  clear,
+  current,
   withdraw,
 })
 

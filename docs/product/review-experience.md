@@ -44,10 +44,9 @@ write with its check. A recommendation alone never decides a field or allows a
 write. An Automatic decision needs its own qualification, tied to the exact
 case and policy version
 ([ADR-0036](../architecture/decisions/0036-qualified-decision-only-automatic-policy.md)).
-Every write, yours or automatic, also needs the library's write permission and
-unchanged evidence and library values. Before the write, Mechanical Librarian
-checks that its own database is consistent, and afterwards it reads the value
-back ([ADR-0037](../architecture/decisions/0037-origin-neutral-guarded-field-effects.md)).
+Every write, yours or automatic, also needs write permission, unchanged
+evidence and library values and a consistent database, and is read back
+([ADR-0037](../architecture/decisions/0037-origin-neutral-guarded-field-effects.md)).
 
 For each field you can keep the current value, choose an eligible proposed
 value or leave it undecided ([Deciding a field](#deciding-a-field)). Blocked is
@@ -174,10 +173,9 @@ These controls retry different things:
 A failure before a report has no automatic retry
 ([provider recovery](../operations/provider-recovery.md)).
 
-The masthead's background-work control shows when source lookups are waiting
-to retry. Its popover lists each source and library with the reason, the number
-waiting and the next automatic retry, offers Retry now, and says what it
-did. Library and Settings show a notice only when lookups will not be retried
+The background-work control also marks lookups waiting to retry: its popover
+lists each source and library with the reason, the number waiting and the next
+automatic retry, offers Retry now, and says what it did. Library and Settings show a notice only when lookups will not be retried
 unless the owner acts, or a source's lookups have waited 24 hours. A
 refused key is never retried on its own: fix it, then use Retry now. An entry
 that needs an API key added or checked links to Settings › Metadata sources. A
@@ -189,8 +187,7 @@ matches. Each failure code has one reason and one next step. The next
 step is a change you make followed by a scan, an automatic retry, or a new
 scan of the library. A new scan queues a failed book again from the step that
 failed. That retry rereads what earlier steps saved. So when saved data could
-not be read, the row says "Library has no step that fixes this." Mechanical
-Librarian refuses an unknown code and invents no guidance for it. The row
+not be read, the row says "Library has no step that fixes this." The row
 shows its reason, next step and a copyable reference, never a stage code, path
 or raw source response. Once the catalogue no longer matches, the row reads
 `Preparation unavailable`.
@@ -218,8 +215,7 @@ work. An empty list says so in one line; with no library connected it links
 to Settings.
 
 Works that need a decision come first, under "Every lookup finished" and then
-"Some lookups gave no usable answer". The first heading does not promise a
-match, and the second does not promise a retry. Works that could not finish
+"Some lookups gave no usable answer". Works that could not finish
 follow under Could not finish, then Not matched, then the rest. The other
 lenses, except Looks wrong, are alphabetical.
 
@@ -231,9 +227,8 @@ found books, but none of them matched this work. "Sources unavailable" reads
 "Failed in Mechanical Librarian" is never retried. Otherwise the status reads
 "No source matched".
 
-An audiobook's iTunes listing is only its cover. It never matches the
-audiobook, so an audiobook that only iTunes found reads "No source matched".
-An iTunes failure never makes its sources unavailable or puts it under "Some
+An audiobook's iTunes listing is only its cover, so an audiobook only iTunes
+found reads "No source matched". An iTunes failure never makes its sources unavailable or puts it under "Some
 lookups gave no usable answer".
 
 A work whose latest preparation could not finish reads Could not finish and
@@ -341,20 +336,25 @@ recorded.
 Where no proposed value fits, Enter a value takes text for a title, subtitle
 or publisher and suggests up to four cleaned forms of the current value. A
 genre field offers Choose genres over the current and proposed genres.
-Recording, or choosing Withdraw on an unwritten decision, keeps focus on the
-field
-([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
+Authors, and an audiobook's narrators, take up to 32 names, one per line. Left
+empty, a subtitle, publisher, genres or narrators records with Clear subtitle,
+or that field's name. Title and authors cannot be empty. Character and name
+counts show only past a limit. Recording, or choosing Withdraw on an
+unwritten decision, keeps focus on the field
+([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
+[ADR-0105](../architecture/decisions/0105-going-back-after-a-write.md)).
 
 A recorded field keeps its choices, and a new choice adds a decision. You
 cannot replace a decision while its write is in progress, or once a cover write
 is verified. You can replace a verified field write that can be reversed.
 
-Library has no Undo and no bulk decisions. To go back, choose the earlier
-value. After a write, Enter a value suggests the value it replaced, as "Use
-previous value", and Choose genres marks those genres Previous. Authors return
-to an earlier value only when a source proposes it. A work whose content
-returns to an earlier state reads as new, and its earlier decisions are
-history.
+Library has no Undo or bulk decisions. To go back, choose the earlier
+value. While a field reads its written value, Change offers what it
+replaced ("Use previous value", "Use previous names", genres marked Previous);
+if it was empty, clearing goes back. Elsewhere the card Before your change
+writes it back. A written work keeps its case for 30 days with nothing to decide,
+outside Attention unless a pin changed. A work whose content returns
+to an earlier state reads as new, and its earlier decisions are history.
 
 ### Pinning a value
 
@@ -460,7 +460,7 @@ is kept until the next scan. Keeping a current cover Mechanical Librarian could
 not read lists it under Kept, and covers not shown leave out its own source.
 Counts follow each decision and Prepare cover comparison.
 
-Pages hold 50 works; Show more covers loads the next after the last one shown.
+Pages hold 50 works; Show more covers loads the next page.
 The URL keeps the tab and the open work. A wall tile reads "No cover" when the
 cover field is empty and "Image unavailable" when the library's cover cannot
 be read; a list row shows either as text beside an empty frame.

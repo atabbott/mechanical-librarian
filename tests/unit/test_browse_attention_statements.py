@@ -679,3 +679,25 @@ def test_package_and_case_reports_are_read_as_before_when_they_differ(
                             ), case
     finally:
         fixture.close()
+
+
+def test_a_kept_case_reads_as_no_attention_in_every_statement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A case kept for a recent write is a current case with nothing to decide:
+    every Library page, lens and count agrees with the pre-#1202 statements,
+    and none counts attention (#1523, S18)."""
+    from tests.support.owner_values import OwnerStore
+    from tests.support.review_cases import _report
+
+    store = OwnerStore(tmp_path, _report())
+    written = "Exact evaluator candidate"
+    store.write(store.decide("owner_entered", {"kind": "text", "value": written}))
+    (verified_at,) = store.repository._connection.execute(
+        "SELECT MAX(occurred_at) FROM field_effect_events WHERE kind='verified'"
+    ).fetchone()
+    store.publish(_report(written, competing=False), now=verified_at + 1)
+    assert store.repository.review_case_kept(store.case.review_case_id)
+    assert _assert_equal_to_oracle(store.repository, monkeypatch) == (0, 0)
+    assert store.repository.count_current_review_cases(None, _LABELS) == (1, 0)
+    store.close()

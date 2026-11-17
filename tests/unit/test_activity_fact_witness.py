@@ -1375,3 +1375,45 @@ def test_only_unconditional_refusal_of_both_routes_classifies_a_table(
         assert _append_only(connection, shapes) == ({"t"} if admitted else set())
     finally:
         connection.close()
+
+
+def test_a_keep_row_depends_on_the_write_frozen_with_it() -> None:
+    """A keep's row reads its own writes and the write its decision names as
+    the one it goes back on (#1523); a write's own move reaches only its own
+    row and the rows of the decisions that name it."""
+    key = activity_facts._key
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE human_decisions(decision_id TEXT, document TEXT)")
+    connection.execute(
+        "INSERT INTO human_decisions VALUES(?,?)",
+        ("keep-1", json.dumps({"follows": "accept-1"})),
+    )
+    connection.execute(
+        "INSERT INTO human_decisions VALUES(?,?)",
+        ("plain-1", json.dumps({"follows": None})),
+    )
+    for decision, expected in (
+        ("keep-1", {"keep-1", "accept-1"}),
+        ("plain-1", {"plain-1"}),
+    ):
+        dependencies, _, candidates = activity_facts._bindings(
+            "human_decision_events",
+            {
+                "event_id": f"event-{decision}",
+                "decision_id": decision,
+                "review_case_id": "case-1",
+                "destination": "genres",
+            },
+            connection,
+        )
+        assert {
+            dependency
+            for dependency in dependencies
+            if dependency[0] == "decision_effects"
+        } == {key("decision_effects", value) for value in expected}
+        assert candidates == {("human_decision", f"event-{decision}")}
+    _, aliases, candidates = activity_facts._bindings(
+        "field_effects", {"plan_id": "plan-1", "decision_id": "accept-1"}, connection
+    )
+    assert aliases == {key("decision_effects", "accept-1")}
+    assert candidates == {("field_effect", "plan-1")}

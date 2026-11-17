@@ -23,6 +23,17 @@ Admission returns one typed result:
 A ProposalSet is actionable when any result is `propose_change`,
 `acceptable_choice` or `unresolved_choice`.
 
+A work written recently keeps its case. When preparation admits a work with
+nothing actionable whose latest verified write, of any field and origin, is
+under 30 days old, the result is `admitted` or `superseded` with the
+transition reason `recent_write`, and holds and pins carry as for any case.
+Only preparation passes the time; the `case-admit` scenario retires as
+before. A kept case adds no Attention fact except a pinned field whose value
+changed, and preparation asks no cover or description advice for it. An
+actionable result replaces it as usual. The first scan of the unchanged work
+once the write is 30 days old sends it back to admission, which retires the
+case ([ADR-0105](../architecture/decisions/0105-going-back-after-a-write.md)).
+
 A scheduled search whose proposals equal the current case's, that fails at a
 provider, or that now identifies nothing never reaches admission
 ([metadata report](metadata-report.md#after-the-report)).
@@ -178,7 +189,10 @@ contract.
 A field decision names the displayed proposal ID and target fingerprint and
 one outcome: `accept` (with the exact proposed value), `keep_current`,
 `reject`, `owner_entered` (with the owner's value), `withdraw`, `pin` or
-`unpin`. It needs a
+`unpin`. The owner's value is text for a title, subtitle or publisher, a genre
+subset, 1 to 32 names for authors or an audiobook's narrators, or
+`{"kind":"empty","value":null}`, which clears a subtitle, publisher, genres or
+narrators and is sent to Audiobookshelf as `null` or `[]`. It needs a
 16–128 character `Idempotency-Key` and the session CSRF token. A
 field-decision body is capped at 8 KiB and a sign-in body at 2 KiB; a larger
 body is refused before parsing.
@@ -186,7 +200,17 @@ body is refused before parsing.
 - A retry with the same key and payload returns the original decision.
   Conflicts and stale state fail with no partial decision or event.
 - Errors: `404` for an absent case, `401` for an invalid session, `403` for a
-  CSRF mismatch, `503` for a persistence outage.
+  CSRF mismatch, `503` for a persistence outage. An owner value is refused
+  with `422`: `owner_value_required` for an empty title or authors,
+  `owner_value_invalid` for a value outside its bounds and
+  `owner_value_unchanged` for the field's current value, which on the case
+  that wrote the field is the written value. On that case `keep_current`
+  writes back the value the case read; where that was empty, a clearable
+  field goes back to empty and any other field is refused as
+  `owner_value_required`.
+- "Use previous value" and the names entry's previous names are offered only
+  while the field reads its latest verified write's value, and never when the
+  value that write replaced was empty: emptying the field is that choice.
 - A pin is refused with `409 pin_change_waiting` while a change to the field
   that is not the owner's standing answer waits to be written, or while the
   owner's choice of the advised description stands, and

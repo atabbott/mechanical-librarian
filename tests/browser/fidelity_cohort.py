@@ -637,6 +637,7 @@ def _field(
         "provenance": provenance or [],
         "corroboration_sources": corroboration_sources or [],
         "owner_control": owner_control,
+        "written_by_case": False,
         "uncertainty": [],
         # Absent members the lenient reader took as none.
         "cover_consideration": None,
@@ -697,6 +698,9 @@ def _case(case_id: str) -> dict[str, object]:
                             ],
                         },
                         "subset": None,
+                        "names": None,
+                        "clear": False,
+                        "current": long_title,
                         "withdraw": None,
                     },
                 ),
@@ -723,6 +727,9 @@ def _case(case_id: str) -> dict[str, object]:
                                 )
                             ],
                         },
+                        "names": None,
+                        "clear": True,
+                        "current": ["Historiography"],
                         "withdraw": None,
                     },
                 ),

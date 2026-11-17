@@ -659,15 +659,19 @@ describe('Library review ownership', () => {
     expect(screen.getByText('<script>chosen</script>')).toBeVisible()
     const language = screen.getByRole('heading', { name: 'Language' }).closest('article')
     if (!language) throw new Error('absence to value history article required')
-    expect(language).toHaveTextContent('From No value is recorded.')
+    // A field that was empty before the change reads as Activity says it (#1523).
+    expect(language).toHaveTextContent('From Not set')
     expect(language).toHaveTextContent('To English')
     const publisher = screen.getByRole('heading', { name: 'Publisher' }).closest('article')
     if (!publisher) throw new Error('value to absence history article required')
     expect(publisher).toHaveTextContent('From Former publisher')
-    expect(publisher).toHaveTextContent('To No value is recorded.')
+    // A change that ends in an empty field reads as a clear does (#1523).
+    expect(publisher).toHaveTextContent('To Cleared')
     const reversal = screen.getByText('Applied candidate').closest('article')
     if (!reversal) throw new Error('keep current reversal history article required')
-    expect(reversal).toHaveTextContent('You kept the current value.')
+    // A keep that wrote back the value before the write says so (#1523).
+    expect(reversal).toHaveTextContent('You went back to the value before your change.')
+    expect(reversal).not.toHaveTextContent('You kept the current value.')
     expect(reversal).toHaveTextContent('From Applied candidate')
     expect(reversal).toHaveTextContent('To Original value')
     expect(reversal).not.toHaveTextContent('Kept')
@@ -700,7 +704,7 @@ describe('Library review ownership', () => {
     expect(retainedAbsence).toHaveTextContent('No value is recorded.')
     const keptAbsence = screen.getByRole('heading', { name: 'Publication date' }).closest('article')
     if (!keptAbsence) throw new Error('kept absence history article required')
-    expect(keptAbsence).toHaveTextContent('Kept No value is recorded.')
+    expect(keptAbsence).toHaveTextContent('Kept Not set')
     expect(keptAbsence).not.toHaveTextContent('From')
     expect(keptAbsence).not.toHaveTextContent('To')
     const unmatchedCandidate = screen
@@ -889,7 +893,7 @@ describe('Library review ownership', () => {
     const recordDecision = vi.fn(async () => {
       current = settled
       return {
-        schema_version: 'review-decision-v1' as const,
+        schema_version: 'human-decision-ack-v2' as const,
         actor: 'owner' as const,
         application: 'apply' as const,
         application_reason: null,

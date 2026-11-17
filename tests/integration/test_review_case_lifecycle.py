@@ -911,7 +911,10 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
         )
 
         def applied(decision: HumanDecision) -> FieldEffectOperation:
-            repository.record_human_decision(decision)
+            # The stored decision: a keep carries the write it goes back on.
+            decision = HumanDecision.from_json(
+                repository.record_human_decision(decision)
+            )
             source = repository.field_effect_authority_source(decision)
             operation = service.plan(
                 decision,
@@ -971,6 +974,43 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
             # report, read after the owner restores it, admits a new case.
             summary = repository.field_effect_activity_summary
             assert summary()["owner_action_required"] == 1
+            # Its own row reads as the change it tried, closed in the word its
+            # write's row uses and saying why; it never went back (#1523).
+            from mechanical_librarian.application.continuous_field_effects import (
+                ContinuousGuardedApplication,
+            )
+            from mechanical_librarian.domain.activity_records import (
+                activity_result_label,
+            )
+
+            (refused,) = [
+                event
+                for event in ContinuousGuardedApplication(
+                    repository,
+                    {},
+                    {},
+                    PersistedFieldEffectAuthority(repository),
+                    (("primary", "ebooks"),),
+                    lambda: 9_000,
+                    lambda *_: None,
+                    activity_only=True,
+                ).activity()["events"]
+                if event["destination"] == "description"
+                and event["category"] == "owner"
+                and str(event["change"]).startswith(f"{desired} \u2192 ")
+            ]
+            assert (refused["state"], refused["failure"]) == (
+                "stale",
+                "restore_unavailable",
+            )
+            assert activity_result_label("stale", "restore_unavailable") == "Closed"
+            said = {
+                str(item["label"]): str(item["value"])
+                for item in cast(list[dict[str, object]], refused["evidence"])
+            }
+            assert said["Written value"] == desired
+            assert said["What happened"] == failure_reason("restore_unavailable")
+            assert "Kept" not in str(refused["change"])
             later = MetadataReport.create(
                 target=TargetFacts(
                     "primary",
@@ -995,9 +1035,10 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
             # The library holds the bytes it held before the first write.
             assert library.detail["media"]["metadata"]["description"] == stored
             assert [request.method for request in library.requests].count("PATCH") == 1
-            # The restore's own row says what it kept, never the value its
-            # corrective write overwrote; the accept row still names what
-            # its write replaced (#1286).
+            # The restore's own row reads as the change it made, from the
+            # value the accept wrote to the value before that change, never
+            # as a keep of a current value (#1286, #1523); the accept row
+            # still names what its write replaced.
             from mechanical_librarian.application.continuous_field_effects import (
                 ContinuousGuardedApplication,
             )
@@ -1022,21 +1063,15 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
                     for item in cast(list[dict[str, object]], event["evidence"])
                 }
                 for event in events
-                if event["state"] in {"keep_current", "accept"}
+                if event["state"] in {"went_back", "accept"}
             }
-            (kept,) = [event for event in events if event["state"] == "keep_current"]
-            assert str(kept["change"]).startswith("Kept ")
-            assert desired not in str(kept["change"])
-            assert (
-                facts["keep_current"]["Current value"]
-                == facts["keep_current"]["Selected value"]
-                != desired
-            )
+            assert not [e for e in events if e["state"] == "keep_current"]
+            (back,) = [event for event in events if event["state"] == "went_back"]
+            before = facts["went_back"]["Value before your change"]
+            assert facts["went_back"]["Written value"] == desired != before
+            assert str(back["change"]) == f"{desired} \u2192 {before}"
             assert facts["accept"]["New value"] == desired
-            assert (
-                facts["accept"]["Previous value"]
-                == facts["keep_current"]["Current value"]
-            )
+            assert facts["accept"]["Previous value"] == before
     finally:
         repository.close()
         library.close()

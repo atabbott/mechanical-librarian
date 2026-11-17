@@ -117,6 +117,7 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
     (
         ("accept", "Accepted"),
         ("keep_current", "Kept current"),
+        ("went_back", "Went back"),
         ("reject", "Rejected"),
         ("owner_entered", "Entered by you"),
         ("withdraw", "Withdrawn"),
@@ -239,7 +240,7 @@ def test_a_change_reads_as_a_sentence_and_as_a_column() -> None:
     assert keep_change("authors", ["Ursula K. Le Guin"]).sentence == (
         "Kept Authors as Ursula K. Le Guin"
     )
-    assert set_change("subtitle", "A subtitle", None).sentence == "Removed Subtitle"
+    assert set_change("subtitle", "A subtitle", None).sentence == "Cleared Subtitle"
     # An unchanged value is a keep, never a set from a value to itself.
     assert set_change("title", "Same", "Same").compact == "Kept Same"
 
@@ -294,6 +295,88 @@ def test_an_owner_keep_states_one_retained_value_and_no_new_one() -> None:
     assert event["change"] == "Kept The Dispossessed"
     assert event["change_detail"] == "Kept Title as The Dispossessed"
     assert "New value" not in _facts(event)
+
+
+@pytest.mark.parametrize(
+    "written, failure, state, result",
+    (
+        ("verified", None, "went_back", "Went back"),
+        # Until its write back verifies, it reads in that write's own word.
+        ("planned", None, "planned", "Planned"),
+        ("applying", None, "applying", "Applying"),
+        ("stale", "restore_unavailable", "stale", "Closed"),
+        ("stale", "connection", "stale", "Waiting to retry"),
+        # Not planned yet: recorded, never Kept current.
+        (None, None, "recorded", "Recorded"),
+    ),
+)
+def test_a_keep_that_goes_back_on_a_write_reads_as_that_change(
+    written: str | None, failure: str | None, state: str, result: str
+) -> None:
+    """A keep that goes back on the case's write reads from the written value
+    to the value before it; only a verified write back reads Went back
+    (#1523)."""
+    report = _titled("The Dispossessed")
+    event = _project(
+        _event(
+            state="keep_current",
+            record={
+                "source_kind": "human_decision",
+                "target_fingerprint": report.target.fingerprint,
+                "selected_value": None,
+                "went_back": {
+                    "written": "Anarres",
+                    "before": "The Dispossessed",
+                    "state": written,
+                    "failure": failure,
+                },
+            },
+        ),
+        report,
+    )
+    assert event["state"] == state
+    assert activity_result_label(state, event.get("failure")).value == result
+    assert event["change"] == "Anarres → The Dispossessed"
+    assert event["change_detail"] == "Set Title back from Anarres to The Dispossessed"
+    facts = _facts(event)
+    assert {key: facts[key] for key in list(facts)[:3]} == {
+        "Written value": "Anarres",
+        "Value before your change": "The Dispossessed",
+        "Chosen by": "You",
+    }
+    assert ("What happened" in facts) is (failure is not None)
+    assert "Kept" not in str(event) and "Current value" not in str(event)
+
+
+def test_a_cover_keep_that_goes_back_names_no_image_identity() -> None:
+    """A cover's values are opaque images, so its keep reads as set_change's
+    cover row does (#1523)."""
+    report = _titled("The Dispossessed")
+    event = _project(
+        _event(
+            state="keep_current",
+            destination="cover",
+            record={
+                "source_kind": "human_decision",
+                "target_fingerprint": report.target.fingerprint,
+                "selected_value": None,
+                "went_back": {
+                    "written": "cover_" + "a" * 64,
+                    "before": "cover_" + "b" * 64,
+                    "state": "verified",
+                    "failure": None,
+                },
+            },
+        ),
+        report,
+    )
+    assert event["state"] == "went_back"
+    assert event["change"] == "Written cover → earlier cover"
+    assert (
+        event["change_detail"]
+        == "Set Cover back from the written image to the earlier image"
+    )
+    assert "cover_" not in str(event)
 
 
 def test_an_owner_rejection_prepares_nothing_and_invents_nothing() -> None:
@@ -955,10 +1038,10 @@ def _automatic(
             "A subtitle",
             None,
             True,
-            "Removed subtitle",
-            "Removed Subtitle",
+            "Cleared subtitle",
+            "Cleared Subtitle",
         ),
-        ("asin", "candidate", "B000000001", None, True, "Removed ASIN", "Removed ASIN"),
+        ("asin", "candidate", "B000000001", None, True, "Cleared ASIN", "Cleared ASIN"),
         (
             "title",
             "candidate",
@@ -1046,10 +1129,10 @@ def test_an_automatic_choice_names_its_field_and_value(  # noqa: PLR0913
 
 def test_an_owner_row_keeps_its_arrow_while_absent_values_name_the_field() -> None:
     assert set_change("isbn", "1", "2").compact == "1 → 2"
-    assert set_change("isbn", "1", None).compact == "Removed ISBN"
+    assert set_change("isbn", "1", None).compact == "Cleared ISBN"
     assert keep_change("asin", None).compact == "Left ASIN unset"
-    assert set_change("subtitle", "A", None).compact == "Removed subtitle"
-    assert set_change("publishedYear", "1", None).compact == "Removed publication year"
+    assert set_change("subtitle", "A", None).compact == "Cleared subtitle"
+    assert set_change("publishedYear", "1", None).compact == "Cleared publication year"
 
 
 # Two descriptions that read alike for longer than a compact change shows.

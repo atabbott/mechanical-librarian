@@ -110,16 +110,17 @@ class OwnerStore:
         self.ticks += 1
         return self.ticks
 
-    def publish(self, report: MetadataReport) -> ReviewCase:
+    def publish(self, report: MetadataReport, *, now: int | None = None) -> ReviewCase:
         """Publish one report of the work and return its current case."""
-        status = self.admit(report)
+        status = self.admit(report, now=now)
         assert status in {"admitted", "superseded", "replayed"}, status
         return self.case
 
-    def admit(self, report: MetadataReport) -> str:
+    def admit(self, report: MetadataReport, *, now: int | None = None) -> str:
         """Publish one report and return its admission status, loading the case
         it admits; under an automatic policy the shadow outcome follows, as a
-        scan's read-back records it."""
+        scan's read-back records it. `now` is the time a scan admits at, which
+        keeps a recently written work's case (#1523)."""
         current = self.repository._connection.execute(
             "SELECT report_id FROM current_metadata_reports WHERE connection_name=? "
             "AND library_name=? AND item_id=? AND file_identity=?",
@@ -140,7 +141,7 @@ class OwnerStore:
             )
         )
         self.repository.publish_proposal(proposal)
-        admitted = json.loads(self.repository.admit_review_case(proposal))
+        admitted = json.loads(self.repository.admit_review_case(proposal, now=now))
         if admitted["status"] in {"admitted", "superseded", "replayed"}:
             case = self.load(admitted["review_case_id"])
             if resolved is not None:
@@ -189,9 +190,11 @@ class OwnerStore:
         """Record one owner command on the case, through the repository.
 
         An owner-entered value is checked against what the field held before
-        its latest verified write, as the web command reads it.
+        its latest verified write, and on the case that wrote the field against
+        what it wrote, as the web command reads them (#1523).
         """
         case = case or self.case
+        written = dict(self.repository.written_field_values(case.review_case_id))
         proposal = next(
             value for value in case.proposals if value["destination"] == destination
         )
@@ -208,9 +211,13 @@ class OwnerStore:
             previous=self.previous().get(destination)
             if outcome == "owner_entered"
             else None,
+            written=(written[destination],)
+            if outcome == "owner_entered" and destination in written
+            else None,
         )
-        self.repository.record_human_decision(decision)
-        return decision
+        # The stored decision, as the web command returns it: a keep carries
+        # the write it goes back on, frozen when it is recorded (#1523).
+        return HumanDecision.from_json(self.repository.record_human_decision(decision))
 
     def plan(
         self, decision: HumanDecision | AutomaticDecision, *, seed: bool = True
@@ -238,6 +245,9 @@ class OwnerStore:
             target_version=snapshot.target_version,
             dependency_digests=snapshot.dependency_digests,
             capability_digest=CAPABILITY,
+            allow_corrective_keep_current=(
+                type(decision) is HumanDecision and decision.outcome == "keep_current"
+            ),
         )
         assert operation is not None
         if seed:

@@ -133,6 +133,8 @@ class ReviewStageRepository(ReviewPipelineRepository, Protocol):
 
     def current_cover_consideration_level(self, review_case_id: str) -> str | None: ...
 
+    def review_case_kept(self, review_case_id: str) -> bool: ...
+
 
 class ReviewPipelineStages:
     """The nine stage decisions, and the pipeline they are assembled into."""
@@ -151,7 +153,7 @@ class ReviewPipelineStages:
             [PipelineAction, bool, ReviewPipelineRepository], str
         ],
         create_proposal_set: Callable[[str, ReviewPipelineRepository], str],
-        admit_review_case: Callable[[str, ReviewPipelineRepository], str],
+        admit_review_case: Callable[[str, ReviewPipelineRepository, int], str],
         cover_considerations: Callable[
             [ReviewPipelineRepository], CoverConsiderationService
         ],
@@ -401,7 +403,9 @@ class ReviewPipelineStages:
         self, pipeline_repository: ReviewPipelineRepository, proposal_set_id: str
     ) -> tuple[str, str | None]:
         result = ReviewAdmissionResult.from_json(
-            self._admit_review_case(proposal_set_id, pipeline_repository)
+            # Only the pipeline supplies the time, which keeps a recently
+            # written work's case open (#1523).
+            self._admit_review_case(proposal_set_id, pipeline_repository, self._clock())
         )
         if result.status == "stale":
             raise ReviewPipelineError("stale")
@@ -449,6 +453,13 @@ class ReviewPipelineStages:
     def prepare_advice(
         self, repository: ReviewPipelineRepository, action: PipelineAction
     ) -> None:
+        # A case kept only because its work was just written has nothing to
+        # decide, so it spends no model request on a cover or description
+        # (#1523). Its shadow outcome and level are projected as for any case.
+        if action.review_case_id is not None and cast(
+            "ReviewStageRepository", repository
+        ).review_case_kept(action.review_case_id):
+            return
         if action.report_id is not None:
             report = MetadataReport.from_json(
                 cast("ReviewStageRepository", repository).get(action.report_id)

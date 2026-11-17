@@ -138,8 +138,14 @@ and file identity, and keeps all 16 results. `propose_change`,
 context. A case records no decision and no write authority.
 
 Each lineage change is an append-only transition: `admitted`, `superseded`,
-`no_case`, `retired` or `tombstoned`. Admitting the same ProposalSet again is
-reported as `replayed` and records nothing new. A newer report makes an
+`no_case`, `retired` or `tombstoned`, with a closed reason. An admitted or
+superseded case is `actionable`, or `recent_write`: nothing is actionable but
+the work's latest verified write is under 30 days old, so the case is kept
+for going back ([ADR-0105](decisions/0105-going-back-after-a-write.md)).
+`nonactionable` retires a case or makes none, `absent` tombstones one, and
+`ineligible` and `policy_changed` retire one. Admitting the same ProposalSet
+again is reported as `replayed` and records nothing new, except that a kept
+case whose write has turned 30 days old retires instead. A newer report makes an
 older case historical without rewriting it. An audiobook whose recording is
 not admitted gets at most a work-only case (series, title, description,
 genre, publication date, cover and edition narrator choices, with no automatic
@@ -175,8 +181,10 @@ Rationale: [ADR-0031](decisions/0031-persisted-review-preparation.md),
 
 A `HumanDecision` is one immutable owner fact for one case, proposal and
 destination. Its outcome is `accept` (a retained alternative), `keep_current`,
-`owner_entered` (typed text for title, subtitle or publisher, or an in-order
-genre subset), `withdraw` (the field is undecided again), `pin` or `unpin` (a
+`owner_entered` (typed text for title, subtitle or publisher, an in-order
+genre subset, names for authors or an audiobook's narrators, or the valueless
+`empty` kind that clears a subtitle, publisher, genres or narrators),
+`withdraw` (the field is undecided again), `pin` or `unpin` (a
 standing instruction to keep the library's value, which writes nothing), or
 `reject`, which only a cover's "no action" records. Choosing an earlier value
 again is a new decision. Pin and unpin rows are never a field's latest
@@ -185,7 +193,8 @@ acts through the field's manual hold, which follows the work, and can stand on
 a chosen value before it is written. Covers and descriptions have their own
 decision lineages and cannot be withdrawn this way, and a cover cannot be
 pinned
-([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
+([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
+[ADR-0105](decisions/0105-going-back-after-a-write.md)).
 
 ### Policy and automatic decisions
 

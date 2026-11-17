@@ -12846,7 +12846,10 @@ def test_a_matching_check_projection_starts_no_description_attempt(
     )
     repository = cast(
         "ReviewPipelineRepository",
-        SimpleNamespace(current_cover_consideration_level=lambda _case: stored),
+        SimpleNamespace(
+            current_cover_consideration_level=lambda _case: stored,
+            review_case_kept=lambda _case: False,
+        ),
     )
     action = PipelineAction(
         "action-1",
@@ -12880,6 +12883,88 @@ def test_a_matching_check_projection_starts_no_description_attempt(
         stages.prepare_advice(repository, action)
     assert calls == [{"reuse_only": reuse_only}]
     assert order == ["cover"]
+
+
+@pytest.mark.parametrize("kept", (True, False), ids=("kept", "actionable"))
+def test_a_kept_case_prepares_no_cover_or_description(kept: bool) -> None:
+    """A case kept only for a recent write has nothing to decide, so it makes
+    no cover comparison or description request; an actionable case still
+    does (#1523, R1)."""
+    from types import SimpleNamespace
+
+    from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
+
+    stages = _proposal_stages(lambda *_: pytest.fail("proposal dispatch"))
+    stages._configuration = cast(
+        "ApplicationConfiguration",
+        SimpleNamespace(
+            review=SimpleNamespace(work_identity=WorkIdentityLevel.TITLE_AND_CREATOR)
+        ),
+    )
+    case = "review_case_" + "a" * 64
+    asked: list[str] = []
+
+    def review_case_kept(value: str) -> bool:
+        asked.append(value)
+        return kept
+
+    repository = cast(
+        "ReviewPipelineRepository",
+        SimpleNamespace(
+            current_cover_consideration_level=lambda _case: None,
+            review_case_kept=review_case_kept,
+        ),
+    )
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "projection",
+        1,
+        "primary",
+        "books",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        source_fingerprint="c" * 64,
+        review_case_id=case,
+    )
+    order: list[str] = []
+    with (
+        patch.object(
+            stages, "prepare_cover", side_effect=lambda *_: order.append("cover")
+        ),
+        patch.object(
+            stages,
+            "_prepare_description",
+            side_effect=lambda *_args, **_values: order.append("description"),
+        ),
+    ):
+        stages.prepare_advice(repository, action)
+    assert asked == [case]
+    assert order == ([] if kept else ["cover", "description"])
+
+
+def test_admission_is_given_the_scan_time() -> None:
+    """Only the pipeline passes the time that keeps a written work's case
+    (#1523, S8)."""
+    calls: list[tuple[object, ...]] = []
+    stages = _proposal_stages(lambda *_: pytest.fail("proposal dispatch"))
+
+    def admit(*values: object) -> str:
+        calls.append(values)
+        return (
+            '{"review_case_id":null,"schema_version":"review-admission-v1",'
+            '"status":"no_case"}'
+        )
+
+    stages._admit_review_case = admit
+    repository = cast("ReviewPipelineRepository", object())
+    assert stages.admit(repository, "proposal_set_" + "1" * 64) == ("no_case", None)
+    assert calls == [("proposal_set_" + "1" * 64, repository, 7)]
 
 
 def _lane_run(supervisor: ReviewPreparationSupervisor, lane: int, wakes: int) -> int:

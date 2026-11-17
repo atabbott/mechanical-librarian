@@ -105,7 +105,12 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_DETAIL_SCHEMA",
-        "review-case-detail-v9",
+        "review-case-detail-v10",
+    ),
+    (
+        "mechanical_librarian.application.review_web",
+        "HUMAN_DECISION_ACK_SCHEMA",
+        "human-decision-ack-v2",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -115,7 +120,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_HISTORY_SCHEMA",
-        "review-case-history-v4",
+        "review-case-history-v5",
     ),
     (
         "mechanical_librarian.application.metadata_policy",
@@ -186,7 +191,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.human_decision",
         "HUMAN_DECISION_SCHEMA",
-        "human-decision-v5",
+        "human-decision-v6",
     ),
     (
         "mechanical_librarian.adapters.persistence.field_effect_validation",
@@ -294,7 +299,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "scripts.qualify_audiobookshelf_field_effect",
         "AUDIOBOOKSHELF_FIELD_EFFECT_SCHEMA",
-        "audiobookshelf-field-effect-v3",
+        "audiobookshelf-field-effect-v4",
     ),
     (
         "scripts.qualify_container_lifecycle",

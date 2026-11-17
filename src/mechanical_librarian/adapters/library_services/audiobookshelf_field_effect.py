@@ -30,7 +30,15 @@ from mechanical_librarian.application.field_effects import (
     TargetServiceUnavailable,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.domain.field_effect import FieldEffectPlan, field_value_version
+from mechanical_librarian.domain.field_effect import (
+    LIST_DESTINATIONS,
+    FieldEffectPlan,
+    field_value_version,
+)
+
+# Every form Audiobookshelf leaves an empty field in reads as no value: `null`,
+# an empty string, an absent key and an empty list (#1523, ADR-0105).
+_EMPTY_FORMS: tuple[object, ...] = (None, "", [])
 
 
 AudiobookshelfCapabilityResult = CapabilityObservation
@@ -332,6 +340,14 @@ class AudiobookshelfFieldEffectTarget:
             if type(metadata) is not dict:
                 raise TargetServiceUnavailable("destination")
             value = metadata.get(plan.destination)
+        # An item that never carried a value omits the key on some responses
+        # and answers `null` on others, and a cleared one keeps `null` or `[]`
+        # by field; capability discovery reads them all as allowed, so the
+        # pre-read and the read-back agree: each is no value (#1523).
+        if plan.destination != "explicit" and any(
+            type(value) is type(form) and value == form for form in _EMPTY_FORMS
+        ):
+            return None
         if plan.destination == "authors":
             if not isinstance(value, list) or any(type(item) is not dict or type(item.get("name")) is not str for item in value):
                 raise TargetServiceUnavailable("destination")
@@ -353,12 +369,6 @@ class AudiobookshelfFieldEffectTarget:
             return normalized or None
         if plan.destination == "explicit" and value is not None and type(value) is not bool:
             raise TargetServiceUnavailable("destination")
-        if plan.destination in {"narrators", "tags"} and value is None:
-            # An item that has never carried a narrator cast or a tag omits
-            # the key entirely on some responses and answers `null` on others.
-            # Capability discovery already reads both as allowed, so the
-            # pre-read has to agree: absent is no value, exactly as `[]` is.
-            return None
         if plan.destination in {"genres", "narrators", "tags"}:
             if type(value) is not list or any(type(item) is not str for item in value):
                 raise TargetServiceUnavailable("destination")
@@ -455,6 +465,11 @@ def _write_status(client: httpx.Client, method: str, url: str, **kwargs: Any) ->
 
 
 def _media_payload(destination: str, value: object) -> dict[str, object]:
+    """The one PATCH body for a destination; an owner's clear is `null` for a
+    scalar and `[]` for a list, the form the service empties each with (#1523).
+    """
+    if value is None and destination in LIST_DESTINATIONS:
+        value = []
     if destination == "tags":
         return {"tags": value}
     if destination == "authors":

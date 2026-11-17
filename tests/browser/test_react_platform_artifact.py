@@ -4657,7 +4657,7 @@ def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
                         "&preview=case-1&field=genres"
                     )
                     genres = page.get_by_role("region", name="Your value for Genres")
-                    genres.get_by_role("button", name="Choose genres").click()
+                    genres.get_by_role("button", name="Change").click()
                     expect(genres.get_by_role("checkbox")).to_have_count(3)
                     page.evaluate(_TWO_FRAMES)
                     # A long genre wraps beside its checkbox; only a single

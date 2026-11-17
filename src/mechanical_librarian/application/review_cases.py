@@ -25,7 +25,9 @@ class ReviewCaseError(RuntimeError):
 
 class ReviewCaseRepository(Protocol):
     def get_proposal(self, proposal_set_id: str) -> str: ...
-    def admit_review_case(self, proposal_set: ProposalSet) -> str: ...
+    def admit_review_case(
+        self, proposal_set: ProposalSet, *, now: int | None = None
+    ) -> str: ...
     def get_review_case(self, review_case_id: str) -> str: ...
     def close(self) -> None: ...
 
@@ -54,7 +56,7 @@ class AdmitReviewCase:
         self._repository = repository
         self._require_current = require_current
 
-    def run(self, proposal_set_id: str) -> str:
+    def run(self, proposal_set_id: str, *, now: int | None = None) -> str:
         try:
             proposal = ProposalSet.from_json(
                 self._repository.get_proposal(proposal_set_id)
@@ -76,7 +78,7 @@ class AdmitReviewCase:
                 raise ReviewCaseError("currentness") from error
             if current is not True:
                 return ReviewAdmissionResult("stale", None).to_json()
-            return self._repository.admit_review_case(proposal)
+            return self._repository.admit_review_case(proposal, now=now)
         except TargetConnectionError:
             raise
         except (CurrentnessError, ReviewAdmissionStaleError):

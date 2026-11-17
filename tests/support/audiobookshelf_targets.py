@@ -146,6 +146,11 @@ class FieldEffectTargetCase:
                                     metadata["description"]
                                 )
                             }
+                        metadata = _service_stored(metadata)
+                        if not metadata:
+                            # A wrong empty form is ignored, answered 200
+                            # without `updated` (#1523, probe D2).
+                            return httpx.Response(self.write_status, json={})
                         self.detail["media"]["metadata"].update(metadata)
                 self.detail["updatedAt"] = 8
                 return httpx.Response(self.write_status, json={"updated": True})
@@ -170,6 +175,23 @@ class FieldEffectTargetCase:
 
     def close(self) -> None:
         self.directory.cleanup()
+
+
+_LIST_FIELDS = frozenset({"authors", "genres", "narrators", "series", "tags"})
+
+
+def _service_stored(metadata: dict[str, object]) -> dict[str, object]:
+    """What Audiobookshelf keeps of one metadata PATCH (#1523, probe D2).
+
+    A list field takes only a list, so `[]` empties it and `null` or `""` is
+    ignored; a scalar ignores a list and stores an empty string as `null`.
+    """
+    stored: dict[str, object] = {}
+    for key, value in metadata.items():
+        if (key in _LIST_FIELDS) != (type(value) is list):
+            continue
+        stored[key] = None if value == "" else value
+    return stored
 
 
 def synthetic_audio_file(

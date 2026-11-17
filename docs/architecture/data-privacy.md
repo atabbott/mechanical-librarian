@@ -68,7 +68,12 @@ are recomputed from those rows and add no new personal data.
 **Decisions and effects.** Owner and automatic decisions, cover
 considerations and field-effect plans retain the values needed for
 attribution and recovery: pre-values, desired values, owner-entered text,
-consent, state, attempts and failure codes. Activity events are append-only.
+consent, state, attempts and failure codes. Owner-entered names are kept like
+owner-entered text; a clear stores no value. A work written in the last 30
+days keeps its current case when nothing is left to decide, holding no more
+than any case
+([ADR-0105](decisions/0105-going-back-after-a-write.md)). Activity events are
+append-only.
 
 **The Library visit.** One row keeps how far Library's listing had got at the
 owner's last visit and when Library was last used, as integers

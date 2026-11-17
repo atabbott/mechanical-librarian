@@ -75,6 +75,7 @@
       "notices": ["unique_typed_candidate"],
       "offer_digest": "907f75d3dd4bb12cfd6aa456bd2fe82f94406a5298466c4df6a3b934eb226296",
       "owner_control": null,
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -164,7 +165,10 @@
       "notices": ["unique_typed_candidate"],
       "offer_digest": "f44601aa0cb8538a840350d4df4c6225ee55729784748d539dbc2149f279d64d",
       "owner_control": {
+        "clear": true,
+        "current": null,
         "entry": null,
+        "names": null,
         "subset": {
           "max_items": 32,
           "options": [
@@ -178,6 +182,7 @@
         },
         "withdraw": null
       },
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -271,6 +276,7 @@
       "notices": ["manifestation_verification_required"],
       "offer_digest": "29856a3b15336ec1bb02d30c6739564582290a9fd62493969615575942737647",
       "owner_control": null,
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -369,13 +375,17 @@
       "notices": ["positive_preservation_evidence"],
       "offer_digest": "907f75d3dd4bb12cfd6aa456bd2fe82f94406a5298466c4df6a3b934eb226296",
       "owner_control": {
+        "clear": false,
+        "current": "Real Tigers",
         "entry": {
           "max_characters": 512,
           "suggestions": []
         },
+        "names": null,
         "subset": null,
         "withdraw": null
       },
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -435,6 +445,7 @@
       "notices": ["no_supported_evidence"],
       "offer_digest": "907f75d3dd4bb12cfd6aa456bd2fe82f94406a5298466c4df6a3b934eb226296",
       "owner_control": null,
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -523,7 +534,19 @@
       "needs_attention": false,
       "notices": ["positive_preservation_evidence"],
       "offer_digest": "4b5743e3bd01c20515f32ff7c81df2da3aba8539a892b6cc6234835206b1652b",
-      "owner_control": null,
+      "owner_control": {
+        "clear": false,
+        "current": ["Mick Herron"],
+        "entry": null,
+        "names": {
+          "max_characters": 512,
+          "max_items": 32,
+          "previous": null
+        },
+        "subset": null,
+        "withdraw": null
+      },
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -583,6 +606,7 @@
       "notices": ["no_supported_evidence"],
       "offer_digest": "6de22d3b56b1713d4245dc9c155b7affddf0cddc586a5dc28230733d7206bd96",
       "owner_control": null,
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -642,6 +666,7 @@
       "notices": ["no_supported_evidence"],
       "offer_digest": "26e0272c4586a4e5fe818d8bb726981b10970a9628383caad007bdedec2bceaa",
       "owner_control": null,
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -770,6 +795,7 @@
       "notices": ["positive_preservation_evidence"],
       "offer_digest": "45a30858643f643e22326072a6c7da46ed97b49abcc1c2de24ad15f2e3961383",
       "owner_control": null,
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -829,6 +855,7 @@
       "notices": ["no_supported_evidence"],
       "offer_digest": "a1a0b1dd20585229db4aa41441b023702b0330cb5bb6220a0bcfab65766ddc88",
       "owner_control": null,
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -888,6 +915,7 @@
       "notices": ["no_supported_evidence"],
       "offer_digest": "d9446863d1d36150b342cd5faba766f5f47c12e112497787048ef76cffea8760",
       "owner_control": null,
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -964,6 +992,7 @@
       "notices": ["unique_typed_candidate"],
       "offer_digest": "a27a834cb5fc3dfdc9b1234ce8730bd51f89e03296507273ea71724d67560887",
       "owner_control": null,
+      "written_by_case": false,
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -1028,6 +1057,7 @@
       "notices": ["no_supported_evidence"],
       "offer_digest": "d7be6f151ff3272693483354ac7511e0744272b5f17a3fb7bc3eae0b4898124d",
       "owner_control": null,
+      "written_by_case": false,
       "pin": null,
       "pin_control": null,
       "preservation_only": false,
@@ -1042,7 +1072,7 @@
   "recording_admission_basis": null,
   "recording_identity_basis": null,
   "review_case_id": "review_case_b62ec3e3209f7ad44663f982fa59cfbe8c9ae3fc88bf1a7413fc3102761699a6",
-  "schema_version": "review-case-detail-v9",
+  "schema_version": "review-case-detail-v10",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",

@@ -48,7 +48,7 @@ class _Repository:
     def get_proposal(self, proposal_set_id: str) -> str:
         return self.proposal.to_json()
 
-    def admit_review_case(self, proposal_set) -> str:
+    def admit_review_case(self, proposal_set, *, now=None) -> str:
         self.admissions += 1
         if self.error is not None:
             raise self.error

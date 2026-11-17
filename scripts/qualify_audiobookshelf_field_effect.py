@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Final, cast
 from unittest.mock import patch
 
-AUDIOBOOKSHELF_FIELD_EFFECT_SCHEMA: Final = "audiobookshelf-field-effect-v3"
+AUDIOBOOKSHELF_FIELD_EFFECT_SCHEMA: Final = "audiobookshelf-field-effect-v4"
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLED_ROOT = os.environ.get("MECHANICAL_LIBRARIAN_QUALIFICATION_INSTALL")
@@ -935,6 +935,105 @@ def _audiobook_canary(
     }
 
 
+# What the owner enters on the audiobook, field by field (#1523, ADR-0105). Each
+# is written, then the field goes back to the value the write replaced, and a
+# clearable field that still holds a value is then cleared.
+OWNER_VALUE_ENTRIES: tuple[tuple[str, object], ...] = (
+    ("subtitle", "Owner qualification subtitle"),
+    ("publisher", "Owner Qualification Press"),
+    ("genres", ["Qualification", "Owner genre"]),
+    ("narrators", ["Owner Narrator", "Second Owner Narrator"]),
+    ("authors", ["Owner Author", "Second Owner Author"]),
+)
+# The fields an owner may empty, and the form each reads back in once it is
+# empty on every pinned version (#1523 probe): `null` for a scalar and `[]`
+# for a list.
+OWNER_CLEARED_FORMS: dict[str, object] = {
+    "subtitle": None,
+    "publisher": None,
+    "genres": [],
+    "narrators": [],
+}
+
+
+def _owner_value_canary(
+    open_service,
+    target,
+    capabilities,
+    writes: list[str],
+    recovery,
+    base: str,
+    token: str,
+    item: str,
+    clock,
+) -> list[dict[str, object]]:
+    """Enter, go back on and clear each owner-entry field on the audiobook.
+
+    Every step is one human write through its own repository, read back by the
+    guarded path. Going back writes the value the entry replaced, which is a
+    clear when the field was empty. A clear is also checked raw: the service's
+    item must hold the empty form the adapter reads back as no value.
+    """
+    rows: list[dict[str, object]] = []
+    for destination, entered in OWNER_VALUE_ENTRIES:
+        placeholder = type("Plan", (), {"work_id": item, "destination": destination})()
+        if capabilities.result(placeholder).category != "allowed":
+            raise QualificationError("owner_value_capability_" + destination)
+        before = target.read(
+            type(
+                "Plan",
+                (),
+                {
+                    "work_id": item,
+                    "destination": destination,
+                    "desired_value": None,
+                    "subtitle_plan": lambda _self: None,
+                },
+            )()
+        ).value
+        steps: list[tuple[str, object]] = [("entered", entered), ("back", before)]
+        if destination in OWNER_CLEARED_FORMS and before is not None:
+            steps.append(("clear", None))
+        for step, desired in steps:
+            service, repository = open_service(destination + "-" + step)
+            try:
+                row = _apply(
+                    service,
+                    repository,
+                    target,
+                    capabilities,
+                    writes,
+                    recovery,
+                    item,
+                    destination,
+                    desired,
+                    clock(),
+                )
+            finally:
+                repository.close()
+            if desired is None:
+                detail = _mapping(
+                    _request("GET", base, "/api/items/" + item, token=token),
+                    "item_detail_invalid",
+                )
+                media = _mapping(detail.get("media"), "item_detail_invalid")
+                metadata = _mapping(media.get("metadata"), "item_detail_invalid")
+                raw = metadata.get(destination, "absent")
+                empty = OWNER_CLEARED_FORMS.get(destination, "unclearable")
+                if raw != empty or type(raw) is not type(empty):
+                    raise QualificationError("owner_clear_not_empty_" + destination)
+            rows.append(
+                {
+                    "destination": destination,
+                    "step": step,
+                    "cleared": desired is None,
+                    "state": row["state"],
+                    "request_count": row["request_count"],
+                }
+            )
+    return rows
+
+
 def _operator_epub(
     source: Path,
     destination: Path,
@@ -1609,6 +1708,141 @@ def _read_installed_return_lineage(
     hold = repository.field_effect_manual_hold_context(review_case_id, destination)
     progress = repository.review_pipeline_progress(connection, library)
     return progress, hold
+
+
+def _installed_field(client, case_id: str, destination: str) -> dict[str, object]:
+    """One field of a case as the review page reads it."""
+    detail = client.get(f"/api/v1/review-cases/{case_id}")
+    if detail.status_code != 200:
+        raise QualificationError("installed_going_back_case_unavailable")
+    fields = _mapping(detail.json(), "installed_going_back_case_invalid").get("fields")
+    field = (
+        next(
+            (
+                value
+                for value in fields
+                if type(value) is dict and value.get("destination") == destination
+            ),
+            None,
+        )
+        if type(fields) is list
+        else None
+    )
+    if field is None:
+        raise QualificationError("installed_going_back_field_missing")
+    return field
+
+
+def _installed_owner_decision(
+    client,
+    mutation_headers: dict[str, str],
+    case_id: str,
+    field: dict[str, object],
+    outcome: str,
+    selected_value: dict[str, object] | None,
+) -> str:
+    """Record one owner answer on a field through the review API."""
+    response = client.post(
+        f"/api/v1/review-cases/{case_id}/decisions",
+        headers={
+            **mutation_headers,
+            "Idempotency-Key": "installed-going-back-" + outcome,
+        },
+        json={
+            "destination": field.get("destination"),
+            "outcome": outcome,
+            "proposal_id": field.get("proposal_id"),
+            "selected_value": selected_value,
+            "target_fingerprint": field.get("target_fingerprint"),
+            "offered_alternatives_digest": field.get("offer_digest"),
+        },
+    )
+    if response.status_code != 200:
+        raise QualificationError(
+            f"installed_going_back_{outcome}_failed:{response.status_code}"
+        )
+    return _string(
+        _mapping(response.json(), "installed_going_back_decision_invalid").get(
+            "decision_id"
+        ),
+        "installed_going_back_decision_invalid",
+    )
+
+
+def _installed_going_back(
+    client,
+    mutation_headers: dict[str, str],
+    written_value: object,
+    *,
+    current_case: Callable[[], tuple[str | None, str | None]],
+    wait_written: Callable[[str], None],
+    read_back: Callable[[], object],
+    rescan: Callable[[], None],
+) -> dict[str, object]:
+    """Go back on the owner's written subtitle, pin the clear, and scan again.
+
+    The subtitle was empty before the owner's write, so going back is a clear:
+    no empty previous value is offered, and the field takes the empty value.
+    The owner pins the clear; once it is written, a scan in which a source
+    still proposes a subtitle keeps the field held, pinned and out of
+    Attention (#1523, ADR-0105).
+    """
+    case_id, _ = current_case()
+    if case_id is None:
+        raise QualificationError("installed_going_back_case_retired")
+    field = _installed_field(client, case_id, "subtitle")
+    control = field.get("owner_control")
+    if (
+        type(control) is not dict
+        or control.get("clear") is not True
+        or control.get("current") != written_value
+    ):
+        raise QualificationError("installed_going_back_not_offered")
+    entry = control.get("entry")
+    suggestions = entry.get("suggestions") if type(entry) is dict else None
+    if type(suggestions) is not list or any(
+        type(value) is dict and value.get("rule") == "previous" for value in suggestions
+    ):
+        raise QualificationError("installed_going_back_empty_previous_offered")
+    cleared = _installed_owner_decision(
+        client,
+        mutation_headers,
+        case_id,
+        field,
+        "owner_entered",
+        {"kind": "empty", "value": None},
+    )
+    _installed_owner_decision(
+        client,
+        mutation_headers,
+        case_id,
+        _installed_field(client, case_id, "subtitle"),
+        "pin",
+        None,
+    )
+    wait_written(cleared)
+    if read_back() is not None:
+        raise QualificationError("installed_going_back_not_cleared")
+    rescan()
+    successor, reason = current_case()
+    if successor is None:
+        raise QualificationError("installed_going_back_case_retired")
+    field = _installed_field(client, successor, "subtitle")
+    pin = field.get("pin")
+    if (
+        type(pin) is not dict
+        or pin.get("state") != "in_force"
+        or field.get("manual_hold") is not True
+        or field.get("needs_attention") is not False
+    ):
+        raise QualificationError("installed_going_back_pin_not_quiet")
+    return {
+        "cleared": True,
+        "empty_previous_offered": False,
+        "pin": "in_force",
+        "needs_attention": False,
+        "successor_reason": reason,
+    }
 
 
 def _installed_continuous_qualification(
@@ -2503,6 +2737,113 @@ def _installed_continuous_qualification(
                 for row in installed_outcomes
             ):
                 raise QualificationError("installed_return_automatic_unverified")
+            subtitle_row = next(
+                (
+                    row
+                    for row in installed_outcomes
+                    if row["destination"] == "subtitle" and row["origin"] == "human"
+                ),
+                None,
+            )
+            if subtitle_row is None:
+                raise QualificationError("installed_going_back_unwritten")
+            written_plan = FieldEffectOperation.from_json(
+                continuous._serialize(
+                    lambda: repository._connection.execute(
+                        "SELECT document FROM field_effects WHERE plan_id=?",
+                        (subtitle_row["plan_id"],),
+                    ).fetchone()[0]
+                )
+            ).plan
+            # Every synthetic item starts without a subtitle, so going back on
+            # the owner's subtitle is a clear (#1523).
+            if written_plan.pre_value is not None:
+                raise QualificationError("installed_going_back_previous_not_empty")
+            _wait_for_preparation(client, len(libraries), allow_failures=True)
+
+            def going_back_case() -> tuple[str | None, str | None]:
+                row = continuous._serialize(
+                    lambda: repository._connection.execute(
+                        "SELECT pointer.review_case_id,transition.reason "
+                        "FROM current_review_case_lineages pointer "
+                        "JOIN review_case_transitions transition "
+                        "ON transition.transition_id=pointer.transition_id "
+                        "WHERE pointer.connection_name=? AND pointer.library_name=? "
+                        "AND pointer.item_id=?",
+                        (
+                            written_plan.connection,
+                            written_plan.library,
+                            written_plan.work_id,
+                        ),
+                    ).fetchone()
+                )
+                return (None, None) if row is None else (row[0], row[1])
+
+            def going_back_written(decision_id: str) -> None:
+                written_deadline = time.monotonic() + 90
+                while time.monotonic() < written_deadline:
+                    states = {
+                        str(state)
+                        for (state,) in continuous._serialize(
+                            lambda: repository._connection.execute(
+                                "SELECT state FROM field_effects WHERE decision_id=?",
+                                (decision_id,),
+                            ).fetchall()
+                        )
+                    }
+                    if "verified" in states:
+                        return
+                    if states & {"stale", "superseded", "abandoned"}:
+                        raise QualificationError(
+                            "installed_going_back_write_" + ",".join(sorted(states))
+                        )
+                    time.sleep(0.5)
+                raise QualificationError("installed_going_back_write_timeout")
+
+            def going_back_read() -> object:
+                detail = _mapping(
+                    _request(
+                        "GET",
+                        base,
+                        "/api/items/" + written_plan.work_id,
+                        token=writer_key,
+                    ),
+                    "item_detail_invalid",
+                )
+                media = _mapping(detail.get("media"), "item_detail_invalid")
+                metadata = _mapping(media.get("metadata"), "item_detail_invalid")
+                return metadata.get("subtitle", "absent")
+
+            def going_back_rescan() -> None:
+                scan_deadline = time.monotonic() + 60
+                while True:
+                    response = client.post(
+                        f"/api/v1/review-preparation/{written_plan.connection}/"
+                        f"{written_plan.library}/scan",
+                        headers=mutation_headers,
+                    )
+                    if response.status_code == 202:
+                        break
+                    if (
+                        response.status_code not in {409, 503}
+                        or time.monotonic() >= scan_deadline
+                    ):
+                        raise QualificationError(
+                            f"installed_going_back_scan_failed:{response.status_code}"
+                        )
+                    _wait_for_preparation(client, len(libraries), allow_failures=True)
+                    time.sleep(0.25)
+                _wait_for_preparation(client, len(libraries), allow_failures=True)
+
+            going_back = _installed_going_back(
+                client,
+                mutation_headers,
+                written_plan.desired_value,
+                current_case=going_back_case,
+                wait_written=going_back_written,
+                read_back=going_back_read,
+                rescan=going_back_rescan,
+            )
             revoked = client.post(
                 "/api/v1/activity/canary/beta/revoke",
                 headers=mutation_headers,
@@ -2651,6 +2992,7 @@ def _installed_continuous_qualification(
         "activity_api": True,
         "continuous_scheduler": True,
         "external_drift_regeneration": True,
+        "going_back": going_back,
         "human_decision_api": True,
         "idempotent_rescan": True,
         "installed_composition": True,
@@ -3689,13 +4031,11 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         ):
             raise QualificationError("audiobook_outcome_state_invalid")
 
-        def description_service(case: str):
-            description_repository = open_repository(
-                _database_path(root, "effects-description-" + case)
-            )
+        def gamma_step_service(prefix: str, case: str):
+            step_repository = open_repository(_database_path(root, prefix + case))
             return (
                 GuardedFieldApplication(
-                    description_repository,
+                    step_repository,
                     gamma_target,
                     FakeBackupReadiness(),
                     gamma_capabilities,
@@ -3706,11 +4046,22 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
                     FakeForwardReevaluation(),
                     clock,
                 ),
-                description_repository,
+                step_repository,
             )
 
+        owner_values = _owner_value_canary(
+            partial(gamma_step_service, "effects-owner-"),
+            gamma_target,
+            gamma_capabilities,
+            writes,
+            recovery,
+            base,
+            writer_key,
+            audiobook_item,
+            clock,
+        )
         description_landings = _description_landings(
-            description_service,
+            partial(gamma_step_service, "effects-description-"),
             gamma_target,
             gamma_capabilities,
             writes,
@@ -3821,6 +4172,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             "real_automatic_adapter": real_automatic_adapter,
             "adapter_canary": adapter_outcomes,
             "audiobook": audiobook,
+            "owner_values": owner_values,
             "description_landings": description_landings,
             "outcomes": installed_outcomes,
         }

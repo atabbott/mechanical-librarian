@@ -104,8 +104,8 @@ leave them.
   the item has been rescanned since. A decision from before the case was last
   reopened, or one that was withdrawn, labels nothing. Accepting or entering a
   value names the alternative with that value. Keeping the current value names
-  the alternative that keeps it. A rejection, or a value no alternative
-  carries, names none. The pick column adds how often the pick is the named
+  the alternative that keeps it. A rejection, a clear, or a value no
+  alternative carries, names none. The pick column adds how often the pick is the named
   alternative, with the same Wilson lower limit. This measures value
   correctness, but only on fields the owner chose to decide.
 - The corroborated pick is one more ranking `--breakdown ID` measures. It

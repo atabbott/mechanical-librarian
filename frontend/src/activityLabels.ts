@@ -10,6 +10,8 @@ const ledgerStateLabels: Readonly<Record<string, string>> = {
   ...writeStateLabels,
   accept: 'Accepted',
   keep_current: 'Kept current',
+  // A keep that went back on the case's own write (#1523).
+  went_back: 'Went back',
   reject: 'Rejected',
   owner_entered: 'Entered by you',
   withdraw: 'Recorded',

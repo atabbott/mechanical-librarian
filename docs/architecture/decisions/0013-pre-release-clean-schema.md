@@ -634,3 +634,16 @@ report's `owner_link` facts; `fixed-conservative-v48`,
 evidence shadow-first. The decision-set, proposal-set and every review response
 version do not move. Every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1523 takes the clean-rebuild branch. `human-decision-v6` admits the
+owner's clear, the closed valueless `empty` kind on `owner_entered` only, and
+names for authors and narrators, and a keep names the decision of the write
+it goes back on (`follows`, null when none), so a v5 document is refused. The
+`human_decisions` table gains three `CHECK`s: a selected value is null or one
+closed kind, the `empty` kind carries no value and appears only on an
+`owner_entered` row, and `follows` is null or text on a `keep_current` row. Both `review_case_transitions` `CHECK`s admit the reason
+`recent_write`, only on an `admitted` or `superseded` row
+([ADR-0105](0105-going-back-after-a-write.md)). The proposal set, metadata
+report, field-effect plan, manual hold and Library versions do not move. Every
+earlier application database is rejected before mutation and needs a clean
+rebuild; no adoption is supplied.

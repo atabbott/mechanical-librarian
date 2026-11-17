@@ -4438,3 +4438,53 @@ def test_choose_then_pin_through_the_decision_route(
     finally:
         next(context, None)
         store.close()
+
+
+def test_keep_and_empty_values_the_route_refuses_append_nothing(
+    tmp_path: Path,
+) -> None:
+    """On the case that wrote an ISBN it read empty, Keep current would go
+    back to empty, which an ISBN cannot be: a mapped refusal. An empty value
+    carrying text is refused as a choice and as an entry. None appends a
+    decision or plans a write (#1523)."""
+    from tests.support.genre_reports import genre_report
+    from tests.support.owner_values import OwnerStore
+
+    store = OwnerStore(tmp_path, genre_report())
+    store.write(
+        store.decide(
+            "accept", {"kind": "text", "value": "9780306406157"}, destination="isbn"
+        )
+    )
+    context = review_web_context(lambda *_: cast(Any, store.repository))
+    web = next(context)
+    try:
+        case_id = store.case.review_case_id
+        decide = _decision_poster(web, web.login(), case_id, "keep-empty-request")
+
+        def counts() -> tuple[int, int]:
+            return store.repository._connection.execute(
+                "SELECT (SELECT count(*) FROM human_decisions),"
+                "(SELECT count(*) FROM field_effects)"
+            ).fetchone()
+
+        before = counts()
+        kept = decide("isbn", "keep_current")
+        assert (kept.status_code, kept.json()["error"]["code"]) == (
+            422,
+            "owner_value_required",
+        )
+        carried = {"kind": "empty", "value": "Fantasy"}
+        chosen = decide("genres", "accept", carried)
+        assert chosen.status_code == 422, chosen.text
+        assert chosen.json()["error"]["code"] == "invalid_selection"
+        entered = decide("genres", "owner_entered", carried)
+        assert (entered.status_code, entered.json()["error"]["code"]) == (
+            422,
+            "owner_value_invalid",
+        )
+        assert counts() == before
+        assert store.repository.pending_field_effect_decision_documents(10) == ()
+    finally:
+        next(context, None)
+        store.close()

@@ -1168,6 +1168,9 @@ describe('ReviewApiClient', () => {
         max_items: 32,
         options: [{ value: 'Drama', current: false, proposed: false, previous: true }],
       },
+      names: null,
+      clear: false,
+      current: null,
       withdraw: null,
     }
     expect(
@@ -1178,6 +1181,9 @@ describe('ReviewApiClient', () => {
         maxItems: 32,
         options: [{ value: 'Drama', current: false, proposed: false, previous: true }],
       },
+      names: null,
+      clear: false,
+      current: null,
       withdraw: null,
     })
     await expect(
@@ -7296,5 +7302,146 @@ describe('logoutOthers', () => {
     await expect(http.logoutOthers()).rejects.toBeInstanceOf(BuildMismatchError)
     expect(fetchMock).not.toHaveBeenCalled()
     expect(mismatch).toHaveBeenCalledOnce()
+  })
+})
+
+// An owner's clear and names entry on the wire (#1523, ADR-0105): each member
+// is decoded closed, and the empty kind only where an owner decision stands.
+describe('owner clear and names on the wire', () => {
+  const EMPTY = { kind: 'empty', value: null }
+  const ownerControl = {
+    entry: null,
+    subset: null,
+    names: { max_items: 32, max_characters: 512, previous: ['Old Writer'] },
+    clear: false,
+    current: ['Ada Example'],
+    withdraw: null,
+  }
+  const readField = async (field: Record<string, unknown>) =>
+    (await readCase(caseDetail({ fields: [reviewField(field)] }))).fields[0]
+
+  it('maps names entry, the clear flag and the current value', async () => {
+    expect((await readField({ owner_control: ownerControl }))?.ownerControl).toEqual({
+      entry: null,
+      subset: null,
+      names: { maxItems: 32, maxCharacters: 512, previous: ['Old Writer'] },
+      clear: false,
+      current: ['Ada Example'],
+      withdraw: null,
+    })
+    const text = { ...ownerControl, names: null, clear: true, current: 'A Quiet Subtitle' }
+    expect((await readField({ owner_control: text }))?.ownerControl).toMatchObject({
+      clear: true,
+      current: 'A Quiet Subtitle',
+    })
+  })
+
+  it.each([
+    [{ ...ownerControl, names: { ...ownerControl.names, extra: 1 } }, 'unknown_key'],
+    [{ ...ownerControl, names: { ...ownerControl.names, max_items: 33 } }, 'const'],
+    [{ ...ownerControl, clear: undefined }, 'required'],
+    [{ ...ownerControl, current: 7 }, 'no_branch'],
+    [{ ...ownerControl, empty_previous: true }, 'unknown_key'],
+  ])('refuses an owner control the contract does not state: %j', async (control, reason) => {
+    await expect(readField({ owner_control: control })).rejects.toMatchObject({
+      reason,
+    })
+  })
+
+  it('reads a clear on an owner decision and refuses it on an automatic one', async () => {
+    const owner = await readField({
+      human_decision: decisionProjection({
+        destination: 'title',
+        outcome: 'owner_entered',
+        selected_value: EMPTY,
+      }),
+    })
+    expect(owner?.humanDecision?.selected_value).toEqual(EMPTY)
+    await expect(
+      readField({
+        automatic_decision: {
+          candidate_id: null,
+          decision_id: 'automatic-1',
+          destination: 'title',
+          occurred_at: 3,
+          outcome: 'candidate',
+          proposal_id: 'proposal-1',
+          review_case_id: 'case-1',
+          selected_value: EMPTY,
+          target_fingerprint: 'fingerprint-1',
+        },
+      }),
+    ).rejects.toThrow(ApiError)
+  })
+
+  it('reads a clear in History only on an owner decision', async () => {
+    const history = await readHistory(
+      caseHistory({
+        items: [
+          historyDecisionItem({
+            destination: 'subtitle',
+            outcome: 'owner_entered',
+            previous_value: { kind: 'text', value: 'A Quiet Subtitle' },
+            selected_value: EMPTY,
+          }),
+        ],
+      }),
+    )
+    expect(history.items[0]).toMatchObject({ category: 'owner', selectedValue: EMPTY })
+    await expect(
+      readHistory(
+        caseHistory({
+          items: [
+            {
+              decision_id: 'automatic-1',
+              destination: 'subtitle',
+              kind: 'automatic_decision_recorded',
+              occurred_at: 1,
+              origin: 'automatic_policy',
+              outcome: 'candidate',
+              previous_value: null,
+              review_case_id: 'case-1',
+              schema_version: 'automatic-decision-history-event-v1',
+              selected_value: EMPTY,
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(ApiError)
+  })
+
+  it('reads a v2 acknowledgement of a clear and refuses the v1 one', async () => {
+    const command = {
+      destination: 'subtitle',
+      outcome: 'owner_entered' as const,
+      proposalId: 'proposal-1',
+      selectedValue: { kind: 'empty' as const, value: null },
+      targetFingerprint: 'fingerprint-1',
+      offerDigest: 'offer-digest',
+      idempotencyKey: 'clear-subtitle',
+    }
+    const answer = (overrides: Record<string, unknown>) =>
+      new ReviewApiClient({
+        csrf,
+        buildIdentity: 'c'.repeat(64),
+        fetch: vi.fn<typeof fetch>(async () =>
+          Response.json(
+            decisionAcknowledgement({
+              destination: 'subtitle',
+              outcome: 'owner_entered',
+              selected_value: EMPTY,
+              confirmation: { status: 'unavailable' },
+              ...overrides,
+            }),
+          ),
+        ),
+      }).recordDecision('case-1', command)
+    expect(await answer({})).toMatchObject({
+      schema_version: 'human-decision-ack-v2' as const,
+      selected_value: EMPTY,
+    })
+    await expect(answer({ schema_version: 'human-decision-ack-v1' })).rejects.toMatchObject({
+      reason: 'const',
+    })
   })
 })
