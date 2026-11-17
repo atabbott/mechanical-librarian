@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 import tempfile
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
@@ -8,6 +10,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from scripts.verify_npm_advisories import accepted_advisories, audit, unaccepted
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -455,3 +458,104 @@ def test_every_permitted_write_scope_names_a_workflow_scope_and_reason() -> None
     for (workflow, scope), reason in PERMITTED_WRITE_SCOPES.items():
         assert workflow.strip() and scope.strip()
         assert len(reason.strip()) >= MIN_REASON_CHARACTERS
+
+
+def _npm_report(*urls: str) -> Mapping[str, object]:
+    """A minimal `npm audit --json` report naming one advisory per URL."""
+
+    return {
+        "auditReportVersion": 2,
+        "vulnerabilities": {
+            f"package-{position}": {
+                "via": [
+                    f"package-{position + 1}",
+                    {"url": url, "title": f"advisory {position}"},
+                ]
+            }
+            for position, url in enumerate(urls)
+        },
+    }
+
+
+_ADVISORY = "https://github.com/advisories/GHSA-0000-0000-0001"
+
+
+def test_the_frontend_audit_fails_on_an_advisory_the_register_does_not_hold() -> None:
+    report = _npm_report(_ADVISORY)
+    assert unaccepted(report, {}, _TODAY) == {"GHSA-0000-0000-0001": "advisory 0"}
+
+
+def test_the_frontend_audit_passes_an_advisory_inside_its_time_box() -> None:
+    register = _register(
+        f'id = "GHSA-0000-0000-0001"\nignoreUntil = 2026-09-15\n{_REASON}'
+    )
+    assert unaccepted(_npm_report(_ADVISORY), register, _TODAY) == {}
+
+
+def test_the_frontend_audit_fails_again_once_the_acceptance_expires() -> None:
+    register = _register(
+        f'id = "GHSA-0000-0000-0001"\nignoreUntil = 2026-08-15\n{_REASON}'
+    )
+    assert accepted_advisories(register, _TODAY) == frozenset()
+    assert list(unaccepted(_npm_report(_ADVISORY), register, _TODAY)) == [
+        "GHSA-0000-0000-0001"
+    ]
+
+
+def test_an_acceptance_covers_only_the_advisory_it_names() -> None:
+    register = _register(
+        f'id = "GHSA-0000-0000-0001"\nignoreUntil = 2026-09-15\n{_REASON}'
+    )
+    report = _npm_report(
+        _ADVISORY,
+        "https://github.com/advisories/GHSA-0000-0000-0002",
+        "https://example.invalid/advisory-without-a-ghsa-id",
+    )
+    assert list(unaccepted(report, register, _TODAY)) == [
+        "GHSA-0000-0000-0002",
+        "https://example.invalid/advisory-without-a-ghsa-id",
+    ]
+
+
+def test_the_public_gate_audits_the_frontend_through_the_register() -> None:
+    workflow = PUBLIC_GATE.read_text(encoding="utf-8")
+    assert "uv run python ../scripts/verify_npm_advisories.py\n" in workflow
+    # A bare `npm audit` would bypass the register; a severity floor or an
+    # omitted dependency type would loosen the audit for every advisory.
+    assert "npm audit" not in workflow
+
+
+def _npm_run(stdout: str, returncode: int) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        ["npm", "audit", "--json"], returncode, stdout, ""
+    )
+
+
+_CLEAN = json.dumps({"auditReportVersion": 2, "vulnerabilities": {}})
+
+
+@pytest.mark.parametrize(
+    ("stdout", "returncode", "expected"),
+    (
+        (_CLEAN, 0, 0),
+        (json.dumps(_npm_report(_ADVISORY)), 1, 1),
+        ("npm ERR! network", 1, 1),
+        (json.dumps({"message": "offline", "error": {"code": "ENOTFOUND"}}), 1, 1),
+        (json.dumps({"vulnerabilities": {}}), 0, 1),
+        (json.dumps({"auditReportVersion": 2}), 0, 1),
+        (_CLEAN, 1, 1),
+    ),
+    ids=(
+        "clean",
+        "unaccepted",
+        "not_json",
+        "npm_error",
+        "unknown_report_version",
+        "no_vulnerabilities_table",
+        "failing_exit_with_nothing_reported",
+    ),
+)
+def test_the_frontend_audit_fails_closed(
+    stdout: str, returncode: int, expected: int
+) -> None:
+    assert audit(_npm_run(stdout, returncode), {}, _TODAY) == expected

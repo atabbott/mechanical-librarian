@@ -100,7 +100,7 @@ jobs:
           npm run lint
           npm run licenses
           npm test
-          npm audit --audit-level=low
+          uv run python ../scripts/verify_npm_advisories.py
           ML_FRONTEND_OUT_DIR="$RUNNER_TEMP/frontend-build-a" npm run build
           ML_FRONTEND_OUT_DIR="$RUNNER_TEMP/frontend-build-b" npm run build
           diff -r "$RUNNER_TEMP/frontend-build-a" "$RUNNER_TEMP/frontend-build-b"
