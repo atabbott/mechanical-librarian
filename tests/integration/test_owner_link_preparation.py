@@ -47,6 +47,7 @@ from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
     InspectionResult,
     ProviderBinding,
+    ReportRepository,
     TargetFile,
     TargetSnapshot,
 )
@@ -215,6 +216,7 @@ def _prepare_ebook(
     path: Path,
     bindings: tuple[ProviderBinding, ...],
     claims: tuple[LocalClaim, ...] = (),
+    repository_factory: Callable[[], ReportRepository] | None = None,
 ) -> MetadataReport:
     selected = TargetFile("a" * 64, "book.epub", "epub")
     snapshot = TargetSnapshot("ebook", LOCAL_TITLE, (selected,), fields=_fields())
@@ -222,7 +224,7 @@ def _prepare_ebook(
         GenerateMetadataReport(
             target=FakeTarget([snapshot, snapshot]),
             inspector=FakeInspector(InspectionResult("c" * 64, claims)),
-            repository_factory=lambda: open_repository(path),
+            repository_factory=repository_factory or (lambda: open_repository(path)),
             providers=bindings,
             connection=TargetConnectionConfiguration(
                 CONNECTION, "https://example.invalid", "/private/target"

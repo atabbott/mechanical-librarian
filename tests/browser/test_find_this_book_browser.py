@@ -86,6 +86,7 @@ def _current(**overrides: Any) -> dict[str, Any]:
         "reason": None,
         "retry_at": None,
         "scope": "work",
+        "source": "search",
         "state": "linked",
         "title": "Dune",
     } | overrides
@@ -290,6 +291,7 @@ def _serve(page: Page, served: _Served) -> None:
                     if view["link"] is None
                     else {
                         "state": view["link"]["state"],
+                        "source": view["link"]["source"],
                         "provider": view["link"]["provider"],
                     }
                 )
