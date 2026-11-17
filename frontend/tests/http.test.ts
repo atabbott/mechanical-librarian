@@ -3303,7 +3303,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v10', error: { code: 'busy' } },
+          { schema_version: 'review-library-v11', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3403,7 +3403,7 @@ describe('ReviewApiClient', () => {
     ).rejects.toMatchObject(refused('const@/schema_version'))
     // v9 added each row's book link (#1477); a v8 row lacks it.
     await expect(
-      readLibrary({ ...page, schema_version: 'review-library-v10' }),
+      readLibrary({ ...page, schema_version: 'review-library-v11' }),
     ).resolves.toBeDefined()
   })
 
@@ -7347,7 +7347,7 @@ describe('the book link wire (#1477)', () => {
     link: null,
     offered: true,
     prefill: { asin: null, authors: ['Frank Herbert'], isbn: null, title: 'Dune' },
-    schema_version: 'owner-link-view-v2',
+    schema_version: 'owner-link-view-v3',
     sources: [
       { lanes: ['title_authors', 'isbn'], marketplaces: null, provider: 'hardcover' },
       { lanes: ['title_authors', 'asin'], marketplaces: ['us', 'uk'], provider: 'audible_catalog' },
@@ -8005,7 +8005,7 @@ describe('the identifiers file wire (#1478)', () => {
         },
         offered: true,
         prefill: { asin: null, authors: [], isbn: null, title: null },
-        schema_version: 'owner-link-view-v2',
+        schema_version: 'owner-link-view-v3',
         sources: [],
       })
     const address = { connection: 'abs', library: 'books', item: 'item-1' }

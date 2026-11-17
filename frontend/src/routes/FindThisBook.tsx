@@ -16,6 +16,7 @@ import type {
   OwnerSearchView,
   WorkAddress,
 } from '../api/http'
+import { useBookMatchingRetry } from '../bookMatchingRetry'
 import { Button } from '../components/Button'
 import { Dropdown } from '../components/Dropdown'
 import { SegmentedControl } from '../components/SegmentedControl'
@@ -41,6 +42,7 @@ import {
   scopeButtons,
   sourceName,
   uncertainLinkCopy,
+  unusedLinkLine,
   withheldLines,
 } from '../findThisBook'
 import type { Refusal } from '../findThisBook'
@@ -56,8 +58,11 @@ export interface FindWork {
   mediaKind: MediaKind
 }
 
-/** What the header needs to show its entry, as the Library row carries it. */
-export type FindEntryRow = Pick<LibraryWorkView, 'findOffered' | 'link'>
+/**
+ * What the header needs to show its entry, as the Library row carries it, and
+ * the row's next step for a preparation that could not finish (#1941).
+ */
+export type FindEntryRow = Pick<LibraryWorkView, 'findOffered' | 'link' | 'preparation'>
 
 /**
  * The header's entry: Find this book while the work has no link and is
@@ -226,6 +231,7 @@ export function FindThisBookEntry({
           address={address}
           work={work}
           view={data}
+          preparation={row?.preparation ?? null}
           start={open}
           refresh={async () => {
             const read = await view.refetch()
@@ -265,6 +271,7 @@ function FindThisBookDialog({
   address,
   work,
   view,
+  preparation,
   start,
   refresh,
   close,
@@ -272,11 +279,14 @@ function FindThisBookDialog({
   address: WorkAddress
   work: FindWork
   view: OwnerLinkView
+  /** The Library row's Could not finish, which gives a link no preparation read its next step. */
+  preparation: LibraryWorkView['preparation']
   start: 'link' | 'form'
   refresh: () => Promise<void>
   close: (said?: string) => void
 }) {
   const { http } = useReviewContext()
+  const givenUp = useBookMatchingRetry(http)
   const dialog = useRef<HTMLDialogElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const medium = mediumOf(work.mediaKind)
@@ -444,6 +454,7 @@ function FindThisBookDialog({
             medium={medium}
             canChange={view.offered}
             now={new Date()}
+            unused={unusedLinkLine(preparation, givenUp.answered ? givenUp.retry : null)}
             onChange={() => {
               setRefusal(null)
               setStep({ at: 'form' })

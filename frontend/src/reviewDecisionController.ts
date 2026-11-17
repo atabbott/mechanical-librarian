@@ -105,8 +105,12 @@ const pinFailureCopy = (
 export const writtenRefusal =
   'This decision has been written to your library, so it can’t be withdrawn.'
 // A choice refused because the work's book link changed since its case was
-// prepared (#1477, Q6): nothing is recorded until preparation runs again.
-export const linkChangedNotice = 'The book link changed. This work is being prepared again.'
+// prepared (#1477, Q6): nothing is recorded until a preparation uses the link.
+// While one could not finish, the work's own line says why and what to do
+// instead (`unusedLinkNotice`, #1941).
+export const linkChangedNotice =
+  'Not recorded. The book link changed. Choose again when preparation has used the link.'
+export const unusedLinkNotice = (line: string) => `Not recorded. ${line}`
 export const linkChanged = (error: unknown) =>
   error instanceof ApiError && error.code === 'link_changed'
 // The store's refusal for an owner command, in the words the owner acts on.
@@ -214,6 +218,7 @@ export const useReviewDecisionController = ({
   onComplete,
   onRecorded,
   onStale,
+  linkNotice = linkChangedNotice,
 }: {
   reviewCaseId: string
   fields: CaseDetailView['fields']
@@ -224,6 +229,8 @@ export const useReviewDecisionController = ({
   onComplete?: (fields: CaseDetailView['fields']) => Promise<void> | void
   onRecorded?: (caseId: string, destination: string) => Promise<void> | void
   onStale: (command: DecisionCommand) => Promise<void> | void
+  // What a choice refused because the book link changed says, for this work.
+  linkNotice?: string
 }) => {
   const { http, queryClient } = useReviewContext()
   const [status, setStatus] = useState<{
@@ -513,7 +520,7 @@ export const useReviewDecisionController = ({
       if (linkChanged(error)) {
         // Not retried: the case is prepared again with the new link.
         forget(command)
-        announce(reviewCaseId, command.destination, linkChangedNotice, true)
+        announce(reviewCaseId, command.destination, linkNotice, true)
         if (!active(command.destination)) await returnTo(command.destination)
         return
       }

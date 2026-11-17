@@ -1082,11 +1082,17 @@ def _language_outside(language: str | None, library: tuple[str, ...]) -> bool:
 
 
 # Link state (S29): what a selected work's link reads, derived per work from
-# its current link, its current report's link facts, the paused flag and the
-# next automatic retry recovery has scheduled.
+# its current link, its current report's link facts, whether the work's latest
+# preparation could not finish, the paused flag and the next automatic retry
+# recovery has scheduled.
 
 OwnerLinkStateName = Literal[
-    "linked", "preparing", "waiting", "contradicted", "needs_replacing"
+    "linked",
+    "preparing",
+    "preparation_failed",
+    "waiting",
+    "contradicted",
+    "needs_replacing",
 ]
 _NEEDS_REPLACING = frozenset(
     {
@@ -1111,19 +1117,25 @@ def link_state(
     facts: OwnerLinkFacts | None,
     *,
     paused: bool,
+    preparation_failed: bool,
     next_retry_at: int | None = None,
 ) -> OwnerLinkState:
     """The state of a work's current link (S29).
 
-    `preparing` while no current report binds the link's digest (Q5),
-    whatever the paused flag says; the flag travels so the line can say
-    preparation waits. A report that binds it reads its outcome: `linked`
+    While no current report binds the link's digest (Q5), the link has not
+    been read: `preparation_failed` when the work's latest preparation could
+    not finish (#1941), since no preparation is then on its way to read it,
+    and `preparing` otherwise, whatever the paused flag says; the flag
+    travels so the line can say preparation waits. A report that binds it
+    reads its outcome, whatever became of a later preparation: `linked`
     when the record was admitted, `waiting` with recovery's next retry when
     the source did not answer, `contradicted` with the re-check's reason, and
     `needs_replacing` with the outcome that makes the link unusable.
     """
     if facts is None or facts.digest != link.digest:
-        return OwnerLinkState("preparing", paused=paused)
+        return OwnerLinkState(
+            "preparation_failed" if preparation_failed else "preparing", paused=paused
+        )
     outcome = OwnerLinkOutcome(facts.outcome)
     if outcome is OwnerLinkOutcome.ADMITTED:
         return OwnerLinkState("linked", paused=paused)

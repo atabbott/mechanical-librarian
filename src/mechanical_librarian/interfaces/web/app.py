@@ -1873,7 +1873,14 @@ class _LibraryValueFlag(_ClosedModel):
 class _LibraryLink(_ClosedModel):
     """A row's book link state and source; the selected work reads the rest (#1477)."""
 
-    state: Literal["linked", "preparing", "waiting", "contradicted", "needs_replacing"]
+    state: Literal[
+        "linked",
+        "preparing",
+        "preparation_failed",
+        "waiting",
+        "contradicted",
+        "needs_replacing",
+    ]
     # How the link was made: chosen from a source, or named by an identifiers
     # file (#1478), which names no source.
     source: Literal["search", "file"]

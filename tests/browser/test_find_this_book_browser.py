@@ -805,7 +805,8 @@ def test_a_decision_refused_because_the_link_changed_says_so(
         ).click()
         expect(
             page.get_by_text(
-                "The book link changed. This work is being prepared again."
+                "Not recorded. The book link changed. Choose again when preparation"
+                " has used the link."
             )
         ).to_be_visible()
         # One send, never repeated on its own.

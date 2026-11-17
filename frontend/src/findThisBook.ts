@@ -13,7 +13,9 @@ import type {
   OwnerSearchView,
   WorkAddress,
 } from './api/http'
+import type { LibraryWorkView } from './api/http'
 import { ApiError, uncertainWriteOutcome } from './api/http'
+import { givenUpCopy } from './bookMatchingRetry'
 import { formatRunningTime, formatWhen } from './dates'
 import { languageName } from './labels'
 
@@ -58,6 +60,7 @@ export const pillText = (state: OwnerLinkState, provider: OwnerLinkProvider | nu
   ({
     linked: provider === null ? 'Linked from a file' : `Linked on ${sourceName(provider)}`,
     preparing: 'Linked, preparing',
+    preparation_failed: 'Link not used yet',
     waiting: `Linked, waiting for ${sourceName(provider)}`,
     contradicted: 'Link contradicted',
     needs_replacing: 'Link needs replacing',
@@ -66,6 +69,7 @@ export const rowLinkPhrase = (state: OwnerLinkState, provider: OwnerLinkProvider
   ({
     linked: 'Linked',
     preparing: 'Linked, preparing',
+    preparation_failed: 'Link not used yet',
     waiting: `Linked, waiting for ${sourceName(provider)}`,
     contradicted: 'Link contradicted',
     needs_replacing: 'Link needs replacing',
@@ -135,8 +139,37 @@ const replacingReason = (link: OwnerLinkCurrent, mediaKind: 'ebook' | 'audiobook
         : 'This work is now an ebook.'
   }
 }
-/** The state line under the link, or null for a link that holds. */
-export const stateLine = (link: OwnerLinkCurrent, mediaKind: 'ebook' | 'audiobook', now: Date) => {
+/**
+ * Why a link no preparation has read is not used yet, and the one step to take,
+ * in the words the work's Library row uses (#1941): Could not finish with the
+ * row's next step, or a Book matching check that gave up with its retry. With
+ * no row at hand it says only what happened.
+ */
+export const unusedLinkLine = (
+  preparation:
+    | Pick<NonNullable<LibraryWorkView['preparation']>, 'checkGivenUp' | 'recovery'>
+    | null
+    | undefined,
+  givenUpRetry: string | null,
+) => {
+  const cause = preparation?.checkGivenUp
+    ? givenUpCopy.replace(/\.$/u, '')
+    : 'Preparation could not finish'
+  const step = preparation ? (preparation.checkGivenUp ? givenUpRetry : preparation.recovery) : null
+  return [`${cause}, so the book link is not used yet.`, step].filter(Boolean).join(' ')
+}
+
+/**
+ * The state line under the link, or null for a link that holds. `unused` is
+ * the line for a link no preparation has read after one could not finish,
+ * from `unusedLinkLine` when the work's row is at hand.
+ */
+export const stateLine = (
+  link: OwnerLinkCurrent,
+  mediaKind: 'ebook' | 'audiobook',
+  now: Date,
+  unused?: string,
+) => {
   const source = link.provider === null ? 'Its sources' : sourceName(link.provider)
   switch (link.state) {
     case 'linked':
@@ -145,6 +178,8 @@ export const stateLine = (link: OwnerLinkCurrent, mediaKind: 'ebook' | 'audioboo
       return link.paused
         ? 'Preparation is paused. The link is used when it resumes.'
         : 'Preparing this work with the link.'
+    case 'preparation_failed':
+      return unused ?? unusedLinkLine(null, null)
     case 'waiting':
       return link.provider === null && link.retry_at === null
         ? 'Its sources did not answer. The link is used once they do.'

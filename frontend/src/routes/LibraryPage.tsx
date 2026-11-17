@@ -39,7 +39,14 @@ import {
   useReviewContext,
 } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
-import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
+import {
+  actionable,
+  requestKey,
+  unusedLinkNotice,
+  useReviewDecisionController,
+} from '../reviewDecisionController'
+import { useBookMatchingRetry } from '../bookMatchingRetry'
+import { unusedLinkLine } from '../findThisBook'
 import { emptyUnproposed, primaryField, railOffers } from '../reviewChoiceCounts'
 import { advancePresentationSettled } from '../reviewAdvancePresentation'
 
@@ -144,6 +151,8 @@ export default function LibraryPage({
     [libraryNavigate, router],
   )
   const { http, updates, queryClient } = useReviewContext()
+  // A given-up Book matching check's retry, for a link notice that names it.
+  const givenUpRetry = useBookMatchingRetry(http)
   useLibraryListing(showListing, data)
   // Global figures read the library summary, which carries no q (#1284).
   const summary = useQuery(librarySummaryQuery(http))
@@ -469,6 +478,17 @@ export default function LibraryPage({
   const coverPrepareFailure = useCoverPrepareFailure(selectedReviewCaseId)
   const controller = useReviewDecisionController({
     reviewCaseId: selectedReviewCaseId,
+    // A link no preparation used after one could not finish (#1941).
+    ...(selectedRow?.link?.state === 'preparation_failed'
+      ? {
+          linkNotice: unusedLinkNotice(
+            unusedLinkLine(
+              selectedRow.preparation,
+              givenUpRetry.answered ? givenUpRetry.retry : null,
+            ),
+          ),
+        }
+      : {}),
     fields: detail.data?.fields ?? [],
     checking: detail.data?.checking ?? false,
     active: (destination) =>

@@ -484,7 +484,12 @@ def test_the_library_row_says_what_the_view_says_before_and_after_a_link(
 def test_a_row_that_could_not_finish_is_not_offered_and_keeps_its_link(
     live: _Live, tmp_path: Path
 ) -> None:
-    """Could not finish (L4): the row offers no search but still shows the link."""
+    """Could not finish (L4): the row offers no search but still shows the link.
+
+    No report has read the link, and no preparation is on its way to read it,
+    so row and view say the link is not used yet, not that it is being
+    prepared (#1941).
+    """
     live.choose(_searched(live))
     # The failed work row stands alone, with no scan row behind it, as the
     # owner-link store's own tests seed it.
@@ -513,7 +518,18 @@ def test_a_row_that_could_not_finish_is_not_offered_and_keeps_its_link(
     (row,) = live.client.get("/api/v1/library?lens=all").json()["items"]
     assert row["find_offered"] is view["offered"] is False
     assert row["link"] is not None and view["link"] is not None
-    assert row["link"]["state"] == view["link"]["state"]
+    assert row["link"]["state"] == view["link"]["state"] == "preparation_failed"
+    # The next scan queues it again: preparing once more, in both.
+    connection = sqlite3.connect(tmp_path / "state.sqlite3", isolation_level=None)
+    connection.execute(
+        "UPDATE review_preparation_work SET state='queued',failure_code=NULL "
+        "WHERE work_id=?",
+        (preparation_work_id(CONNECTION, LIBRARY, ITEM),),
+    )
+    connection.close()
+    view = live.client.get(VIEW).json()
+    (row,) = live.client.get("/api/v1/library?lens=all").json()["items"]
+    assert row["link"]["state"] == view["link"]["state"] == "preparing"
 
 
 def test_the_view_needs_a_session_and_refuses_an_unknown_work(live: _Live) -> None:

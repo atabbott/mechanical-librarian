@@ -3651,6 +3651,7 @@ export const mapHistory = (value: HistoryDto): HistoryView => ({
 const linkReasonsByState: Readonly<Record<OwnerLinkState, readonly (OwnerLinkReason | null)[]>> = {
   linked: [null],
   preparing: [null],
+  preparation_failed: [null],
   waiting: [null],
   contradicted: ['format', 'runtime', 'narrators', 'variant'],
   needs_replacing: ['missing', 'merged', 'source_disabled', 'medium_changed'],
