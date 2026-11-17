@@ -591,8 +591,8 @@ def _owner_link_facts(
             {"label": "Source", "value": source},
             {
                 "label": "What happens next",
-                "value": "This work is prepared again without the link. "
-                "Nothing is written until you choose a value in Library.",
+                "value": "Withdrawing writes nothing to Audiobookshelf. "
+                "This work is prepared again without the link.",
             },
         ]
     linked_as, clause = _LINKED_AS.get(
@@ -606,8 +606,8 @@ def _owner_link_facts(
         {"label": "Linked as", "value": linked_as},
         {
             "label": "What happens next",
-            "value": "This work is prepared again with the link. "
-            "Nothing is written until you choose a value in Library.",
+            "value": "Linking writes nothing to Audiobookshelf. "
+            "This work is prepared again with the link.",
         },
     ]
 

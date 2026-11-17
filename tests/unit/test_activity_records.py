@@ -1542,8 +1542,8 @@ def test_a_book_link_names_its_record_source_and_what_follows(
     assert _facts(event) == {
         "Source": "Open Library",
         "Linked as": linked_as,
-        "What happens next": "This work is prepared again with the link. "
-        "Nothing is written until you choose a value in Library.",
+        "What happens next": "Linking writes nothing to Audiobookshelf. "
+        "This work is prepared again with the link.",
     }
     assert (
         activity_result_label(state).value
@@ -1565,8 +1565,8 @@ def test_a_withdrawn_link_names_the_link_it_ended() -> None:
     )
     assert _facts(event) == {
         "Source": "Open Library",
-        "What happens next": "This work is prepared again without the link. "
-        "Nothing is written until you choose a value in Library.",
+        "What happens next": "Withdrawing writes nothing to Audiobookshelf. "
+        "This work is prepared again without the link.",
     }
 
 
