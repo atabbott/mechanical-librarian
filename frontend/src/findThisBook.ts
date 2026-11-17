@@ -126,7 +126,7 @@ export const stateLine = (
   link: OwnerLinkCurrent,
   mediaKind: 'ebook' | 'audiobook',
   now: Date,
-  recovery?: string | undefined,
+  recovery?: string,
 ) => {
   const source = sourceName(link.provider)
   switch (link.state) {
