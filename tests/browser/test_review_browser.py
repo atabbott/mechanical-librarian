@@ -13041,7 +13041,7 @@ def test_owner_clears_the_genres_in_one_press():
         expect(panel).not_to_contain_text("Unavailable")
         _owner_layout_holds(page)
         page.set_viewport_size({"width": 1440, "height": 900})
-        page.get_by_role("link", name="History", exact=True).click()
+        _open_library_history(page)
         entry = page.locator("article", has_text="You cleared the genres.")
         expect(entry).to_be_visible()
         expect(entry).to_contain_text("Cleared")
