@@ -589,13 +589,19 @@ export const useReviewDecisionController = ({
       nameUnsent(queryClient.getQueryData(detailKey))
     }
   })
+  // A read newer than the lock lifts it at once, before the effect above
+  // clears it, so no render says the work could not be reloaded after it was.
+  const held =
+    reconciliation.data && (detailState?.dataUpdatedAt ?? 0) <= reconciliation.data.detailUpdatedAt
+      ? reconciliation.data
+      : null
   const entries = acknowledged.caseId === reviewCaseId ? acknowledged.entries : []
   const failed = [...entries].reverse().find((entry) => entry.phase === 'failed') ?? null
   const outstanding = entries.filter((entry) => entry.phase === 'recording')
   const chosen = (destination: string) =>
     [...entries].reverse().find((entry) => entry.command.destination === destination) ?? null
   const retry = () => {
-    if (!failed || reconciliation.data !== null) return
+    if (!failed || held !== null) return
     announce(
       reviewCaseId,
       failed.command.destination,
@@ -609,7 +615,7 @@ export const useReviewDecisionController = ({
     void decision.mutateAsync(failed.command).catch(() => undefined)
   }
   const submit = (command: DecisionCommand) => {
-    if (reconciliation.data !== null || checking) return false
+    if (held !== null || checking) return false
     const settled = settledFor(reviewCaseId)
     // Two presses of the same choice, or a second choice for a field whose
     // first is still in flight, are the same decision. Neither becomes a
@@ -656,7 +662,7 @@ export const useReviewDecisionController = ({
   const alertFor = (destination: string) =>
     status.caseId === reviewCaseId && status.destination === destination && status.alert
   const messageFor = (destination: string) =>
-    reconciliation.data?.destination === destination ? reconciliation.data.message : undefined
+    held?.destination === destination ? held.message : undefined
   return {
     statusFor,
     // A choice field's status line, where the field shows one, and whether it
@@ -674,9 +680,9 @@ export const useReviewDecisionController = ({
     // Choices remain readable while the exact field records in place. Submit
     // itself rejects any repeated or alternate command for that field.
     recording: outstanding.length > 0,
-    canRetry: failed !== null && reconciliation.data === null,
+    canRetry: failed !== null && held === null,
     retry,
-    reloadRequired: reconciliation.data !== null,
+    reloadRequired: held !== null,
     // Every decision control of the case is disabled while it is checked.
     checking,
     messageFor,

@@ -14613,12 +14613,20 @@ it('returns focus to the work after the page’s Reload current case reads it', 
   )
   const reload = await screen.findByRole('button', { name: 'Reload current case' })
   failing = false
+  const scrolled = vi.mocked(Element.prototype.scrollIntoView)
+  scrolled.mockClear()
   await user.click(reload)
   await waitFor(() =>
     expect(screen.queryByText(/could not be reloaded after your choice/u)).toBeNull(),
   )
-  // The read that worked hands focus to the work, never to a stale line.
+  // The read that worked hands focus to the work, never to a stale line,
+  // and no render says the work could not be reloaded after it was.
   await waitFor(() => expect(document.activeElement).toHaveAttribute('data-route-focus'))
+  expect(
+    scrolled.mock.contexts.filter((element) =>
+      (element as Element).classList.contains('decision-failure'),
+    ),
+  ).toEqual([])
 })
 
 it('brings the lock’s line into view when the owner is returned to the field they left', async () => {
