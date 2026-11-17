@@ -24,6 +24,10 @@ CoverTasteProfileSchemaVersion = Literal["cover-taste-profile-v2"]
 COVER_TASTE_PROFILE_SCHEMA: Final[CoverTasteProfileSchemaVersion] = (
     "cover-taste-profile-v2"
 )
+CoverTasteVerdictSchemaVersion = Literal["cover-taste-verdict-v1"]
+COVER_TASTE_VERDICT_SCHEMA: Final[CoverTasteVerdictSchemaVersion] = (
+    "cover-taste-verdict-v1"
+)
 
 TasteSection = Literal["drawn_to", "avoid", "trade_offs", "keep_or_switch"]
 TASTE_SECTIONS: Final[tuple[TasteSection, ...]] = get_args(TasteSection)
@@ -63,6 +67,26 @@ TASTE_PREVIEWS_PER_DECISION: Final = 4
 TASTE_MAX_IMAGES: Final = 100
 TASTE_MAX_REQUEST_BYTES: Final = 24_000_000
 TASTE_MIN_ARTS: Final = 2
+
+# The taste judge (#1372 PR 4, J1-J7): one closed verdict per eligible cover
+# field and profile version, over the current cover and at most 12 other arts.
+TasteJudgeDecision = Literal["keep_current", "choose", "abstain"]
+# The closed failure codes a judgement may end with, a subset of S12's.
+TasteJudgeFailure = Literal[
+    "unavailable", "invalid_output", "unknown_charge", "interrupted"
+]
+TASTE_JUDGE_MAX_ALTERNATIVES: Final = 12
+TASTE_JUDGE_MAX_RULES: Final = 3
+# A verdict at or above this confidence is labelled Strong, never admitted by it.
+TASTE_STRONG_CONFIDENCE: Final = 90
+# A profile version stands this long before it is judged under, so a burst of
+# owner edits costs one pass.
+TASTE_JUDGE_SETTLE_SECONDS: Final = 120
+# After a provider outage judging pauses this long, so it costs a few
+# requests an hour rather than a whole pass.
+TASTE_JUDGE_OUTAGE_PAUSE_SECONDS: Final = 600
+# How often a moving pass tells an open Covers view to read again.
+TASTE_JUDGE_NOTICE_SECONDS: Final = 10
 
 
 class CoverTasteError(ValueError):
@@ -350,6 +374,7 @@ def merge_taste_rebuild(
 
 __all__ = [
     "COVER_TASTE_PROFILE_SCHEMA",
+    "COVER_TASTE_VERDICT_SCHEMA",
     "MAX_TASTE_PROFILE_CODE_POINTS",
     "MAX_TASTE_PROFILE_WORDS",
     "MAX_TASTE_REMOVED",
@@ -360,9 +385,17 @@ __all__ = [
     "TASTE_SECTIONS",
     "CoverTasteError",
     "TasteBuildFailure",
+    "TASTE_JUDGE_MAX_ALTERNATIVES",
+    "TASTE_JUDGE_MAX_RULES",
+    "TASTE_JUDGE_NOTICE_SECONDS",
+    "TASTE_JUDGE_OUTAGE_PAUSE_SECONDS",
+    "TASTE_JUDGE_SETTLE_SECONDS",
+    "TASTE_STRONG_CONFIDENCE",
     "TasteEditAction",
     "TasteEditError",
     "TasteEditRefusal",
+    "TasteJudgeDecision",
+    "TasteJudgeFailure",
     "TasteProfile",
     "TasteProvenance",
     "TasteRule",
