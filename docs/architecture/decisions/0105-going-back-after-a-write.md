@@ -82,7 +82,7 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    from the keep's own first plan, or before one exists from the write it
    follows. That write is frozen when the keep is recorded: the stored keep
    names the decision of the write planning resolves for it then, or null
-   when it follows none, and History's From and To and Activity's values
+   when it follows none, and History's From and Activity's written value
    read that write's own verified effect, never episode floors, so a later
    return changes neither. Its result is Went back once that write back
    verifies; until then it is the write's own word (Planned, Closed and so
