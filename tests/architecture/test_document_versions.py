@@ -309,7 +309,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "scripts.qualify_audiobookshelf_field_effect",
         "AUDIOBOOKSHELF_FIELD_EFFECT_SCHEMA",
-        "audiobookshelf-field-effect-v5",
+        "audiobookshelf-field-effect-v6",
     ),
     (
         "scripts.qualify_container_lifecycle",

@@ -1450,6 +1450,18 @@ def _owner_link_evidence() -> dict[str, object]:
             "anchored_lanes": [],
             "history": ["link_withdrawn", "linked"],
         },
+        "identifier_import": {
+            "rows": 2,
+            "counts": {"will_link": 1, "no_item": 1},
+            "refused": [{"row": 3, "reason": "no_item"}],
+            "linked": 1,
+            "replay_same_import": True,
+            "link": {"state": "contradicted", "source": "file", "provider": None},
+            "status": [1, 1],
+            "activity_rows": ["imported"],
+            "withdrawn": 1,
+            "after": None,
+        },
         "unexpected_requests": 0,
     }
 
@@ -1492,6 +1504,28 @@ def test_owner_link_evidence_passes_only_when_every_row_21_claim_holds() -> None
         ("out_of_band", "scopes", ["work", "recording"], "out_of_band_book_only"),
         ("withdrawal", "link_lanes", ["Open Library"], "link_evidence_gone"),
         ("withdrawal", "history", ["linked"], "history_link_and_withdrawal"),
+        # An identifiers file (#1478): matched by the service's path, linked
+        # once, prepared as a file link, one Activity row, then withdrawn.
+        (
+            "identifier_import",
+            "counts",
+            {"will_link": 0, "no_item": 2},
+            "import_matched_by_path",
+        ),
+        ("identifier_import", "replay_same_import", False, "import_linked_once"),
+        (
+            "identifier_import",
+            "link",
+            {"state": "linked", "source": "search", "provider": "hardcover"},
+            "import_prepared_as_file_link",
+        ),
+        ("identifier_import", "activity_rows", [], "import_activity_row"),
+        (
+            "identifier_import",
+            "after",
+            {"state": "linked", "source": "file", "provider": None},
+            "import_withdrawn",
+        ),
     ],
 )
 def test_owner_link_evidence_names_each_unproved_claim(

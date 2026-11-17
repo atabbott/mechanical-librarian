@@ -202,7 +202,8 @@ about the work, and it should steer what preparation reads.
     check admits `book_linked`. The file source (#1478) moves
     `review-library-v10` (the link's source), `review-case-history-v7` with
     `owner-link-history-event-v2`, `owner-link-view-v2` and `catalogue-v3`
-    (each item's folder path), and adds the import tables. The link digest
+    (each item's folder path), and adds the import tables; the
+    `audiobookshelf-field-effect-v6` receipt records the import phase. The link digest
     leaves out the source, so no report or proposal version moves for it.
     Every earlier application database is rejected
     before mutation and needs a clean rebuild
