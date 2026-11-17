@@ -2283,6 +2283,34 @@ def _assert_primary_fill(primary: Locator, secondary: Locator | None) -> None:
         assert secondary.evaluate(_FILL_AND_ACCENT)[0] != fill
 
 
+def _open_library_history(page: Page) -> None:
+    """Open History from the Library header, where it is under More (#1477).
+
+    Focus returning to the field after a decision lands closes an open More,
+    as any focus leaving it does, so More is opened again while it is not.
+    """
+    actions = page.get_by_role("navigation", name="Work actions")
+    more = actions.get_by_role("button", name="More for this work")
+    history = actions.get_by_role("link", name="History", exact=True)
+    for _attempt in range(3):
+        if more.get_attribute("aria-expanded") != "true":
+            more.click()
+        try:
+            history.click(timeout=3_000)
+            return
+        except PlaywrightTimeoutError:
+            continue
+    history.click()
+
+
+def _open_library_view(page: Page, view: str) -> None:
+    """Open Evidence or History from the Library header."""
+    if view == "History":
+        _open_library_history(page)
+    else:
+        page.get_by_role("link", name=view, exact=True).click()
+
+
 def _login(page: Page, origin: str) -> None:
     page.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
     page.goto(f"{origin}/login")
@@ -7047,7 +7075,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                     ).to_be_visible()
                     page.set_viewport_size({"width": 1440, "height": 900})
 
-                page.get_by_role("link", name="History").click()
+                _open_library_history(page)
                 expect(
                     page.get_by_text("You chose a proposed value.").first
                 ).to_be_visible()
@@ -11713,7 +11741,7 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                 from urllib.parse import parse_qs, urlsplit
 
                 for departure in ("Evidence", "History"):
-                    page.get_by_role("link", name=departure, exact=True).click()
+                    _open_library_view(page, departure)
                     expect(
                         page.get_by_role("heading", name=departure, exact=True)
                     ).to_be_visible()
@@ -11924,7 +11952,7 @@ def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch)
                         has_text="New advice requested"
                     )
                 ).to_be_visible()
-                page.get_by_role("link", name="History", exact=True).click()
+                _open_library_history(page)
                 expect(
                     page.get_by_role("heading", name="History", exact=True)
                 ).to_be_visible()
@@ -12215,7 +12243,7 @@ def test_description_retry_retains_real_selected_choice(state):
                             )
                         ).to_be_visible()
                     for view in ("Evidence", "History"):
-                        page.get_by_role("link", name=view, exact=True).click()
+                        _open_library_view(page, view)
                         expect(
                             page.get_by_role("heading", name=view, exact=True)
                         ).to_be_visible()
@@ -12573,7 +12601,7 @@ def test_language_ask_owner_choice_is_reachable_and_durable(audio):
             choice.focus()
             choice.press("Space")
             expect(choice).to_have_attribute("aria-checked", "true")
-            page.get_by_role("link", name="History", exact=True).click()
+            _open_library_history(page)
             expect(page.get_by_text("To English", exact=True)).to_be_visible()
             page.get_by_role("link", name="Activity", exact=True).click()
             page.get_by_role("heading", name="Activity", exact=True).wait_for()
@@ -12922,7 +12950,7 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
             )
         ).to_be_focused()
         assert "genres" in _attention_destinations(page, case_id)
-        page.get_by_role("link", name="History", exact=True).click()
+        _open_library_history(page)
         expect(page.get_by_text("You withdrew your choice.")).to_be_visible()
         expect(page.get_by_text("You entered a value.")).to_be_visible()
 

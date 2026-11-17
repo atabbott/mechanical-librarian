@@ -2159,9 +2159,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto(
             "https://react-platform.invalid/library?lens=needs_attention&preview=case-1&field=title"
         )
-        diagnostic_links = page.get_by_role("navigation", name="Evidence and history")
+        diagnostic_links = page.get_by_role("navigation", name="Work actions")
         expect(diagnostic_links.get_by_role("link", name="Evidence")).to_be_visible()
+        # History is under More (#1477).
+        more = diagnostic_links.get_by_role("button", name="More for this work")
+        expect(diagnostic_links.get_by_role("link", name="History")).to_be_hidden()
+        more.click()
         expect(diagnostic_links.get_by_role("link", name="History")).to_be_visible()
+        more.click()
         diagnostic_links.get_by_role("link", name="Evidence").click()
         expect(page).to_have_url(
             "https://react-platform.invalid/review/case-1?field=title&lens=needs_attention&subview=evidence"
