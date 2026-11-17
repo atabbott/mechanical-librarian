@@ -82,7 +82,9 @@ Object.defineProperties(HTMLDialogElement.prototype, {
 it('keeps the active search caret through debounced Library URL changes', async () => {
   const user = userEvent.setup()
   const { router } = renderRoute('/library?lens=all', createHttp())
-  const search = await screen.findByRole('searchbox')
+  // Library's first render can pass the default second when the whole suite
+  // runs at once; on main too, it failed only there, at this first find.
+  const search = await screen.findByRole('searchbox', {}, { timeout: 4_000 })
   await user.click(search)
   await user.keyboard('synthetic')
   await waitFor(() => expect(router.state.location.search.q).toBe('synthetic'))
@@ -14520,7 +14522,7 @@ it('retries an advised selection through the ordinary controller with the same a
   expect(first[1].authoredDescription?.binding).toEqual(advice.binding)
 })
 
-it('places the decision failure directly under its retry, before the external update status (#1584)', async () => {
+it('places the decision failure directly under its retry, both under the choices (#1584)', async () => {
   const authored = readCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
   if (!field) throw new Error('description fixture requires its field')
@@ -14556,10 +14558,194 @@ it('places the decision failure directly under its retry, before the external up
   expect(message).toHaveTextContent('Your choice could not be confirmed.')
   const status = screen.getByLabelText('Writing to the library')
   expect(retry.nextElementSibling).toBe(message)
+  // Both sit right under the choices, where the owner pressed.
+  expect(retry.previousElementSibling).toHaveClass('direct-choice')
   expect(message.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 })
 
-it('places the reload-required alert directly above Reload current case, before the external update status (#1584)', async () => {
+it('names Reload current case on the button its sentence names when the work could not be reloaded', async () => {
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const http = createHttp()
+  let decided = false
+  http.getCaseDetail = vi.fn(async () => {
+    if (decided) throw new ApiError(503, 'persistence')
+    return { ...authored, id: 'case-1', fields: [field] }
+  })
+  http.recordDecision = vi.fn(async () => {
+    decided = true
+    throw new ApiError(503, 'persistence')
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent.setup().click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  const message = await screen.findByText(/could not be reloaded after your choice/u)
+  const alert = message.closest('[role="alert"]') ?? message
+  expect(alert).toHaveTextContent('Choose Reload current case before choosing again.')
+  expect(
+    within(alert as HTMLElement).getByRole('button', { name: 'Reload current case' }),
+  ).toBeVisible()
+  expect(within(alert as HTMLElement).queryByRole('button', { name: 'Try again' })).toBeNull()
+})
+
+it('returns focus to the work after the page’s Reload current case reads it', async () => {
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const http = createHttp()
+  let failing = false
+  http.getCaseDetail = vi.fn(async () => {
+    if (failing) throw new ApiError(503, 'persistence')
+    return { ...authored, id: 'case-1', fields: [field] }
+  })
+  http.recordDecision = vi.fn(async () => {
+    failing = true
+    throw new ApiError(503, 'persistence')
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  const reload = await screen.findByRole('button', { name: 'Reload current case' })
+  failing = false
+  const scrolled = vi.mocked(Element.prototype.scrollIntoView)
+  scrolled.mockClear()
+  await user.click(reload)
+  await waitFor(() =>
+    expect(screen.queryByText(/could not be reloaded after your choice/u)).toBeNull(),
+  )
+  // The read that worked hands focus to the work, never to a stale line,
+  // and no render says the work could not be reloaded after it was.
+  await waitFor(() => expect(document.activeElement).toHaveAttribute('data-route-focus'))
+  expect(
+    scrolled.mock.contexts.filter((element) =>
+      (element as Element).classList.contains('decision-failure'),
+    ),
+  ).toEqual([])
+})
+
+it('brings the lock’s line into view when the owner is returned to the field they left', async () => {
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const http = createHttp()
+  let decided = false
+  http.getCaseDetail = vi.fn(async () => {
+    if (decided) throw new Error('current case refresh unavailable')
+    return { ...authored, id: 'case-1' }
+  })
+  let answer: () => void = () => undefined
+  http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(
+    () =>
+      new Promise((resolve) => {
+        answer = () => {
+          decided = true
+          resolve({
+            schema_version: 'description-selection-ack-v1',
+            decision_id: `human_decision_${'a'.repeat(64)}`,
+            advised: true,
+            invalidation_sequences: [],
+            confirmation: { status: 'unavailable' },
+          })
+        }
+      }),
+  )
+  const scrolled = vi.mocked(Element.prototype.scrollIntoView)
+  const { router } = renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent.setup().click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  await waitFor(() => expect(http.recordDecision).toHaveBeenCalled())
+  // The owner moves on while the choice records.
+  await router.navigate({
+    to: '/library',
+    search: (search: Record<string, unknown>) => ({ ...search, field: 'title' }),
+  } as never)
+  await screen.findByRole('heading', { name: 'Title' })
+  scrolled.mockClear()
+  answer()
+  const line = await screen.findByText(/could not be reloaded/u)
+  await waitFor(() => expect(scrolled.mock.contexts).toContain(line))
+})
+
+it('keeps focus on the failure line when a retry gets no answer and takes its button away', async () => {
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
+  let sent = 0
+  http.recordDecision = vi.fn(async () => {
+    sent += 1
+    if (sent === 1) throw new ApiError(503, 'persistence')
+    throw new UncertainMutationError({
+      operation: 'POST /api/v1/review-cases/{review_case_id}/decisions',
+      responseStatus: 200,
+      at: '/presentation/now',
+      reason: 'required',
+    })
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  await user.click(await screen.findByRole('button', { name: 'Try the same decision again' }))
+  const message = await screen.findByText(
+    'No answer came back. Check whether your choice was recorded before choosing again.',
+  )
+  expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
+  await waitFor(() => expect(message).toHaveFocus())
+  expect(document.activeElement).not.toBe(document.body)
+})
+
+it.each([
+  [
+    'link_changed',
+    'Not recorded. The book link changed. Choose again when preparation has used the link.',
+  ],
+  ['decision_written', 'This decision has been written to your library, so it can’t be withdrawn.'],
+] as const)(
+  'says a %s refusal right under the choices, never at the field’s foot',
+  async (code, said) => {
+    const authored = readCaseDetail(descriptionAdviceFixture)
+    const field = authored.fields.find((item) => item.destination === 'description')
+    if (!field) throw new Error('description fixture requires its field')
+    const http = createHttp()
+    http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
+    http.recordDecision = vi.fn(async () => {
+      throw new ApiError(409, code)
+    })
+    const scrolled = vi.mocked(Element.prototype.scrollIntoView)
+    scrolled.mockClear()
+    renderRoute('/library?lens=all&preview=case-1&field=description', http)
+    await userEvent.setup().click(
+      await screen.findByRole('radio', {
+        name: 'Choose advised value: Authored synthetic description.',
+      }),
+    )
+    const message = await screen.findByRole('alert')
+    expect(message).toHaveTextContent(said)
+    expect(message).toHaveClass('decision-failure')
+    expect(message.previousElementSibling).toHaveClass('direct-choice')
+    // Brought just into view, so the owner sees why nothing was chosen.
+    expect(scrolled.mock.contexts).toContain(message)
+    expect(scrolled).toHaveBeenCalledWith({ block: 'nearest' })
+    // Nothing else says it again at the field's foot.
+    expect(screen.getAllByText(said)).toHaveLength(1)
+  },
+)
+
+it('places the reload-required alert directly above Reload current case, both under the choices (#1584)', async () => {
   const authored = readCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
   if (!field) throw new Error('description fixture requires its field')
@@ -14611,7 +14797,9 @@ it('places the reload-required alert directly above Reload current case, before 
   expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
   const status = screen.getByLabelText('Writing to the library')
   expect(message.nextElementSibling).toBe(reload)
-  expect(reload.nextElementSibling).toBe(status)
+  // Both sit right under the recorded choice, not at the field's foot.
+  expect(message.previousElementSibling).toHaveClass('recorded-outcome')
+  expect(reload.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 })
 
 it.each(['verified', 'no_change_required'] as const)(

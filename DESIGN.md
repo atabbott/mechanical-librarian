@@ -492,7 +492,9 @@ field-line colour, set in a gutter and centred on the value's first line, which 
 the ring, takes the Archive Teal Wash with a 2px inner accent edge, and says
 "Your choice" in words; a recommendation is stated in its label, not by a wash.
 Keyboard focus is a 3px focus-colour outline drawn inside the choice. Automatic,
-resolved, or stale fields must not present a false choice. Field tabs name their status in words (Needs you,
+resolved, or stale fields must not present a false choice. A choice that is refused or not confirmed is
+said in Correction Red right under the choices, with its Try the same decision again or Reload current
+case, and the page scrolls just far enough to show it. Field tabs name their status in words (Needs you,
 Decided, Pinned, Automatic, Optional, No change), never by a glyph.
 
 ### Cover Choice

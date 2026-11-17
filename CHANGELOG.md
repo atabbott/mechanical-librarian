@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- When a choice is refused or can't be confirmed, the reason now shows right
+  under the choices, with Try the same decision again or Reload current case,
+  and the page scrolls just far enough to show it. Before, it appeared below
+  the source values, out of view. When the work can't be reloaded after a
+  choice, the page's button now says Reload current case (#1944).
 - In store mode, Settings can change the owner password. It asks for the
   current password, keeps this browser signed in and signs out every other
   browser (#1385).

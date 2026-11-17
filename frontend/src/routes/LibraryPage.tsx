@@ -1250,7 +1250,10 @@ export default function LibraryPage({
                   void detail.refetch()
                 }}
               >
-                Try again
+                {/* The lock's sentence names Reload current case (#1584). */}
+                {controller.messageFor(search.field ?? selected?.destination ?? '') === undefined
+                  ? 'Try again'
+                  : 'Reload current case'}
               </button>{' '}
             </p>
           ) : !detail.data.current ? (

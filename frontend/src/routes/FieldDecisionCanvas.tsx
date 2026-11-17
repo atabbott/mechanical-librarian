@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { Ref } from 'react'
 
 import { displayValue } from '../api/http'
@@ -133,6 +134,35 @@ export function FieldDecisionCanvas({
     selected.destination,
     selectedChoiceMode && !ownerStatusShown && !pinStatusShown,
   )
+  // A refused or failed choice, or a case that must be reloaded first.
+  const choiceFailure =
+    choiceStatus.text !== '' &&
+    !choiceStatus.offerChanged &&
+    (controller.decision.isError || controller.reloadRequired)
+  const failureLine = useRef<HTMLParagraphElement>(null)
+  // A line that arrives below the window is brought just into view, so a
+  // choice that changed nothing never looks as if nothing happened.
+  // Focus is taken only by a line that arrives while the field is shown: a
+  // canvas that mounts after the page's own Reload leaves focus to the page.
+  // The flag resets on unmount, so StrictMode's second mount is a mount too.
+  const shown = useRef(false)
+  useEffect(
+    () => () => {
+      shown.current = false
+    },
+    [],
+  )
+  useEffect(() => {
+    const line = failureLine.current
+    const arrived = shown.current
+    shown.current = true
+    if (!choiceFailure || !line) return
+    line.scrollIntoView({ block: 'nearest' })
+    // A retry that fails without one to offer again takes its button away:
+    // the line holds the focus it had, never the page body.
+    if (arrived && (document.activeElement === null || document.activeElement === document.body))
+      line.focus({ preventScroll: true })
+  }, [choiceFailure, choiceStatus.text])
   const pinBusy = controller.recording || controller.checking || controller.reloadRequired
   const pinControl = pinControls({
     busy: pinBusy,
@@ -149,6 +179,15 @@ export function FieldDecisionCanvas({
     selected.destination === 'cover' &&
     (selected.coverConsideration !== null || selectedCoverPreparation)
   const selectedProgress = controller.phase(selected.destination)
+  const recovery =
+    controller.canRetry && selectedProgress?.phase === 'failed' ? (
+      <button ref={retryButton} className="decision-retry" type="button" onClick={controller.retry}>
+        Try the same decision again
+      </button>
+    ) : null
+  const reload = controller.reloadRequired ? (
+    <ReloadCase reloading={reloading} settle={controller.settle} />
+  ) : null
   // A pin or an unpin chooses no card: the recorded choice stays marked.
   const cardProgress =
     selectedProgress?.command.outcome === 'pin' || selectedProgress?.command.outcome === 'unpin'
@@ -528,7 +567,16 @@ export function FieldDecisionCanvas({
           pin={contextPin}
         />
       )}
+      {/* What went wrong with a choice is said right under the choices, where
+          the owner pressed, never at the foot below the source values. */}
       {choiceStatus.offerChanged ? <p role="status">{choiceStatus.text}</p> : null}
+      {choiceFailure ? recovery : null}
+      {choiceFailure ? (
+        <p ref={failureLine} tabIndex={-1} className="decision-failure" role="alert">
+          {choiceStatus.text}
+        </p>
+      ) : null}
+      {choiceFailure ? reload : null}
       {selected.ownerControl && !controller.reloadRequired ? (
         <OwnerControls
           key={ownerKey}
@@ -583,24 +631,13 @@ export function FieldDecisionCanvas({
         reviewCaseId={selectedReviewCaseId}
         field={selected}
       />
-      {controller.canRetry && selectedProgress?.phase === 'failed' ? (
-        <button
-          ref={retryButton}
-          className="decision-retry"
-          type="button"
-          onClick={controller.retry}
-        >
-          Try the same decision again
-        </button>
+      {/* A pin's or an entered value's own line says what failed at its
+          control, so its retry and reload stay at the foot, after it. */}
+      {choiceFailure ? null : recovery}
+      {choiceStatus.text && !choiceStatus.offerChanged && !choiceFailure ? (
+        <p role="status">{choiceStatus.text}</p>
       ) : null}
-      {choiceStatus.text && !choiceStatus.offerChanged ? (
-        <p role={controller.decision.isError || controller.reloadRequired ? 'alert' : 'status'}>
-          {choiceStatus.text}
-        </p>
-      ) : null}
-      {controller.reloadRequired ? (
-        <ReloadCase reloading={reloading} settle={controller.settle} />
-      ) : null}
+      {choiceFailure ? null : reload}
       {selectedChoiceMode && effect ? (
         <aside className="field-apply-context" aria-label="Writing to the library">
           <span className="activity-state-mark" aria-hidden="true"></span>
