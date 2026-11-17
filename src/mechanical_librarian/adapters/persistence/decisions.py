@@ -26,10 +26,10 @@ run inside it.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
 import json
 import sqlite3
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
@@ -282,9 +282,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         human_predecessor: Callable[
             [HumanDecision], sqlite3.Row | tuple[str, ...] | None
         ],
-        followed_write: Callable[
-            [HumanDecision], sqlite3.Row | tuple[str, ...] | None
-        ],
+        followed_write: Callable[[HumanDecision], sqlite3.Row | tuple[str, ...] | None],
     ) -> None:
         super().__init__(connection, binding)
         self._requeue_title_projections = requeue_title_projections
