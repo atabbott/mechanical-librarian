@@ -2176,6 +2176,8 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 "change": _cohort_change(work, destination)[0],
                 "change_detail": _cohort_change(work, destination)[1],
                 "check_group": CHECK_GROUP if work == CHECKED_WORK else None,
+                # Only an identifiers file import's row names it (#1478).
+                "identifier_import_id": None,
                 "field_label": _COHORT_FIELD_LABELS[destination],
                 "policy_changes": (
                     _COHORT_POLICY_CHANGES if destination == "policy" else []
