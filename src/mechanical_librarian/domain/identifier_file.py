@@ -88,7 +88,7 @@ _COUNT_OF_REASON: Final = {
 _ISBN_SHAPE = re.compile(r"[0-9](?:-?[0-9]){8}-?[0-9X]|[0-9](?:-?[0-9]){12}")
 _ASIN_SHAPE = re.compile(r"[0-9A-Za-z]{10}")
 # Unicode Cc (U+0000-001F, U+007F-009F) other than TAB, LF or the CR of a CRLF.
-_CONTROL_CHARACTER = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]|\r(?!\n)")
+_CONTROL_CHARACTER = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]|\r(?!\n)")
 
 
 class IdentifierFileError(ValueError):
