@@ -36,9 +36,12 @@ export function CalibrationStart({
   onStart: () => void
   startRef: RefObject<HTMLButtonElement | null>
 }) {
+  // The line names the region and is not read again as its content.
   return (
     <section className="covers-picks-start" aria-labelledby="covers-picks-start">
-      <p id="covers-picks-start">Pick 25 covers to get suggestions</p>
+      <p id="covers-picks-start" aria-hidden="true">
+        Pick 25 covers to get suggestions
+      </p>
       <button ref={startRef} type="button" className="button-primary" onClick={onStart}>
         Start
       </button>

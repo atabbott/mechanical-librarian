@@ -509,7 +509,8 @@ the frame carries hover, recommended and chosen states. Above 1024px the
 current cover takes the first of four equal columns, the same size as the other
 covers and level with them. In Covers' picks the cards are shuffled for each
 work in one grid, the current cover is marked rather than first, and no
-recommendation is shown. Off-screen cover images load lazily.
+recommendation is shown; above 1024px up to four cards of at most 15rem share
+a row, so each card's choice line is in the first screen. Off-screen cover images load lazily.
 
 ### Cover Observation Evidence
 

@@ -2815,6 +2815,127 @@ describe("Covers' picks (#1372 PR 3)", () => {
     )
   })
 
+  it('keeps the open work when the set is read again with a new work first', async () => {
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1', 'case-2'])
+    const { queryClient } = renderRoute(picksRoute, http)
+    await screen.findByRole('heading', { level: 3, name: 'First Book' })
+    await screen.findByRole('radiogroup', { name: question })
+    // A newly prepared work with three covers now sorts first, and the open
+    // work moves down: live invalidation of ['covers'] reads the set again.
+    http.getCoverCalibration.mockImplementation(async () =>
+      calibration(['case-3', 'case-2', 'case-1']),
+    )
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['covers'] })
+    })
+    await waitFor(() => expect(http.getCoverCalibration).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('heading', { level: 3, name: 'First Book' })).toBeVisible()
+    expect(screen.queryByRole('heading', { level: 3, name: 'Third Book' })).toBeNull()
+    await chooseOtherPick(user)
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+    expect(http.recordDecision.mock.calls[0]?.[0]).toBe('case-1')
+    // The walk keeps its order, the new work at its end.
+    expect(await screen.findByRole('heading', { level: 3, name: 'Second Book' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Skip for now' }))
+    expect(await screen.findByRole('heading', { level: 3, name: 'Third Book' })).toBeVisible()
+  })
+
+  it('waits for the count after a pick before Stop says it', async () => {
+    const user = userEvent.setup()
+    let chosen = 3
+    let release: () => void = () => undefined
+    const http = picksHttp(['case-1', 'case-2'], () => chosen)
+    const read = http.getTasteProfile.getMockImplementation()
+    if (!read) throw new Error('no taste read')
+    const record = createHttp().recordDecision
+    http.recordDecision.mockImplementation(async (caseId, command) => {
+      chosen = 4
+      // The count is read again only once released.
+      http.getTasteProfile.mockImplementation(async (...args) => {
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return read(...args)
+      })
+      return record(caseId, command)
+    })
+    const { router } = renderRoute(picksRoute, http)
+    expect(await screen.findByText('4 of 25')).toBeVisible()
+    await chooseOtherPick(user)
+    await screen.findByRole('heading', { level: 3, name: 'Second Book' })
+    await user.click(screen.getByRole('button', { name: 'Stop' }))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    expect(router.state.location.search.tab).toBe('picks')
+    expect(screen.queryByText('3 of 25 picks saved.')).toBeNull()
+    act(() => release())
+    await waitFor(() => expect(router.state.location.search.tab).toBe('decide'))
+    expect(await screen.findByText('4 of 25 picks saved.')).toBeVisible()
+    expect(screen.queryByText('3 of 25 picks saved.')).toBeNull()
+  })
+
+  it('leaves the build focus behind when the owner changes tab', async () => {
+    const user = userEvent.setup()
+    let chosen = 24
+    const http = picksHttp(['case-1', 'case-2'], () => chosen)
+    const record = createHttp().recordDecision
+    http.recordDecision.mockImplementation(async (caseId, command) => {
+      chosen = 25
+      return record(caseId, command)
+    })
+    const { router } = renderRoute(picksRoute, http)
+    await chooseOtherPick(user)
+    await waitFor(() => expect(router.state.location.search.tab).toBe('taste'))
+    const writing = await screen.findByRole('heading', { name: 'Writing your taste profile' })
+    await waitFor(() => expect(writing.closest('section')).toHaveFocus())
+    await user.click(screen.getByRole('button', { name: /^To decide/u }))
+    await waitFor(() => expect(router.state.location.search.tab).toBe('decide'))
+    const tasteTab = screen.getByRole('button', { name: /^Taste profile/u })
+    await user.click(tasteTab)
+    await waitFor(() => expect(router.state.location.search.tab).toBe('taste'))
+    const again = await screen.findByRole('heading', { name: 'Writing your taste profile' })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    expect(again.closest('section')).not.toHaveFocus()
+    expect(tasteTab).toHaveFocus()
+  })
+
+  it.each([
+    ['not configured', { configured: false }],
+    ['a profile exists', { profile: ready.profile, versions: ready.versions }],
+    ['25 picks', { chosen: 25 }],
+  ] as const)('sends a typed picks link back to To decide when %s', async (_name, taste) => {
+    const http = picksHttp(['case-1'], 0, taste)
+    const { router } = renderRoute('/library?lens=all&view=covers&tab=decide', http)
+    await screen.findByRole('button', { name: /^First Book/u })
+    await act(async () => {
+      await router.navigate({
+        to: '/library',
+        search: { lens: 'all', view: 'covers', tab: 'picks' },
+      })
+    })
+    await waitFor(() => expect(router.state.location.search.tab).toBe('decide'))
+    // Replaced, so Back does not reopen the picks.
+    expect(router.history.length).toBe(2)
+    expect(screen.queryByRole('heading', { name: 'Pick the cover you like' })).toBeNull()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('names the Start entry once', async () => {
+    renderRoute('/library?lens=all&view=covers', picksHttp([]))
+    const phrase = 'Pick 25 covers to get suggestions'
+    const entry = await screen.findByRole('region', { name: phrase })
+    // The phrase is the region's name and is not read again as its content.
+    const read = within(entry)
+      .queryAllByText(phrase)
+      .filter((element) => element.closest('[aria-hidden="true"]') === null)
+    expect(read).toEqual([])
+    expect(within(entry).getByRole('button', { name: 'Start' })).toBeVisible()
+  })
+
   it('offers Reload when the set cannot be read', async () => {
     const user = userEvent.setup()
     const http = picksHttp(['case-1'])

@@ -50,6 +50,7 @@ from mechanical_librarian.domain.cover_rules import CoverMeasures
 from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+    TargetFieldState,
     report_content_address,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -182,13 +183,15 @@ def _library(
     shared_measures: CoverMeasures | None = None,
     small_current: bool = False,
     larger_copy: bool = False,
+    target_state: TargetFieldState = TargetFieldState.VALUE,
 ) -> Iterator[_Library]:
     """With ``fetching``, every report still waits on a provider lookup.
     With ``works``, the base report offers three extra candidates and each
     named work keeps its own authors, series and share of them; with
     ``shared_measures`` every image is one art; with ``small_current`` the current
     cover is under the size floor, and with ``larger_copy`` too a larger copy
-    of it is offered.
+    of it is offered. ``target_state`` is the cover's target state, so with
+    ``readable_current=False`` an empty one is a work with no cover at all.
     With ``put_back``, item-1's current cover is a verified automatic switch
     whose original is listed, and its report offers that original (#1363).
     With ``undecodable`` too, the decoder refused that original, so the
@@ -202,6 +205,7 @@ def _library(
         shared_measures=shared_measures,
         incumbent_size=(200, 300) if small_current or larger_copy else None,
         incumbent_duplicate_size=(2_000, 3_000) if larger_copy else None,
+        target_state=target_state,
     )
     if works is not None:
         base = MetadataReport.create(
@@ -831,10 +835,12 @@ def _post_cover_decision(
     *,
     outcome: str = "keep_current",
     kind: str | None = None,
+    source: str | None = None,
 ) -> Any:
     """POST an owner cover decision as the book page does.
 
-    An accept names the comparison's one candidate of ``kind``.
+    An accept names the comparison's one candidate of ``kind``, or of
+    ``source`` too when more than one is of that kind.
     """
     detail = client.get(f"/api/v1/review-cases/{case_id}")
     assert detail.status_code == 200, detail.text
@@ -847,7 +853,9 @@ def _post_cover_decision(
         (candidate,) = (
             value
             for value in consideration["candidates"]
-            if value["incumbent"] is False and value["candidate_kind"] == kind
+            if value["incumbent"] is False
+            and value["candidate_kind"] == kind
+            and (source is None or source in value["source_kinds"])
         )
         selected = {"kind": "cover", "value": candidate["artifact_id"]}
     return client.post(
@@ -1572,6 +1580,9 @@ def test_calibration_leaves_out_a_work_whose_pick_would_not_count(
                     sequence=index,
                 )
         assert _calibrated(library) == []
+        if exclusion == "unreadable_current":
+            # Left out by the store, so no report is read for it.
+            assert library.repository.read_cover_calibration() == ()
 
 
 def test_without_an_exclusion_the_same_library_is_offered(tmp_path: Path) -> None:
@@ -1681,6 +1692,16 @@ def test_calibration_stops_reading_reports_at_twenty_five(
     assert _selected(rows) == list(range(25))
     assert len(read) == 25
     assert _selected(rows[:10]) == list(range(10))
+    # A work the caps leave out is never read, and nothing is skipped after
+    # reading: with capped works first, still exactly 25 reports are read.
+    read.clear()
+    capped = _rows(
+        tmp_path / "capped",
+        [_Work(authors=("Same",)) for _ in range(4)]
+        + [_Work(authors=(f"Other {n}",)) for n in range(30)],
+    )
+    assert _selected(capped) == [0, 1, *range(4, 27)]
+    assert len(read) == 25
 
 
 def test_the_calibration_route_is_private_and_reads_the_set(tmp_path: Path) -> None:
@@ -1745,4 +1766,41 @@ def test_every_calibration_pick_counts_toward_the_taste_profile(
             )
             assert keep.status_code == 200, keep.text
             assert taste.eligible_count() == 2
+        assert _calibrated(library) == []
+
+
+def test_a_work_with_no_cover_at_all_is_offered_and_its_pick_counts(
+    tmp_path: Path,
+) -> None:
+    """With no current cover there is no keep to offer, and an accept counts (S2)."""
+    from mechanical_librarian.adapters.persistence.cover_taste import (
+        SQLiteCoverTasteRepository,
+    )
+
+    with _library(
+        tmp_path, readable_current=False, target_state=TargetFieldState.EMPTY
+    ) as library:
+        taste = SQLiteCoverTasteRepository(library.repository._connection)
+        assert _calibrated(library) == ["item-1"]
+        (item,) = cast(dict[str, Any], cover_calibration(library.repository))["items"]
+        assert (item["cover"], item["unreadable_cover"]) == (None, False)
+        with _client(library) as (client, headers):
+            detail = client.get(f"/api/v1/review-cases/{library.cases['item-1']}")
+            (field,) = (
+                value
+                for value in detail.json()["fields"]
+                if value["destination"] == "cover"
+            )
+            assert field["cover_consideration"]["incumbent"]["state"] == "absent"
+            accept = _post_cover_decision(
+                client,
+                headers,
+                library.cases["item-1"],
+                "calibration-no-cover-1",
+                outcome="accept",
+                kind="candidate",
+                source="hardcover",
+            )
+            assert accept.status_code == 200, accept.text
+        assert taste.eligible_count() == 1
         assert _calibrated(library) == []

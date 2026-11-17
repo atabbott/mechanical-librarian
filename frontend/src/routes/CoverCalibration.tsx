@@ -1,7 +1,7 @@
 import { useQuery as useOptionalQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
-import type { TasteProfileView } from '../api/http'
+import type { CoverWorkView, TasteProfileView } from '../api/http'
 import { coverField } from '../coverDecision'
 import { picksSaved } from '../coverPicks'
 import { prefetchBackgroundQuery, queryWorkClass } from '../queryWork'
@@ -39,6 +39,26 @@ export function CoverCalibration({
     refetchOnWindowFocus: false,
     retry: false,
   })
+  // The walk: every work read this session, in the order first read. A
+  // re-read of the set (live invalidation, Reload, polling) refreshes the
+  // works it still lists in place and adds the others to the end, so the open
+  // work changes only on a pick, Skip for now or passing over a work decided
+  // elsewhere.
+  const [walk, setWalk] = useState<{ read: unknown; works: readonly CoverWorkView[] }>({
+    read: undefined,
+    works: [],
+  })
+  if (set.data !== undefined && set.data !== walk.read) {
+    const fresh = new Map(set.data.items.map((work) => [work.review_case_id, work]))
+    const known = new Set(walk.works.map((work) => work.review_case_id))
+    setWalk({
+      read: set.data,
+      works: [
+        ...walk.works.map((work) => fresh.get(work.review_case_id) ?? work),
+        ...set.data.items.filter((work) => !known.has(work.review_case_id)),
+      ],
+    })
+  }
   // Every work this session picked, skipped or passed over, so a re-read
   // never offers it again.
   const [seen, setSeen] = useState<ReadonlySet<string>>(new Set())
@@ -48,7 +68,7 @@ export function CoverCalibration({
   const [pickedAt, setPickedAt] = useState(0)
   const heading = useRef<HTMLHeadingElement>(null)
   useEffect(() => heading.current?.focus(), [])
-  const items = set.data?.items ?? []
+  const items = walk.works
   const open = items.filter((work) => !seen.has(work.review_case_id))
   const current = open[0]
   const next = open[1]
@@ -74,34 +94,40 @@ export function CoverCalibration({
   }, [next, http, queryClient])
   // Run out: the set is read once more, leaving out what this session saw,
   // and the screen ends only when that read brings nothing new (S4).
-  const ranOut = !done && set.isSuccess && !set.isFetching && current === undefined
+  const ranOut =
+    !done && set.isSuccess && !set.isFetching && walk.read === set.data && current === undefined
   const empty = ranOut && items.length === 0 && seen.size === 0
   if (ranOut && !empty && rereadAt !== seen.size) setRereadAt(seen.size)
   const { refetch } = set
   useEffect(() => {
     if (rereadAt !== null) void refetch()
   }, [rereadAt, refetch])
+  // Stop, like running out, names the count only once taste is read again
+  // after the last pick, so it is never one short.
+  const [stopped, setStopped] = useState(false)
+  const counted = tasteReadAt >= pickedAt
   // Each end is said once.
   const ended = useRef(false)
   const end = done
     ? ({ kind: 'done' } as const)
-    : empty
-      ? ({ kind: 'notice', text: emptyCopy } as const)
-      : ranOut && rereadAt === seen.size && tasteReadAt >= pickedAt
-        ? ({
-            kind: 'notice',
-            text: `${picksSaved(taste.chosen, required)} ${ranOutCopy}`,
-          } as const)
-        : null
+    : stopped && counted
+      ? ({ kind: 'notice', text: picksSaved(taste.chosen, required) } as const)
+      : empty
+        ? ({ kind: 'notice', text: emptyCopy } as const)
+        : ranOut && rereadAt === seen.size && counted
+          ? ({
+              kind: 'notice',
+              text: `${picksSaved(taste.chosen, required)} ${ranOutCopy}`,
+            } as const)
+          : null
   useEffect(() => {
     if (end === null || ended.current) return
     ended.current = true
     onEnd(end)
   })
   const stop = () => {
-    ended.current = true
+    setStopped(true)
     void queryClient.invalidateQueries({ queryKey: ['covers'] })
-    onEnd({ kind: 'notice', text: picksSaved(taste.chosen, required) })
   }
   const position = Math.min(taste.chosen + 1, required)
   return (

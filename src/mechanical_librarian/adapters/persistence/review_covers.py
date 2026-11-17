@@ -269,6 +269,10 @@ _CALIBRATION_SQL = (
     "IS NOT 'hold' "
     "AND json_extract(consideration.currentness_document,'$.cover_stage.arts')>=? "
     "AND typeof(facts.format)='text' "
+    # Keeping a current cover that could not be read names no preview, so that
+    # pick would not count; a work with no cover at all offers no keep (S2).
+    "AND json_extract(consideration.document,'$.incumbent.state') "
+    "IS NOT 'unavailable' "
     "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
     "JOIN cover_selection_authorities answered "
     "ON answered.selection_id=current.selection_id "

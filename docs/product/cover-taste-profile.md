@@ -55,7 +55,9 @@ series. Works with three or more different covers come first. Each work's
 covers are shuffled the same way every time, its current cover is marked
 Current cover rather than placed first, and nothing is recommended. A pick is
 the work's ordinary cover choice; Skip for now records nothing. A work decided
-elsewhere meanwhile is passed over.
+elsewhere meanwhile is passed over, and a work found later joins the end, so
+the open work never changes under you. A link to the picks while Start is not
+offered opens To decide instead.
 
 Stop returns to To decide with "{n} of 25 picks saved.". When no work has two
 different covers, Start says "No works have two different covers to pick

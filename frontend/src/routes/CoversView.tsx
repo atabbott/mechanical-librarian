@@ -998,6 +998,10 @@ function SwitchedList({
   )
 }
 
+/** Whether To decide offers picks: a taste model, no profile, fewer than 25 picks. */
+const picksDue = (taste: TasteProfileRead) =>
+  taste.configured && taste.profile === null && taste.chosen < taste.required
+
 /** Covers' picks in the tabs' place, once the taste read says where the owner is. */
 function CoverPicks({
   taste,
@@ -1006,7 +1010,17 @@ function CoverPicks({
   taste: UseQueryResult<TasteProfileRead>
   onEnd: (end: CalibrationEnd) => void
 }) {
-  return taste.data ? (
+  const navigate = useNavigate({ from: '/library' })
+  // Picks open only as Start offers them (S9): a typed or kept link while no
+  // taste model is set up, a profile exists or 25 picks count goes back to
+  // To decide. Judged on the first read only, so the 25th pick still ends here.
+  const [admitted, setAdmitted] = useState<boolean | null>(null)
+  if (admitted === null && taste.data) setAdmitted(picksDue(taste.data))
+  useEffect(() => {
+    if (admitted === false)
+      void navigate({ replace: true, search: { lens: 'all', view: 'covers', tab: 'decide' } })
+  }, [admitted, navigate])
+  return admitted === false ? null : taste.data ? (
     <CoverCalibration
       taste={taste.data}
       tasteReadAt={Math.max(taste.dataUpdatedAt, taste.errorUpdatedAt)}
@@ -1045,10 +1059,7 @@ export default function CoversView() {
   const { pages, works, selectedId, listed, linked, selected, select, ordered, marked } = queue
   // While no taste profile exists, To decide offers 25 picks (#1372 S9).
   const tasteRead = useQuery(tasteQuery(http))
-  const profileDue =
-    tasteRead.data?.configured === true &&
-    tasteRead.data.profile === null &&
-    tasteRead.data.chosen < tasteRead.data.required
+  const profileDue = tasteRead.data !== undefined && picksDue(tasteRead.data)
   const offerPicks = inList && tab === 'decide' && profileDue
   const startRef = useRef<HTMLButtonElement>(null)
   // After picks end on To decide, focus stays on Start rather than the book
@@ -1058,6 +1069,7 @@ export default function CoversView() {
   const changeTab = (next: CoversTab) => {
     setNotice(null)
     setHoldFocus(false)
+    setFocusBuild(false)
     void navigate({ search: { lens: 'all', view: 'covers', tab: next } })
   }
   const endPicks = (end: CalibrationEnd) => {

@@ -1659,6 +1659,9 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .covers-picks-meter span { display:block; height:100%; background:var(--accent-strong); }
 .covers-picks .covers-comparison > header h3 { flex-basis:100%; margin:0; font:700 1.2rem/1.25 Georgia,'Times New Roman',serif; }
 .covers-picks .covers-comparison > header h3:focus { outline:none; }
+/* Above 1024px up to four cards share a row, each at most 15rem wide, so every
+   card's choice line shows in the first screen; narrower, the strip applies. */
+@media (min-width:1025px) { .covers-picks .library-cover-layout { grid-template-columns:repeat(auto-fill, minmax(min(11rem, 100%), 15rem)); max-width:calc(4 * 15rem + 3 * 10px); } }
 dialog.first-review-guide.covers-intro { width:min(34rem,calc(100vw - 2rem)); }
 .covers-intro-body { display:grid; gap:.5rem; padding:24px 28px 16px; }
 .covers-intro-body p { max-width:60ch; margin:0; line-height:1.5; }

@@ -335,8 +335,9 @@ def select_calibration(
     share its first author, or one of its series (#1372 S3).
 
     Names are compared case-folded. A work with no author or no series has no
-    cap on that fact, and a work with no readable current cover is passed
-    over. A report is read only for a work the caps keep, until 25 are kept.
+    cap on that fact. The store leaves out a work whose current cover could
+    not be read, so a report is read only for a work the caps keep, and at
+    most 25 are read.
     """
     kept: list[tuple[CoverRow, LibraryReportFacts]] = []
     authors: dict[str, int] = {}
@@ -355,10 +356,6 @@ def select_calibration(
         ):
             continue
         report = _report_facts(candidate.row.report_document)
-        # Keeping a current cover that could not be read, or none, names no
-        # preview, so that pick would not count toward the taste profile.
-        if report.cover is None:
-            continue
         if author is not None:
             authors[author] = authors.get(author, 0) + 1
         for name in names:
