@@ -42,6 +42,9 @@ from mechanical_librarian.adapters.persistence.cover_consideration_documents imp
 from mechanical_librarian.adapters.persistence.cover_taste import (
     validate_cover_taste_versions,
 )
+from mechanical_librarian.adapters.persistence.cover_taste_judge import (
+    validate_cover_taste_verdicts,
+)
 from mechanical_librarian.adapters.persistence.description_advice import (
     validate_description_history,
 )
@@ -2886,6 +2889,7 @@ def _validate_schema_contents_without_review_field_facts(
     try:
         validate_description_history(connection)
         validate_cover_taste_versions(connection)
+        validate_cover_taste_verdicts(connection)
     except ValueError as error:
         raise MetadataReportError("database is unavailable or incompatible") from error
     _validate_metadata_policy_documents(connection)

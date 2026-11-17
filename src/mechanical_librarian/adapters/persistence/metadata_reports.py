@@ -398,7 +398,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._cover_taste = SQLiteCoverTasteRepository(connection)
         self._cover_taste_judge = SQLiteCoverTasteJudgeRepository(
-            connection, lambda: self._live_cover_authority()
+            connection, self._judge_cover_read
         )
         self._retained_covers = SQLiteRetainedCoverRepository(connection, binding)
         self._current_cover_authority: tuple[str | None, str | None] = (None, None)
@@ -749,12 +749,16 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._current_cover_authority = (policy_reference, replay_reference)
         self._current_work_identity_level = work_identity_level
 
-    def _live_cover_authority(self) -> tuple[str | None, str | None]:
-        """The live policy and replay references, read again as a browse read
-        captures them; the bound pair when nothing captures them."""
-        if self._capture_cover_read is None:
-            return self._current_cover_authority
-        return self._capture_cover_read()[0]
+    @contextmanager
+    def _judge_cover_read(self) -> Iterator[tuple[str | None, str | None]]:
+        """The live cover authority with provider fetching captured once, as
+        a browse read captures them; the bound pair when nothing captures."""
+        observation = self.capture_browse_observation()
+        if observation is None:
+            yield self._current_cover_authority
+            return
+        with self.install_browse_observation(observation):
+            yield observation[0]
 
     def _cover_read_authority(self) -> tuple[str | None, str | None]:
         return (

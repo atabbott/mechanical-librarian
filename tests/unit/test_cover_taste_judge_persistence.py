@@ -7,6 +7,8 @@ the engine is a fake whose answers each test chooses.
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import sqlite3
 from collections.abc import Callable
@@ -14,11 +16,27 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from PIL import Image
+from PIL.PngImagePlugin import PngInfo
 
-from mechanical_librarian.adapters.persistence.cover_taste_judge import _DUE_SQL
+from mechanical_librarian.adapters.persistence import schema
+from mechanical_librarian.adapters.persistence.cover_taste_judge import (
+    _DUE_ONE_SQL,
+    _DUE_SQL,
+    SQLiteCoverTasteJudgeRepository,
+    validate_cover_taste_verdicts,
+)
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    MetadataReportError,
+    open_repository,
+)
+from mechanical_librarian.adapters.persistence.schema import _COVER_TASTE_TRIGGERS
 from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewerError,
     canonical_json,
+)
+from mechanical_librarian.application.cover_packet_semantics import (
+    normalize_cover_preview,
 )
 from mechanical_librarian.application.cover_taste_contract import (
     TasteChargeUnknownError,
@@ -26,6 +44,7 @@ from mechanical_librarian.application.cover_taste_contract import (
 from mechanical_librarian.application.cover_taste_judge import (
     CoverTasteBackground,
     CoverTasteJudgeService,
+    JudgeCandidate,
 )
 from mechanical_librarian.application.cover_taste_judge_contract import (
     AdmittedTasteJudgeRequest,
@@ -33,6 +52,9 @@ from mechanical_librarian.application.cover_taste_judge_contract import (
 )
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
+)
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
 )
 from mechanical_librarian.domain.cover_taste import (
     TASTE_JUDGE_NOTICE_SECONDS,
@@ -197,12 +219,18 @@ def test_verdicts_are_append_only_and_a_pair_is_attempted_once(library) -> None:
     assert document["consideration_id"] == consideration_id
 
 
-def test_the_due_statement_and_verdict_reads_search_their_indexes(library) -> None:
-    policy, replay = library.repository._live_cover_authority()
+@pytest.mark.parametrize(
+    ("statement", "last"), ((_DUE_SQL, 64), (_DUE_ONE_SQL, "cover_consideration_x"))
+)
+def test_the_due_statements_and_verdict_reads_search_their_indexes(
+    library, statement: str, last: object
+) -> None:
+    policy, replay = library.repository._current_cover_authority
     plan = " ".join(
         row[-1]
         for row in library.repository._connection.execute(
-            "EXPLAIN QUERY PLAN " + _DUE_SQL, (policy, replay, TASTE_MIN_ARTS, 1)
+            "EXPLAIN QUERY PLAN " + statement,
+            (policy, replay, TASTE_MIN_ARTS, TASTE_MIN_ARTS, 1, last),
         )
     )
     assert "SEARCH attempted USING COVERING INDEX cover_taste_judgements_pair" in plan
@@ -323,7 +351,7 @@ def test_a_missing_preview_ends_the_attempt_unavailable_uncounted(library) -> No
 def test_a_restart_ends_a_running_judgement_interrupted(library) -> None:
     version = _version(library.repository)
     store = library.repository.cover_taste_judge_store()
-    due = store.next_due(version)
+    due = store.due_one(store.due(version, 1)[0], version)
     assert due is not None
     assert store.claim(due.consideration_id, version, NOW, "example/vision", 50)
     client = _Client(library)
@@ -432,3 +460,249 @@ def test_binding_admission_reaches_every_aggregate_store(tmp_path: Path) -> None
         assert unbound == []
     finally:
         repository.close()
+
+
+def test_a_lost_verdict_write_after_a_usage_reported_reply_ends_unavailable(
+    library, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reply was admitted and its usage reported, so a verdict write lost
+    afterwards is no fault of the reply: the attempt ends `unavailable`, and
+    the day is not stopped."""
+    _version(library.repository)
+    client = _Client(library)
+    service, _access = _service(library, client, _Clock())
+
+    def lost(*_args: object, **_kwargs: object) -> None:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(SQLiteCoverTasteJudgeRepository, "succeed", lost)
+    with pytest.raises(sqlite3.OperationalError):
+        service.wake(NOW)
+    assert [row[2:] for row in _rows(library)] == [("failed", "unavailable")]
+    assert _count(library) == [(1, None)]
+
+
+def test_at_most_one_skip_and_one_due_scan_per_wake(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A field the full report leaves with one alternative is skipped one per
+    wake, so preparation runs between skips; each wake scans at most once."""
+    works = {
+        "larger_copy_alone": WORKS["larger_copy_alone"],
+        "larger_copy_again": WORKS["larger_copy_alone"],
+        "larger_copy_third": WORKS["larger_copy_alone"],
+    }
+    library = _library(tmp_path, works)
+    try:
+        _version(library.repository)
+        scans: list[int] = []
+        due = SQLiteCoverTasteJudgeRepository.due
+
+        def counted(
+            self: SQLiteCoverTasteJudgeRepository, version: int, limit: int
+        ) -> tuple[str, ...]:
+            scans.append(limit)
+            return due(self, version, limit)
+
+        monkeypatch.setattr(SQLiteCoverTasteJudgeRepository, "due", counted)
+        client = _Client(library)
+        service, _access = _service(library, client, _Clock())
+        for wake in range(1, 4):
+            assert service.wake(NOW)
+            assert [row[2:] for row in _rows(library)] == [("skipped", None)] * wake
+            assert len(scans) == 1
+        # The batch is spent: the next wake scans once, finds nothing, idles.
+        assert service.wake(NOW) is False
+        assert len(scans) == 2
+        assert client.items == [] and _count(library) == []
+    finally:
+        library.repository.close()
+
+
+def _automatic(library: _Library, item: str, consideration_id: str, tag: str) -> None:
+    """An automatic cover decision answering `item` from `consideration_id`."""
+    connection = library.repository._connection
+    connection_name, library_name, item_id = connection.execute(
+        "SELECT connection_name,library_name,item_id FROM current_review_packages "
+        "WHERE review_case_id=?",
+        (library.cases[item],),
+    ).fetchone()
+    selection = "cover_selection_" + tag * 64
+    connection.execute(
+        "INSERT INTO cover_selection_authorities VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (
+            selection,
+            connection_name,
+            library_name,
+            item_id,
+            "automatic",
+            "automatic_decision_" + tag * 64,
+            consideration_id,
+            None,
+            1,
+            json.dumps(
+                {
+                    "decision_document": json.dumps(
+                        {"schema_version": COVER_AUTOMATIC_DECISION_SCHEMA}
+                    )
+                }
+            ),
+        ),
+    )
+    connection.execute(
+        "INSERT INTO current_cover_selection_authorities VALUES(?,?,?,?)",
+        (connection_name, library_name, item_id, selection),
+    )
+    connection.commit()
+
+
+def test_a_field_an_automatic_decision_answered_is_not_due(library) -> None:
+    """An automatic decision from the field's own consideration answered it,
+    as Covers' stage reads; one from an older consideration did not."""
+    version = _version(library.repository)
+    considerations = {
+        item: library.considerations[item]["consideration_id"]
+        for item in ("keep", "wrong_shape", "unreadable")
+    }
+    _automatic(library, "keep", considerations["keep"], "a")
+    _automatic(library, "wrong_shape", considerations["unreadable"], "b")
+    store = library.repository.cover_taste_judge_store()
+    due = store.due(version, 64)
+    assert {library.item(consideration_id) for consideration_id in due} == {
+        "wrong_shape",
+        "unreadable",
+    }
+    assert store.due_one(considerations["keep"], version) is None
+    assert store.due_one(considerations["wrong_shape"], version) is not None
+
+
+def _png(text: str) -> bytes:
+    buffer = io.BytesIO()
+    info = PngInfo()
+    info.add_text("Comment", text)
+    Image.new("RGBA", (32, 48), (40, 90, 160, 255)).save(buffer, "PNG", pnginfo=info)
+    return buffer.getvalue()
+
+
+def test_only_a_larger_copy_may_send_its_stored_preview_as_transport(
+    library,
+) -> None:
+    """A larger copy records its stored preview's digest as its transport; any
+    other candidate must record the canonical PNG's."""
+    stored = _png("not canonical")
+    stored_digest = hashlib.sha256(stored).hexdigest()
+    canonical = normalize_cover_preview(stored, source_sha256=stored_digest).digest
+    assert canonical != stored_digest
+    service, _access = _service(library, _Client(library), _Clock())
+    service._read_preview = lambda _digest: stored
+
+    def candidate(transport: str, larger_copy: bool) -> JudgeCandidate:
+        return JudgeCandidate(
+            "cover-a", False, 32, 48, stored_digest, transport, larger_copy
+        )
+
+    [image] = service._seal((candidate(stored_digest, True),))
+    assert image.transport_sha256 == canonical
+    [image] = service._seal((candidate(canonical, False),))
+    assert image.transport_sha256 == canonical
+    with pytest.raises(ValueError, match="cover preview changed"):
+        service._seal((candidate(stored_digest, False),))
+
+
+def _judged_verdict(library: _Library) -> None:
+    _version(library.repository)
+    service, _access = _service(library, _Client(library), _Clock())
+    assert service.wake(NOW)
+    library.repository._connection.commit()
+
+
+def _rewrite_verdict(library: _Library, column: str, value: str) -> None:
+    """Replace one stored verdict column, as only a direct database edit could."""
+    connection = library.repository._connection
+    connection.execute("PRAGMA foreign_keys=OFF")
+    connection.execute("DROP TRIGGER cover_taste_verdicts_no_update")
+    connection.execute(f"UPDATE cover_taste_verdicts SET {column}=?", (value,))
+    connection.execute(_COVER_TASTE_TRIGGERS["cover_taste_verdicts_no_update"])
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys=ON")
+
+
+@pytest.fixture
+def versions_unchecked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_version` seeds a bare profile version, which the version validator
+    (tested in `test_cover_taste_persistence`) refuses; only the verdicts are
+    checked here."""
+    monkeypatch.setattr(schema, "validate_cover_taste_versions", lambda _c: None)
+
+
+def test_open_accepts_the_verdict_a_judgement_wrote(
+    tmp_path: Path, versions_unchecked: None
+) -> None:
+    library = _library(tmp_path, _works("keep"))
+    _judged_verdict(library)
+    validate_cover_taste_verdicts(library.repository._connection)
+    library.repository.close()
+    open_repository(tmp_path / "application.sqlite3").close()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"rules": [99]},
+        {"rules": [1, 1]},
+        {"rules": []},
+        {"confidence": 101},
+        {"version": 2},
+        {"consideration_id": "cover_consideration_" + "0" * 64},
+        {"current_marker": False},
+        {"decision": "choose"},
+        {"engine": "elsewhere"},
+        {"packet_sha256": "X" * 64},
+        {"note": "x"},
+        None,
+    ],
+    ids=[
+        "rule-not-in-version",
+        "rule-repeat",
+        "no-rule",
+        "confidence-over-100",
+        "other-version",
+        "other-consideration",
+        "not-current",
+        "choose-without-candidate",
+        "engine",
+        "digest",
+        "extra-key",
+        "not-canonical",
+    ],
+)
+def test_open_refuses_a_verdict_no_judgement_wrote(
+    tmp_path: Path, versions_unchecked: None, change: dict[str, object] | None
+) -> None:
+    library = _library(tmp_path, _works("keep"))
+    _judged_verdict(library)
+    value = json.loads(
+        library.repository._connection.execute(
+            "SELECT document FROM cover_taste_verdicts"
+        ).fetchone()[0]
+    )
+    document = (
+        json.dumps(value, indent=1)
+        if change is None
+        else canonical_json({**value, **change})
+    )
+    _rewrite_verdict(library, "document", document)
+    library.repository.close()
+    with pytest.raises(MetadataReportError):
+        open_repository(tmp_path / "application.sqlite3")
+
+
+def test_open_refuses_a_verdict_without_its_succeeded_judgement(
+    tmp_path: Path,
+) -> None:
+    library = _library(tmp_path, _works("keep"))
+    _judged_verdict(library)
+    _rewrite_verdict(library, "judgement_id", "taste_judgement_" + "0" * 32)
+    with pytest.raises(ValueError, match="taste verdict is invalid"):
+        validate_cover_taste_verdicts(library.repository._connection)
+    library.repository.close()

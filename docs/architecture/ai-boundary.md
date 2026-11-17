@@ -153,13 +153,16 @@ writes only its own append-only verdicts; nothing reads them yet.
   a confidence and 1–3 rule numbers of that version. Anything else is
   `invalid_output`, never repaired; on OpenRouter a reply without usage or a
   timeout after sending is `unknown_charge` and stops the day.
-- **Ceilings.** One judgement per runner wake, counted durably before dispatch
-  against `cover_taste_judge_daily_requests`. A new version is judged after it
-  has stood 120 seconds; an engine failure pauses judging for 10 minutes. A
+- **Ceilings.** One judgement, or one recorded skip, per runner wake; each
+  judgement is counted durably before dispatch against
+  `cover_taste_judge_daily_requests`. A new version is judged after it has
+  stood 120 seconds; an engine failure pauses judging for 10 minutes. A
   failed field waits for a new version.
 - **Storage and redaction.** Verdicts name the comparison's own reference and
-  are append-only by trigger. Failures are closed codes; rules, references,
-  previews and raw output never reach logs, status or the support bundle.
+  are append-only by trigger; opening the database refuses one that no
+  succeeded judgement of that field and version wrote. Failures are closed
+  codes; rules, references, previews and raw output never reach logs, status
+  or the support bundle.
 
 ## Engines
 

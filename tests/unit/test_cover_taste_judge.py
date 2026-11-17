@@ -88,11 +88,6 @@ WORKS: dict[str, dict[str, object]] = {
         "extra": 1,
     },
     # Due by the statement, but the full report leaves one alternative.
-    "sharper_copy_alone": {
-        "incumbent_size": (400, 600),
-        "candidate_size": (1200, 1800),
-        "shared_measures": SAME_ART,
-    },
     "larger_copy_alone": {
         "incumbent_size": (200, 300),
         "incumbent_duplicate_size": (2000, 3000),
@@ -100,6 +95,12 @@ WORKS: dict[str, dict[str, object]] = {
     },
     # Never due.
     "same_art": {"shared_measures": SAME_ART},
+    # A sharper copy of the current art is one art: branch b needs two.
+    "sharper_copy_alone": {
+        "incumbent_size": (400, 600),
+        "candidate_size": (1200, 1800),
+        "shared_measures": SAME_ART,
+    },
     "unknown_read": {
         "readable_current": False,
         "abs_state": CoverSourceState.TIMEOUT,
@@ -123,7 +124,7 @@ JUDGED = {
     "unreadable",
     "released_hold",
 }
-SKIPPED = {"sharper_copy_alone", "larger_copy_alone"}
+SKIPPED = {"larger_copy_alone"}
 
 
 def _extra(root: Path, index: int) -> CoverSource:
@@ -364,12 +365,13 @@ def _judge(library: _Library, client: _Client) -> CoverTasteJudgeService:
 
 
 def _pass(service: CoverTasteJudgeService) -> int:
-    """Wake until nothing more is due; return how many fields were judged."""
-    judged = 0
+    """Wake until nothing more is due; return how many fields were judged or
+    skipped, one per wake."""
+    handled = 0
     while service.wake(NOW):
-        judged += 1
-        assert judged <= len(WORKS)
-    return judged
+        handled += 1
+        assert handled <= len(WORKS)
+    return handled
 
 
 def _attempts(library: _Library) -> dict[str, tuple[str, str | None]]:
@@ -389,13 +391,14 @@ def judged(tmp_path_factory: pytest.TempPathFactory) -> tuple[_Library, _Client]
     _hold_for_owner(library, "released_hold", False)
     _version(library.repository)
     client = _Client()
-    assert _pass(_judge(library, client)) == len(JUDGED)
+    assert _pass(_judge(library, client)) == len(JUDGED) + len(SKIPPED)
     return library, client
 
 
 def test_each_branch_is_judged_once_and_every_exclusion_is_not(judged) -> None:
     """J1: branches a and b are judged; HOLD, FILL, a same-art pair, an
-    unknown read, a fault with no other art, an owner's answer and an
+    unknown read, a fault with no other art, a sharper copy of the current
+    art alone, an owner's answer and an
     active owner hold are not. A field the full report leaves with one
     alternative is recorded `skipped` once, with no request."""
     library, client = judged
@@ -561,15 +564,17 @@ def test_judge_candidates_leaves_the_stage_standing_when_too_few_remain(
     # A fresh version makes every never-judged eligible field due again.
     version = _version(library.repository, created_at=1)
     seen: dict[str, object] = {}
-    due = store.next_due(version)
-    while due is not None:
+    for consideration_id in store.due(version, 64):
+        due = store.due_one(consideration_id, version)
+        assert due is not None
         item = library.item(due.consideration_id)
         seen[item] = judge_candidates(due)
         # A stage that no longer matches the statement's facts is not judged.
         assert judge_candidates(replace(due, reason="edition_preference")) is None
         store.record(due.consideration_id, version, NOW)
-        due = store.next_due(version)
-    assert seen["sharper_copy_alone"] is None
+    assert store.due(version, 64) == ()
+    # A same-art sharper copy on its own is never selected.
+    assert "sharper_copy_alone" not in seen
     assert seen["larger_copy_alone"] is None
     # keep_current verdicts are never judged again under a newer version (S22).
     assert not {"keep", "keep_many", "wrong_shape", "below_floor"} & set(seen)

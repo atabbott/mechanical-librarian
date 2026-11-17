@@ -48,6 +48,9 @@ from mechanical_librarian.domain.metadata_report import AUDIO_FILE_FORMATS
 # With nothing due, the due statement runs again after this, as the
 # builder's schedule does.
 _IDLE_SECONDS = 60
+# Due fields are read in batches of this many, each read again before it is
+# judged, so a pass does not scan every package once per field.
+_DUE_BATCH = 64
 # A fault of the art itself: another copy of the current art cures nothing.
 _RESOLUTION_FAULTS = frozenset({"below_floor", "sharper_copy"})
 
@@ -83,6 +86,8 @@ class JudgeCandidate:
     height: int
     preview_sha256: str
     transport_sha256: str
+    # A larger copy records its stored preview as its transport.
+    larger_copy: bool = False
 
 
 def _previewed(candidate: dict[str, object]) -> bool:
@@ -107,6 +112,7 @@ def _judged(candidate: dict[str, object], current: bool) -> JudgeCandidate:
         cast(int, candidate["height"]),
         cast(str, candidate["preview_sha256"]),
         cast(str, candidate["transport_sha256"]),
+        candidate.get("candidate_kind") == "larger_copy",
     )
 
 
@@ -191,7 +197,9 @@ class CoverTasteJudgeRepository(Protocol):
 
     def refusal(self, now: int, daily_limit: int) -> bool: ...
 
-    def next_due(self, version: int) -> JudgeDue | None: ...
+    def due(self, version: int, limit: int) -> tuple[str, ...]: ...
+
+    def due_one(self, consideration_id: str, version: int) -> JudgeDue | None: ...
 
     def record(
         self,
@@ -245,12 +253,15 @@ class CoverTasteJudgeService:
         self._idle_until = 0
         self._paused_until = 0
         self._noticed_at: int | None = None
+        self._queue: list[str] = []
+        self._queue_version: int | None = None
 
     def wake(self, now: int, changed: Callable[[], object] = lambda: None) -> bool:
-        """Judge at most one due field; only the preparation runner calls it.
+        """Judge or skip at most one due field; only the preparation runner
+        calls it.
 
         `changed` is called at most once every 10 seconds while a pass moves
-        and once when it ends. Returns whether a field was judged.
+        and once when it ends. Returns whether a field was judged or skipped.
         """
         repository = self._repository()
         if not self._recovered:
@@ -270,20 +281,20 @@ class CoverTasteJudgeService:
             or repository.refusal(now, self._daily_limit)
         ):
             return False
-        due = repository.next_due(active.version)
-        candidates = None if due is None else judge_candidates(due)
-        while due is not None and candidates is None:
-            # The full report leaves the field ineligible: recorded once,
-            # with no request, so it is never selected again (J1).
-            repository.record(due.consideration_id, active.version, now)
-            due = repository.next_due(active.version)
-            candidates = None if due is None else judge_candidates(due)
-        if due is None or candidates is None:
+        due = self._next_due(repository, active.version)
+        if due is None:
             self._idle_until = now + _IDLE_SECONDS
             if self._noticed_at is not None:
                 self._noticed_at = None
                 changed()
             return False
+        candidates = judge_candidates(due)
+        if candidates is None:
+            # The full report leaves the field ineligible: recorded once,
+            # with no request, so it is never selected again (J1). One per
+            # wake, so lane 1 keeps preparing between skips.
+            repository.record(due.consideration_id, active.version, now)
+            return True
         try:
             self._judge(repository, active, due, candidates)
         finally:
@@ -295,14 +306,35 @@ class CoverTasteJudgeService:
                 changed()
         return True
 
+    def _next_due(
+        self, repository: CoverTasteJudgeRepository, version: int
+    ) -> JudgeDue | None:
+        """The next field still due: a batch of ids is scanned at most once a
+        wake, and each id is read again on its own before it is used."""
+        if version != self._queue_version:
+            self._queue, self._queue_version = [], version
+        scanned = False
+        while True:
+            if not self._queue:
+                if scanned:
+                    return None
+                self._queue = list(repository.due(version, _DUE_BATCH))
+                scanned = True
+                if not self._queue:
+                    return None
+            due = repository.due_one(self._queue.pop(0), version)
+            if due is not None:
+                return due
+
     def _seal(
         self, candidates: tuple[JudgeCandidate, ...]
     ) -> tuple[TasteJudgeImage, ...]:
         """Each preview re-admitted as the canonical PNG the consideration
         recorded; raises when any is missing or changed.
 
-        A larger copy records its stored preview as its transport, which the
-        source digest binds; every other candidate records the canonical PNG.
+        Only a larger copy may record its stored preview as its transport,
+        which the source digest binds; every other candidate records the
+        canonical PNG.
         """
         images = []
         for candidate in candidates:
@@ -310,10 +342,10 @@ class CoverTasteJudgeService:
                 self._read_preview(candidate.preview_sha256),
                 source_sha256=candidate.preview_sha256,
             )
-            if candidate.transport_sha256 not in {
-                preview.digest,
-                candidate.preview_sha256,
-            }:
+            if candidate.transport_sha256 != preview.digest and (
+                not candidate.larger_copy
+                or candidate.transport_sha256 != candidate.preview_sha256
+            ):
                 raise ValueError("cover preview changed")
             images.append(
                 TasteJudgeImage(
@@ -389,6 +421,11 @@ class CoverTasteJudgeService:
             except TasteJudgeOutputError:
                 repository.fail(judgement_id, self._clock(), failure, stop_day=stop_day)
                 return
+            # The verdict was admitted: a write lost now leaves no verdict
+            # through no fault of the reply, so the attempt ends `unavailable`
+            # (or `unknown_charge` without usage).
+            if reply.usage_reported:
+                failure = "unavailable"
             repository.succeed(
                 judgement_id,
                 self._clock(),
