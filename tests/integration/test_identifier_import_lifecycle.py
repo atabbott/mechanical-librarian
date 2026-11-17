@@ -429,11 +429,12 @@ def test_an_identifiers_file_links_its_works_and_its_import_is_withdrawn(
         == [(CONNECTION, LIBRARY, PreparationTrigger.BOOK_LINKED)] * 2
     )
     # Activity: the import's row, its withdrawal's row and each owner change.
-    assert [(e["state"], e["change"]) for e in world.activity()] == [
+    # Every write here shares one clock time, so their order is not asserted.
+    assert sorted((e["state"], e["change"]) for e in world.activity()) == [
+        ("imported", "Linked 15 works"),
         ("link_changed", f"Linked to {LINKED_TITLE} on Hardcover"),
         ("link_withdrawn", f"Withdrew the link to ISBN {ISBNS['item-3']}"),
         ("withdraw", "Withdrew 13 links"),
-        ("imported", "Linked 15 works"),
     ]
     status = world.get(f"/api/v1/identifier-imports/{import_id}")
     assert (status["still_linked"], status["withdrawn"]) == (0, True)
