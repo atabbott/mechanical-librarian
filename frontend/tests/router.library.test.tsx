@@ -82,7 +82,9 @@ Object.defineProperties(HTMLDialogElement.prototype, {
 it('keeps the active search caret through debounced Library URL changes', async () => {
   const user = userEvent.setup()
   const { router } = renderRoute('/library?lens=all', createHttp())
-  const search = await screen.findByRole('searchbox')
+  // Library's first render can pass the default second when the whole suite
+  // runs at once; on main too, it failed only there, at this first find.
+  const search = await screen.findByRole('searchbox', {}, { timeout: 4_000 })
   await user.click(search)
   await user.keyboard('synthetic')
   await waitFor(() => expect(router.state.location.search.q).toBe('synthetic'))
