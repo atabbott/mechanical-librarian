@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { Ref } from 'react'
 
 import { displayValue } from '../api/http'
@@ -133,6 +134,17 @@ export function FieldDecisionCanvas({
     selected.destination,
     selectedChoiceMode && !ownerStatusShown && !pinStatusShown,
   )
+  // A refused or failed choice, or a case that must be reloaded first.
+  const choiceFailure =
+    choiceStatus.text !== '' &&
+    !choiceStatus.offerChanged &&
+    (controller.decision.isError || controller.reloadRequired)
+  const failureLine = useRef<HTMLParagraphElement>(null)
+  // A line that arrives below the window is brought just into view, so a
+  // choice that changed nothing never looks as if nothing happened.
+  useEffect(() => {
+    if (choiceFailure) failureLine.current?.scrollIntoView({ block: 'nearest' })
+  }, [choiceFailure, choiceStatus.text])
   const pinBusy = controller.recording || controller.checking || controller.reloadRequired
   const pinControl = pinControls({
     busy: pinBusy,
@@ -528,7 +540,27 @@ export function FieldDecisionCanvas({
           pin={contextPin}
         />
       )}
+      {/* What went wrong with a choice is said right under the choices, where
+          the owner pressed, never at the foot below the source values. */}
       {choiceStatus.offerChanged ? <p role="status">{choiceStatus.text}</p> : null}
+      {controller.canRetry && selectedProgress?.phase === 'failed' ? (
+        <button
+          ref={retryButton}
+          className="decision-retry"
+          type="button"
+          onClick={controller.retry}
+        >
+          Try the same decision again
+        </button>
+      ) : null}
+      {choiceFailure ? (
+        <p ref={failureLine} className="decision-failure" role="alert">
+          {choiceStatus.text}
+        </p>
+      ) : null}
+      {controller.reloadRequired ? (
+        <ReloadCase reloading={reloading} settle={controller.settle} />
+      ) : null}
       {selected.ownerControl && !controller.reloadRequired ? (
         <OwnerControls
           key={ownerKey}
@@ -583,23 +615,8 @@ export function FieldDecisionCanvas({
         reviewCaseId={selectedReviewCaseId}
         field={selected}
       />
-      {controller.canRetry && selectedProgress?.phase === 'failed' ? (
-        <button
-          ref={retryButton}
-          className="decision-retry"
-          type="button"
-          onClick={controller.retry}
-        >
-          Try the same decision again
-        </button>
-      ) : null}
-      {choiceStatus.text && !choiceStatus.offerChanged ? (
-        <p role={controller.decision.isError || controller.reloadRequired ? 'alert' : 'status'}>
-          {choiceStatus.text}
-        </p>
-      ) : null}
-      {controller.reloadRequired ? (
-        <ReloadCase reloading={reloading} settle={controller.settle} />
+      {choiceStatus.text && !choiceStatus.offerChanged && !choiceFailure ? (
+        <p role="status">{choiceStatus.text}</p>
       ) : null}
       {selectedChoiceMode && effect ? (
         <aside className="field-apply-context" aria-label="Writing to the library">

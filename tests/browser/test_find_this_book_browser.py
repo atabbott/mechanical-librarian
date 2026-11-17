@@ -599,6 +599,42 @@ def test_none_of_these_closes_without_a_request_and_returns_focus(
         page.close()
 
 
+# Where focus is after a Tab: a control in the dialog, the browser's own
+# controls (the page's body holds it), or something on the page behind.
+_FOCUS_PLACE = """() => {
+  const active = document.activeElement
+  if (active === null || active === document.body) return 'browser'
+  return active.closest('dialog.find-book-dialog') ? 'dialog' : 'page'
+}"""
+
+
+def test_tab_never_leaves_the_dialog_for_the_page_behind_it(browser: Browser) -> None:
+    served = _Served()
+    page = _page(browser, served)
+    try:
+        _open_case(page)
+        dialog = _open_find(page)
+        close = dialog.get_by_role("button", name="Close", exact=True)
+        places = []
+        for _ in range(24):
+            page.keyboard.press("Tab")
+            places.append(page.evaluate(_FOCUS_PLACE))
+        # The modal dialog leaves the page behind it inert: past its last
+        # control focus goes to the browser's own controls, then back to the
+        # dialog's first, and never to the page.
+        assert "page" not in places
+        assert "browser" in places
+        while page.evaluate(_FOCUS_PLACE) != "browser":
+            page.keyboard.press("Tab")
+        page.keyboard.press("Tab")
+        expect(close).to_be_focused()
+        for _ in range(24):
+            page.keyboard.press("Shift+Tab")
+            assert page.evaluate(_FOCUS_PLACE) != "page"
+    finally:
+        page.close()
+
+
 def test_choosing_sends_only_position_and_scope_under_an_idempotency_key(
     browser: Browser,
 ) -> None:
@@ -788,6 +824,15 @@ def test_more_holds_history_and_answers_the_keyboard(browser: Browser) -> None:
         page.close()
 
 
+_UNDER_CHOICES_IN_VIEW = """notice => {
+  const box = notice.getBoundingClientRect()
+  return {
+    underChoices: notice.previousElementSibling?.classList.contains('direct-choice') ?? false,
+    inView: box.top >= 0 && box.bottom <= window.innerHeight,
+  }
+}"""
+
+
 def test_a_decision_refused_because_the_link_changed_says_so(
     browser: Browser,
 ) -> None:
@@ -798,11 +843,17 @@ def test_a_decision_refused_because_the_link_changed_says_so(
         page.get_by_role(
             "radio", name=f"Choose proposed value: {_PROPOSED}", exact=True
         ).click()
-        expect(
-            page.get_by_text(
-                "The book link changed. This work is being prepared again."
-            )
-        ).to_be_visible()
+        notice = page.get_by_text(
+            "The book link changed. This work is being prepared again."
+        )
+        expect(notice).to_be_visible()
+        # Said right under the choices and brought into the window, so the
+        # owner sees why nothing was chosen.
+        expect(notice).to_have_attribute("role", "alert")
+        assert notice.evaluate(_UNDER_CHOICES_IN_VIEW) == {
+            "underChoices": True,
+            "inView": True,
+        }
         # One send, never repeated on its own.
         assert len(served.writes) == 1
         expect(page.get_by_text("Your choice")).to_have_count(0)
