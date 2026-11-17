@@ -1550,3 +1550,60 @@ def test_link_catalogue_answers_the_owner_search_and_records_each_asin() -> None
     assert catalogue.asins("audnexus") == [qualification.OWNER_LINK_ASIN]
     assert catalogue.asins("audiosilo") == [qualification.OWNER_LINK_ASIN]
     assert catalogue.asins("unexpected") == []
+
+
+def test_continuous_catalogue_answers_the_real_hardcover_lanes_and_cover() -> None:
+    """Real-consumer dry proof for the continuous phase's synthetic Hardcover.
+
+    The books-first WORK search asks with `$titles`; a fake that read only
+    `title` raised inside the adapter, so the whole observation, ISBN lane
+    included, read unavailable and no case offered anything but the local
+    ISBN (`installed_human_destinations_unproved`, before #1477). The cover
+    must sit on Hardcover's asset host, and the patched remote read must hand
+    back its URL as the observer reads it.
+    """
+    claim = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="ISBN: 9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+        scope=ClaimScope.EDITION,
+    )
+    lanes = (
+        MetadataDiscoveryLane(
+            "lane_" + "1" * 64,
+            ProviderQueryKind.WORK,
+            (claim.reference,),
+            title="Guarded qualification title",
+            authors=("Synthetic Author", "Second Qualified Author"),
+        ),
+        MetadataDiscoveryLane(
+            "lane_" + "2" * 64,
+            ProviderQueryKind.ISBN,
+            (claim.reference,),
+            matched_family="9780306406157",
+            canonical_isbns=("9780306406157",),
+        ),
+    )
+    asked: dict[str, int] = {}
+    hosts: set[str | None] = set()
+    for lane in lanes:
+        result = HardcoverMetadataProvider(
+            "qualification-catalogue-a",
+            _qualification_hardcover_client({}, asked, {}, {}),
+            65_536,
+        ).observe(MetadataDiscoveryPlan((claim,), (lane,)))
+        assert [value.status for value in result.observation.lanes] == [
+            ProviderStatus.CANDIDATES
+        ]
+        hosts |= {httpx.URL(str(value.url)).host for value in result.cover_descriptors}
+    assert asked == {"isbn": 1, "title": 1}
+    assert hosts == {"assets.hardcover.app"}
+    remote = qualification._qualification_remote_cover(
+        "https://assets.hardcover.app/c.png"
+    )
+    assert remote.url == "https://assets.hardcover.app/c.png"
+    assert remote.content

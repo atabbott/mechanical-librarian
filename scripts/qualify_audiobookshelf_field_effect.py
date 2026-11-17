@@ -1357,6 +1357,16 @@ def _wait_for_preparation(
     raise QualificationError("installed_preparation_timeout")
 
 
+def _qualification_remote_cover(url: str, **_: object) -> Any:
+    """The continuous phase's remote cover read: its URL and a small PNG.
+
+    The cover observer reads the final URL's host as well as the bytes.
+    """
+    return type(
+        "QualificationRemoteCover", (), {"content": _png(32, 96, 160), "url": url}
+    )()
+
+
 def _qualification_hardcover_client(
     title_corrections: dict[str, str],
     observations: dict[str, int],
@@ -1430,8 +1440,14 @@ def _qualification_hardcover_client(
             else:
                 observations["title"] = observations.get("title", 0) + 1
                 requested_isbn = "9780306406157"
+                # The books-first WORK search asks with `$titles` (#1380); the
+                # first is the lane's own title.
+                raw_titles = values.get("titles")
                 requested_title = _string(
-                    values.get("title"), "installed_provider_title_invalid"
+                    raw_titles[0]
+                    if type(raw_titles) is list and raw_titles
+                    else values.get("title"),
+                    "installed_provider_title_invalid",
                 )
                 raw_authors = values.get("authors")
                 authors = (
@@ -1474,7 +1490,9 @@ def _qualification_hardcover_client(
             }
             for index, author in enumerate(contribution_authors, start=1)
         ]
-        cover = {"url": "https://qualification.invalid/cover.png"}
+        # Hardcover covers are admitted only from its asset host; the remote
+        # read itself is patched, so no socket opens.
+        cover = {"url": "https://assets.hardcover.app/qualification/cover.png"}
         tags = [
             {
                 "id": 1,
@@ -1483,6 +1501,34 @@ def _qualification_hardcover_client(
             },
             {"id": 2, "tag": "Guarded", "tag_category": {"id": 2, "category": "Mood"}},
         ]
+        book = {
+            "id": request_local_id,
+            "title": title,
+            "description": "A bounded continuous guarded qualification value.",
+            "release_date": "2025-02-03",
+            "image": cover,
+            "contributions": contributions,
+            "book_series": [
+                {
+                    "id": 1,
+                    "position": None if scenario == "missing" else "2.5",
+                    "series": {"id": 1, "name": "Guarded Qualification"},
+                }
+            ],
+            "taggings": [{"id": 1, "tag_id": 1}, {"id": 2, "tag_id": 2}],
+        }
+        if body.get("operationName") == "BooksByTitleAuthor":
+            # The books-first WORK search answers books and tags alone.
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "books": [{**book, "canonical_id": None, "compilation": False}],
+                        "tags": tags,
+                    }
+                },
+                request=request,
+            )
         return httpx.Response(
             200,
             json={
@@ -1516,32 +1562,7 @@ def _qualification_hardcover_client(
                             "contributions": contributions,
                         }
                     ],
-                    "books": [
-                        {
-                            "id": request_local_id,
-                            "title": title,
-                            "description": "A bounded continuous guarded qualification value.",
-                            "release_date": "2025-02-03",
-                            "image": cover,
-                            "contributions": contributions,
-                            "book_series": [
-                                {
-                                    "id": 1,
-                                    "position": None
-                                    if scenario == "missing"
-                                    else "2.5",
-                                    "series": {
-                                        "id": 1,
-                                        "name": "Guarded Qualification",
-                                    },
-                                }
-                            ],
-                            "taggings": [
-                                {"id": 1, "tag_id": 1},
-                                {"id": 2, "tag_id": 2},
-                            ],
-                        }
-                    ],
+                    "books": [book],
                     "tags": tags,
                 }
             },
@@ -1785,12 +1806,9 @@ def _installed_continuous_qualification(
             **kwargs,
         )
 
-    def provider_cover(*_: object, **__: object) -> object:
-        return type("QualificationRemoteCover", (), {"content": _png(32, 96, 160)})()
-
     provider_patch = patch.object(composition, "hardcover_client", provider_client)
     cover_patch = patch.object(
-        cover_evidence_observer, "fetch_remote_cover", provider_cover
+        cover_evidence_observer, "fetch_remote_cover", _qualification_remote_cover
     )
     provider_patch.start()
     cover_patch.start()
@@ -2618,7 +2636,7 @@ def _installed_continuous_qualification(
         composition, "hardcover_client", provider_client
     )
     restart_cover_patch = patch.object(
-        cover_evidence_observer, "fetch_remote_cover", provider_cover
+        cover_evidence_observer, "fetch_remote_cover", _qualification_remote_cover
     )
     restart_provider_patch.start()
     restart_cover_patch.start()
