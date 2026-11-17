@@ -1296,8 +1296,13 @@ _LINKED_BOOK = httpx.Response(
 @pytest.mark.parametrize(
     ("linked", "answer", "state", "link"),
     [
-        (True, _LINKED_BOOK, "matched", {"state": "linked"}),
-        (True, httpx.Response(502), "unavailable", {"state": "waiting"}),
+        (True, _LINKED_BOOK, "matched", {"state": "linked", "provider": "hardcover"}),
+        (
+            True,
+            httpx.Response(502),
+            "unavailable",
+            {"state": "waiting", "provider": "hardcover"},
+        ),
         (False, _LINKED_BOOK, "no_match", None),
     ],
     ids=["link-lane-candidates", "link-lane-outage", "control-unlinked"],

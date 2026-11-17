@@ -332,6 +332,58 @@ def test_a_work_that_could_not_finish_is_not_offered() -> None:
     assert harness.source.queries == []
 
 
+@pytest.mark.parametrize("could_not_finish", [False, True], ids=["ready", "failed"])
+@pytest.mark.parametrize(
+    "providers",
+    [
+        _PROVIDERS,
+        (),
+        (
+            ProviderConnectionConfiguration(
+                "gb", False, False, None, adapter="google_books"
+            ),
+        ),
+    ],
+    ids=["sources", "no-sources", "disabled-source"],
+)
+def test_a_library_row_is_offered_by_the_link_views_own_rule(
+    providers: tuple[ProviderConnectionConfiguration, ...], could_not_finish: bool
+) -> None:
+    harness = _harness(providers=providers)
+    harness.works.could_not_finish = could_not_finish
+    offered = harness.service.subject(CONNECTION, LIBRARY, ITEM).offered
+    reads = harness.works.reads
+    find_offer = harness.service.find_offer()
+    assert find_offer(CONNECTION, LIBRARY, "epub", could_not_finish) is offered
+    assert offered is (not could_not_finish and providers == _PROVIDERS)
+    # The row reads no work: what the store says is already on the row.
+    assert harness.works.reads == reads
+
+
+def test_a_library_row_of_an_unknown_library_is_not_offered() -> None:
+    find_offer = _harness().service.find_offer()
+    assert find_offer(CONNECTION, "elsewhere", "epub", False) is False
+    assert find_offer(CONNECTION, LIBRARY, "epub", False) is True
+
+
+def test_a_library_page_selects_each_librarys_sources_once() -> None:
+    harness = _harness()
+    selected: list[tuple[str, str]] = []
+    configuration = harness.service._configuration
+    select = configuration.select
+
+    def counted(connection: str, library: str) -> tuple[Any, ...]:
+        selected.append((connection, library))
+        return select(connection, library)
+
+    configuration.select = counted  # type: ignore[method-assign]
+    find_offer = harness.service.find_offer()
+    for _ in range(3):
+        assert find_offer(CONNECTION, LIBRARY, "epub", False) is True
+    assert find_offer(CONNECTION, LIBRARY, "epub", True) is False
+    assert selected == [(CONNECTION, LIBRARY)]
+
+
 def test_one_search_in_flight_per_session() -> None:
     harness = _harness()
     inner: list[str] = []

@@ -31,6 +31,9 @@ from mechanical_librarian.adapters.persistence.owner_links import (
     current_owner_link_row,
     record_owner_link,
 )
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    preparation_work_id,
+)
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderRequestPacer,
 )
@@ -445,6 +448,69 @@ def test_the_view_offers_the_work_and_names_no_link_until_one_is_chosen(
         "state": "preparing",
         "title": "Current title",
     }
+
+
+@pytest.mark.parametrize("sources", [True, False], ids=["offered", "no-source"])
+def test_the_library_row_says_what_the_view_says_before_and_after_a_link(
+    live: _Live, sources: bool
+) -> None:
+    """The header shows its entry from the row, so row and view agree (#1477)."""
+    if not sources:
+        live.configuration.providers = ()
+
+    def row() -> dict[str, object]:
+        answer = live.client.get("/api/v1/library?lens=all")
+        assert answer.status_code == 200, answer.text
+        (item,) = answer.json()["items"]
+        return item
+
+    view = live.client.get(VIEW).json()
+    assert row()["find_offered"] is view["offered"] is sources
+    assert row()["link"] is None
+    if not sources:
+        return
+    live.choose(_searched(live))
+    view = live.client.get(VIEW).json()
+    assert row()["find_offered"] is view["offered"] is True
+    assert row()["link"] == {
+        "state": view["link"]["state"],
+        "provider": view["link"]["provider"],
+    }
+
+
+def test_a_row_that_could_not_finish_is_not_offered_and_keeps_its_link(
+    live: _Live, tmp_path: Path
+) -> None:
+    """Could not finish (L4): the row offers no search but still shows the link."""
+    live.choose(_searched(live))
+    # The failed work row stands alone, with no scan row behind it, as the
+    # owner-link store's own tests seed it.
+    connection = sqlite3.connect(tmp_path / "state.sqlite3", isolation_level=None)
+    connection.execute(
+        "INSERT INTO review_preparation_work(work_id,scan_id,ordinal,connection_name,"
+        "library_name,library_id,item_id,file_identity,source_revision,"
+        "source_fingerprint,producer_fingerprint,catalogue_generation,"
+        "catalogue_fingerprint,stage,state,failure_code,updated_at) "
+        "VALUES(?,'scan',0,?,?,'library-1',?,?,0,?,?,1,?,'complete',"
+        "'failed','provider',?)",
+        (
+            preparation_work_id(CONNECTION, LIBRARY, ITEM),
+            CONNECTION,
+            LIBRARY,
+            ITEM,
+            "b" * 64,
+            "c" * 64,
+            "d" * 64,
+            "e" * 64,
+            NOW + 1,
+        ),
+    )
+    connection.close()
+    view = live.client.get(VIEW).json()
+    (row,) = live.client.get("/api/v1/library?lens=all").json()["items"]
+    assert row["find_offered"] is view["offered"] is False
+    assert row["link"] is not None and view["link"] is not None
+    assert row["link"]["state"] == view["link"]["state"]
 
 
 def test_the_view_needs_a_session_and_refuses_an_unknown_work(live: _Live) -> None:
