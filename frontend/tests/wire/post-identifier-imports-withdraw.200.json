@@ -1,0 +1,11 @@
+{
+  "method": "POST",
+  "path": "/api/v1/identifier-imports/identifier_import_0000000000000000000000000000000000000000000000000000000000000001/withdraw",
+  "status": 200,
+  "body": {
+    "import_id": "identifier_import_0000000000000000000000000000000000000000000000000000000000000001",
+    "withdrawn": 3,
+    "scan_requested": true,
+    "schema_version": "identifier-import-withdrawal-v1"
+  }
+}

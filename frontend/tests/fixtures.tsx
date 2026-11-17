@@ -247,6 +247,7 @@ export const activity = (
         change: 'Not set \u2192 9780060512750',
         change_detail: 'Set ISBN from Not set to 9780060512750',
         field_label: 'ISBN',
+        identifier_import_id: null,
         policy_changes: [],
         evidence: [
           { label: 'Previous value', value: 'Not set' },

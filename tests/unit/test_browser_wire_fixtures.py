@@ -22,7 +22,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -74,6 +74,7 @@ from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
 )
+from tests.unit.test_identifier_import_web import identifier_web
 from tests.unit.test_reviewer_access_application import _Auth, _OpenRouter
 
 FIXTURES = Path("frontend/tests")
@@ -752,3 +753,36 @@ def test_library_progress(tmp_path) -> None:
     finally:
         repository.close()
     _expect_wire("get-library-progress", capture, {})
+
+
+def test_identifier_import(tmp_path: Path) -> None:
+    """#1478: a preview, its import and status, and Withdraw this import."""
+
+    def capture(response: Any, method: str) -> tuple[str, str, int, object]:
+        assert 200 <= response.status_code < 300, response.text
+        return method, response.request.url.path, response.status_code, response.json()
+
+    with identifier_web(tmp_path) as live:
+        previewed = capture(live.preview(), "POST")
+        preview_id = cast("dict[str, Any]", previewed[3])["preview_id"]
+        imported = capture(live.confirm(preview_id), "POST")
+        import_id = cast("dict[str, Any]", imported[3])["import_id"]
+        captures = {
+            "post-libraries-identifier-previews": previewed,
+            "post-identifier-previews-import": imported,
+            "get-identifier-previews": capture(
+                live.client.get(f"/api/v1/identifier-previews/{preview_id}"), "GET"
+            ),
+            "get-identifier-imports": capture(
+                live.client.get(f"/api/v1/identifier-imports/{import_id}"), "GET"
+            ),
+            "post-identifier-imports-withdraw": capture(
+                live.withdraw(import_id), "POST"
+            ),
+        }
+    placeholders = {
+        "identifier-preview-placeholder-000000000000": preview_id,
+        "identifier_import_" + "0" * 63 + "1": import_id,
+    }
+    for slug, wire in captures.items():
+        _expect_wire(slug, wire, placeholders)

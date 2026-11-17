@@ -162,6 +162,7 @@ from mechanical_librarian.domain.reviewer_access import (
 from mechanical_librarian.domain.value_flags import ValueFlagDestination, ValueFlagRule
 from mechanical_librarian.interfaces.web import (
     find_this_book,
+    identifier_import,
     live_stream,
     review_frontend,
 )
@@ -2219,6 +2220,11 @@ class _ActivityEvent(_ClosedModel):
     evidence: list[_ActivityEvidence] = Field(default_factory=list, max_length=8)
     failure: str | None = Field(default=None, max_length=512)
     field_label: str = Field(default="Recorded field", max_length=64)
+    # Set only on an identifiers file import's row (#1478): the import its
+    # Details read live and Withdraw this import names.
+    identifier_import_id: str | None = Field(
+        default=None, pattern=r"^identifier_import_[0-9a-f]{64}$"
+    )
     # A Policy row's exact From/To. Every other category keeps the compact
     # detail density rather than inheriting policy-detail bulk.
     policy_changes: list[_ActivityPolicyChange] = Field(
@@ -3357,7 +3363,17 @@ _BODY_PATH_LIMITS = {
     "/api/v1/library/link/withdraw": 4_096,
 }
 # A Find this book choice, a position and a scope, stays at the default.
-_BODY_PATTERN_LIMITS = ((re.compile(r"/api/v1/review-cases/[^/]+/decisions"), 8_192),)
+_BODY_PATTERN_LIMITS = (
+    (re.compile(r"/api/v1/review-cases/[^/]+/decisions"), 8_192),
+    # An identifiers file (#1478): read whole, then refused past 1 MiB.
+    (
+        re.compile(
+            r"/api/v1/libraries/[a-z][a-z0-9_-]{0,63}/[a-z][a-z0-9_-]{0,63}"
+            r"/identifier-previews"
+        ),
+        1_048_576,
+    ),
+)
 
 
 def create_review_app(
@@ -3640,6 +3656,9 @@ def _register_routes(
         app, application, session_cookie, authenticated_session_cookie
     )
     find_this_book.register_routes(
+        app, application, session_cookie, authenticated_session_cookie, _require_session
+    )
+    identifier_import.register_routes(
         app, application, session_cookie, authenticated_session_cookie, _require_session
     )
     _register_taste_routes(

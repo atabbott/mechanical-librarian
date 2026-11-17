@@ -2280,6 +2280,18 @@
             "title": "Field Label",
             "type": "string"
           },
+          "identifier_import_id": {
+            "anyOf": [
+              {
+                "pattern": "^identifier_import_[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identifier Import Id"
+          },
           "library": {
             "maxLength": 512,
             "title": "Library",
@@ -7618,6 +7630,335 @@
         "title": "_HistoryTransitionItem",
         "type": "object"
       },
+      "_IdentifierCounts": {
+        "additionalProperties": false,
+        "description": "How the file's rows were decided; they add up to its rows.",
+        "properties": {
+          "already_linked": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Already Linked",
+            "type": "integer"
+          },
+          "ambiguous": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Ambiguous",
+            "type": "integer"
+          },
+          "conflicting": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Conflicting",
+            "type": "integer"
+          },
+          "invalid_identifier": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Invalid Identifier",
+            "type": "integer"
+          },
+          "no_item": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "No Item",
+            "type": "integer"
+          },
+          "repeated": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Repeated",
+            "type": "integer"
+          },
+          "unreadable": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Unreadable",
+            "type": "integer"
+          },
+          "will_link": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Will Link",
+            "type": "integer"
+          },
+          "wrong_medium": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Wrong Medium",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "will_link",
+          "already_linked",
+          "no_item",
+          "ambiguous",
+          "invalid_identifier",
+          "wrong_medium",
+          "repeated",
+          "conflicting",
+          "unreadable"
+        ],
+        "title": "_IdentifierCounts",
+        "type": "object"
+      },
+      "_IdentifierImportStatus": {
+        "additionalProperties": false,
+        "description": "An import's live state, read when its Activity details open.",
+        "properties": {
+          "import_id": {
+            "pattern": "^identifier_import_[0-9a-f]{64}$",
+            "title": "Import Id",
+            "type": "string"
+          },
+          "linked": {
+            "maximum": 5000.0,
+            "minimum": 1.0,
+            "title": "Linked",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": "identifier-import-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "still_linked": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Still Linked",
+            "type": "integer"
+          },
+          "withdrawn": {
+            "title": "Withdrawn",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "import_id",
+          "linked",
+          "still_linked",
+          "withdrawn",
+          "schema_version"
+        ],
+        "title": "_IdentifierImportStatus",
+        "type": "object"
+      },
+      "_IdentifierImportWithdrawal": {
+        "additionalProperties": false,
+        "description": "What Withdraw this import withdrew (`identifier-import-withdrawal-v1`).",
+        "properties": {
+          "import_id": {
+            "pattern": "^identifier_import_[0-9a-f]{64}$",
+            "title": "Import Id",
+            "type": "string"
+          },
+          "scan_requested": {
+            "title": "Scan Requested",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "const": "identifier-import-withdrawal-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "withdrawn": {
+            "maximum": 5000.0,
+            "minimum": 1.0,
+            "title": "Withdrawn",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "import_id",
+          "withdrawn",
+          "scan_requested",
+          "schema_version"
+        ],
+        "title": "_IdentifierImportWithdrawal",
+        "type": "object"
+      },
+      "_IdentifierImported": {
+        "additionalProperties": false,
+        "description": "What an import recorded (`identifier-import-v1`).",
+        "properties": {
+          "import_id": {
+            "pattern": "^identifier_import_[0-9a-f]{64}$",
+            "title": "Import Id",
+            "type": "string"
+          },
+          "linked": {
+            "maximum": 5000.0,
+            "minimum": 1.0,
+            "title": "Linked",
+            "type": "integer"
+          },
+          "scan_requested": {
+            "title": "Scan Requested",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "const": "identifier-import-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "import_id",
+          "linked",
+          "scan_requested",
+          "schema_version"
+        ],
+        "title": "_IdentifierImported",
+        "type": "object"
+      },
+      "_IdentifierPreview": {
+        "additionalProperties": false,
+        "description": "One held preview (`identifier-preview-v1`).",
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/_IdentifierCounts"
+          },
+          "expires_at": {
+            "maximum": 8640000000000.0,
+            "minimum": 0.0,
+            "title": "Expires At",
+            "type": "integer"
+          },
+          "preview_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Preview Id",
+            "type": "string"
+          },
+          "refused": {
+            "items": {
+              "$ref": "#/components/schemas/_RefusedRow"
+            },
+            "maxItems": 5000,
+            "title": "Refused",
+            "type": "array"
+          },
+          "rows": {
+            "maximum": 5000.0,
+            "minimum": 1.0,
+            "title": "Rows",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": "identifier-preview-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "will_link": {
+            "items": {
+              "$ref": "#/components/schemas/_WillLinkRow"
+            },
+            "maxItems": 5000,
+            "title": "Will Link",
+            "type": "array"
+          }
+        },
+        "required": [
+          "preview_id",
+          "expires_at",
+          "rows",
+          "counts",
+          "will_link",
+          "refused",
+          "schema_version"
+        ],
+        "title": "_IdentifierPreview",
+        "type": "object"
+      },
+      "_IdentifierPreviewStatus": {
+        "additionalProperties": false,
+        "description": "A preview after an uncertain confirm (`identifier-preview-status-v1`).\n\n`imported` names the import; `open` means the preview may still be\nconfirmed; `closed` means it was never imported and is gone.",
+        "properties": {
+          "import_id": {
+            "anyOf": [
+              {
+                "pattern": "^identifier_import_[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Import Id"
+          },
+          "linked": {
+            "anyOf": [
+              {
+                "maximum": 5000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked"
+          },
+          "schema_version": {
+            "const": "identifier-preview-status-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "imported",
+              "open",
+              "closed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "import_id",
+          "linked",
+          "schema_version"
+        ],
+        "title": "_IdentifierPreviewStatus",
+        "type": "object"
+      },
+      "_IdentifierRefusal": {
+        "additionalProperties": false,
+        "description": "A refused preview, import or withdrawal: one closed code.",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/_IdentifierRefusalCode"
+          },
+          "schema_version": {
+            "const": "review-error-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "schema_version"
+        ],
+        "title": "_IdentifierRefusal",
+        "type": "object"
+      },
+      "_IdentifierRefusalCode": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 64,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "_IdentifierRefusalCode",
+        "type": "object"
+      },
       "_ImprintEbookQualification": {
         "additionalProperties": false,
         "properties": {
@@ -11999,6 +12340,40 @@
         "title": "_RefusalCode",
         "type": "object"
       },
+      "_RefusedRow": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "enum": [
+              "row_too_long",
+              "row_shape",
+              "no_item",
+              "ambiguous",
+              "invalid_isbn",
+              "invalid_asin",
+              "asin_for_ebook",
+              "isbn_for_audiobook",
+              "conflicting",
+              "repeated",
+              "already_linked"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "row": {
+            "maximum": 5001.0,
+            "minimum": 2.0,
+            "title": "Row",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row",
+          "reason"
+        ],
+        "title": "_RefusedRow",
+        "type": "object"
+      },
       "_ReportChapter": {
         "additionalProperties": false,
         "properties": {
@@ -14108,6 +14483,54 @@
         "title": "_UnavailableDecisionConfirmation",
         "type": "object"
       },
+      "_WillLinkRow": {
+        "additionalProperties": false,
+        "description": "A row the import links: the work as Library names it, and its record.",
+        "properties": {
+          "authors": {
+            "items": {
+              "maxLength": 512,
+              "type": "string"
+            },
+            "maxItems": 512,
+            "title": "Authors",
+            "type": "array"
+          },
+          "identifier": {
+            "pattern": "^(?:97[89][0-9]{10}|[0-9A-Z]{10})$",
+            "title": "Identifier",
+            "type": "string"
+          },
+          "identifier_kind": {
+            "enum": [
+              "isbn",
+              "asin"
+            ],
+            "title": "Identifier Kind",
+            "type": "string"
+          },
+          "row": {
+            "maximum": 5001.0,
+            "minimum": 2.0,
+            "title": "Row",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 512,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "row",
+          "title",
+          "authors",
+          "identifier_kind",
+          "identifier"
+        ],
+        "title": "_WillLinkRow",
+        "type": "object"
+      },
       "_WritePlan": {
         "additionalProperties": false,
         "properties": {
@@ -15983,6 +16406,629 @@
           }
         ],
         "summary": "Reconcile Field Effect"
+      }
+    },
+    "/api/v1/identifier-imports/{import_id}": {
+      "get": {
+        "description": "How many of the import's links are still current; never cached.",
+        "operationId": "identifier_import_status_api_v1_identifier_imports__import_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "maxLength": 82,
+              "title": "Import Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierImportStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Identifier Import Status"
+      }
+    },
+    "/api/v1/identifier-imports/{import_id}/withdraw": {
+      "post": {
+        "description": "Withdraw each of the import's links that is still current (S11).",
+        "operationId": "withdraw_identifier_import_api_v1_identifier_imports__import_id__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "maxLength": 82,
+              "title": "Import Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[\\x21-\\x7e]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierImportWithdrawal"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Withdraw Identifier Import"
+      }
+    },
+    "/api/v1/identifier-previews/{preview_id}": {
+      "get": {
+        "description": "Whether the preview was imported, is still open, or closed (S11).",
+        "operationId": "identifier_preview_status_api_v1_identifier_previews__preview_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "preview_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Preview Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierPreviewStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Identifier Preview Status"
+      }
+    },
+    "/api/v1/identifier-previews/{preview_id}/import": {
+      "post": {
+        "description": "Link every will-link row of the session's preview, at once (S9).",
+        "operationId": "import_identifiers_api_v1_identifier_previews__preview_id__import_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "preview_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Preview Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[\\x21-\\x7e]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierImported"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Import Identifiers"
+      }
+    },
+    "/api/v1/libraries/{connection}/{library}/identifier-previews": {
+      "post": {
+        "description": "Decide an identifiers file against the library. Nothing is recorded.",
+        "operationId": "preview_identifiers_api_v1_libraries__connection___library__identifier_previews_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Connection",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Library",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "maxLength": 1048576,
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_IdentifierRefusal"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Preview Identifiers"
       }
     },
     "/api/v1/library": {
