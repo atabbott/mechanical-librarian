@@ -35,6 +35,12 @@ from mechanical_librarian.application.cover_policy import (
     CoverPolicy,
     adjudicate_cover_policy,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -960,6 +966,37 @@ def test_a_link_reached_cover_is_an_owner_choice_and_never_automatic(
     (candidate,) = cast("list[dict[str, Any]]", projection["candidates"])
     assert candidate["identity"]["outcome"] == "title_creator_work_match"
     assert candidate["match_reason"] == "title_and_author"
+
+
+def test_the_current_cover_from_the_linked_book_names_no_reason() -> None:
+    """The current Audiobookshelf cover can be the linked book's own image: it
+    reads as the same book, unselectable and unranked with no rank key, and,
+    as every current cover, names no match reason (#1477)."""
+    from mechanical_librarian.interfaces.web.app import _CoverCandidate
+
+    listed = _listed_source(11)
+    current = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "abs:current"),
+        CoverSourceKind.ABS,
+        CoverSourceState.RETRIEVED,
+        listed.artifact,
+    )
+    report = _isbn_lane_report(listed, current)
+    case_id = "review_case_" + "c" * 64
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(cover_identity, "owner_link_reached", lambda *_: "owner_link")
+        projection = _service(_EXACT).ensure(
+            case_id, report.to_json(), {"proposal_id": "review_proposal_" + "d" * 64}
+        )
+    (candidate,) = cast("list[dict[str, Any]]", projection["candidates"])
+    assert candidate["incumbent"] is True
+    assert candidate["identity"]["outcome"] == "owner_link_match"
+    assert candidate["match_state"] == "same_book"
+    assert candidate["match_reason"] is None
+    assert candidate["selectable"] is False
+    assert candidate["deterministic_rank"] is None
+    assert candidate["deterministic_rank_key"] is None
+    _CoverCandidate.model_validate(candidate)
 
 
 def test_no_election_takes_an_owner_link_outcome() -> None:

@@ -46,6 +46,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     OwnerLinkFacts,
     ProviderCandidate,
+    ProviderEvidenceKind,
     canonical_asin,
     canonical_json,
     creator_comparison_key,
@@ -54,6 +55,7 @@ from mechanical_librarian.domain.metadata_report import (
     identifier_only_candidate,
     isbn_family,
     manifestation_publication_contradicted,
+    normalize_title,
     recording_variant_conflict,
     target_work_identity_context,
 )
@@ -501,7 +503,9 @@ class WithheldScopeReason(StrEnum):
     """Why This edition or This recording is not offered on a card (S15)."""
 
     NO_ISBN = "no_isbn"
-    FORMAT = "format"
+    # The record states a print format, or an audio one, for its edition.
+    FORMAT_PRINT = "format_print"
+    FORMAT_AUDIO = "format_audio"
     NO_RUNTIME = "no_runtime"
     RUNTIME = "runtime"
     NARRATORS = "narrators"
@@ -876,9 +880,26 @@ def _card_scopes(
     return (OwnerLinkScope.WORK,), ((scope, reason),)
 
 
+# An edition format an ebook edition link cannot be (S15: "not print or
+# audio"); print is `manifestation_publication_contradicted`'s own list.
+_AUDIO_EDITION_FORMATS: Final = frozenset(
+    {
+        "audio",
+        "audio book",
+        "audio cassette",
+        "audio cd",
+        "audiobook",
+        "audible audio",
+        "audible audiobook",
+        "mp3 cd",
+    }
+)
+
+
 def _edition_withheld(
     card: OwnerSearchCard, candidate: ProviderCandidate
 ) -> WithheldScopeReason | None:
+    """This edition's check: an ISBN, and a stated format neither print nor audio."""
     if card.isbn is None or not record_identity_valid(
         OwnerLinkScope.EDITION, card.provider, card.isbn
     ):
@@ -887,7 +908,14 @@ def _edition_withheld(
     if claim is not None and manifestation_publication_contradicted(
         candidate, (claim,)
     ):
-        return WithheldScopeReason.FORMAT
+        return WithheldScopeReason.FORMAT_PRINT
+    if any(
+        evidence.kind is ProviderEvidenceKind.PHYSICAL_FORMAT
+        and evidence.scope is ClaimScope.EDITION
+        and normalize_title(evidence.value).casefold() in _AUDIO_EDITION_FORMATS
+        for evidence in candidate.evidence
+    ):
+        return WithheldScopeReason.FORMAT_AUDIO
     return None
 
 

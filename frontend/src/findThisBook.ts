@@ -61,13 +61,14 @@ export const pillText = (state: OwnerLinkState, provider: OwnerLinkProvider) =>
     contradicted: 'Link contradicted',
     needs_replacing: 'Link needs replacing',
   })[state]
-export const rowLinkPhrases = {
-  linked: 'Linked',
-  preparing: 'Linked, preparing',
-  waiting: 'Linked, waiting',
-  contradicted: 'Link contradicted',
-  needs_replacing: 'Link needs replacing',
-} as const satisfies Record<OwnerLinkState, string>
+export const rowLinkPhrase = (state: OwnerLinkState, provider: OwnerLinkProvider) =>
+  ({
+    linked: 'Linked',
+    preparing: 'Linked, preparing',
+    waiting: `Linked, waiting for ${sourceName(provider)}`,
+    contradicted: 'Link contradicted',
+    needs_replacing: 'Link needs replacing',
+  })[state]
 export const linkTone = (state: OwnerLinkState) =>
   state === 'linked' || state === 'preparing' ? 'accent' : 'notice'
 
@@ -198,9 +199,13 @@ export const withheldLines = (card: OwnerSearchCard, provider: OwnerLinkProvider
     switch (reason) {
       case 'no_isbn':
         return ['This edition is not offered because the record lists no ISBN.']
-      case 'format':
+      case 'format_print':
         return [
           `This edition is not offered because ${sourceName(provider)} lists it as a print edition.`,
+        ]
+      case 'format_audio':
+        return [
+          `This edition is not offered because ${sourceName(provider)} lists it as an audiobook.`,
         ]
       case 'no_runtime':
         return ['This recording is not offered because the record states no running time.']
@@ -353,6 +358,18 @@ export const refusalFor = (
             text: 'The link was changed in another window. Check it, then withdraw again.',
           }
         : { at: action, text: 'The link was changed in another window. Search again to change it.' }
+    case 'work_not_found':
+      return {
+        at: action,
+        text: 'This work is no longer in Audiobookshelf. Close this and choose another work.',
+      }
+    case 'find_not_offered':
+      return {
+        at: action,
+        text: 'No source can search for this work now. Check its library’s sources in Settings.',
+      }
+    case 'idempotency_conflict':
+      return { at: action, text: uncertainLinkCopy }
     case 'card_not_choosable':
     case 'scope_not_offered':
       return { at: action, text: 'This record cannot be linked that way. Choose This book.' }

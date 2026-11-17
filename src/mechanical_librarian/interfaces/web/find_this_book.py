@@ -158,7 +158,13 @@ class _OwnerSearchBody(_Closed):
 class _CardScopeWithheld(_Closed):
     scope: _Scope
     reason: Literal[
-        "no_isbn", "format", "no_runtime", "runtime", "narrators", "variant"
+        "no_isbn",
+        "format_print",
+        "format_audio",
+        "no_runtime",
+        "runtime",
+        "narrators",
+        "variant",
     ]
 
 

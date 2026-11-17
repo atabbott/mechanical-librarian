@@ -662,8 +662,12 @@ export interface LibraryWorkView {
   cover?: LibraryCoverView
   /** What looks wrong with the current values, one finding per rule (#1334). */
   valueFlags: readonly ValueFlagView[]
-  /** The state of the work's book link, or null when it has none (#1477). */
-  link: OwnerLinkState | null
+  /** The work's book link state and source, or null when it has none (#1477). */
+  link: LibraryLinkView | null
+}
+export interface LibraryLinkView {
+  state: OwnerLinkState
+  provider: OwnerLinkProvider
 }
 export interface LibraryCounts {
   attention: number
@@ -3156,7 +3160,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
             },
       ...(item.cover === null ? {} : { cover: mapLibraryCover(item.cover) }),
       valueFlags: item.value_flags.map(mapValueFlag),
-      link: item.link === null ? null : item.link.state,
+      link: item.link === null ? null : { state: item.link.state, provider: item.link.provider },
     }
   }),
 })
@@ -3719,15 +3723,15 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     const matchState = candidate.match_state
     // match-state and unconfirmed-unranked; X59 (a confirmed incumbent is
     // unselectable and unranked with a key; a confirmed alternative has a key).
+    // A linked-book cover has no key, current or not: it is never ranked.
     if (
       matchState !== expectedMatchState ||
       (!confirmed && (selectable || deterministicRank !== null || deterministicRankKey !== null)) ||
       (confirmed &&
         incumbent &&
+        !linkedBook &&
         (selectable || deterministicRank !== null || deterministicRankKey === null)) ||
-      (linkedBook &&
-        !incumbent &&
-        (selectable || deterministicRank !== null || deterministicRankKey !== null)) ||
+      (linkedBook && (selectable || deterministicRank !== null || deterministicRankKey !== null)) ||
       (confirmed && !incumbent && !linkedBook && deterministicRankKey === null)
     )
       throw new ApiError(502, 'contradictory_cover_identity')

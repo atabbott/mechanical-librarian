@@ -12,7 +12,14 @@ import {
   CsrfRenewedError,
   mapReportDetail,
 } from '../src/api/http'
-import { WORK_ACTIONS, asinValid, isbnValid, ownerTextValid, refusalFor } from '../src/findThisBook'
+import {
+  WORK_ACTIONS,
+  asinValid,
+  isbnValid,
+  ownerTextValid,
+  refusalFor,
+  withheldLines,
+} from '../src/findThisBook'
 import { createHttp, library, renderRoute } from './fixtures'
 import { card, linked } from './findThisBookFixtures'
 import { reportDetail } from './wireFixtures'
@@ -48,7 +55,7 @@ const results = (overrides: Partial<OwnerSearchView> = {}): OwnerSearchView => (
       withheld: [{ scope: 'edition', reason: 'no_isbn' }],
       isbn: null,
     }),
-    card({ position: 2, title: 'Dune (unlinkable)', choosable: false, scopes: [] }),
+    card({ position: 2, title: 'Dune (unlinkable)', choosable: false, scopes: [], isbn: null }),
   ],
   more: true,
   dropped: 2,
@@ -236,7 +243,7 @@ describe('the dialog', () => {
     expect(within(dialog).getByText('More results. Refine the search.')).toBeVisible()
     expect(within(dialog).getByText('2 results could not be shown.')).toBeVisible()
     expect(within(dialog).getAllByText('By Frank Herbert')).toHaveLength(3)
-    expect(within(dialog).getAllByText('ISBN 9780441172719')).toHaveLength(2)
+    expect(within(dialog).getAllByText('ISBN 9780441172719')).toHaveLength(1)
     expect(within(dialog).getAllByText('1965 · Chilton')).toHaveLength(3)
     expect(within(dialog).getByRole('button', { name: 'Choose Dune' })).toBeVisible()
     expect(within(dialog).queryByRole('button', { name: 'Choose Dune (unlinkable)' })).toBeNull()
@@ -300,12 +307,57 @@ describe('the dialog', () => {
     expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue('A Book')
   })
 
+  it.each([
+    [
+      new ApiError(404, 'work_not_found'),
+      'This work is no longer in Audiobookshelf. Close this and choose another work.',
+    ],
+    [
+      new ApiError(409, 'find_not_offered'),
+      'No source can search for this work now. Check its library’s sources in Settings.',
+    ],
+  ])('puts %s beside Search and keeps the query', async (error, text) => {
+    const search = vi.fn<ReviewHttp['searchOwnerLink']>(async () => {
+      throw error
+    })
+    const { user, dialog } = await openDialog(withView(offered, { searchOwnerLink: search }))
+    const title = within(dialog).getByRole('textbox', { name: 'Title' })
+    await user.clear(title)
+    await user.type(title, 'Dune')
+    await user.click(within(dialog).getByRole('button', { name: 'Search' }))
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert).toHaveTextContent(text)
+    expect(alert).toHaveAttribute('id', 'find-book-search-refusal')
+    expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveValue('Dune')
+  })
+
+  it('reads an idempotency conflict beside the scope buttons as an uncertain write', async () => {
+    const http = withView(offered, {
+      searchOwnerLink: vi.fn(async () => results()),
+      chooseOwnerLink: vi.fn(async () => {
+        throw new ApiError(409, 'idempotency_conflict')
+      }),
+    })
+    const { user, dialog } = await openDialog(http)
+    await user.click(within(dialog).getByRole('button', { name: 'Search' }))
+    await user.click(await within(dialog).findByRole('button', { name: 'Choose Dune' }))
+    await user.click(within(dialog).getByRole('button', { name: 'This book' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'No answer came back. Check whether the work is linked before choosing again.',
+    )
+    // The confirmation stays open on the same card, so nothing is lost.
+    expect(
+      within(dialog).getByText('Link this work to Dune by Frank Herbert from Hardcover?'),
+    ).toBeVisible()
+    expect(within(dialog).getByRole('button', { name: 'This book' })).toBeVisible()
+  })
+
   it('confirms with contradiction and withheld lines, and links under one key per attempt', async () => {
     let view: OwnerLinkView = offered
     const contradicted = card({
       language: 'de',
       scopes: ['work'],
-      withheld: [{ scope: 'edition', reason: 'format' }],
+      withheld: [{ scope: 'edition', reason: 'format_print' }],
       contradictions: [
         {
           code: 'identifier',
@@ -514,6 +566,36 @@ describe('refusal words', () => {
       'choose',
       'No answer came back. Check whether the work is linked before choosing again.',
     ],
+    [
+      new ApiError(404, 'work_not_found'),
+      'search',
+      'search',
+      'This work is no longer in Audiobookshelf. Close this and choose another work.',
+    ],
+    [
+      new ApiError(404, 'work_not_found'),
+      'choose',
+      'choose',
+      'This work is no longer in Audiobookshelf. Close this and choose another work.',
+    ],
+    [
+      new ApiError(409, 'find_not_offered'),
+      'search',
+      'search',
+      'No source can search for this work now. Check its library’s sources in Settings.',
+    ],
+    [
+      new ApiError(409, 'idempotency_conflict'),
+      'choose',
+      'choose',
+      'No answer came back. Check whether the work is linked before choosing again.',
+    ],
+    [
+      new ApiError(409, 'idempotency_conflict'),
+      'withdraw',
+      'withdraw',
+      'No answer came back. Check whether the work is linked before choosing again.',
+    ],
   ] as const)('%s on %s reads at %s', (error, action, place, text) => {
     expect(refusalFor(error, 'hardcover', action, now)).toEqual({ at: place, text })
   })
@@ -543,6 +625,23 @@ describe('refusal words', () => {
         now,
       ).text,
     ).toMatch(/^Google Books’s request quota is used up\. Search again after .+\.$/u)
+  })
+})
+
+describe('withheld scope words', () => {
+  it('names a print edition and an audiobook apart', () => {
+    expect(
+      withheldLines(
+        card({ scopes: ['work'], withheld: [{ scope: 'edition', reason: 'format_print' }] }),
+        'open_library',
+      ),
+    ).toEqual(['This edition is not offered because Open Library lists it as a print edition.'])
+    expect(
+      withheldLines(
+        card({ scopes: ['work'], withheld: [{ scope: 'edition', reason: 'format_audio' }] }),
+        'open_library',
+      ),
+    ).toEqual(['This edition is not offered because Open Library lists it as an audiobook.'])
   })
 })
 

@@ -376,7 +376,7 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
         (CONNECTION, LIBRARY, PreparationTrigger.BOOK_LINKED)
     ]
     # Until the scan prepares it, the link is waiting on its preparation.
-    assert world.row()["link"] == {"state": "preparing"}
+    assert world.row()["link"] == {"state": "preparing", "provider": "hardcover"}
     link = world.get(view)["link"]
     assert (link["title"], link["provider"], link["scope"], link["state"]) == (
         LINKED_TITLE,
@@ -412,7 +412,7 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
         lens="all", search=None, limit=50, cursor=None
     )
     (row,) = [item for item in page["items"] if item["item"] == ITEM]
-    assert row["link"] == {"state": "linked"}
+    assert row["link"] == {"state": "linked", "provider": "hardcover"}
     assert world.get(view)["link"]["state"] == "linked"
 
     # The owner withdraws it later; the work is prepared again without it.

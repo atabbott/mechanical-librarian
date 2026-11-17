@@ -456,7 +456,7 @@ def test_the_classifier_reference_names_the_listed_edition_rule() -> None:
     assert CLASSIFIER_REFERENCE == cover_identity._CLASSIFIER_REFERENCE
 
 
-def _isbn_lane_report(source: CoverSource) -> MetadataReport:
+def _isbn_lane_report(source: CoverSource, *more: CoverSource) -> MetadataReport:
     isbn = LocalClaim.create(
         kind=ClaimKind.ISBN,
         observed="9780306406157",
@@ -525,7 +525,7 @@ def _isbn_lane_report(source: CoverSource) -> MetadataReport:
                 lanes=(lane,),
             ),
         ),
-        cover_sources=(source,),
+        cover_sources=(source, *more),
     )
 
 
