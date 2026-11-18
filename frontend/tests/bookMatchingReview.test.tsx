@@ -1,11 +1,21 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../src/api/http'
 import type { CaseDetailView, ReviewHttp } from '../src/api/http'
-import { activity, createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
+import {
+  activity,
+  createHttp,
+  createLiveStream,
+  detail,
+  library,
+  renderRoute,
+  loadRouteModules,
+} from './fixtures'
 import { view } from './settingsFixtures'
+
+beforeAll(loadRouteModules)
 
 // Book matching in review (#1355, activation B): a work waiting for its check,
 // a choice refused because the field's offer changed, the source line of a value

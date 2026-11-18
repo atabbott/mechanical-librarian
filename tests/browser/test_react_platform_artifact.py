@@ -1425,9 +1425,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             ).all():
                 expect(evidence).to_be_enabled()
                 expect(evidence).to_have_attribute("aria-expanded", "false")
-            assert (1 if retry else 0) == comparison.get_by_role(
-                "button", name="Retry visual review"
-            ).count()
+            # Retry is offered once the reviewer-access read answers, which can
+            # come after the comparison it belongs to.
+            expect(
+                comparison.get_by_role("button", name="Retry visual review")
+            ).to_have_count(1 if retry else 0)
             if case_id in {"case-1", "case-2"}:
                 capture_visual_proof(
                     "library-completed" if case_id == "case-1" else "library-failed"
@@ -4732,18 +4734,33 @@ globalThis.__restore = () => {
 # Every layout shift that moved a node of the masthead outside its status slot.
 # What the masthead's own size moves below it is read from its box instead,
 # since a route's content also moves with the reads it waits on.
+# `__settleShifts` waits for two frames the page has rendered, not animation
+# frames, which the test's clock fakes as timers that run ahead of a busy
+# renderer, then takes the shifts they reported, which the observer would
+# otherwise deliver later.
 _SHIFTS_OUTSIDE_STATUS = """
 (() => {
   globalThis.__shifts = [];
-  new PerformanceObserver((list) => {
-    for (const entry of list.getEntries()) {
+  const record = (entries) => {
+    for (const entry of entries) {
       const moved = entry.sources.map((source) => source.node)
         .map((node) => node?.nodeType === 1 ? node : node?.parentElement)
         .filter((node) => node?.closest('.masthead') && !node.closest('.shell-status'));
       if (moved.length)
         globalThis.__shifts.push([entry.value, moved.map((node) => node.className || node.tagName)]);
     }
-  }).observe({type: 'layout-shift', buffered: true});
+  };
+  const observer = new PerformanceObserver((list) => record(list.getEntries()));
+  observer.observe({type: 'layout-shift', buffered: true});
+  const rendered = () => new Promise((done) => {
+    const watch = new ResizeObserver(() => { watch.disconnect(); done(); });
+    watch.observe(document.documentElement);
+  });
+  globalThis.__settleShifts = async () => {
+    await rendered();
+    await rendered();
+    record(observer.takeRecords());
+  };
 })();
 """
 
@@ -4858,7 +4875,10 @@ def test_masthead_holds_still_while_status_changes() -> None:
                 states = {"loading": page.evaluate(_MASTHEAD_GEOMETRY)}
                 clipped: list[str] = []
                 # The route has painted; from here only status changes.
-                page.evaluate("() => { globalThis.__shifts.length = 0 }")
+                page.evaluate(
+                    "async () => { await globalThis.__settleShifts();"
+                    " globalThis.__shifts.length = 0 }"
+                )
                 state["preparation"] = "absent"
                 while held:
                     preparation(held.pop())
@@ -4868,6 +4888,10 @@ def test_masthead_holds_still_while_status_changes() -> None:
                 # a second before it shows, which the clock runs through.
                 for label in list(_PREPARATION_STATES)[1:]:
                     state["preparation"] = label
+                    # The owner is present: without input for ten seconds of
+                    # the page's clock, which its jumps soon reach, a tab
+                    # defers preparation updates as idle.
+                    page.keyboard.press("Shift")
                     page.evaluate("() => globalThis.__publish('preparation')")
                     # The icon speaks the label, then any source sentences
                     # the cohort's lookups add (#1494).
@@ -4902,7 +4926,10 @@ def test_masthead_holds_still_while_status_changes() -> None:
                 }
                 if text == "100%":
                     assert len(boxes) == 1, f"{where}: the masthead moved {states}"
-                    shifts = page.evaluate("() => globalThis.__shifts")
+                    shifts = page.evaluate(
+                        "async () => { await globalThis.__settleShifts();"
+                        " return globalThis.__shifts }"
+                    )
                     assert shifts == [], f"{where}: {shifts}"
                 elif len(boxes) > 1:
                     assert all(state["static"] for state in states.values()), (
@@ -4992,8 +5019,20 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                         )
                         assert top <= 176, f"{where}: content starts at {top}"
                     page.locator(".skip-link").focus()
+                    reached_content = False
                     for _ in range(18):
                         page.keyboard.press("Tab")
+                        # A page with fewer stops wraps back to the skip link,
+                        # which is drawn over the masthead by design. It must
+                        # have reached the page's content first.
+                        if page.evaluate(
+                            "() => document.activeElement?.classList.contains('skip-link')"
+                        ):
+                            assert reached_content, f"{where}: wrapped before content"
+                            break
+                        reached_content = reached_content or page.evaluate(
+                            "() => Boolean(document.activeElement?.closest('main'))"
+                        )
                         cover = page.evaluate(_MASTHEAD_COVER)
                         if cover["focus"] is not None:
                             assert cover["focus"][2] >= cover["bottom"] - 1, (

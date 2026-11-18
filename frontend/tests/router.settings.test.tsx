@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
   AmbiguousMutationError,
@@ -27,8 +27,10 @@ import type {
   SettingsWrite,
 } from '../src/api/http'
 import { coverReviewerLabel } from '../src/labels'
-import { createHttp, idlePreparation, renderRoute } from './fixtures'
+import { createHttp, idlePreparation, renderRoute, loadRouteModules } from './fixtures'
 import { document, savedDocument, view } from './settingsFixtures'
+
+beforeAll(loadRouteModules)
 
 const reviewerView: ReviewerAccessView = {
   schema_version: 'reviewer-access-view-v6',
@@ -2871,10 +2873,18 @@ it.each(['mismatch', 'success'] as const)(
       await screen.findByText('Reviewer settings could not be loaded.')
     ).closest<HTMLElement>('[role="alert"]')
     if (!alert) throw new Error('the reviewer access alert is required')
-    // The route's own focus move is deferred a frame. Under load it can land
-    // after the press and take focus from the retry, so it is waited for.
+    // Settings takes route focus as it mounts, but the shell's own move is
+    // deferred a frame. Under load that frame can land while the retry's
+    // region has just unmounted and focus is on the page, and take it to the
+    // route. Wait for the frame, which marks the restored path, not for focus.
     const route = globalThis.document.querySelector('main [data-route-focus]')
-    await waitFor(() => expect(route).toHaveFocus())
+    await waitFor(() =>
+      expect(globalThis.document.getElementById('main-content')).toHaveAttribute(
+        'data-restored-path',
+        '/settings',
+      ),
+    )
+    expect(route).toHaveFocus()
     await user.click(within(alert).getByRole('button', { name: 'Try again' }))
     const target =
       outcome === 'mismatch'
@@ -2904,6 +2914,13 @@ it('keeps focus off the page while the reviewer access Try again reads (#1742)',
     await screen.findByText('Reviewer settings could not be loaded.')
   ).closest<HTMLElement>('[role="alert"]')
   if (!alert) throw new Error('the reviewer access alert is required')
+  // The shell's deferred route focus lands first, as above.
+  await waitFor(() =>
+    expect(globalThis.document.getElementById('main-content')).toHaveAttribute(
+      'data-restored-path',
+      '/settings',
+    ),
+  )
   await user.click(within(alert).getByRole('button', { name: 'Try again' }))
   // A first-read retry renders the loading line in place of the alert.
   const reading = await screen.findByText('Loading reviewer settings…')
