@@ -76,7 +76,9 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    episode. A description written with the adviser's text counts, by the
    same rule as the write a keep follows. A field whose latest write holds
    the value the case read again, after a keep, a clear or an entry, does
-   not count, and its card is Keep current value. There the browser shows that keep as a card headed "Before your
+   not count. After a keep its card is Keep current value; after a clear or
+   an entry the browser leaves that card out, since the recorded value is
+   the value the case read. There the browser shows that keep as a card headed "Before your
    change", holding the value the case read, and never calls it current. It
    leaves the card out where owner entry already offers the same way back
    (Clear for an empty value, or that value as the previous value, names or
