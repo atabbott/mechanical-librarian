@@ -467,9 +467,9 @@ qualification, every verdict stays a suggestion.
   comparison, so the judge judges it again first. Lane 1 then runs build,
   then switching, then judge.
 - **Preview (K7).** A read over stored verdicts only. Under the version in
-  use it walks each current comparison's newest verdict, oldest first, through
-  `cover_taste_verdicts_version`. Each verdict is one checked cover, up to 100
-  in all. A switch is a `choose` that meets gates 4-6 under the protection
+  use it walks the newest verdict on each work's current case, oldest first,
+  through `cover_taste_verdicts_version`. Each verdict is one checked cover, up
+  to 100 in all. A switch is a `choose` that meets gates 4-6 under the protection
   asked about. The walk stops at the fifth switch. Posture, record, room and
   holds are not asked. An owner answer since the verdict shows as Looks right
   (the same candidate) or Keep current; any other answer takes the switch out.

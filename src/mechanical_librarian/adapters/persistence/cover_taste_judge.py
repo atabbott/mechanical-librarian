@@ -158,7 +158,8 @@ _SWITCH_CANDIDATES_SQL = (
     "ORDER BY verdict.created_at,verdict.rowid LIMIT ?"
 )
 # The preview walk (K7): each current comparison's newest verdict under one
-# version, oldest first, read through `cover_taste_verdicts_version`.
+# version, oldest first, read through `cover_taste_verdicts_version`. Only a
+# work's current case counts: an earlier case keeps its comparison pointer.
 _PREVIEW_WALK_SQL = (
     "SELECT verdict.consideration_id,verdict.document,verdict.created_at,"
     "pointer.review_case_id,consideration.document,report.document,"
@@ -166,6 +167,8 @@ _PREVIEW_WALK_SQL = (
     "FROM cover_taste_verdicts verdict "
     "JOIN current_cover_considerations pointer "
     "ON pointer.consideration_id=verdict.consideration_id "
+    "JOIN current_review_case_lineages lineage "
+    "ON lineage.review_case_id=pointer.review_case_id "
     "JOIN cover_considerations consideration "
     "ON consideration.consideration_id=verdict.consideration_id "
     "JOIN metadata_reports report ON report.report_id=consideration.report_id "

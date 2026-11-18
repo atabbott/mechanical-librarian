@@ -12,6 +12,7 @@ import io
 import json
 import sqlite3
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -71,6 +72,13 @@ from mechanical_librarian.domain.cover_taste import (
     TASTE_JUDGE_SETTLE_SECONDS,
     TASTE_MIN_ARTS,
 )
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetField,
+    TargetFieldState,
+)
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
 from tests.unit.test_cover_taste_judge import WORKS, _Library, _library, _version
 from tests.unit.test_cover_taste_suggestions import (
     _choose,
@@ -954,3 +962,74 @@ def test_the_preview_walk_reads_through_the_version_index(previewed) -> None:
     assert "SEARCH verdict USING INDEX cover_taste_verdicts_version" in plan
     assert "SCAN verdict" not in plan
     assert "USE TEMP B-TREE" not in plan
+
+
+def _successor_case(library: _Library, item: str) -> str:
+    """Publish `item` again with another publisher, so it is reviewed as a
+    new case whose cover is compared afresh, and return the new case."""
+    repository = library.repository
+    report = MetadataReport.from_json(
+        repository._connection.execute(
+            "SELECT document FROM metadata_reports WHERE report_id=?",
+            (library.considerations[item]["report_id"],),
+        ).fetchone()[0]
+    )
+    target = report.target
+    successor = MetadataReport.create(
+        target=replace(
+            target,
+            fields=tuple(
+                TargetField(field.destination, TargetFieldState.VALUE, "Elsewhere")
+                if field.destination.value == "publisher"
+                else field
+                for field in target.fields
+            ),
+        ),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        cover_sources=report.cover_sources,
+    )
+    repository.publish(successor, lambda: True, expected_current=report.report_id)
+    proposal_set = evaluate_report(successor)
+    repository.publish_proposal(proposal_set)
+    case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+    assert case_id != library.cases[item]
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    proposal = next(row for row in case.proposals if row["destination"] == "cover")
+    ensured = library.service.ensure(case_id, successor.to_json(), proposal)
+    library.considerations[item] = json.loads(
+        repository._connection.execute(
+            "SELECT document FROM cover_considerations WHERE consideration_id=?",
+            (ensured["consideration_id"],),
+        ).fetchone()[0]
+    )
+    library.cases[item] = case_id
+    return case_id
+
+
+def test_the_preview_shows_a_work_once_from_its_current_case(previewed) -> None:
+    """A work reviewed again as a new case keeps a comparison pointer on its
+    earlier case. The preview reads only the current case: the earlier one's
+    verdict is not shown or counted, and once the new comparison is judged
+    the work shows once, from the case the owner can answer."""
+    plan = {"keep": ("choose", 70, [1])}
+    _judge(previewed, plan)
+    earlier = previewed.cases["keep"]
+    assert [
+        switch.review_case_id for switch in _walk(previewed, "unprotected").switches
+    ] == [earlier]
+    current = _successor_case(previewed, "keep")
+    assert previewed.repository._connection.execute(
+        "SELECT count(*) FROM current_cover_considerations WHERE review_case_id=?",
+        (earlier,),
+    ).fetchone() == (1,)
+    waiting = _walk(previewed, "unprotected")
+    assert (waiting.checked, waiting.switches) == (0, ())
+    _judge(previewed, plan, NOW + TASTE_JUDGE_SETTLE_SECONDS + 60)
+    walk = _walk(previewed, "unprotected")
+    assert [switch.review_case_id for switch in walk.switches] == [current]
+    assert walk.checked == 1
