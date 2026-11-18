@@ -35,7 +35,7 @@ COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v3"
 # An automatic cover choice keeps the first selection version.
 AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v1"
 
-HUMAN_DECISION_SCHEMA: Final = "human-decision-v6"
+HUMAN_DECISION_SCHEMA: Final = "human-decision-v7"
 HumanDecisionEventSchemaVersion = Literal["human-decision-event-v1"]
 HUMAN_DECISION_EVENT_SCHEMA: Final[HumanDecisionEventSchemaVersion] = (
     "human-decision-event-v1"
@@ -997,11 +997,10 @@ class HumanDecision:
     # Absent for an owner's choice; `matching_changed` for the valueless row
     # the Book matching reconciliation appends.
     cause: str | None = None
-    # A keep's write it goes back on, frozen when the store records it: the
-    # decision whose verified write the keep follows in its own episode, as
-    # planning resolves it then, or none (#1523), as when that write already
-    # holds the value the case read. Never part of the request, so a replay
-    # stays the same request.
+    # The decision whose verified write this decision follows in its own
+    # episode, frozen when the store records it; a keep goes back on it, and
+    # names none when that write already holds the value the case read
+    # (#1523). Never part of the request, so a replay stays the same request.
     follows: str | None = None
 
     @staticmethod
@@ -1459,8 +1458,7 @@ class HumanDecision:
                 or (
                     value.follows is not None
                     and (
-                        value.outcome != "keep_current"
-                        or type(value.follows) is not str
+                        type(value.follows) is not str
                         or _FOLLOWED.fullmatch(value.follows) is None
                     )
                 )

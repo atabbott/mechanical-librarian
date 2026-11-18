@@ -552,11 +552,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             # history and word, settle and hold nothing now (#1358).
             self._connection.execute(
                 "INSERT INTO review_case_episodes(review_case_id,decision_floor,"
-                "effect_floor) VALUES(?,COALESCE((SELECT MAX(ordinal) FROM "
+                "event_floor) VALUES(?,COALESCE((SELECT MAX(ordinal) FROM "
                 "human_decisions WHERE review_case_id=?),0),COALESCE((SELECT "
-                "MAX(rowid) FROM field_effects),0)) ON CONFLICT(review_case_id) "
+                "MAX(rowid) FROM field_effect_events),0)) ON CONFLICT(review_case_id) "
                 "DO UPDATE SET decision_floor=excluded.decision_floor,"
-                "effect_floor=excluded.effect_floor",
+                "event_floor=excluded.event_floor",
                 (case.review_case_id, case.review_case_id),
             )
         return case, existing is not None
