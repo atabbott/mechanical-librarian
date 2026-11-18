@@ -1794,9 +1794,9 @@ def test_history_reads_what_a_decision_replaced_not_a_later_automatic_write(
             "kind": "list",
             "value": ["Drama"],
         }
-        # Accepting Fantasy again would change nothing, so it is refused; a
-        # keep is the decision that follows the automatic write (#1523).
-        again = store.decide("keep_current", destination="genres")
+        again = store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
         assert _keep_history(store, again)["previous_value"] == {
             "kind": "list",
             "value": ["Fantasy"],
@@ -1831,6 +1831,29 @@ def test_accepting_the_value_the_case_wrote_is_unchanged(store: OwnerStore) -> N
     )
     keep = store.decide("keep_current", destination="genres")
     assert _pending(store) == [keep.decision_id]
+
+
+@pytest.mark.parametrize("later", ["keep_current", "owner_entered"])
+def test_accepting_the_written_value_replaces_a_later_unwritten_answer(
+    tmp_path: Path, later: str
+) -> None:
+    """Read Drama, accept Fantasy, written, then go back to Drama, still
+    unwritten. That later decision is the field's answer, so accepting
+    Fantasy again records and replaces it before it writes Drama, rather
+    than being refused as unchanged (#1523)."""
+    store = OwnerStore(tmp_path, _HELD)
+    try:
+        store.write(store.decide("accept", _FANTASY, destination="genres"))
+        replaced = store.decide(
+            later,
+            {"kind": "list", "value": ["Drama"]} if later == "owner_entered" else None,
+            destination="genres",
+        )
+        assert _pending(store) == [replaced.decision_id]
+        again = store.decide("accept", _FANTASY, destination="genres")
+        assert _pending(store) == [again.decision_id]
+    finally:
+        store.close()
 
 
 _DRAMA = {"kind": "list", "value": ["Drama"]}

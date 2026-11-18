@@ -210,7 +210,8 @@ body is refused before parsing.
   `owner_value_invalid` for a value outside its bounds and
   `owner_value_unchanged` for the field's current value, which on the case
   that wrote the field is the written value. An accept of the value the
-  case's latest write holds is refused the same way. On that case
+  case's latest write holds is refused the same way while the owner
+  decision that made that write is still the field's answer. On that case
   `keep_current` writes back the value the case read; where that was empty,
   a clearable field goes back to empty and any other field is refused as
   `owner_value_required`. Where the case's latest write already holds that

@@ -1143,12 +1143,7 @@ def test_an_earlier_generation_write_in_flight_still_refuses_an_owner_answer(
 def test_an_earlier_generation_write_once_settled_lets_the_owner_answer(
     library: _Library, tmp_path: Path
 ) -> None:
-    """A settled earlier-generation write no longer stands in the owner's way.
-
-    Leaving automatic continues the episode (#1568), so the value automatic
-    wrote is the case's own: accepting it again would change nothing and is
-    refused as unchanged, and the owner answers by keeping the current value.
-    """
+    """A settled earlier-generation write no longer stands in the owner's way."""
     root = library.root
     automatic = library.automatic()
     root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
@@ -1161,26 +1156,7 @@ def test_an_earlier_generation_write_once_settled_lets_the_owner_answer(
 
     library.leave_automatic()
 
-    case = library.case()
-    with pytest.raises(HumanDecisionError, match="owner_value_unchanged"):
-        root.record_human_decision(
-            _accept(case, "authors", "owner-accepting-the-write", 40)
-        )
-    owner = HumanDecision.create(
-        case,
-        proposal_id=next(
-            str(value["proposal_id"])
-            for value in case.proposals
-            if value["destination"] == "authors"
-        ),
-        target_fingerprint=case.target_fingerprint,
-        destination="authors",
-        actor="owner",
-        outcome="keep_current",
-        selected_value=None,
-        idempotency_key="owner-after-writing",
-        occurred_at=40,
-    )
+    owner = _accept(library.case(), "authors", "owner-after-writing", 40)
     root.record_human_decision(owner)
     assert root._connection.execute(
         "SELECT decision_id FROM human_decisions WHERE review_case_id=?",
