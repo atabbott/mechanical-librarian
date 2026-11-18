@@ -119,7 +119,7 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    a wrong form, so the adapter's contract tests pin the form per field. No
    clear is refused as unsupported on the pinned versions; that refusal stays
    for any field outside the clearable set.
-8. **Versions.** `human-decision-v7` (#ISSUE; v6 named a write on a keep
+8. **Versions.** `human-decision-v7` (#1973; v6 named a write on a keep
    only), `review-case-detail-v10`, `review-case-history-v5` and the
    `audiobookshelf-field-effect-v4` qualification receipt.
    `review_case_transitions` admits `recent_write` in both of its `CHECK`s,
