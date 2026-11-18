@@ -4084,3 +4084,33 @@ describe('Description preferences on an earlier build (#1742)', () => {
     expect(document.body).not.toHaveFocus()
   })
 })
+
+// Current covers names Taste profile's Switching, which it changes, and links
+// to it; the link lands on Switching (#1372 PR 5, G1).
+it.each([
+  ['suggest_only', 'Suggest only'],
+  ['automatic', 'Automatic'],
+] as const)('names Switching by taste as %s and links to it', async (value, label) => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const initial = view()
+  http.getSettings = vi.fn(async () => ({
+    ...initial,
+    document: {
+      ...initial.document,
+      cover_preferences: { ...initial.document.cover_preferences, taste_switching: value },
+    },
+  }))
+  const { router } = renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Current covers' })
+  const link = await within(region).findByRole('link', { name: 'Switching by taste' })
+  expect(link).toHaveAttribute('href', '/library?lens=all&view=covers&tab=taste#taste-switching')
+  const row = link.closest('.settings-field-row')
+  expect(row).toHaveTextContent(`Switching by taste${label}`)
+  // The row follows the three choices, before the edition's cover.
+  const protection = within(region).getByRole('group', { name: 'Replace a current cover' })
+  expect(protection.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  await user.click(link)
+  await waitFor(() => expect(router.state.location.hash).toBe('taste-switching'))
+  expect(router.state.location.search).toEqual({ lens: 'all', view: 'covers', tab: 'taste' })
+})

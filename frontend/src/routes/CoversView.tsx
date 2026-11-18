@@ -43,6 +43,7 @@ import type { CalibrationEnd } from './CoverCalibration'
 import { CoverComparison } from './CoverComparison'
 import { CalibrationStart, CoversWalkthrough } from './CoversIntro'
 import TasteProfileView from './TasteProfileView'
+import { TasteRuleGroups } from './TasteRuleGroups'
 
 // Library's Covers view (#1633, #1363): every book's cover, grouped by what it
 // asks of the owner. Each choice is one gesture through the book's own
@@ -438,12 +439,16 @@ function SwitchedRow({
         </h3>
         <p>{byline(work)}</p>
         <p>{switchedLead(switched.at, new Date())}</p>
+        {switched.taste ? <p>{`Taste profile v${String(switched.taste.version)}`}</p> : null}
         {switched.reason ? (
           <>
             <FaultPill work={work} />
             {reasonLine(work) ? <p>{reasonLine(work)}</p> : null}
           </>
         ) : null}
+        {/* While Others is open the rules give way, so its covers start
+            where a measured row's do (#1372 PR 5, D2). */}
+        {switched.taste && !open ? <TasteRuleGroups rules={switched.taste.rules} /> : null}
         <SwitchedFailure failure={failure} refused={refused && !done} onReload={reload} />
       </div>
       <SwitchedActions
@@ -979,46 +984,63 @@ function SwitchedList({
   advance: (work: CoverWorkView, outcome: Outcome) => void
   replaced: (reviewCaseId: string) => void
 }) {
-  // Switched rows by the reason they were switched; fills only under All
-  // (#1363 Q14). Component state, not a URL parameter.
+  // Switched rows by the taste profile version or the measured rule that
+  // switched them; fills only under All (#1363 Q14, #1372 PR 5 E1). Component
+  // state, not a URL parameter.
   const [show, setShow] = useState('all')
+  const versions = [
+    ...new Set(
+      works.flatMap((work) =>
+        work.group === 'auto' && work.switched?.taste ? [work.switched.taste.version] : [],
+      ),
+    ),
+  ]
+    .sort((left, right) => right - left)
+    .map((version) => ({
+      value: `taste-${String(version)}`,
+      label: `Taste profile v${String(version)}`,
+    }))
   const faults = coverFaultCodes.flatMap((code) => {
     const first = works.find((work) => work.group === 'auto' && work.switched?.reason === code)
     const label = first ? coverFaultLabel(code, audiobook(first)) : null
     return label === null ? [] : [{ value: code, label }]
   })
-  const shown = faults.some((fault) => fault.value === show) ? show : 'all'
+  const options = [...versions, ...faults]
+  const shown = options.some((option) => option.value === show) ? show : 'all'
+  const matches = (work: CoverWorkView) =>
+    shown === 'all' ||
+    (shown.startsWith('taste-')
+      ? `taste-${String(work.switched?.taste?.version)}` === shown
+      : work.switched?.reason === shown)
   return (
     <>
-      {faults.length ? (
+      {options.length ? (
         <div className="covers-show">
           <span aria-hidden="true">Show</span>
           <Dropdown
             ariaLabel="Show"
             compact
             value={shown}
-            options={[{ value: 'all', label: 'All' }, ...faults]}
+            options={[{ value: 'all', label: 'All' }, ...options]}
             onChange={setShow}
           />
         </div>
       ) : null}
       <ul className="covers-switched">
-        {works
-          .filter((work) => shown === 'all' || work.switched?.reason === shown)
-          .map((work, index) => (
-            <SwitchedRow
-              key={work.review_case_id}
-              work={work}
-              index={index}
-              done={marked[work.review_case_id]}
-              open={selectedId === work.review_case_id}
-              onOpen={() =>
-                select(selectedId === work.review_case_id ? undefined : work.review_case_id)
-              }
-              onRecorded={(outcome) => advance(work, outcome)}
-              onReplaced={replaced}
-            />
-          ))}
+        {works.filter(matches).map((work, index) => (
+          <SwitchedRow
+            key={work.review_case_id}
+            work={work}
+            index={index}
+            done={marked[work.review_case_id]}
+            open={selectedId === work.review_case_id}
+            onOpen={() =>
+              select(selectedId === work.review_case_id ? undefined : work.review_case_id)
+            }
+            onRecorded={(outcome) => advance(work, outcome)}
+            onReplaced={replaced}
+          />
+        ))}
       </ul>
     </>
   )

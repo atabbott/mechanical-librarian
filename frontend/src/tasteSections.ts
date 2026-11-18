@@ -10,3 +10,6 @@ export const tasteSectionHeadings = {
   trade_offs: 'How you trade them off',
   keep_or_switch: 'When to keep or switch',
 } satisfies Record<TasteSection, string>
+
+// Taste profile's Switching, which Policy › Current covers links to (#1372 PR 5).
+export const tasteSwitchingId = 'taste-switching'

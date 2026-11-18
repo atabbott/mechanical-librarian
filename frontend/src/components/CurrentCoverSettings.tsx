@@ -1,5 +1,6 @@
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 
 import { BuildMismatchError, refusalCopy, uncertainWriteOutcome } from '../api/http'
@@ -10,6 +11,7 @@ import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
 import { FieldRow } from './FieldRow'
 import { SegmentedControl } from './SegmentedControl'
 import { StaleBuildRead } from './StaleBuildRead'
+import { tasteSwitchingId } from '../tasteSections'
 
 // Policy's Current covers (#1363, ADR-0093): when a current cover may be
 // replaced, and whether an edition's cover is preferred. The two settings are
@@ -182,6 +184,27 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
           />
           <p id="current-covers-protection">{protectionLines[draft.current_protection]}</p>
         </FieldRow>
+        {/* Taste profile's Switching, which it changes (#1372 PR 5, G1). */}
+        <div className="settings-field-row current-covers-switching">
+          <div>
+            <span className="settings-field-title">
+              <Link
+                to="/library"
+                search={{ lens: 'all', view: 'covers', tab: 'taste' }}
+                hash={tasteSwitchingId}
+              >
+                Switching by taste
+              </Link>
+            </span>
+          </div>
+          <div className="settings-field-control">
+            <span>
+              {base.cover_preferences.taste_switching === 'automatic'
+                ? 'Automatic'
+                : 'Suggest only'}
+            </span>
+          </div>
+        </div>
         <FieldRow
           group
           title="Prefer the edition's cover"

@@ -26,6 +26,8 @@ import { useRequiredQuery as useQuery } from '../queryWork'
 import { routeFailureCopy } from '../routeFailure'
 import { tasteSectionHeadings } from '../tasteSections'
 import { useReviewContext } from '../router'
+import { useTasteSwitching } from '../tasteSwitching'
+import { SwitchingControl, SwitchingPreview } from './TasteSwitching'
 
 // Covers → Taste profile (#1372): the profile the builder model wrote from the
 // owner's cover choices, which the owner edits rule by rule; each saved change
@@ -761,6 +763,7 @@ function TasteSection({
 
 function Profile({ view }: { view: TasteProfile }) {
   const { container, editor } = useTasteRuleEditor(view)
+  const switching = useTasteSwitching()
   const profile = view.profile
   if (profile === null) return null
   return (
@@ -783,16 +786,16 @@ function Profile({ view }: { view: TasteProfile }) {
           <dd>{`${String(profile.rules.length)} of 40`}</dd>
         </div>
       </dl>
-      {view.confirmed.suggested === 0 ? null : (
-        <p className="taste-confirmed">
-          {`Confirmed ${view.confirmed.confirmed.toLocaleString('en-GB')} of ${view.confirmed.suggested.toLocaleString('en-GB')} suggestions`}
-        </p>
-      )}
       <p className="taste-status" role="status" tabIndex={-1}>
         {editor.status}
       </p>
-      {/* Wide screens put Versions beside the rules, as the prototype does. */}
+      {/* Choosing Automatic opens the preview here, above the rules (#1372 PR 5). */}
+      <SwitchingPreview switching={switching} />
+      {/* Wide screens put Switching and Versions beside the rules, as the
+          prototype does; phones put Switching above the rules. "Confirmed"
+          sits inside Switching. */}
       <div className="taste-body">
+        <SwitchingControl switching={switching} view={view} />
         <div className="taste-rules">
           {(Object.keys(sectionHeadings) as Rule['section'][]).map((section) => (
             <TasteSection key={section} section={section} profile={profile} editor={editor} />
