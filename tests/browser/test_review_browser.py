@@ -5139,6 +5139,8 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                         ...document.querySelectorAll('.description-value button'),
                         ...document.querySelectorAll('#choice-evidence-current li strong, #choice-evidence-current li > span, #choice-evidence-current li p'),
                         ...document.querySelectorAll('.description-choice-content + .choice-select strong'),
+                        // Card labels such as Recommended and Your choice, beside the key badge (#1523).
+                        ...document.querySelectorAll('.metadata-choice .choice-select > small'),
                       ].filter(node => node.getClientRects().length);
                       return targets.flatMap(node => {
                         const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
@@ -5155,11 +5157,8 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                         return result;
                       });
                     }""")
-                    assert words and all(word["lines"] == 1 for word in words), (
-                        width,
-                        size,
-                        words,
-                    )
+                    broken = [word for word in words if word["lines"] != 1]
+                    assert words and not broken, (width, size, broken)
                     assert (
                         page.evaluate("document.documentElement.scrollWidth") <= width
                     )
@@ -11930,12 +11929,22 @@ def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch)
                 expect(
                     page.get_by_role("article", name="Advised description")
                 ).to_have_count(0)
+                # A verified advice write replaced the description the case
+                # read, so its card is the value before the change (#1523).
                 current = chooser.get_by_role(
-                    "radio", name="Choose current value: Existing description."
+                    "radio",
+                    name=(
+                        "Choose the value before your change: Existing description."
+                        if state == "automatic"
+                        else "Choose current value: Existing description."
+                    ),
                 )
                 provider = chooser.get_by_role(
                     "radio", name="Choose proposed value: A qualified description."
                 )
+                expect(
+                    chooser.get_by_text("Before your change", exact=True)
+                ).to_have_count(1 if state == "automatic" else 0)
                 expect(current).to_be_enabled()
                 expect(provider).to_be_enabled()
                 select = chooser.get_by_role(

@@ -6,6 +6,7 @@ is shown for it, never enters Attention, and changes no persisted fact.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -21,12 +22,15 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_report import TargetFieldState
+from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.description_advice import (
     _guarded_application,
     _prepared,
     _preserved_description_report,
     qualify_description_advice,
 )
+from tests.support.proposal_evidence import _report as _proposal_report
 
 REPEATED = (
     "Every source repeats your current description, so no review is needed. "
@@ -325,17 +329,90 @@ def test_keep_current_writes_back_after_the_advice_was_written(
     assert apply(decision) == "Authored synthetic description."
     assert store.read(case_id)["current"] is False
     # The verified write retired the advice; its selection still offers Keep
-    # current, so the owner can reverse it.
-    assert _description(repository, case_id)["decision_actions"] == [
-        "keep_current",
-        "accept",
-    ]
+    # current, so the owner can reverse it. The case wrote the field, so the
+    # card reads Before your change (#1523).
+    written = _description(repository, case_id)
+    assert written["decision_actions"] == ["keep_current", "accept"]
+    assert written["written_by_case"] is True
     keep = _decide(repository, case_id, f"keep-after-{origin}-write", 40)
     assert keep.to_json() in repository.pending_field_effect_decision_documents(100)
+    # Until the write back lands, the field still holds the adviser's text.
+    assert _description(repository, case_id)["written_by_case"] is True
     restored = authority.resolve(keep)
     assert restored.pre_value == "Authored synthetic description."
     assert restored.decision_value == {"kind": "text", "value": snapshot.pre_value}
     assert apply(keep, corrective=True) == snapshot.pre_value
+    # Back at the value the case read: Keep current value again.
+    assert _description(repository, case_id)["written_by_case"] is False
+    repository.close()
+
+
+def _empty_description_report():
+    """The preserved description report, read with no description."""
+    source, *_ = _automatic_no_change_inputs("description_preserved")
+    return _proposal_report(
+        fields=tuple(
+            replace(field, state=TargetFieldState.MISSING, value=None, restorable=False)
+            if field.destination.value == "description"
+            else field
+            for field in source.target.fields
+        ),
+        local_claims=source.local_claims,
+        providers=source.providers,
+    )
+
+
+@pytest.mark.parametrize("origin", ["human", "automatic_policy"])
+def test_an_advice_write_over_an_empty_description_has_no_way_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, origin: str
+) -> None:
+    """The adviser's text written over an empty description is the case's
+    write, and a description can't be emptied: the detail says it was
+    written, so the screen offers no keep that the store refuses (#1523)."""
+    from tests.support.field_effects import CAPABILITY
+
+    qualify_description_advice(monkeypatch)
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path,
+        automatic=origin == "automatic_policy",
+        report_override=_empty_description_report(),
+    )
+    case_id = binding.review_case_id
+    decision = store.admit(candidate.candidate_id, binding, origin, "a" * 64, 11)
+    authority = PersistedFieldEffectAuthority(repository)
+    application, target = _guarded_application(repository, tmp_path, authority)
+    resolved = authority.resolve(decision)
+    operation = application.plan(
+        decision,
+        connection=resolved.connection,
+        library=resolved.library,
+        work_id=resolved.work_id,
+        destination=resolved.destination,
+        pre_value=resolved.pre_value,
+        desired_value=resolved.decision_value,
+        target_fingerprint=resolved.target_fingerprint,
+        target_version=resolved.target_version,
+        dependency_digests=resolved.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    target.seed(operation.plan)
+    assert application.apply(operation.plan.plan_id).state == "verified"
+    field = _description(repository, case_id)
+    assert field["written_by_case"] is True
+    assert "keep_current" in field["decision_actions"]
+    before = repository._connection.execute(
+        "SELECT count(*) FROM human_decisions"
+    ).fetchone()
+    with pytest.raises(ReviewWebError) as refused:
+        _decide(repository, case_id, f"keep-after-empty-{origin}-write", 40)
+    assert refused.value.code == "owner_value_required"
+    assert (
+        repository._connection.execute(
+            "SELECT count(*) FROM human_decisions"
+        ).fetchone()
+        == before
+    )
     repository.close()
 
 
@@ -412,8 +489,6 @@ def test_a_description_decision_follows_the_write_that_landed_last(
 
 def _description_of_snapshot(repository, case_id: str, **changes) -> dict:
     """The field read over a snapshot with these fields replaced."""
-    from dataclasses import replace
-
     read = repository.read_current_review_case
 
     class Reader:
