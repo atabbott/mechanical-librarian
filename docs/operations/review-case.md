@@ -59,6 +59,11 @@ bound report. Any other ProposalSet is `incompatible` and publishes nothing.
 Admission makes no decision, plan or write.
 
 A newer report makes an earlier case historical without rewriting it.
+A re-preparation whose report identifies no book retires the work's case: the
+work shows as unmatched, its case is no longer current, and once the book is
+identified again its case opens afresh. A scheduled search that identifies
+nothing keeps the case instead
+([ADR-0102](../architecture/decisions/0102-search-every-finished-book-again.md)).
 When preparation admits or retires a work past a case, a write still waiting
 for Audiobookshelf to come back on that case closes, and a cover's restore
 point is removed.
@@ -207,7 +212,8 @@ body is refused before parsing.
   that wrote the field is the written value. On that case `keep_current`
   writes back the value the case read; where that was empty, a clearable
   field goes back to empty and any other field is refused as
-  `owner_value_required`.
+  `owner_value_required`. Where the case's latest write already holds that
+  value, the keep is recorded as a plain keep and writes nothing.
 - "Use previous value" and the names entry's previous names are offered only
   while the field reads its latest verified write's value, and never when the
   value that write replaced was empty: emptying the field is that choice.

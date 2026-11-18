@@ -4,7 +4,18 @@
     "build": null,
     "chosen": 25,
     "configured": true,
+    "confirmed": {
+      "confirmed": 0,
+      "suggested": 0
+    },
     "daily_limit": 8,
+    "judge": {
+      "configured": false,
+      "daily_limit": 5000,
+      "failed": 0,
+      "retry_after": null,
+      "stopped": null
+    },
     "profile": {
       "built_at": 1000,
       "decisions": 25,
@@ -46,18 +57,7 @@
         "kind": "built",
         "version": 1
       }
-    ],
-    "judge": {
-      "configured": false,
-      "daily_limit": 5000,
-      "stopped": null,
-      "retry_after": null,
-      "failed": 0
-    },
-    "confirmed": {
-      "confirmed": 0,
-      "suggested": 0
-    }
+    ]
   },
   "method": "POST",
   "path": "/api/v1/covers/taste/rules",
