@@ -273,9 +273,20 @@ jobs:
           --source-sha "${{ github.event.pull_request.head.sha || github.sha }}"
           --test-tier required
 
+  # The browser tier is split into three shards, one per runner: run serially
+  # on one runner it took about twenty minutes. Each shard runs its share
+  # serially, so every test still has a runner and a Chromium to itself. The
+  # job id keeps the name the local browser gate reads its pins from; the
+  # required `protected-browser` check is the job below, which passes only when
+  # every shard has.
   protected-browser:
+    name: browser shard ${{ matrix.shard }} of 3
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - name: Check out the exact revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -347,8 +358,9 @@ jobs:
       # Saved only after the payload is accepted, so a malformed one is never
       # persisted for a later run to restore. Only a push to `main` writes it;
       # a pull request restores and verifies the payload but never saves one.
+      # Shard 1 alone saves it, so the shards never race to write one key.
       - name: Save the recorded Chromium qualification payload
-        if: github.event_name == 'push' && steps.chromium-payload.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && matrix.shard == 1 && steps.chromium-payload.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
@@ -376,13 +388,30 @@ jobs:
           npm run generate
           ML_FRONTEND_OUT_DIR="$RUNNER_TEMP/react-assets" npm run build
 
-      - name: Run the protected browser tier
+      # Serial within the shard: four Chromium workers on one hosted runner
+      # broke timing-bound tests and saved little time. Every shard computes
+      # the same split from recorded function times, so together they run
+      # every case once. The per-test deadline is a backstop, so a hang fails
+      # named instead of at the job limit.
+      - name: Run the protected browser tier, one shard
         env:
           ML_REACT_ASSET_DIR: ${{ runner.temp }}/react-assets
-        # Serial: four Chromium workers on one hosted runner broke
-        # timing-bound tests and saved little time. The per-test deadline is a
-        # backstop, so a hang fails named instead of at the job limit.
-        run: uv run python scripts/run_test_tier.py browser --test-timeout-seconds 180
+        run: uv run python scripts/run_test_tier.py browser --shard ${{ matrix.shard }}/3 --test-timeout-seconds 180
+
+  # The one browser check the ruleset requires. It runs even when a shard
+  # failed or was cancelled, and passes only when all three passed, so a
+  # failing or missing shard can never read as a skipped, passing check.
+  browser-gate:
+    name: protected-browser
+    needs: protected-browser
+    if: always()
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every browser shard to pass
+        env:
+          SHARDS: ${{ needs.protected-browser.result }}
+        run: test "$SHARDS" = success
 
   container-image:
     runs-on: ubuntu-26.04
