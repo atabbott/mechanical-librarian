@@ -3843,6 +3843,29 @@ describe('Switching by taste (#1372 part 5)', () => {
     await waitFor(() => expect(within(group).queryByRole('checkbox')).toBeNull())
   })
 
+  // A save on its way shows the choice it saves; a refusal shows the stored
+  // one again.
+  it('shows the checkbox as clicked while it saves, and as stored if refused', async () => {
+    const user = userEvent.setup()
+    const http = switchingHttp({}, settingsWith({ taste_switching: 'automatic' }))
+    let refuse: (error: Error) => void = () => undefined
+    http.writeSettings.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          refuse = reject
+        }),
+    )
+    renderRoute(tasteRoute, http)
+    const group = await switchingGroup()
+    const box = await within(group).findByRole('checkbox', { name: 'Only covers with a fault' })
+    await user.click(box)
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledTimes(1))
+    expect(box).not.toBeChecked()
+    refuse(new ApiError(409, 'stale_revision'))
+    await within(group).findByRole('alert')
+    expect(box).toBeChecked()
+  })
+
   it('turns Automatic off while Current covers is Never and links to it', async () => {
     renderRoute(
       tasteRoute,

@@ -80,6 +80,10 @@ export function useTasteSwitching() {
   })
   const preferences = settings.data?.document.cover_preferences
   const automatic = preferences?.taste_switching === 'automatic'
+  // While a save is on its way the choices show what it saves, so a click
+  // never looks ignored.
+  const shown =
+    save.isPending && preferences ? { ...preferences, ...save.variables.change } : preferences
   const write = (change: Change, done: string) => {
     if (!save.isPending) save.mutate({ change, done })
   }
@@ -129,6 +133,7 @@ export function useTasteSwitching() {
   return {
     settings,
     preferences,
+    shown,
     automatic,
     previewing,
     protect,

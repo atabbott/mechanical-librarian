@@ -54,10 +54,10 @@ export function SwitchingControl({
   }, [preferences, hash])
   const locked = settings.data?.authority === 'file'
   const never = preferences?.current_protection === 'proposals_only'
-  const automaticChecked = switching.automatic || previewing
+  const automaticChecked = switching.shown?.taste_switching === 'automatic' || previewing
   const protectChecked = previewing
     ? switching.protect
-    : preferences?.current_protection === 'protected'
+    : switching.shown?.current_protection === 'protected'
   const confirmed = view.confirmed
   return (
     <fieldset
