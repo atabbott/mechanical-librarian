@@ -277,8 +277,13 @@ def test_cleanup_failure_after_success_is_not_hidden_by_callers_exception_contex
     assert caught.value.snapshot.evidence.accessed_at == "2023-11-14T22:13:20.000000Z"
 
 
-def test_snapshot_construction_cannot_replace_dispatch_failure(monkeypatch):
-    from mechanical_librarian.adapters.providers import google_books_metadata
+@pytest.mark.parametrize(
+    "factory,name,kind", _PROVIDERS, ids=tuple(name for _, name, _ in _PROVIDERS)
+)
+def test_snapshot_construction_cannot_replace_dispatch_failure(
+    monkeypatch, factory, name, kind
+):
+    from mechanical_librarian.adapters.providers import sdk
 
     cause = RuntimeError("dispatch failed")
 
@@ -288,11 +293,16 @@ def test_snapshot_construction_cannot_replace_dispatch_failure(monkeypatch):
     def snapshot(*_args):
         raise RuntimeError("snapshot failed")
 
-    provider = GoogleBooksMetadataProvider(
-        "google_books", httpx.Client(transport=httpx.MockTransport(dispatch)), 65536
+    provider = factory(
+        name,
+        httpx.Client(
+            transport=httpx.MockTransport(dispatch),
+            headers={"User-Agent": "synthetic"},
+        ),
+        65536,
     )
-    monkeypatch.setattr(google_books_metadata, "ProviderFailureSnapshot", snapshot)
+    monkeypatch.setattr(sdk, "ProviderFailureSnapshot", snapshot)
     with pytest.raises(RuntimeError) as caught:
-        provider.observe(_plan("ebook"))
+        provider.observe(_plan(kind))
     assert caught.value is cause
     assert caught.value.args == ("dispatch failed",)

@@ -2,7 +2,7 @@ import { invalidateBackgroundQueries } from '../queryWork'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import {
   AmbiguousMutationError,
@@ -534,8 +534,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       ownerActivation.transition_id === activatedTransitionId)
       ? ownerActivation
       : undefined
-  const editorRef = useRef<HTMLDivElement>(null)
-  const trayRef = useRef<HTMLElement>(null)
   const policyStatusRef = useRef<HTMLParagraphElement>(null)
   // A preview takes focus from the button that produced it; a refusal or
   // uncertainty that returns here is said by the status, which runs after.
@@ -607,30 +605,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     return () => cancelAnimationFrame(frame)
   }, [activeChapter])
 
-  // The sticky tray spans both columns, so the sidebar must stop above it or
-  // the tray covers the safety controls at the bottom of the left column. The
-  // tray's height is content-dependent (stage copy, reflow, zoom) and the page
-  // keeps a tail below the editor, so the reserve is measured rather than
-  // guessed; the stylesheet subtracts it from the sidebar's bounded height.
-  useLayoutEffect(() => {
-    const editor = editorRef.current
-    const tray = trayRef.current
-    if (!editor || !tray) return undefined
-    const measure = () => {
-      const bottom = editor.getBoundingClientRect().bottom + window.scrollY
-      const tail = Math.max(document.documentElement.scrollHeight - bottom, 0)
-      editor.style.setProperty(
-        '--policy-tray-reserve',
-        `${String(Math.ceil(tray.offsetHeight + tail + 24))}px`,
-      )
-    }
-    measure()
-    window.addEventListener('resize', measure)
-    return () => {
-      window.removeEventListener('resize', measure)
-    }
-  })
-
   const completedValidate = stage === 'preview' || stage === 'activation' || stage === 'activated'
   const completedPreview = stage === 'activation' || stage === 'activated'
   const currentStep =
@@ -677,7 +651,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           <h1>Library policy</h1>
         </div>
       </header>
-      <div className="cm-policy-editor" ref={editorRef}>
+      <div className="cm-policy-editor">
         <aside className="cm-policy-sidebar">
           <header>
             <strong>{data.state.profile.name}</strong>
@@ -1064,7 +1038,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         <FinishTray
           label="Policy draft and activation"
           className={`stage-${stage}`}
-          ref={trayRef}
           summary={
             <>
               {['error', 'warning'].includes(status.tone) ? null : (

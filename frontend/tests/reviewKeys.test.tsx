@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type {
   CaseDetailView,
@@ -11,7 +11,16 @@ import type {
 } from '../src/api/http'
 import { reconciliationKey } from '../src/reviewDecisionController'
 import { reviewKey } from '../src/reviewKey'
-import { createHttp, detail, library, recordedAcknowledgement, renderRoute } from './fixtures'
+import {
+  createHttp,
+  detail,
+  library,
+  recordedAcknowledgement,
+  renderRoute,
+  loadRouteModules,
+} from './fixtures'
+
+beforeAll(loadRouteModules)
 
 // Review keys (#1337): each key focuses and presses the control a pointer uses.
 const present = <T,>(value: T | null | undefined): T => {

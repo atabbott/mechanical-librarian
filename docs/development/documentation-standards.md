@@ -59,7 +59,14 @@ this page: it edits in place and adds no delivery history.
   its issue reference.
 
 Every live document is listed in, or reachable from, [the index](../README.md).
-A document that is no longer needed is deleted.
+A run of related pages in the index is a nested list, one link per line in
+alphabetical order. A document that is no longer needed is deleted.
+
+`CHANGELOG.md` and `docs/README.md` merge by keeping both sides' lines
+(`merge=union` in `.gitattributes`), so taking in `main` never stops on two
+entries added at the same place. Read their diff after the merge, above all
+when one side closed a milestone's section: an entry edited on both sides
+comes out twice, and the check below reads only open sections.
 
 ## Writing
 
@@ -80,8 +87,11 @@ A document that is no longer needed is deleted.
 It checks that every document under `docs/` is reachable from `docs/README.md`,
 that every relative link resolves, that the ADR index and the ADR files match
 one to one with no shared numbers, that no heading outside an ADR names an
-issue (such as `(#1070)`), and that no living document other than the
-changelog exceeds 6,000 words. Run it locally with:
+issue (such as `(#1070)`), that no living document other than the
+changelog exceeds 6,000 words, and that every entry in an open changelog
+section is one block without blank lines that ends with a full stop, with no
+sentence starting in lower case straight after a closing bracket, the marks a
+union merge leaves when it splices two entries. Run it locally with:
 
 ```text
 uv run python scripts/verify_documentation_integrity.py

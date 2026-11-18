@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, BuildMismatchError } from '../src/api/http'
 import { DecodeFailure } from '../src/generated/review-decoders'
@@ -15,6 +15,7 @@ import {
   readEvidence,
   readHistory,
   renderRoute,
+  loadRouteModules,
 } from './fixtures'
 import {
   caseHistory,
@@ -25,6 +26,8 @@ import {
   decisionProjection,
   historyCoverItem,
 } from './wireFixtures'
+
+beforeAll(loadRouteModules)
 
 describe('Library review ownership', () => {
   it('opens readable direct Evidence and restores the exact Library selection', async () => {

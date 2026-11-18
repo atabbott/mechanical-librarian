@@ -15,6 +15,19 @@ brackets are GitHub issues.
 - **Clean rebuild required.** A write that lands after a work returns to an
   earlier case counts as that case's own, and one still waiting holds off a
   pin. History shows what each decision replaced, even within a second (#1973).
+- Attention now opens when pressed just as Library's first work is selected.
+  Search keeps the cursor when a preparation run opened from setup loads after
+  you click into it. In Covers, the selected tab stays in view when its counts
+  arrive (#1959).
+- **Clean rebuild required.** When a refresh or a changed file leaves a book
+  unidentified, its old case now closes too: it no longer accepts choices,
+  and a change waiting on it for Audiobookshelf is dropped rather than
+  written later. Once the book is identified again, its case opens afresh
+  (#1953).
+- Policy's finish tray no longer covers the end of the chapter index, so its
+  last controls stay in reach. Keyboard focus outlines on value choices, field
+  tabs and phone-width controls are no longer cut off, and Settings keeps focus
+  on Change password and Sign out other browsers while they send (#1960).
 - When a choice is refused or can't be confirmed, the reason now shows right
   under the choices, with Try the same decision again or Reload current case,
   and the page scrolls just far enough to show it. Before, it appeared below

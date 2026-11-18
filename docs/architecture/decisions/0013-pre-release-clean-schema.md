@@ -697,6 +697,14 @@ report, consideration, verdict or profile version moves. Every earlier
 application database is rejected before mutation and needs a clean rebuild; no
 adoption is supplied.
 
+Issue #1953 takes the clean-rebuild branch. Both `review_case_transitions`
+`CHECK`s admit the reason `unidentified`, only on a `retired` row by
+`review-preparation-v1` that names the case it retires
+([ADR-0031](0031-persisted-review-preparation.md)). No report, proposal,
+decision, plan or response version moves. Every earlier application database
+is rejected before mutation and needs a clean rebuild; no adoption is
+supplied.
+
 Issue #1973 takes the clean-rebuild branch. `review_case_episodes` replaces
 `effect_floor` with `event_floor`, the latest field-effect event when the case
 was admitted again, so a write belongs to the episode it landed in.

@@ -3,7 +3,7 @@
 
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type {
   ProviderOutcomeView,
@@ -12,7 +12,9 @@ import type {
   ReviewHttp,
 } from '../src/api/http'
 import { RecordingIdentityBasis } from '../src/components/RecordingIdentityBasis'
-import { createHttp, detail, library, renderRoute } from './fixtures'
+import { createHttp, detail, library, renderRoute, loadRouteModules } from './fixtures'
+
+beforeAll(loadRouteModules)
 
 const running = 'Its running time closely matches this audiobook’s.'
 

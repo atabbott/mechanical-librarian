@@ -176,8 +176,8 @@ h2 { margin-bottom:.35rem; }
 /* A running command looks disabled; retained busy rows keep their contrast.
    It keeps focus, so it mixes its own colours toward the surface rather than
    fading, and its focus outline stays unmixed (#1698). */
-:is(.provider-throttle-notice, .preparation-popover, .preparation-detail, .cm-policy-route, .settings-reviewer, .description-advice-preparation) button[aria-disabled='true'] { cursor:not-allowed; color:color-mix(in srgb,var(--ink) 55%,var(--surface)); border-color:color-mix(in srgb,var(--line) 55%,var(--surface)); }
-:is(.provider-throttle-notice, .preparation-popover, .preparation-detail, .cm-policy-route, .settings-reviewer, .description-advice-preparation) .button-primary[aria-disabled='true'] { color:var(--surface); background:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); border-color:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); }
+:is(.provider-throttle-notice, .preparation-popover, .preparation-detail, .cm-policy-route, .settings-reviewer, .description-advice-preparation, .settings-password) button[aria-disabled='true'] { cursor:not-allowed; color:color-mix(in srgb,var(--ink) 55%,var(--surface)); border-color:color-mix(in srgb,var(--line) 55%,var(--surface)); }
+:is(.provider-throttle-notice, .preparation-popover, .preparation-detail, .cm-policy-route, .settings-reviewer, .description-advice-preparation, .settings-password) .button-primary[aria-disabled='true'] { color:var(--surface); background:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); border-color:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); }
 .provider-throttle-notice button[aria-busy='true'], .preparation-popover button[aria-busy='true'] { cursor:progress; }
 @media (max-width:760px) { .provider-throttle-command button { min-height:44px; width:100%; } }
 main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outline:none; }
@@ -352,9 +352,10 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-page-heading p { max-width:72ch; margin-top:.35rem; color:var(--soft); font-size:.8rem; line-height:1.5; }
 .cm-policy-route .cm-page-heading { margin-bottom:1.25rem; padding-bottom:1.25rem; border-bottom:2px solid var(--ink); }
 .cm-policy-editor { display:grid; grid-template-columns:minmax(230px,270px) minmax(0,1fr); align-items:start; overflow:clip; border:1px solid var(--line); border-radius:1rem; background:var(--surface); box-shadow:var(--shadow); }
-/* The rail is bounded and scrolls itself. Unbounded it grew past the viewport,
-   and the sticky finish tray then floated across its safety controls. */
-.cm-policy-sidebar { --policy-sidebar-room:calc(100dvh - var(--sticky-top) - var(--policy-tray-reserve,16rem)); position:sticky; top:var(--sticky-top); display:grid; align-content:start; min-height:min(570px,var(--policy-sidebar-room)); max-height:var(--policy-sidebar-room); overflow:auto; padding:0; border:0; border-right:1px solid var(--line); border-radius:1rem 0 0 1rem; background:var(--surface-strong); }
+/* The rail is bounded by the window and scrolls itself. The sticky finish
+   tray sits under the chapter column only, so the rail can take the window's
+   whole height and the tray never floats across its safety controls. */
+.cm-policy-sidebar { --policy-sidebar-room:calc(100dvh - var(--sticky-top) - .75rem); position:sticky; top:var(--sticky-top); display:grid; align-content:start; min-height:min(570px,var(--policy-sidebar-room)); max-height:var(--policy-sidebar-room); overflow:auto; padding:0; border:0; border-right:1px solid var(--line); border-radius:1rem 0 0 1rem; background:var(--surface-strong); }
 /* On a screen too short to keep the masthead, the sidebar flows with the page
    too: a column bounded above the tray would leave its header no room. */
 html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; min-height:0; max-height:none; overflow:visible; }
@@ -441,6 +442,10 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-finish-tray { position:sticky; z-index:5; bottom:.7rem; display:grid; grid-column:1 / -1; grid-template-columns:minmax(300px,1fr) auto auto; align-items:center; gap:.65rem .85rem; margin:.7rem; padding:.72rem .85rem; border:1px solid var(--line-strong); border-radius:.85rem; background:var(--surface); box-shadow:var(--shadow); transition:border-color 180ms ease-out,background 180ms ease-out; }
 /* A tray taller than a third of the window would cover what it finishes, so it scrolls with the page (#1503). */
 .cm-finish-tray[data-static] { position:static; }
+/* The rail's area runs down through the result and the tray (the editor has at most three rows), so it
+   stays stuck until the editor's own end rather than sliding under the masthead beside the tray. */
+.cm-policy-editor > .cm-policy-sidebar { grid-row:1 / span 3; }
+.cm-policy-editor > .cm-finish-tray { grid-column:2; }
 .cm-finish-tray.stage-preview, .cm-finish-tray.stage-activation { border-color:var(--accent); background:color-mix(in srgb,var(--surface) 92%,var(--accent-soft)); }
 .cm-finish-tray.stage-activated { border-color:var(--accent-strong); background:var(--accent-soft); }
 .cm-finish-summary, .cm-policy-finish-message { display:grid; min-width:0; gap:.15rem; }
@@ -576,7 +581,8 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 }
 @media (max-width:760px) {
   .cm-policy-editor { grid-template-columns:minmax(0,1fr); overflow:visible; }
-  .cm-policy-result { grid-column:1; }
+  .cm-policy-result, .cm-policy-editor > .cm-finish-tray { grid-column:1; }
+  .cm-policy-editor > .cm-policy-sidebar { grid-row:auto; }
   .cm-policy-sidebar { position:static; min-height:0; max-height:none; overflow:visible; border-right:0; border-bottom:1px solid var(--line); border-radius:1rem 1rem 0 0; }
   .cm-policy-sidebar > header { grid-template-columns:minmax(0,1fr) auto; align-items:center; }
   .cm-policy-sidebar > header span { display:none; }
@@ -669,13 +675,21 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-finish-tray > ol { grid-column:1; grid-row:2; }
   .cm-finish-actions { grid-column:2; grid-row:1 / span 2; }
 }
-/* Its three columns need about 46rem, which enlarged text can take from a wide window's editor too;
-   a phone keeps its own arrangement (#1490). */
+/* From 761px the tray sits beside the rail, which is at most 270px wide. Its three columns need 300px
+   and about 37rem more, so the editor needs that and the rail; enlarged text can take it from a wide
+   window's editor too. A phone keeps its own arrangement (#1490, #1960). */
 @media (min-width:761px) {
-  @container policy-editor (max-width:46rem) {
+  @container policy-editor (max-width:calc(580px + 37rem)) {
     .cm-finish-tray { grid-template-columns:minmax(0,1fr) auto; }
     .cm-finish-tray > ol { grid-column:1; grid-row:2; }
     .cm-finish-actions { grid-column:2; grid-row:1 / span 2; }
+  }
+  @container policy-editor (max-width:calc(27rem + 270px)) {
+    .cm-finish-tray { grid-template-columns:minmax(0,1fr); }
+    .cm-finish-tray > ol { grid-column:1; grid-row:auto; flex-wrap:wrap; justify-content:space-between; gap:.35rem; }
+    .cm-finish-tray > ol > li small { white-space:normal; }
+    .cm-finish-actions { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,9rem),1fr)); grid-column:1; grid-row:auto; width:100%; }
+    .cm-finish-actions button { min-width:0; white-space:normal; overflow-wrap:normal; }
   }
 }
 @container policy-editor (max-width:27rem) {
@@ -756,6 +770,8 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .settings-password label { font-size:.75rem; font-weight:650; }
 .settings-password small { color:var(--soft); font-size:.75rem; font-weight:400; }
 .settings-password-actions { display:flex; flex-wrap:wrap; gap:.4rem; }
+/* The row's grid gap spaces the newer-build line; a paragraph margin would double it. */
+.settings-password .stale-build-read { margin:0; }
 .settings-password-actions button { padding:.45rem .8rem; }
 .settings-password-reveal { justify-self:start; padding:.45rem .65rem; font-size:.75rem; }
 .settings-password-status { margin:0; color:var(--accent-strong); font-size:.75rem; font-weight:650; }
@@ -880,7 +896,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .selected-work-header { display: flex; flex-wrap:wrap; align-items: center; gap: 17px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }.selected-work-header > div { flex:1 1 min-content; min-width:0; }.selected-work-header .library-book-mark { flex: 0 0 auto; }.selected-work-header h2 { margin: 2px 0 5px; font-size: clamp(1.45rem,2.4vw,1.95rem); overflow-wrap:break-word; }.selected-work-header p { margin: 0; color: var(--soft); overflow-wrap:anywhere; }.selected-work-status { display:flex; gap:20px; margin:0; text-align:left; }.selected-work-status div { display:grid; gap:2px; }.selected-work-status dt { color:var(--soft); font-size:.75rem; }.selected-work-status dd { margin:0; font-family:Georgia,'Times New Roman',serif; font-size:1.3rem; font-weight:700; }
 .field-map { display: grid; min-width: 0; gap: 6px; }
 .field-filmstrip { display: flex; gap: 8px; padding: 0 0 20px; overflow-x: auto; border-bottom: 1px solid var(--line); }.field-filmstrip button { display: grid; min-width: 180px; min-height: 88px; gap: 3px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); text-align: left; }.field-filmstrip button[aria-current='true'] { border-color: var(--accent); background: var(--accent-soft); }.field-filmstrip small,.field-filmstrip span { color: var(--soft); }.field-filmstrip span { max-width:22ch; overflow:hidden; font-size:.75rem; text-overflow:ellipsis; white-space:nowrap; }
-.automatic-resolution-details { margin:18px 0 0; border:1px solid var(--line); border-radius:10px; background:var(--surface); }.automatic-resolution-details summary { display:flex; min-height:48px; align-items:center; justify-content:space-between; gap:16px; padding:10px 14px; cursor:pointer; }.automatic-resolution-details summary > span { display:grid; gap:2px; font-weight:650; }.automatic-resolution-details summary small { flex:none; }.automatic-resolution-details summary small { color:var(--soft); }.automatic-resolution-list { display:grid; border-top:1px solid var(--line); }.automatic-resolution-row { display:grid; padding:12px 14px; border-bottom:1px solid var(--line); }.automatic-resolution-row:not(.is-unchanged) { box-shadow:inset 3px 0 var(--notice); }.automatic-resolution-row strong { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; }.automatic-resolution-row:last-child { border-bottom:0; }.automatic-resolution-row small { display:block; min-width:0; overflow-wrap:anywhere; }.automatic-resolution-row small { margin-top:3px; color:var(--soft); }
+.automatic-resolution-details { margin:18px 0 0; border:1px solid var(--line); border-radius:10px; background:var(--surface); }.automatic-resolution-details summary { display:flex; min-height:48px; align-items:center; justify-content:space-between; gap:16px; padding:10px 14px; cursor:pointer; }.automatic-resolution-details summary > span { display:grid; gap:2px; font-weight:650; }.automatic-resolution-details summary small { flex:none; }.automatic-resolution-details summary small { color:var(--soft); }.automatic-resolution-list { display:grid; grid-template-columns:minmax(0,1fr); border-top:1px solid var(--line); }.automatic-resolution-row { display:grid; padding:12px 14px; border-bottom:1px solid var(--line); }.automatic-resolution-row:not(.is-unchanged) { box-shadow:inset 3px 0 var(--notice); }.automatic-resolution-row strong { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; }.automatic-resolution-row:last-child { border-bottom:0; }.automatic-resolution-row small { display:block; min-width:0; overflow-wrap:anywhere; }.automatic-resolution-row small { margin-top:3px; color:var(--soft); }
 .decision-canvas { padding-top: 16px; }.decision-canvas > header { display: flex; justify-content: space-between; gap: 24px; }.decision-canvas > header p { max-width:68ch; margin: 0 0 7px; color: var(--soft); }.decision-canvas > header > div > p:first-child { color: var(--accent-strong); font-size: .75rem; font-weight:700; letter-spacing: .07em; text-transform: uppercase; }.decision-canvas dl { display: flex; flex:0 0 auto; gap: 18px; margin: 0; color: var(--soft); font-size: .78rem; }.decision-canvas dt { margin-bottom: 4px; }.decision-canvas dd { margin: 0; color: var(--ink); font-weight: 700; }.queue-movement { display:flex; justify-content:flex-end; gap:8px; margin:0 0 12px; }.queue-movement button,.decision-retry { min-height:44px; padding:0 13px; border:1px solid var(--line-strong); border-radius:8px; background:var(--surface); color:var(--accent-strong); font-weight:650; }.queue-movement button:disabled { opacity:.45; }.decision-retry { margin:14px 0 0; }.decision-failure { max-width:66ch; margin:14px 0 0; color:var(--danger); font-weight:650; }.decision-retry + .decision-failure { margin-top:8px; }.decision-retry + p,.description-advice-preparation > button + p { margin-top:8px; }
 .decision-context { max-width:66ch; margin:20px 0 0; color:var(--soft); line-height:1.55; }
 .context-value { display:grid; max-width:66ch; gap:10px; margin-top:14px; padding:14px 16px; border:1px solid var(--line); border-radius:10px; background:var(--surface); }
@@ -956,6 +972,8 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .variant-m-workspace .field-filmstrip { gap: 0; padding: 0; overflow-x: auto; border-block: 1px solid var(--line); scroll-behavior: smooth; }
 .variant-m-workspace .field-filmstrip button { position: relative; min-width: 0; min-height: 58px; flex: 1 0 5.5rem; place-items: center; gap: 2px; padding: 7px 5px; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: transparent; text-align: center; }
 .variant-m-workspace .field-filmstrip button:first-child { border-left: 0; }
+/* The strip scrolls sideways and clips above and below, so a tab's ring is drawn inside it. */
+.variant-m-workspace .field-filmstrip button:focus-visible { outline-offset: -3px; }
 .variant-m-workspace .field-filmstrip button > strong { max-width: 100%; overflow: hidden; font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
 .variant-m-workspace .field-filmstrip button > .field-status { max-width: 100%; color: var(--soft); font-size: .75rem; font-weight: 650; }
 .variant-m-workspace .field-filmstrip .field-status.is-needs { color: color-mix(in srgb, var(--notice) 85%, var(--ink)); }
@@ -1027,7 +1045,8 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .pin-foot:not(.has-note) > :first-child:not(:empty) { margin-top:10px; }
 /* Why a field has no pin is supporting text, not the state a pin in force shows. */
 .pin-why { color:var(--soft); }
-.pin-note { padding:.75rem; border:1px solid var(--accent); border-radius:4px; background:color-mix(in srgb,var(--accent) 15%,var(--surface)); }
+/* Below 400px the note's sides give way a little, so its longest word fits a 320px phone at 200% text. */
+.pin-note { padding:.75rem min(.75rem,3vw); border:1px solid var(--accent); border-radius:4px; background:color-mix(in srgb,var(--accent) 15%,var(--surface)); }
 .pin-foot [role='alert'] { color:var(--danger); font-weight:650; }
 .metadata-choice.is-evidence-open { padding-bottom:0; }
 .metadata-choice:hover, .metadata-choice:has(:focus-visible) { background:color-mix(in srgb, var(--accent-soft) 45%, var(--surface-strong)); }
@@ -1041,8 +1060,11 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .metadata-choice.is-selected, .metadata-choice.is-selected:hover { background:var(--accent-soft); box-shadow:inset 0 0 0 2px var(--accent); }
 .metadata-choice.is-selected .choice-select > strong::before { border-color:var(--accent-strong); background:var(--accent-strong); box-shadow:inset 0 0 0 4px var(--surface-strong); }
 .choice-chosen { margin-left:auto; color:var(--accent-strong); }
-/* Focus is drawn inside the card, so the panel's rounded clipping cannot cut it. */
-.metadata-choice .choice-select:focus-visible { outline:3px solid var(--focus); outline-offset:-7px; border-radius:12px; }
+/* Focus rings the whole card, drawn just inside its edge so the panel's
+   rounded clipping cannot cut it and it never crosses the radio or the
+   source line. Evidence keeps its own ring. */
+.metadata-choice .choice-select:focus-visible { outline:none; }
+.metadata-choice:has(> .choice-select:focus-visible) { outline:3px solid var(--focus); outline-offset:-3px; }
 .choice-recommendation { color:var(--soft); font-size:.75rem; }
 .choice-evidence { display:grid; gap:10px; padding:14px 24px 18px; border-top:1px solid var(--line); background:color-mix(in srgb, var(--surface) 80%, var(--accent-soft)); }
 .choice-evidence > p,.choice-evidence p { margin:0; overflow-wrap:anywhere; font-size:.75rem; line-height:1.45; }
@@ -1855,8 +1877,13 @@ dialog.first-review-guide.covers-intro { width:min(34rem,calc(100vw - 2rem)); }
 .cm-policy-disclosures > .cm-disclosure[open] { flex-basis:100%; }
 .cm-policy-disclosures > .cm-disclosure > summary { padding:0; border:0; background:none; text-decoration:underline; text-underline-offset:3px; }
 @media (max-width:760px) {
-  /* Phones: the workspace is the page, not a card inside it, and each ledger row's Details is one width. */
-  .variant-m-workspace .library-workspace { border:0; border-radius:0; background:transparent; }
+  /* Phones: the workspace is the page, not a card inside it, and each ledger row's Details is one width.
+     With no frame there is nothing to clip to, and clipping cut the sides off the focus ring of every
+     control that reaches the page's edge. */
+  .variant-m-workspace .library-workspace { overflow:visible; border:0; border-radius:0; background:transparent; }
+  /* A choice word too wide for the entry card at enlarged text is cut at the card's own edge, as the
+     workspace used to cut it, rather than crossing the card's border. */
+  .variant-m-workspace .owner-entry { overflow-x:clip; }
   .variant-m-workspace .workspace-detail { padding-inline:0; border-top:0; background:transparent; }
   .variant-m-workspace .compact-workspace-back { margin-inline:0; }
   /* The counts sit under the title beside the cover, which can then be larger. */

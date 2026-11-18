@@ -34,14 +34,14 @@ How the pipeline prepares each work, stage by stage:
 
 - [Scope and non-goals](product/scope.md)
 - [Roadmap](product/roadmap.md)
-- [Review experience](product/review-experience.md), its
-  [first review](product/first-review.md) guide, its
-  [taste profile](product/cover-taste-profile.md),
-  [Library progress](product/library-progress.md),
-  [Looks wrong](product/looks-wrong.md),
-  [Find this book](product/find-this-book.md),
-  [review keys](product/review-keys.md) and the
-  [write plan](product/write-plan.md)
+- [Review experience](product/review-experience.md) and its pages:
+  - [Find this book](product/find-this-book.md)
+  - [First review](product/first-review.md) guide
+  - [Library progress](product/library-progress.md)
+  - [Looks wrong](product/looks-wrong.md)
+  - [Review keys](product/review-keys.md)
+  - [Taste profile](product/cover-taste-profile.md)
+  - [Write plan](product/write-plan.md)
 - [Automation policy](product/automation-policy.md) and
   [qualification records](product/rich-metadata-qualification.md)
 - [Admission-rule ledger](product/admission-rule-ledger.md): every early
@@ -77,18 +77,19 @@ How the pipeline prepares each work, stage by stage:
 - [Work management](development/work-management.md)
 - [Delivery and merging](development/slice-delivery.md)
 - [Release engineering](development/release-engineering.md)
-- [Contributor workbench](development/contributor-workbench.md),
-  [ebook evidence batches](operations/ebook-evidence-batches.md),
-  [cold-start report](operations/cold-start-report.md),
-  [work-route measurement](operations/work-route-measurement.md),
-  [Hardcover series sample](operations/hardcover-series-sample.md),
-  [owner labels](operations/owner-labels.md),
-  [description advice qualification](operations/description-advice-qualification.md),
-  [rebuild checks](operations/rebuild-checks.md),
-  [cover observation smoke](operations/cover-observation-smoke.md),
-  [provider evidence replay](development/provider-evidence-replay.md),
-  [reviewer cost measurement](development/reviewer-cost-measurement.md) and
-  [recoverability qualification](development/recoverability-qualification.md)
+- [Contributor workbench](development/contributor-workbench.md) and the
+  maintainer runbooks:
+  - [Cold-start report](operations/cold-start-report.md)
+  - [Cover observation smoke](operations/cover-observation-smoke.md)
+  - [Description advice qualification](operations/description-advice-qualification.md)
+  - [Ebook evidence batches](operations/ebook-evidence-batches.md)
+  - [Hardcover series sample](operations/hardcover-series-sample.md)
+  - [Owner labels](operations/owner-labels.md)
+  - [Provider evidence replay](development/provider-evidence-replay.md)
+  - [Rebuild checks](operations/rebuild-checks.md)
+  - [Recoverability qualification](development/recoverability-qualification.md)
+  - [Reviewer cost measurement](development/reviewer-cost-measurement.md)
+  - [Work-route measurement](operations/work-route-measurement.md)
 
 ## Research
 

@@ -2,11 +2,13 @@ import { readFileSync } from 'node:fs'
 
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import type { ReviewHttp } from '../src/api/http'
 import { drawerQuery } from '../src/attentionRail'
-import { createHttp, createLiveStream, renderRoute } from './fixtures'
+import { createHttp, createLiveStream, renderRoute, loadRouteModules } from './fixtures'
+
+beforeAll(loadRouteModules)
 
 // jsdom has no native dialog methods. The top layer, the inert page and Escape
 // are proved in a real browser (`test_review_browser.py`).

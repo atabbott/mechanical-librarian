@@ -117,6 +117,13 @@ _PARALLEL_TIERS = ("fast", "browser")
 _DEADLINE_TIERS = ("fast", "browser")
 # Each fast-tier file's recorded wall time, which `--shard` balances on.
 _FAST_TIMINGS = Path(__file__).with_name("fast_tier_timings.json")
+# The recorded seconds fast shard 1 starts with before any file is dealt. In
+# the gate, the job running shard 1 runs the source and frontend checks first,
+# four to five minutes the other shard jobs do not spend, and a hosted runner
+# spends about 0.45 of a second per recorded second, so shard 1 is dealt that
+# much less recorded work and every fast job ends near the same time.
+# Calibrate it again when the table is recorded on another machine.
+_FAST_SHARD_ONE_HEAD_START = 600.0
 # Each browser-tier test function's recorded time, every parameter set and its
 # share of any module fixture included, which a browser `--shard` balances on.
 _BROWSER_TIMINGS = Path(__file__).with_name("browser_tier_timings.json")
@@ -1149,6 +1156,8 @@ def _shard_units(
     once. A file's expected time is its recorded run time; a file with none
     is estimated from its size at the recorded files' rate. The record only
     balances the shards: a stale one makes them uneven, never incomplete.
+    Shard 1 starts `_FAST_SHARD_ONE_HEAD_START` ahead, so it is dealt less,
+    unless that would leave it no file.
     """
 
     recorded = _recorded_seconds(root)
@@ -1160,19 +1169,28 @@ def _shard_units(
         unit: sum(recorded.get(target, sizes[target] * rate) for target in unit)
         for unit in units
     }
-    return _balanced_share(expected, index, count)
+    # The allowance is sized for the gate's four shards. Where it would leave
+    # shard 1 nothing, as with many more shards, every shard drops it alike.
+    allowance = _FAST_SHARD_ONE_HEAD_START
+    if not _balanced_share(expected, 1, count, allowance):
+        allowance = 0.0
+    return _balanced_share(expected, index, count, allowance)
 
 
 def _balanced_share(
-    expected: dict[tuple[str, ...], float], index: int, count: int
+    expected: dict[tuple[str, ...], float],
+    index: int,
+    count: int,
+    head_start: float = 0.0,
 ) -> tuple[tuple[str, ...], ...]:
     """Deal units, longest expected first, to the least-loaded of `count` shares.
 
-    A tie goes to the lowest-numbered share and equal times are dealt in unit
-    order, so every shard computes the same split from the same expectations.
+    Share 1 starts loaded with `head_start`. A tie goes to the lowest-numbered
+    share and equal times are dealt in unit order, so every shard computes the
+    same split from the same expectations.
     """
 
-    loads = [0.0] * count
+    loads = [head_start] + [0.0] * (count - 1)
     owned: list[list[tuple[str, ...]]] = [[] for _ in range(count)]
     for unit in sorted(expected, key=lambda unit: (-expected[unit], unit)):
         shard = loads.index(min(loads))
