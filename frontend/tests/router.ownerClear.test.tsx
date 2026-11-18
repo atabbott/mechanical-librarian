@@ -12,10 +12,12 @@ import type {
 } from '../src/api/http'
 import { destinationLabel } from '../src/labels'
 import { SettledFieldContext } from '../src/routes/FieldDecisionOutcome'
+import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import {
   createHttp,
   detail,
   library,
+  readCaseDetail,
   recordedAcknowledgement,
   renderRoute,
   loadRouteModules,
@@ -856,6 +858,224 @@ describe('the keep card on a field this case wrote (#1523)', () => {
       expect(keepCardShown()).toBeNull()
     },
   )
+
+  // A description the adviser's text replaced, read back after the write.
+  const adviceWritten = (before: string | null): Field => {
+    const authored = readCaseDetail(descriptionAdviceFixture)
+    const field = authored.fields.find((item) => item.destination === 'description')
+    const advice = field?.descriptionAdvice
+    if (!field || !advice?.candidate) throw new Error('description fixture requires its advice')
+    const [current, ...others] = field.choiceContexts
+    if (!current) throw new Error('description fixture requires its current context')
+    return {
+      ...field,
+      writtenByCase: true,
+      currentValue: before ?? 'Not set in Audiobookshelf',
+      currentRaw: before,
+      choiceContexts: [
+        {
+          ...current,
+          evidence: [
+            ...current.evidence,
+            {
+              language: null,
+              observation: 'Description: the same text.',
+              role: 'external_corroboration',
+              source: 'Hardcover',
+            },
+          ],
+        },
+        ...others,
+      ],
+      descriptionAdvice: {
+        ...advice,
+        current: false,
+        application_outcome: 'verified',
+        selected_advice: { candidate: advice.candidate, binding: advice.binding, current: false },
+        selection: {
+          decision_id: `automatic_decision_${'a'.repeat(64)}`,
+          candidate_id: advice.candidate.candidate_id,
+          binding: advice.binding,
+          origin: 'automatic_policy',
+          resolved_policy_id: `resolved_policy_${'b'.repeat(64)}`,
+          qualification_manifest_sha256: 'c'.repeat(64),
+          idempotency_digest: 'd'.repeat(64),
+          occurred_at: 10,
+          destination: 'description' as const,
+          outcome: 'accept',
+          application: 'guarded',
+        },
+      },
+    }
+  }
+
+  it('offers the description before the adviser’s text was written', async () => {
+    const user = userEvent.setup()
+    const http = owner(adviceWritten(`An earlier description. ${'It goes on. '.repeat(30)}`))
+    renderRoute('/library?lens=all&preview=case-1&field=description', http)
+    const advised = await screen.findByRole('radio', { name: /^Choose advised value:/u })
+    expect(advised).toHaveTextContent('Applied and verified')
+    const card = screen.getByText('Before your change').closest('.current-choice-list')
+    if (!(card instanceof HTMLElement)) throw new Error('the before-your-change card is required')
+    expect(
+      within(card).getByRole('radio', { name: 'Choose the description before your change' }),
+    ).toHaveAttribute('aria-checked', 'false')
+    await user.click(
+      within(card).getByRole('button', {
+        name: 'Evidence for the description before your change',
+      }),
+    )
+    expect(card).toHaveTextContent('Description: the same text.')
+    expect(screen.queryByText('Keep current value')).toBeNull()
+  })
+
+  it('says a description read empty has no way back once the advice is written', async () => {
+    renderRoute('/library?lens=all&preview=case-1&field=description', owner(adviceWritten(null)))
+    await screen.findByRole('radio', { name: /^Choose advised value:/u })
+    const heading = screen.getByRole('heading', { name: 'Description' })
+    expect(heading.parentElement?.querySelector('p')).toHaveTextContent(
+      'The description was empty before your change, and it can’t be emptied.',
+    )
+    expect(keepCardShown()).toBeNull()
+  })
+
+  it('marks a recorded keep on a field back at the value the case read', async () => {
+    const kept = decided({ ...isbnOver('9780306406157'), writtenByCase: false }, null)
+    if (!kept.humanDecision) throw new Error('a recorded decision is required')
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=isbn',
+      owner({
+        ...kept,
+        editable: true,
+        needsAttention: false,
+        humanDecision: { ...kept.humanDecision, outcome: 'keep_current' },
+      }),
+    )
+    const card = await screen.findByRole('radio', {
+      name: /^Choose current value: 9780306406157/u,
+    })
+    expect(screen.getByText('Keep current value')).toBeVisible()
+    expect(card).toHaveAttribute('aria-checked', 'true')
+    expect(card).toHaveTextContent('Your choice')
+  })
+
+  // A field the case wrote, then took back to the value it read with an
+  // owner entry or a clear: no longer written, and the entry is the outcome.
+  const genresBack = (before: readonly string[] | null, entered: unknown): Field => {
+    const back = decided(
+      offered('genres', {
+        writtenByCase: false,
+        currentValue: before ? before.join(' · ') : 'Not set in Audiobookshelf',
+        currentRaw: before,
+        proposedValues: [{ kind: 'list', value: ['Fantasy'] }],
+        ownerControl: control({
+          clear: true,
+          current: before,
+          subset: {
+            maxItems: 32,
+            options: [
+              ...(before ?? []).map((value) => ({
+                value,
+                current: true,
+                proposed: false,
+                previous: false,
+              })),
+              { value: 'Fantasy', current: false, proposed: true, previous: false },
+            ],
+          },
+        }),
+      }),
+      entered,
+    )
+    return { ...back, editable: true, needsAttention: false }
+  }
+
+  it.each([
+    ['a clear back to empty genres', null, EMPTY, 'You cleared the genres.'],
+    [
+      'an entry back to the genres read',
+      ['Drama'],
+      { kind: 'list', value: ['Drama'] },
+      'You chose 1 genre.',
+    ],
+  ] as const)('leaves it out after %s', async (_, before, entered, said) => {
+    renderRoute('/library?lens=all&preview=case-1&field=genres', owner(genresBack(before, entered)))
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(keepCardShown()).toBeNull()
+    expect(screen.queryByRole('radio', { name: /^Choose current value/u })).toBeNull()
+    expect(screen.getByText(said)).toBeVisible()
+    // The value read has one pin, the recorded entry's, beside the proposed value's.
+    const pins = screen.getAllByRole('button', { name: 'Pin this value' })
+    expect(pins).toHaveLength(2)
+    expect(pins.filter((pin) => pin.closest('.owner-recorded-pin'))).toHaveLength(1)
+  })
+
+  it('leaves it out after authors entered back as they were read', async () => {
+    const back = decided(
+      offered('authors', {
+        writtenByCase: false,
+        currentValue: 'Ada Example · Bo Example',
+        currentRaw: ['Ada Example', 'Bo Example'],
+        proposedValues: [{ kind: 'list', value: ['Mick Herron'] }],
+        ownerControl: namesControl(['Ada Example', 'Bo Example'], false),
+      }),
+      { kind: 'list', value: ['Ada Example', 'Bo Example'] },
+    )
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=authors',
+      owner({ ...back, editable: true, needsAttention: false }),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(keepCardShown()).toBeNull()
+  })
+
+  it('still offers the way back after genres entered back in another order', async () => {
+    // The store compares in order: Drama · Mystery is not the Mystery · Drama it read.
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=genres',
+      owner({
+        ...genresBack(['Mystery', 'Drama'], { kind: 'list', value: ['Drama', 'Mystery'] }),
+        writtenByCase: true,
+      }),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(screen.getByText('Before your change')).toBeVisible()
+    expect(
+      screen.getByRole('radio', { name: 'Choose the value before your change: Mystery · Drama' }),
+    ).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('leaves it out after a subtitle entered back as it was read', async () => {
+    const back = decided(
+      offered('subtitle', {
+        writtenByCase: false,
+        currentValue: 'Original subtitle',
+        currentRaw: 'Original subtitle',
+        proposedValues: [{ kind: 'text', value: 'A Quiet Subtitle' }],
+        ownerControl: textControl('Original subtitle', true),
+      }),
+      { kind: 'text', value: 'Original subtitle' },
+    )
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=subtitle',
+      owner({ ...back, editable: true, needsAttention: false }),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(keepCardShown()).toBeNull()
+  })
+
+  it('still offers it beside an entry of another value', async () => {
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=genres',
+      owner(genresBack(['Drama'], { kind: 'list', value: ['Fantasy'] })),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(screen.getByText('Keep current value')).toBeVisible()
+    expect(screen.getByRole('radio', { name: /^Choose current value: Drama/u })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    )
+  })
 
   it('says it in the plural on authors written over nothing', async () => {
     const written = decided(

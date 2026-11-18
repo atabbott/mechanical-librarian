@@ -33,6 +33,9 @@ changed, and preparation asks no cover or description advice for it. An
 actionable result replaces it as usual. The first scan of the unchanged work
 once the write is 30 days old sends it back to admission, which retires the
 case ([ADR-0105](../architecture/decisions/0105-going-back-after-a-write.md)).
+A re-preparation that identifies nothing retires a kept case like any other
+(below); if the work is identified again while the write is under 30 days
+old, admission keeps its case again.
 
 A scheduled search whose proposals equal the current case's, that fails at a
 provider, or that now identifies nothing never reaches admission
@@ -209,9 +212,11 @@ body is refused before parsing.
   with `422`: `owner_value_required` for an empty title or authors,
   `owner_value_invalid` for a value outside its bounds and
   `owner_value_unchanged` for the field's current value, which on the case
-  that wrote the field is the written value. On that case `keep_current`
-  writes back the value the case read; where that was empty, a clearable
-  field goes back to empty and any other field is refused as
+  that wrote the field is the written value. An accept of the value the
+  case's latest write holds is refused the same way while the owner
+  decision that made that write is still the field's answer. On that case
+  `keep_current` writes back the value the case read; where that was empty,
+  a clearable field goes back to empty and any other field is refused as
   `owner_value_required`. Where it read a description stored with formatting
   a restore would lose, the keep is refused with `409 restore_unavailable`,
   and the field's `restore_unavailable` is true. Where the case's latest

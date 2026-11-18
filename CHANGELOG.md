@@ -17,6 +17,9 @@ brackets are GitHub issues.
   written. It says to restore the earlier description in Audiobookshelf. The
   pin line now says you can pin after the next scan, and the recorded line
   names the genres or names you chose (#1984).
+- Pressing your written choice again no longer leaves the field waiting for
+  a write that never comes: it does nothing, and from another open tab it is
+  refused as already current (#1980).
 - **Clean rebuild required.** A write that lands after a work returns to an
   earlier case counts as that case's own, and one still waiting holds off a
   pin. History shows what each decision replaced, even within a second (#1973).
@@ -49,6 +52,10 @@ brackets are GitHub issues.
   narrators, and enter authors and narrators by name. A cleared field stays out
   of automatic handling until you choose Resume automatic handling. A character
   or name count shows only once a value is over its limit (#1523).
+- After the description adviser's text is written, the description's first
+  card reads Before your change and writes back the description it replaced.
+  Once you keep the value a field had before your change, its card reads Keep
+  current value again (#1976).
 
 ## 0.38.0 — Owner-directed matching (in progress)
 

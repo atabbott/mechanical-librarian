@@ -132,7 +132,7 @@ export const commandSelected = (
 // is the recorded answer has to be readable. The owner's own decision is the
 // answer whenever there is one; an automatic decision only speaks for a field
 // they have not decided themselves.
-const recordedSelected = (
+export const recordedSelected = (
   field: ReviewField,
   outcome: 'accept' | 'keep_current',
   selectedValue: DecisionCommand['selectedValue'] = null,
@@ -172,7 +172,7 @@ const emptyRaw = (value: unknown) =>
   value === undefined ||
   value === '' ||
   (Array.isArray(value) && value.length === 0)
-const sameNames = (left: readonly string[], right: unknown) =>
+const sameInOrder = (left: readonly string[], right: unknown) =>
   Array.isArray(right) &&
   left.length === right.length &&
   left.every((name, index) => name === right[index])
@@ -190,7 +190,7 @@ const wayBackInEntry = (field: ReviewField) => {
   if (emptyRaw(before)) return control.clear
   if (control.entry?.suggestions.some(({ rule, value }) => rule === 'previous' && value === before))
     return true
-  if (control.names?.previous && sameNames(control.names.previous, before)) return true
+  if (control.names?.previous && sameInOrder(control.names.previous, before)) return true
   const previousGenres =
     control.subset?.options.filter((option) => option.previous).map((option) => option.value) ?? []
   return previousGenres.length > 0 && sameGenres(previousGenres, before)
@@ -202,15 +202,30 @@ export const noWayBack = (field: ReviewField) =>
   field.decisionActions.includes('keep_current') &&
   emptyRaw(field.currentRaw) &&
   !CLEARABLE.includes(field.destination)
+// Whether the field's recorded owner entry or clear holds the value the case
+// read: the field is back at it, and the recorded outcome already says so.
+// Lists compare in order, as the store does, so genres back in another order
+// still count as written (#1523).
+const enteredBack = (field: ReviewField) => {
+  const decision = field.humanDecision
+  const selected = decision?.outcome === 'owner_entered' ? decision.selected_value : null
+  if (!selected) return false
+  const before = field.currentRaw
+  if (selected.kind === 'empty') return emptyRaw(before)
+  return Array.isArray(selected.value)
+    ? sameInOrder(selected.value, before)
+    : selected.value === before
+}
 // The card that keeps the value the case read. Elsewhere it is Keep current
 // value. On the case that wrote the field that value is no longer the
 // library's, so it reads Before your change, and pressing it writes that value
 // back. It is left out where owner entry already offers the same way back, and
 // where there is none: nothing to restore and a field that can't be emptied,
-// or a description whose formatting a restore would lose (#1523, ADR-0105,
-// #1424).
+// or a description whose formatting a restore would lose. It is left out too
+// where the owner's recorded entry or clear already holds that value (#1523,
+// ADR-0105, #1424).
 export const keepCard = (field: ReviewField): 'keep' | 'before' | null =>
-  !field.decisionActions.includes('keep_current')
+  !field.decisionActions.includes('keep_current') || enteredBack(field)
     ? null
     : field.writtenByCase !== true
       ? 'keep'

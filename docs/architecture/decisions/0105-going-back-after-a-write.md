@@ -75,30 +75,40 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    refuses the keep as `owner_value_required`. A description it read stored
    with formatting a restore would lose refuses the keep as
    `restore_unavailable` (#1424). The case detail's `written_by_case` marks
-   each field the case wrote in its current episode, and
-   `restore_unavailable` marks such a description. There the browser shows
-   that keep as a card headed "Before your change", holding the value the case read, and never calls it current. It
-   leaves the card out where owner entry already offers the same way back
-   (Clear for an empty value, or that value as the previous value, names or
-   genres), and where there is none, a field read empty that cannot be
-   emptied or such a description, saying so in one sentence. History reads
-   that keep as "You went back to the value before your change.", its To an empty value as Not set,
-   and Activity reads it as a change from the written value to that value,
-   from the keep's own first plan, or before one exists from the write it
-   follows. Every owner decision freezes, when it is recorded, the write it
-   follows; a keep goes back on it. The stored decision names the decision
-   of the write planning resolves for it then, or null when it follows none,
-   or, for a keep, when that write already holds the value the case read,
-   which makes the keep a plain keep. The pending set holds a keep only
-   while it names a write. History's From for every decision, and Activity's
-   written value for a keep, read that write's own verified effect, never
-   episode floors or a clock in whole seconds, so a later return or a write
-   in the same second changes none of them. Its result is Went back once that write back
-   verifies; until then it is the write's own word (Planned, Closed and so
-   on, with the reason), or Recorded while unplanned, and never Kept
-   current. Activity's shared fact store re-reads an owner decision's row
-   when its own effects or the named write's effects move (ADR-0082). The
-   server path and its refusal stay for API callers.
+   each field the case wrote in its current episode; a description written
+   with the adviser's text counts, by the same rule as the write a keep
+   follows. `restore_unavailable` marks such a formatted description. On such
+   a field the browser shows that keep as a card
+   headed "Before your change", holding the value the case read, and never
+   calls it current. It leaves the card out where owner entry already offers
+   the same way back (Clear for an empty value, or that value as the previous
+   value, names or genres), and where there is none, a field read empty that
+   cannot be emptied or such a formatted description, saying so in one
+   sentence. A field whose latest write
+   holds the value the case read again, after a keep, a clear or an entry, is
+   not written: after a keep its card is Keep current value, and after a clear
+   or an entry of that value, in the same order, the browser leaves the card
+   out because the recorded value already holds it. History reads a keep that
+   goes back as "You went back to the value before your change.", its To an
+   empty value as Not set, and Activity reads it as a change from the written
+   value to that value, from the keep's own first plan, or before one exists
+   from the write it follows. Every owner decision freezes, when it is
+   recorded, the write it follows; a keep goes back on it. The stored decision
+   names the decision of the write planning resolves for it then, or null when
+   it follows none, or, for a keep, when that write already holds the value the
+   case read, which makes the keep a plain keep. While the owner decision that
+   made that write is still the field's answer, an accept of the value it holds
+   is refused as `owner_value_unchanged` and records nothing, since planning
+   would write nothing for it. The pending set holds a keep only while it names
+   a write. History's From for every decision, and Activity's written value for
+   a keep, read that write's own verified effect, never episode floors or a
+   clock in whole seconds, so a later return or a write in the same second
+   changes none of them. Its result is Went back once that write back verifies;
+   until then it is the write's own word (Planned, Closed and so on, with the
+   reason), or Recorded while unplanned, and never Kept current. Activity's
+   shared fact store re-reads an owner decision's row when its own effects or
+   the named write's effects move (ADR-0082). The server path and its refusal
+   stay for API callers.
 5. **The kept case.** When the pipeline admits a ProposalSet with nothing
    actionable while the work's latest verified write, of any origin and
    destination, covers included, is under 2,592,000 seconds old by the
@@ -114,7 +124,15 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    once the write is 30 days old, so the same ProposalSet retires it. The
    unchanged-work branch of preparation sends such a work back to admission
    when the scan's time is 30 days past the write. A kept case therefore lasts
-   until the first scan once its 30 days have passed.
+   until the first scan once its 30 days have passed, unless a requested
+   refresh, a changed file or a recovery reset first prepares the work and
+   identifies nothing. That retires the kept case as it retires any case
+   (ADR-0031, #1953): the write it was kept for is already verified, so
+   nothing about the write is lost, only the way back while the work stays
+   unidentified. Once preparation identifies the work again within the 30
+   days, admission keeps the work's case again for the same write, as a new
+   admission, and offers the way back again. A scheduled search that
+   identifies nothing still keeps it (ADR-0102).
 7. **Payload forms.** The adapter sends `null` for subtitle and publisher and
    `[]` for genres and narrators, and reads `null`, `""`, an absent key and
    `[]` as empty on every field but the explicit flag. Read-back alone shows
@@ -147,6 +165,10 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
   kept case can outlive them until the next scan.
 - When a kept case expires, a pinned field whose value changed leaves
   Attention with it, unasked, as a retired case's does today.
+- While a re-preparation identifies nothing, a written work has no case to
+  go back from; the way back returns when the work is identified again
+  within the 30 days. An owner answer recorded on the kept case but not yet
+  sent when it retires is refused, as on any retired case.
 - A wrong empty payload succeeds silently at the service; only read-back
   catches it.
 
@@ -185,8 +207,11 @@ session without that cost.
 Persistence tests cover the empty kind, names and their refusals, both new
 `CHECK`s, pinning a clear, the written value as current, when previous is
 offered, the kept case at 29 and 30 days with replay, an actionable successor,
-a changed pin, the skipped advice and the unchanged-work expiry. Adapter tests
-pin each payload and read form. The Audiobookshelf field-effect qualification
-enters, goes back on and clears each field on every pinned image, checks each
-clear raw, and on the installed path clears a written subtitle, pins the clear
-and checks that the next scan keeps it quiet.
+a changed pin, the skipped advice, the unchanged-work expiry, and a kept case
+retired by a re-preparation that identifies nothing, with its verified write
+unchanged, an unsent answer on it refused, and the case kept again once the
+work is identified again. Adapter tests pin each payload and read form. The
+Audiobookshelf field-effect qualification enters, goes back on and clears
+each field on every pinned image, checks each clear raw, and on the installed
+path clears a written subtitle, pins the clear and checks that the next scan
+keeps it quiet.

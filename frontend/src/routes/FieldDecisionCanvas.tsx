@@ -17,6 +17,7 @@ import {
   isLongDescription,
   keepCard,
   noWayBackSentence,
+  recordedSelected,
   valueText,
 } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
@@ -272,6 +273,15 @@ export function FieldDecisionCanvas({
           )
           const key = `${selected.destination}:${context?.alternativeId ?? String(index)}`
           const card = { ...currentCard, kind: 'proposed', value } as const
+          const chosen = choiceSelected(selected, cardProgress, 'accept', value)
+          // The owner's recorded accept whose own write has landed ("This
+          // decision has been written…") is the written value: choosing it
+          // again would change nothing, so it sends nothing.
+          const written =
+            chosen &&
+            selected.humanDecision !== null &&
+            recordedSelected(selected, 'accept', value) &&
+            selected.ownerControl?.withdraw === 'written'
           return {
             id: key,
             automatic: automaticallySelected(selected, cardProgress),
@@ -285,7 +295,7 @@ export function FieldDecisionCanvas({
             expanded: expandedChoices.has(key),
             label: '',
             longDescription: isLongDescription(selected.destination, displayValue(value.value)),
-            onChoose: () => choose(selected, 'accept', value),
+            onChoose: written ? () => undefined : () => choose(selected, 'accept', value),
             pin: pinControl(cardPin(selected, card), value),
             pinned: cardPinned(selected, card),
             recording:
@@ -295,7 +305,7 @@ export function FieldDecisionCanvas({
                 'accept',
                 value,
               ) && selectedProgress?.phase === 'recording',
-            selected: choiceSelected(selected, cardProgress, 'accept', value),
+            selected: chosen,
             toggle: () => toggleChoiceEvidence(key),
             value: valueText(selected.destination, displayValue(value.value)),
           }

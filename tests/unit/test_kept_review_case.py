@@ -152,9 +152,19 @@ def test_a_scan_time_must_be_a_whole_non_negative_second(store: OwnerStore) -> N
 
 
 def _pipeline(
-    store: SQLiteMetadataReportRepository, report: MetadataReport, now: int
+    store: SQLiteMetadataReportRepository,
+    report: MetadataReport,
+    now: int,
+    *,
+    identified: bool = True,
 ) -> ReviewPreparationPipeline:
-    """One ebook prepared from `report`, admitted at the scan's time `now`."""
+    """One ebook prepared from `report`, admitted at the scan's time `now`.
+
+    `identified=False` completes the extraction as evidence only, as a report
+    that admits no work identity does. The work is listed under the report's
+    title, so a report with another title lists it as changed and preparation
+    extracts it again.
+    """
     listed = replace(
         entry("item-1", report.file.identity),
         library="ebooks",
@@ -172,7 +182,14 @@ def _pipeline(
             None if current is None else MetadataReport.from_json(current).report_id,
             after_publication=lambda bound, published: (
                 bound.complete_review_extraction_publication(
-                    action, published.report_id, now, 0, None, claim_next, None, False
+                    action,
+                    published.report_id,
+                    now,
+                    0,
+                    None if identified else "evidence_only",
+                    claim_next,
+                    None,
+                    False,
                 )
             ),
         )
@@ -269,6 +286,113 @@ def test_an_unchanged_scan_retires_the_kept_case_once_the_write_is_old(
     # Keeping and retiring a case writes no event naming the work's values.
     captured = capfd.readouterr()
     assert WRITTEN not in captured.err + captured.out
+    store.close()
+
+
+def test_a_re_preparation_that_identifies_nothing_retires_the_kept_case(
+    tmp_path: Path,
+) -> None:
+    """A changed work whose new report identifies nothing retires its kept
+    case as it retires any case (#1953). The write the case was kept for was
+    verified before the case was kept, so retiring it changes nothing about
+    the write; once the work is identified again within the 30 days, the
+    same write keeps the case again and the way back is offered (#1523)."""
+    store = OwnerStore(tmp_path, None)
+    install_settings_authority(store.repository)
+    store.repository.enter_shadow_preview(1, ())
+    _drain(_pipeline(store.repository, _report(), 20))
+    store.load(str(_work(store)[3]))
+    written_at = _write(store)
+    _drain(_pipeline(store.repository, _read_back(), written_at + 1))
+    kept = _work(store)
+    assert _reason(store) == "recent_write"
+    connection = store.repository._connection
+    effects = connection.execute(
+        "SELECT plan_id,state,document FROM field_effects"
+    ).fetchall()
+    assert [state for _, state, _ in effects] == ["verified"]
+    events = connection.execute(
+        "SELECT plan_id,kind,occurred_at FROM field_effect_events ORDER BY rowid"
+    ).fetchall()
+
+    _drain(
+        _pipeline(
+            store.repository,
+            _read_back("Identified as nothing"),
+            written_at + 2,
+            identified=False,
+        )
+    )
+
+    assert _work(store) == ("complete", "complete", "evidence_only", None)
+    assert not _current(store, str(kept[3]))
+    assert connection.execute(
+        "SELECT actor,kind,reason FROM review_case_transitions "
+        "ORDER BY checkpoint DESC LIMIT 1"
+    ).fetchone() == ("review-preparation-v1", "retired", "unidentified")
+    # The write is untouched: still verified, with no event added.
+    assert (
+        connection.execute(
+            "SELECT plan_id,state,document FROM field_effects"
+        ).fetchall()
+        == effects
+    )
+    assert (
+        connection.execute(
+            "SELECT plan_id,kind,occurred_at FROM field_effect_events ORDER BY rowid"
+        ).fetchall()
+        == events
+    )
+
+    # Identified again inside the 30 days, the same write keeps the case
+    # again, admitted afresh rather than replayed.
+    _drain(_pipeline(store.repository, _read_back(), written_at + 3))
+    again = _work(store)
+    assert again[:3] == ("complete", "complete", "case")
+    assert _current(store, str(again[3]))
+    assert connection.execute(
+        "SELECT actor,kind,reason FROM review_case_transitions "
+        "ORDER BY checkpoint DESC LIMIT 1"
+    ).fetchone() == ("review-admission-v1", "admitted", "recent_write")
+    detail = InspectCurrentReviewCase(store.repository).run(str(again[3]))
+    title = next(value for value in detail["fields"] if value["destination"] == "title")
+    assert {"rule": "previous", "value": "Title"} in title["owner_control"]["entry"][
+        "suggestions"
+    ]
+    store.close()
+
+
+def test_an_unsent_answer_on_a_retired_kept_case_is_refused(
+    tmp_path: Path,
+) -> None:
+    """An owner answer recorded on the kept case but not yet sent when a
+    re-preparation that identifies nothing retires the case is refused when
+    it is next applied, and sends nothing, as on any retired case (#1953)."""
+    store = OwnerStore(tmp_path, None)
+    install_settings_authority(store.repository)
+    store.repository.enter_shadow_preview(1, ())
+    _drain(_pipeline(store.repository, _report(), 20))
+    store.load(str(_work(store)[3]))
+    written_at = _write(store)
+    _drain(_pipeline(store.repository, _read_back(), written_at + 1))
+    store.load(str(_work(store)[3]))
+    going_back = store.plan(
+        store.decide("owner_entered", {"kind": "text", "value": "Title"})
+    )
+    sent = list(store.patches)
+
+    _drain(
+        _pipeline(
+            store.repository,
+            _read_back("Identified as nothing"),
+            written_at + 2,
+            identified=False,
+        )
+    )
+    refused = store.service.apply(going_back.plan.plan_id)
+
+    assert (refused.state, refused.failure) == ("stale", "authority")
+    assert store.patches == sent
     store.close()
 
 
