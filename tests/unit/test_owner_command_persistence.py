@@ -216,7 +216,9 @@ def test_the_hold_refusal_shows_only_until_resume_is_chosen(tmp_path: Path) -> N
         case_id, _ = publish_genre_case(store.repository, report)
         store.load(case_id)
         decision = store.decide(
-            "owner_entered", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+            "owner_entered",
+            {"kind": "list", "value": ["Fantasy"]},
+            destination="genres",
         )
         assert _field(store, "genres")["owner_control"]["withdraw"] == "automatic_hold"
         scan = store.repository.request_review_scan(
@@ -236,6 +238,40 @@ def test_the_hold_refusal_shows_only_until_resume_is_chosen(tmp_path: Path) -> N
         )
         assert _field(store, "genres")["owner_control"]["withdraw"] is None
         _refused(store, "automatic_hold", "withdraw", destination="genres")
+    finally:
+        store.close()
+
+
+# With nothing to enter, a resumed answer keeps its controls, which show the
+# recorded value, rather than losing them with the refusal.
+def test_a_resumed_answer_keeps_its_controls_without_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import mechanical_librarian.application.review_web as review_web
+
+    monkeypatch.setattr(review_web, "owner_entry_admitted", lambda *_: False)
+    store = OwnerStore(tmp_path, None)
+    try:
+        case_id, _ = publish_genre_case(store.repository, genre_report())
+        store.load(case_id)
+        decision = store.decide(
+            "owner_entered",
+            {"kind": "list", "value": ["Fantasy"]},
+            destination="genres",
+        )
+        held = _field(store, "genres")["owner_control"]
+        assert cast(dict, held)["withdraw"] == "automatic_hold"
+        assert store.repository.clear_field_effect_manual_hold(
+            case_id, "genres", store.clock(), decision.decision_id
+        )
+        assert _field(store, "genres")["owner_control"] == {
+            "entry": None,
+            "subset": None,
+            "names": None,
+            "clear": False,
+            "current": None,
+            "withdraw": None,
+        }
     finally:
         store.close()
 
@@ -1111,6 +1147,8 @@ def test_a_requested_return_whose_checks_fail_can_be_requested_again(
         False,
         True,
     )
+    # Resume is offered again, so the refusal that names it shows again.
+    assert cast(dict, field["owner_control"])["withdraw"] == "automatic_hold"
     again, _ = _request_return(store, token)
     assert again == scan_id
     assert store.repository._connection.execute(

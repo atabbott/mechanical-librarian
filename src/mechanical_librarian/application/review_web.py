@@ -3604,26 +3604,29 @@ def _owner_control(
     # Amendment 2). Beside an automatic decision the store refuses a withdraw
     # whatever the hold's state, but the refusal names Resume automatic
     # handling, so it shows only while the hold stands and no Resume is out:
-    # once Resume is requested or done, the field offers no withdraw at all.
+    # once Resume is requested or done, the field offers no withdraw at all,
+    # and still shows the owner's recorded value with its controls.
     withdraw = None
+    resumed = False
     if (
         decision is not None
         and decision.outcome != "reject"
         and destination not in UNREVERSIBLE_DESTINATIONS
         and all(row[0] != destination for row in snapshot.pins)
     ):
-        withdraw = (
-            (
-                "automatic_hold"
-                if destination in snapshot.held_destinations
-                and destination not in snapshot.return_requested_destinations
-                else None
+        if not automatic:
+            withdraw = dict(snapshot.decision_effect_states).get(
+                destination, "available"
             )
-            if automatic
-            else dict(snapshot.decision_effect_states).get(destination, "available")
-        )
+        elif (
+            destination in snapshot.held_destinations
+            and destination not in snapshot.return_requested_destinations
+        ):
+            withdraw = "automatic_hold"
+        else:
+            resumed = True
     entered = (entry, subset, names) != (None, None, None)
-    if not entered and withdraw is None:
+    if not entered and withdraw is None and not resumed:
         return None
     return {
         "entry": entry,
