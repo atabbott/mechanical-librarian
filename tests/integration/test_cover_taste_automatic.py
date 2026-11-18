@@ -44,11 +44,15 @@ from mechanical_librarian.application.cover_taste_switching import (
     CoverTasteSwitching,
 )
 from mechanical_librarian.application.review_covers import cover_page
-from mechanical_librarian.application.review_web import RecordHumanDecision
+from mechanical_librarian.application.review_web import (
+    InspectCurrentReviewCase,
+    RecordHumanDecision,
+)
 from mechanical_librarian.domain import cover_qualification_policy
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.cover_taste import COVER_TASTE_VERDICT_SCHEMA
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
@@ -59,8 +63,17 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from tests.integration.test_cover_rules_activation import _planned, _selections
-from tests.support.audiobook_covers import SYNTHETIC_TASTE_RECORD
+from tests.integration.test_cover_rules_activation import (
+    _planned,
+    _prepared,
+    _reprepare,
+    _selections,
+    _service,
+)
+from tests.support.audiobook_covers import (
+    SYNTHETIC_MEASURED_RECORD,
+    SYNTHETIC_TASTE_RECORD,
+)
 from tests.unit.test_cover_taste_judge import WORKS, _Library, _report, _version
 from tests.unit.test_cover_taste_suggestions import _detail_suggestion
 
@@ -529,6 +542,10 @@ def test_taste_automatic_never_replaces_an_owner_cover_choice(
         assert _wakes(library, NOW + 21) == 0
         (selection,) = _selections(repository)
         assert selection["kind"] == "owner"
+        # Taste alone never offers Resume (K9).
+        assert repository._connection.execute(
+            "SELECT count(*) FROM cover_automatic_held"
+        ).fetchone() == (0,)
         # Only the owner's own answer waits to be written.
         assert all(
             json.loads(document)["actor"] == "owner"
@@ -807,3 +824,173 @@ def test_an_owner_chosen_cover_is_never_judged_sentinel(tmp_path: Path) -> None:
         _version(library.repository, NOW + 2)
         library.repository._connection.commit()
         assert library.repository.cover_taste_judge_store().due(2, 64) == ()
+
+
+# K9: cover Resume, once the owner has taken a cover over from Automatic.
+
+
+def _cover_field(prepared: Any, service: CoverConsiderationService) -> dict[str, Any]:
+    detail = InspectCurrentReviewCase(prepared.repository, service).run(
+        prepared.review_case_id
+    )
+    return next(
+        row
+        for row in cast("list[dict[str, Any]]", detail["fields"])
+        if row["destination"] == "cover"
+    )
+
+
+def _keep_cover(prepared: Any, expected_selection_id: str | None) -> None:
+    """The owner keeps the current cover, over a switch when one is named."""
+    repository = prepared.repository
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(prepared.review_case_id))["case"]
+    )
+    proposal = next(row for row in case.proposals if row["destination"] == "cover")
+    document = repository.current_cover_consideration_document(prepared.review_case_id)
+    repository.record_human_decision(
+        HumanDecision.create(
+            case,
+            proposal_id=str(proposal["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination="cover",
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key="synthetic-owner-keeps-cover-0001",
+            occurred_at=11,
+        ),
+        cover_consideration_id=json.loads(document)["consideration_id"],
+        cover_confirmation={
+            "expected_selection_id": expected_selection_id,
+            "confirm_unverified_match": False,
+        },
+    )
+
+
+def _marks(prepared: Any) -> list[tuple[str, str]]:
+    return prepared.repository._connection.execute(
+        "SELECT review_case_id,consideration_id FROM cover_automatic_held"
+    ).fetchall()
+
+
+@pytest.mark.parametrize("over_switch", [True, False])
+def test_cover_resume_shows_only_where_the_stage_would_switch_but_for_the_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, over_switch: bool
+) -> None:
+    """Dry proof c's case: a Keep over a switch shows no Resume on the
+    deciding comparison, and does on a later one the stage would switch. A
+    cover kept in To decide, with no switch to keep over, never shows it."""
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD if over_switch else None,
+    )
+    with _prepared(tmp_path) as prepared:
+        service = _service(prepared)
+        selections = _selections(prepared.repository)
+        assert [row["kind"] for row in selections] == (
+            ["automatic"] if over_switch else []
+        )
+        _keep_cover(prepared, selections[0]["selection_id"] if selections else None)
+        assert _cover_field(prepared, service)["manual_hold"] is False
+        assert _marks(prepared) == []
+        monkeypatch.setattr(
+            cover_qualification_policy,
+            "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+            SYNTHETIC_MEASURED_RECORD,
+        )
+        service.update_policy(CoverPolicy(prefer_edition=True))
+        later = json.loads(_reprepare(service, prepared))
+        assert json.loads(later["policy_report_document"])["stage"]["outcome"] == (
+            "replace"
+        )
+        # The stage would switch it but for the owner, either way.
+        assert _marks(prepared) == [
+            (prepared.review_case_id, later["consideration_id"])
+        ]
+        assert [row["kind"] for row in _selections(prepared.repository)] == ["owner"]
+        assert _cover_field(prepared, service)["manual_hold"] is over_switch
+
+
+def test_cover_resume_hands_the_cover_back_to_automatic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the fresh checks complete and the hold clears, the owner's
+    pointer is released and the stage admits its switch in that one
+    transaction, with nothing left open after it."""
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with _prepared(tmp_path) as prepared:
+        repository = prepared.repository
+        service = _service(prepared)
+        (switch,) = _selections(repository)
+        _keep_cover(prepared, switch["selection_id"])
+        service.update_policy(CoverPolicy(prefer_edition=True))
+        later = json.loads(_reprepare(service, prepared))
+        token = repository.field_effect_manual_hold_token(
+            prepared.review_case_id, "cover"
+        )
+        assert token is not None
+        connection = repository._connection
+        considerations = repository._cover_considerations
+        admit = considerations._admit_automatic_cover
+        inside: list[bool] = []
+
+        def observed(document: str, occurred_at: int) -> None:
+            inside.append(connection.in_transaction)
+            admit(document, occurred_at)
+
+        monkeypatch.setattr(considerations, "_admit_automatic_cover", observed)
+        assert (
+            repository.clear_field_effect_manual_hold(
+                prepared.review_case_id, "cover", 20, token
+            )
+            is not None
+        )
+        assert inside == [True]
+        assert not connection.in_transaction
+        (selection,) = _selections(repository)
+        assert selection["kind"] == "automatic"
+        assert selection["consideration_id"] == later["consideration_id"]
+        assert _marks(prepared) == []
+        field = _cover_field(prepared, service)
+        assert field["manual_hold"] is False
+
+
+def test_a_later_comparison_with_no_switch_clears_the_mark(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with _prepared(tmp_path) as prepared:
+        service = _service(prepared)
+        (switch,) = _selections(prepared.repository)
+        _keep_cover(prepared, switch["selection_id"])
+        service.update_policy(CoverPolicy(prefer_edition=True))
+        _reprepare(service, prepared)
+        assert len(_marks(prepared)) == 1
+        # While a provider is still fetching, the stage admits nothing: the
+        # later comparison has no mark and no Resume.
+        service = _service(prepared, fetching=True)
+        service.update_policy(CoverPolicy(prefer_edition=False))
+        _reprepare(service, prepared)
+        assert _marks(prepared) == []
+        assert _cover_field(prepared, service)["manual_hold"] is False
+        # Clearing the hold now releases nothing: the owner's cover stays.
+        token = prepared.repository.field_effect_manual_hold_token(
+            prepared.review_case_id, "cover"
+        )
+        assert (
+            prepared.repository.clear_field_effect_manual_hold(
+                prepared.review_case_id, "cover", 20, token
+            )
+            is not None
+        )
+        assert [row["kind"] for row in _selections(prepared.repository)] == ["owner"]

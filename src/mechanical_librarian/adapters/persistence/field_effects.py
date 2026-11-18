@@ -145,6 +145,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             [FieldEffectOperation, str, int], None
         ],
         current_cover_authority: Callable[[], tuple[str | None, str | None]],
+        resume_automatic_cover: Callable[[str, int], None] = lambda _case, _at: None,
     ) -> None:
         super().__init__(connection, binding)
         self._record_field_effect_event = record_field_effect_event
@@ -154,6 +155,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         self.field_effect_authority_source = field_effect_authority_source
         self._retire_stale_cover_consideration = retire_stale_cover_consideration
         self._current_cover_authority = current_cover_authority
+        self._resume_automatic_cover = resume_automatic_cover
 
     @local_operation
     def record_current_field_effect_no_change(
@@ -993,6 +995,10 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                             automatic[0],
                         ),
                     )
+            if updated == 1 and destination == "cover":
+                # Cover Resume (K9): the owner's cover goes back to Automatic
+                # in this transaction, which reads and writes only this store.
+                self._resume_automatic_cover(review_case_id, changed_at)
             transaction.commit()
             return context if updated == 1 else None
         except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:

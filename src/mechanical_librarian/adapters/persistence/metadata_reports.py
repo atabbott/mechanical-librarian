@@ -436,6 +436,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
+            resume_automatic_cover=(
+                lambda review_case_id, changed_at: (
+                    self._cover_considerations._resume_automatic_cover(
+                        review_case_id, changed_at
+                    )
+                )
+            ),
         )
         # Every injected callable resolves its target through this repository at
         # call time rather than capturing a bound method here.  Three review

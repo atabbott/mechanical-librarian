@@ -357,6 +357,9 @@ class CurrentReviewCaseSnapshot:
     cover_history: tuple[dict[str, object], ...] = ()
     current_cover_selection: tuple[str, str, str | None] | None = None
     current_cover_automatic_decision_id: str | None = None
+    # The stage would switch the current comparison's cover but for the
+    # owner's hold or choice, so cover Resume may show (#1372 PR 5, K9).
+    cover_automatic_held: bool = False
     resolved_policy_document: str | None = None
     description_advice: dict[str, object] | None = None
     # F59's owner controls: each latest owner decision's write state, and what
@@ -1990,12 +1993,18 @@ class InspectCurrentReviewCase:
         # Held only while the hold row is in force: Return to automatic
         # releases it on the deciding case too (#1358). A pinned field offers
         # Unpin instead, so its hold is not one Resume can release.
+        # A cover offers Resume only where the stage would switch it but for
+        # the owner, never for a cover chosen in To decide (K9).
         manual_hold = (
             pin_state is None
             and destination in snapshot.held_destinations
             and (
-                carried_hold
-                or (decision is not None and automatic_decision is not None)
+                snapshot.cover_automatic_held
+                if destination == "cover"
+                else (
+                    carried_hold
+                    or (decision is not None and automatic_decision is not None)
+                )
             )
         )
         return self._field_document(

@@ -193,6 +193,11 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         if basis is None:
             return
         value, policy_report, case, report, lineage, resolved, generation = basis
+        # Derived again on each admission of the current comparison (K9).
+        self._connection.execute(
+            "DELETE FROM cover_automatic_held WHERE review_case_id=?",
+            (case.review_case_id,),
+        )
         stage = cast("dict[str, object]", policy_report["stage"])
         reference = policy_report.get("recommended_candidate_reference")
         candidate = next(
@@ -251,19 +256,19 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 keeps_original = cover_pre_value(report) is not None
             except FieldEffectError:
                 return
+            if replacement_record(qualification_identity) is None or (
+                keeps_original and not retained_cover_store_has_room(self._connection)
+            ):
+                return
             if (
-                replacement_record(qualification_identity) is None
-                or (
-                    keeps_original
-                    and not retained_cover_store_has_room(self._connection)
-                )
-                or self._connection.execute(
+                self._connection.execute(
                     "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
                     "AND destination='cover' AND active=1",
                     (case.review_case_id,),
                 ).fetchone()
                 is not None
             ):
+                self._held_for_owner(case.review_case_id, value, occurred_at)
                 return
         else:
             return
@@ -280,7 +285,65 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             if stage["outcome"] == "replace"
             else None,
             occurred_at,
+            on_owner=lambda: self._held_for_owner(
+                case.review_case_id, value, occurred_at
+            ),
         )
+
+    def _held_for_owner(
+        self, review_case_id: str, value: Mapping[str, Any], occurred_at: int
+    ) -> None:
+        """Mark a comparison the stage would switch but for the owner (K9).
+
+        Only the stage marks one: every admission gate passed except the
+        owner's hold or choice, so Resume may show for this cover. Taste alone
+        never does, because the judge never looks at an owner's cover.
+        """
+        self._connection.execute(
+            "INSERT INTO cover_automatic_held(review_case_id,consideration_id,"
+            "occurred_at) VALUES(?,?,?) ON CONFLICT(review_case_id) DO UPDATE SET "
+            "consideration_id=excluded.consideration_id,occurred_at=excluded.occurred_at",
+            (review_case_id, value["consideration_id"], occurred_at),
+        )
+
+    def _resume_automatic_cover(self, review_case_id: str, changed_at: int) -> None:
+        """Hand a held cover back to Automatic as its hold clears (K9).
+
+        Inside the hold-clearing transaction: when the case's current
+        comparison is one the stage would switch but for the owner, the
+        owner's selection pointer for the work is released and admission
+        runs again for that comparison. Without the mark, a cover chosen in
+        To decide, nothing changes.
+        """
+        row = self._connection.execute(
+            "SELECT consideration.document,report.document,report.document_digest,"
+            "consideration.document_digest,consideration.report_id,"
+            "lineage.connection_name,lineage.library_name,lineage.item_id "
+            "FROM cover_automatic_held held "
+            "JOIN current_cover_considerations current "
+            "ON current.review_case_id=held.review_case_id "
+            "AND current.consideration_id=held.consideration_id "
+            "JOIN cover_considerations consideration "
+            "ON consideration.consideration_id=held.consideration_id "
+            "JOIN metadata_reports report ON report.report_id=consideration.report_id "
+            "JOIN current_review_case_lineages lineage "
+            "ON lineage.review_case_id=held.review_case_id "
+            "WHERE held.review_case_id=?",
+            (review_case_id,),
+        ).fetchone()
+        self._connection.execute(
+            "DELETE FROM cover_automatic_held WHERE review_case_id=?",
+            (review_case_id,),
+        )
+        if row is None:
+            return
+        self._connection.execute(
+            "DELETE FROM current_cover_selection_authorities WHERE connection_name=? "
+            "AND library_name=? AND item_id=? AND selection_id IN (SELECT selection_id "
+            "FROM cover_selection_authorities WHERE kind='owner')",
+            row[5:],
+        )
+        self._admit_automatic_cover(expand_cover_consideration(*row[:5]), changed_at)
 
     def _admit_taste_automatic_cover(
         self, consideration_id: str, verdict_id: str, occurred_at: int
@@ -582,6 +645,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         *,
         verdict_id: str | None = None,
         taste_version: int | None = None,
+        on_owner: Callable[[], None] = lambda: None,
     ) -> bool:
         """Record one automatic selection over the case's proposal alternative.
 
@@ -632,13 +696,14 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             lineage,
         ).fetchone()
         prior = None if current is None else json.loads(current[0])
-        if prior is not None and (
-            prior["kind"] == "owner"
-            or (
-                qualification_identity not in RECORDED_IDENTITIES
-                and not strictly_better_cover_rank(
-                    candidate["deterministic_rank_key"], prior.get("rank_key")
-                )
+        if prior is not None and prior["kind"] == "owner":
+            on_owner()
+            return False
+        if (
+            prior is not None
+            and qualification_identity not in RECORDED_IDENTITIES
+            and not strictly_better_cover_rank(
+                candidate["deterministic_rank_key"], prior.get("rank_key")
             )
         ):
             return False
@@ -999,6 +1064,10 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             )
             self._record_cover_consideration_event(
                 consideration_id, review_case_id, preparation_kind, occurred_at
+            )
+            self._connection.execute(
+                "DELETE FROM cover_automatic_held WHERE review_case_id=?",
+                (review_case_id,),
             )
             self._retire_unwritten_automatic_cover(
                 review_case_id, value.get("policy_reference"), occurred_at
