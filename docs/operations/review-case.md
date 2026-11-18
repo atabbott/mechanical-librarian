@@ -59,6 +59,11 @@ bound report. Any other ProposalSet is `incompatible` and publishes nothing.
 Admission makes no decision, plan or write.
 
 A newer report makes an earlier case historical without rewriting it.
+A re-preparation whose report identifies no book retires the work's case: the
+work shows as unmatched, its case is no longer current, and once the book is
+identified again its case opens afresh. A scheduled search that identifies
+nothing keeps the case instead
+([ADR-0102](../architecture/decisions/0102-search-every-finished-book-again.md)).
 When preparation admits or retires a work past a case, a write still waiting
 for Audiobookshelf to come back on that case closes, and a cover's restore
 point is removed.

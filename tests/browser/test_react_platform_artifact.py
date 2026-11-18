@@ -7,6 +7,7 @@ import sys
 import time
 from collections.abc import Callable
 from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -1424,9 +1425,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             ).all():
                 expect(evidence).to_be_enabled()
                 expect(evidence).to_have_attribute("aria-expanded", "false")
-            assert (1 if retry else 0) == comparison.get_by_role(
-                "button", name="Retry visual review"
-            ).count()
+            # Retry is offered once the reviewer-access read answers, which can
+            # come after the comparison it belongs to.
+            expect(
+                comparison.get_by_role("button", name="Retry visual review")
+            ).to_have_count(1 if retry else 0)
             if case_id in {"case-1", "case-2"}:
                 capture_visual_proof(
                     "library-completed" if case_id == "case-1" else "library-failed"
@@ -4731,18 +4734,33 @@ globalThis.__restore = () => {
 # Every layout shift that moved a node of the masthead outside its status slot.
 # What the masthead's own size moves below it is read from its box instead,
 # since a route's content also moves with the reads it waits on.
+# `__settleShifts` waits for two frames the page has rendered, not animation
+# frames, which the test's clock fakes as timers that run ahead of a busy
+# renderer, then takes the shifts they reported, which the observer would
+# otherwise deliver later.
 _SHIFTS_OUTSIDE_STATUS = """
 (() => {
   globalThis.__shifts = [];
-  new PerformanceObserver((list) => {
-    for (const entry of list.getEntries()) {
+  const record = (entries) => {
+    for (const entry of entries) {
       const moved = entry.sources.map((source) => source.node)
         .map((node) => node?.nodeType === 1 ? node : node?.parentElement)
         .filter((node) => node?.closest('.masthead') && !node.closest('.shell-status'));
       if (moved.length)
         globalThis.__shifts.push([entry.value, moved.map((node) => node.className || node.tagName)]);
     }
-  }).observe({type: 'layout-shift', buffered: true});
+  };
+  const observer = new PerformanceObserver((list) => record(list.getEntries()));
+  observer.observe({type: 'layout-shift', buffered: true});
+  const rendered = () => new Promise((done) => {
+    const watch = new ResizeObserver(() => { watch.disconnect(); done(); });
+    watch.observe(document.documentElement);
+  });
+  globalThis.__settleShifts = async () => {
+    await rendered();
+    await rendered();
+    record(observer.takeRecords());
+  };
 })();
 """
 
@@ -4857,7 +4875,10 @@ def test_masthead_holds_still_while_status_changes() -> None:
                 states = {"loading": page.evaluate(_MASTHEAD_GEOMETRY)}
                 clipped: list[str] = []
                 # The route has painted; from here only status changes.
-                page.evaluate("() => { globalThis.__shifts.length = 0 }")
+                page.evaluate(
+                    "async () => { await globalThis.__settleShifts();"
+                    " globalThis.__shifts.length = 0 }"
+                )
                 state["preparation"] = "absent"
                 while held:
                     preparation(held.pop())
@@ -4867,6 +4888,10 @@ def test_masthead_holds_still_while_status_changes() -> None:
                 # a second before it shows, which the clock runs through.
                 for label in list(_PREPARATION_STATES)[1:]:
                     state["preparation"] = label
+                    # The owner is present: without input for ten seconds of
+                    # the page's clock, which its jumps soon reach, a tab
+                    # defers preparation updates as idle.
+                    page.keyboard.press("Shift")
                     page.evaluate("() => globalThis.__publish('preparation')")
                     # The icon speaks the label, then any source sentences
                     # the cohort's lookups add (#1494).
@@ -4901,7 +4926,10 @@ def test_masthead_holds_still_while_status_changes() -> None:
                 }
                 if text == "100%":
                     assert len(boxes) == 1, f"{where}: the masthead moved {states}"
-                    shifts = page.evaluate("() => globalThis.__shifts")
+                    shifts = page.evaluate(
+                        "async () => { await globalThis.__settleShifts();"
+                        " return globalThis.__shifts }"
+                    )
                     assert shifts == [], f"{where}: {shifts}"
                 elif len(boxes) > 1:
                     assert all(state["static"] for state in states.values()), (
@@ -4925,7 +4953,8 @@ _MASTHEAD_COVER = """() => {
   const sticky = [...document.querySelectorAll('main *')]
     .filter((node) => getComputedStyle(node).position === 'sticky'
       && getComputedStyle(node).top !== 'auto' && node.getClientRects().length > 0)
-    .map((node) => [String(node.className).slice(0, 40), Math.round(node.getBoundingClientRect().top)]);
+    .map((node) => [String(node.className).slice(0, 40), Math.round(node.getBoundingClientRect().top),
+      Math.round(parseFloat(getComputedStyle(node).top))]);
   return {
     static: document.documentElement.dataset.masthead === 'static',
     position: getComputedStyle(masthead).position,
@@ -4990,8 +5019,20 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                         )
                         assert top <= 176, f"{where}: content starts at {top}"
                     page.locator(".skip-link").focus()
+                    reached_content = False
                     for _ in range(18):
                         page.keyboard.press("Tab")
+                        # A page with fewer stops wraps back to the skip link,
+                        # which is drawn over the masthead by design. It must
+                        # have reached the page's content first.
+                        if page.evaluate(
+                            "() => document.activeElement?.classList.contains('skip-link')"
+                        ):
+                            assert reached_content, f"{where}: wrapped before content"
+                            break
+                        reached_content = reached_content or page.evaluate(
+                            "() => Boolean(document.activeElement?.closest('main'))"
+                        )
                         cover = page.evaluate(_MASTHEAD_COVER)
                         if cover["focus"] is not None:
                             assert cover["focus"][2] >= cover["bottom"] - 1, (
@@ -5003,10 +5044,15 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                     page.evaluate(_TWO_FRAMES)
                     cover = page.evaluate(_MASTHEAD_COVER)
                     if not cover["static"]:
+                        # Each region's sticky offset clears the masthead, and
+                        # so does every region held at it. A region its own
+                        # container is carrying away, at that container's end,
+                        # scrolls on under the masthead like any content.
                         under = [
                             region
                             for region in cover["sticky"]
-                            if region[1] < cover["bottom"] - 1
+                            if region[2] < cover["bottom"] - 1
+                            or region[2] - 1 <= region[1] < cover["bottom"] - 1
                         ]
                         assert under == [], f"{where}: under the masthead {cover}"
         # The popover opens inside the viewport, however the status wraps or
@@ -5999,6 +6045,62 @@ def test_policy_preview_actions_stay_inside_the_editor_at_200_percent_text() -> 
         assert failures == [], "\n".join(failures)
 
 
+def test_policy_tray_beside_the_rail_keeps_its_actions_inside_the_editor() -> None:
+    """The tray sits under the chapters only, beside the index, so it takes
+    each arrangement by the width it gets: at 100% and 150% text, from just
+    over 1024px to 1440px, its steps and actions in preview and activation
+    stay inside the editor, each action can be pressed, and the index holds all
+    it has at the top of the page (#1960)."""
+    styles = {"100%": "", "150%": "html { font-size: 150% !important; }"}
+    text = "100%"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        failures = []
+        for text in styles:
+            for width, height in (
+                (1025, 768),
+                (1100, 800),
+                (1200, 800),
+                (1280, 800),
+                (1440, 900),
+            ):
+                where = f"{text} text at {width}x{height}"
+                page.set_viewport_size({"width": width, "height": height})
+                page.goto("https://react-platform.invalid/policy?section=identity")
+                rail = page.locator(".cm-policy-sidebar").evaluate(
+                    "node => [node.clientHeight, node.scrollHeight,"
+                    " innerHeight - node.getBoundingClientRect().top]"
+                )
+                if rail[0] < min(rail[1], rail[2]) - 1:
+                    failures.append(f"{where}: the index shows {rail[0]} of {rail[1]}")
+                page.get_by_role("region", name="Title and subtitle").get_by_role(
+                    "button", name="Ignore"
+                ).click()
+                page.get_by_role("button", name="Validate and preview").click()
+                review = page.get_by_role("button", name="Review activation")
+                review.wait_for()
+                page.evaluate(_TWO_FRAMES)
+                failures += [
+                    f"{where}, preview: {failure}"
+                    for failure in page.evaluate(_PAST_THE_EDITOR)
+                    + page.evaluate(_ESCAPED_CONTROLS, ".cm-finish-tray button")
+                ]
+                review.click(timeout=5000)
+                page.get_by_role("button", name="Activate policy").wait_for()
+                page.evaluate(_TWO_FRAMES)
+                failures += [
+                    f"{where}, activation: {failure}"
+                    for failure in page.evaluate(_PAST_THE_EDITOR)
+                    + page.evaluate(_ESCAPED_CONTROLS, ".cm-finish-tray button")
+                ]
+        assert failures == [], "\n".join(failures)
+
+
 def test_activity_paging_keeps_the_focused_control_in_view() -> None:
     """Moving to the next Activity page or changing the page size from the
     keyboard keeps the control that has focus in view, clear of the masthead,
@@ -6483,3 +6585,82 @@ def test_library_progress_largest_counts_wrap_inside_the_run_box() -> None:
             " <= document.documentElement.clientWidth"
         )
         page.close()
+
+
+# The focus ring a focused control draws (its outline width plus offset past its
+# border box), and the sides of it that an ancestor which clips its overflow
+# cuts off. Read while the control has keyboard focus.
+_RING_CUT = """node => {
+  const own = getComputedStyle(node)
+  const ring = parseFloat(own.outlineWidth) + parseFloat(own.outlineOffset)
+  const box = node.getBoundingClientRect()
+  const cut = new Set()
+  for (let up = node.parentElement; up; up = up.parentElement) {
+    const style = getComputedStyle(up)
+    if (style.overflowX === 'visible' && style.overflowY === 'visible') continue
+    const edge = up.getBoundingClientRect()
+    const left = edge.left + up.clientLeft
+    const top = edge.top + up.clientTop
+    if (box.left - ring < left - 0.5) cut.add('left')
+    if (box.right + ring > left + up.clientWidth + 0.5) cut.add('right')
+    if (box.top - ring < top - 0.5) cut.add('top')
+    if (box.bottom + ring > top + up.clientHeight + 0.5) cut.add('bottom')
+  }
+  return own.outlineStyle === 'none' ? ['no ring'] : [...cut]
+}"""
+
+
+def test_focus_rings_on_the_work_screen_are_never_cut_off() -> None:
+    """A field tab, a value card and the controls at a phone's page edge show
+    their whole focus ring. The tabs' strip scrolls sideways and clips above
+    and below, the value panel clips its rounded corners, and on a phone the
+    frameless workspace no longer clips at the page's edge."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        for width, height, text in (
+            (1440, 900, ""),
+            (390, 844, ""),
+            (320, 844, "html { font-size: 200% !important; }"),
+        ):
+            # Reduced motion, so the strip scrolls a focused tab in at once
+            # rather than smoothly, and each ring is measured where it settles.
+            page = browser.new_page(
+                viewport={"width": width, "height": height},
+                locale="en-US",
+                reduced_motion="reduce",
+            )
+            _serve_cohort(page, stylesheet=partial(str, text))
+            page.goto(
+                "https://react-platform.invalid/library?lens=all&preview=case-1&field=title"
+            )
+            tabs = page.locator(".field-filmstrip button")
+            expect(tabs.first).to_be_visible()
+            # Tab along the strip from its first tab: each one the keyboard
+            # reaches is scrolled fully into the strip, ring and all.
+            page.keyboard.press("Shift")
+            tabs.first.focus()
+            for index in range(tabs.count()):
+                if index:
+                    page.keyboard.press("Tab")
+                tab = tabs.nth(index)
+                expect(tab).to_be_focused()
+                assert tab.evaluate(_RING_CUT) == [], (width, tab.inner_text())
+            choice = page.locator(".metadata-choice > .choice-select").first
+            choice.focus()
+            # The ring goes round the whole card, inside its edge, so it never
+            # crosses the radio or the source line under the value.
+            card = page.locator(".metadata-choice:has(> .choice-select:focus-visible)")
+            expect(card).to_have_count(1)
+            assert (
+                choice.evaluate("node => getComputedStyle(node).outlineStyle") == "none"
+            )
+            assert card.evaluate(_RING_CUT) == [], width
+            for name in ("Show more source values",) + (
+                ("Back to works",) if width < 761 else ()
+            ):
+                control = page.get_by_role("button", name=name, exact=True)
+                control.focus()
+                assert control.evaluate(_RING_CUT) == [], (width, name)
+            page.close()
