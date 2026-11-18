@@ -1,5 +1,6 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useId, useLayoutEffect, useRef } from 'react'
 import type { SyntheticEvent } from 'react'
 
 import { refusalCopy, uncertainWriteOutcome } from '../api/http'
@@ -18,6 +19,8 @@ import { useReviewContext } from '../router'
 import { KeyBadge } from './ReviewKeys'
 import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
+import { tasteSectionHeadings } from '../tasteSections'
+import type { TasteSection } from '../tasteSections'
 import { SettingsPathText } from '../components/SettingsPathText'
 
 import {
@@ -942,6 +945,11 @@ function LibraryCoverChoicesContent({
   const consideration = field.coverConsideration
   const keeps = field.decisionActions.includes('keep_current')
   const accepts = field.decisionActions.includes('accept')
+  const trackSection = useSuggestedCardInView(
+    calibration || !field.coverTasteSuggestion
+      ? null
+      : `${reviewCaseId} ${field.coverTasteSuggestion.verdict_id}`,
+  )
   if (consideration?.current !== true)
     return <PrepareCoverComparison disabled={disabled} cover={cover} failure={failure} />
   const prepared = coverComparisonShape(
@@ -951,6 +959,7 @@ function LibraryCoverChoicesContent({
   )
   const shape = calibration ? calibrationShape(prepared, reviewCaseId) : prepared
   const { candidates, expanded, incumbent, alternatives } = shape
+
   const coverContexts = consideration.choiceContexts
   const currentContext = coverContexts[0]
   const cardState = coverCardState({
@@ -1003,6 +1012,7 @@ function LibraryCoverChoicesContent({
     consideration.reviewerStatus === 'failed' || consideration.reviewerStatus === 'unavailable'
   return (
     <section
+      ref={trackSection}
       className={`library-cover-comparison${expanded ? ' is-expanded' : ''}`}
       aria-label="Choose a cover"
     >
@@ -1082,26 +1092,70 @@ function LibraryCoverChoicesContent({
     </section>
   )
 }
+// On a narrow screen the cards scroll sideways, so a work that opens with a
+// suggestion scrolls its card row to show the Suggested card, once per work
+// and suggestion: never the page, never down, and never again after the
+// owner has scrolled the row (#1372 PR 4b).
+function useSuggestedCardInView(key: string | null) {
+  const section = useRef<HTMLElement>(null)
+  const done = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    const root = section.current
+    if (key === null || done.current === key || !root) return
+    done.current = key
+    if (!root.querySelector('.cover-taste-why')) return
+    const card = root.querySelector<HTMLElement>('.library-cover-card.is-recommended')
+    const track = card?.closest<HTMLElement>('.library-cover-layout, .library-cover-pinned')
+    if (!card || !track || track.scrollWidth <= track.clientWidth) return
+    const shown = card.closest<HTMLElement>('.cover-choice') ?? card
+    const start = shown.getBoundingClientRect().left - track.getBoundingClientRect().left
+    const end = start + shown.getBoundingClientRect().width
+    if (start >= 0 && end <= track.clientWidth) return
+    track.scrollLeft = Math.max(0, track.scrollLeft + start)
+  })
+  return section
+}
+
 // Why the taste judge suggests the marked card: its strength and the rules
 // it cited, each the stored rule shown as text (#1372 PR 4b).
 function SuggestedBecause({ suggestion }: { suggestion: CoverTasteSuggestion }) {
   const navigate = useNavigate()
+  const id = useId()
+  // The cited rules under their Taste profile sections, in its order, each
+  // keeping the order the suggestion model cited it in.
+  const groups = (Object.keys(tasteSectionHeadings) as TasteSection[])
+    .map((section) => ({
+      section,
+      rules: suggestion.rules.filter((rule) => rule.section === section),
+    }))
+    .filter((group) => group.rules.length > 0)
   return (
-    <aside className="cover-taste-why" aria-labelledby="cover-taste-why">
+    <aside className="cover-taste-why" aria-labelledby={`${id}-why`}>
       <header>
-        <strong id="cover-taste-why">Suggested because</strong>
+        <strong id={`${id}-why`}>Suggested because</strong>
         <StatusPill tone={suggestion.strength === 'strong' ? 'accent' : 'neutral'}>
           {suggestion.strength === 'strong' ? 'Strong' : 'Likely'}
         </StatusPill>
+        {/* Rules from an earlier version can read differently now (Q4). */}
+        {suggestion.version === suggestion.version_in_use ? null : (
+          <StatusPill tone="neutral">{`From version ${String(suggestion.version)}`}</StatusPill>
+        )}
       </header>
-      <ol>
-        {suggestion.rules.map((rule) => (
-          <li key={rule.number}>
-            <span className="cover-taste-rule">{String(rule.number)}</span>
-            <span>{rule.text}</span>
-          </li>
-        ))}
-      </ol>
+      {groups.map((group) => (
+        <div key={group.section} className="cover-taste-group">
+          <span id={`${id}-${group.section}`} className="cover-taste-section">
+            {tasteSectionHeadings[group.section]}
+          </span>
+          <ol aria-labelledby={`${id}-${group.section}`}>
+            {group.rules.map((rule) => (
+              <li key={rule.number}>
+                <span className="cover-taste-rule">{String(rule.number)}</span>
+                <span>{rule.text}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
       <button
         type="button"
         className="cover-taste-edit"

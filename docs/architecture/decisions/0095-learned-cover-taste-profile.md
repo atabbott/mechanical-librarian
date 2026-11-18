@@ -412,8 +412,10 @@ PR 4b a `choose` verdict is a suggestion the owner sees.
   Strong at a confidence of 90 or more, otherwise Likely (Q11, Q12). Strength
   orders To decide and never changes Attention (Q14). A verdict under an older
   version is shown with that version's rule texts until the work is judged
-  again (Q4). Try again asks again for the failed fields under the version in
-  use, as a requested attempt the next wake takes up.
+  again (Q4); the suggestion carries each rule's section and the version in
+  use. Try again asks again for the failed fields under the version in use
+  that could still be judged, as a requested attempt the next wake takes up;
+  a repeat with nothing failed succeeds, so a lost answer is never stale.
 - **Confirmations.** The verdict in force for an owner selection is the
   newest at or before it. A selection under a `choose` counts toward
   "Confirmed {n} of {m}", and toward n when it took that candidate; one total

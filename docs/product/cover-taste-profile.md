@@ -77,18 +77,24 @@ suggestions. A suggestion is Strong when the model is at least 90% confident.
 A work you already answered is never suggested.
 
 The open work marks the suggested card "Suggested" and, below the covers,
-"Suggested because" names Strong or Likely and lists the rules it rests on,
-by number and text, with Edit taste profile, which opens this tab. Nothing is
-added above the covers. Choosing the suggested card is the ordinary choice;
-keeping the current cover or choosing another is a correction, which the
-next rebuild reads first. After an edit, a suggestion keeps the rules of the
-version it was made under until the work is compared again.
+"Suggested because" names Strong or Likely beside its heading and lists the
+rules it rests on, by number and text, under this tab's section headings, so
+a rule from "What you avoid" reads as one, with Edit taste profile, which
+opens this tab. Nothing is added above the covers. Where the covers scroll
+sideways, the row opens scrolled to the suggested card. Choosing it is the
+ordinary choice; keeping the current cover or choosing another is a
+correction, which the next rebuild reads first. After an edit, a suggestion
+keeps the rules of the version it was made under, marked "From version {n}",
+until the work is compared again. A work you have open stays open when a
+suggestion moves it between tabs.
 
 Under the build's state, the tab says when suggestions wait: "Set up the
 suggestion model in Settings." with no model, the daily limit or an
-unconfirmed charge with the local time they resume, and "{n} works could not
-be checked against your taste profile." with Try again, which compares them
-again. At most 5,000 suggestions are asked for a day by default
+unconfirmed charge with the local time they resume, and "The suggestion model
+could not check {n} works against your taste profile." with Try again, which
+compares them again and says "The suggestion model will check {n} works
+again.". During a stop, the line says when Try again returns instead. A work
+counts only while it could still be compared. At most 5,000 suggestions are asked for a day by default
 ([configuration](../reference/configuration.md#taste-profile)). Under the
 version, "Confirmed {n} of {m} suggestions" counts the suggested works you
 answered and how many took the suggestion.

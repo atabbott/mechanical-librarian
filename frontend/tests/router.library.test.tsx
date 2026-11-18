@@ -7734,9 +7734,10 @@ describe('Library route', () => {
             coverTasteSuggestion: {
               verdict_id: `taste_verdict_${'a'.repeat(32)}`,
               version: 2,
+              version_in_use: 2,
               candidate_reference: `cover_transport_ref_${'a'.repeat(64)}`,
               strength: 'likely',
-              rules: [{ number: 1, text: 'Prefer drawn covers.' }],
+              rules: [{ number: 1, section: 'drawn_to', text: 'Prefer drawn covers.' }],
             },
           },
         ],
@@ -7749,6 +7750,7 @@ describe('Library route', () => {
     const box = within(comparison).getByRole('complementary', { name: 'Suggested because' })
     expect(card.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(within(box).getByText('Likely')).toBeVisible()
+    expect(within(box).getByRole('list', { name: 'What you’re drawn to' })).toBeVisible()
     expect(within(box).getByRole('listitem')).toHaveTextContent('1Prefer drawn covers.')
   })
 

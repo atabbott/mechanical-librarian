@@ -1745,12 +1745,9 @@ def test_every_calibration_pick_counts_toward_the_taste_profile(
     tmp_path: Path,
 ) -> None:
     """A pick is the work's ordinary decision, and both kinds count (S2)."""
-    from mechanical_librarian.adapters.persistence.cover_taste import (
-        SQLiteCoverTasteRepository,
-    )
 
     with _library(tmp_path, ("item-1", "item-2")) as library:
-        taste = SQLiteCoverTasteRepository(library.repository._connection)
+        taste = library.repository.cover_taste_store()
         first, second = _calibrated(library)
         with _client(library) as (client, headers):
             accept = _post_cover_decision(
@@ -1775,14 +1772,11 @@ def test_a_work_with_no_cover_at_all_is_offered_and_its_pick_counts(
     tmp_path: Path,
 ) -> None:
     """With no current cover there is no keep to offer, and an accept counts (S2)."""
-    from mechanical_librarian.adapters.persistence.cover_taste import (
-        SQLiteCoverTasteRepository,
-    )
 
     with _library(
         tmp_path, readable_current=False, target_state=TargetFieldState.EMPTY
     ) as library:
-        taste = SQLiteCoverTasteRepository(library.repository._connection)
+        taste = library.repository.cover_taste_store()
         assert _calibrated(library) == ["item-1"]
         (item,) = cast(dict[str, Any], cover_calibration(library.repository))["items"]
         assert (item["cover"], item["unreadable_cover"]) == (None, False)

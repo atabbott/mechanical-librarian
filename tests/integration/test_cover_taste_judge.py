@@ -355,7 +355,10 @@ def test_a_suggestion_is_listed_shown_confirmed_and_learned_from(
             suggestion = cast("dict[str, object]", cover["cover_taste_suggestion"])
             assert suggestion["candidate_reference"] == reference
             assert (suggestion["version"], suggestion["strength"]) == (1, "likely")
-            assert suggestion["rules"] == [{"number": 1, "text": "Calm colour."}]
+            assert suggestion["rules"] == [
+                {"number": 1, "section": "drawn_to", "text": "Calm colour."}
+            ]
+            assert suggestion["version_in_use"] == 1
             taste = http.get("/api/v1/covers/taste").json()
             assert taste["judge"]["configured"] is True
             assert taste["judge"]["failed"] == 0

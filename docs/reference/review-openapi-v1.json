@@ -5687,6 +5687,16 @@
             "title": "Number",
             "type": "integer"
           },
+          "section": {
+            "enum": [
+              "drawn_to",
+              "avoid",
+              "trade_offs",
+              "keep_or_switch"
+            ],
+            "title": "Section",
+            "type": "string"
+          },
           "text": {
             "maxLength": 400,
             "minLength": 1,
@@ -5696,6 +5706,7 @@
         },
         "required": [
           "number",
+          "section",
           "text"
         ],
         "title": "_CoverTasteReason",
@@ -5755,11 +5766,17 @@
             "minimum": 1.0,
             "title": "Version",
             "type": "integer"
+          },
+          "version_in_use": {
+            "minimum": 1.0,
+            "title": "Version In Use",
+            "type": "integer"
           }
         },
         "required": [
           "verdict_id",
           "version",
+          "version_in_use",
           "candidate_reference",
           "strength",
           "rules"
@@ -16299,7 +16316,7 @@
     },
     "/api/v1/covers/taste/suggestions/retry": {
       "post": {
-        "description": "Try again for the works whose check against the version in use\nfailed; `stale` when that version changed or none failed.",
+        "description": "Try again for the works whose check against the version in use\nfailed; `stale` only when that version is no longer in use, so a\nrepeat whose first answer was lost succeeds.",
         "operationId": "retry_taste_judge_api_v1_covers_taste_suggestions_retry_post",
         "parameters": [
           {

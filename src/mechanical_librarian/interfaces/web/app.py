@@ -905,6 +905,8 @@ class _CoverPolicyReport(_StoredDocumentCopy):
 
 class _CoverTasteReason(_ClosedModel):
     number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
+    # The rule's section, so an avoided look reads as one (#1372 PR 4b).
+    section: TasteSection
     # The rule as the verdict's profile version stored it, shown as text.
     text: StrictStr = Field(min_length=1, max_length=MAX_TASTE_RULE_CODE_POINTS)
 
@@ -913,7 +915,10 @@ class _CoverTasteSuggestion(_ClosedModel):
     """The cover the taste judge suggests and the rules it cited (J8)."""
 
     verdict_id: StrictStr = Field(pattern=r"^taste_verdict_[0-9a-f]{32}$")
+    # The profile version the verdict was made under, and the one in use: a
+    # suggestion from an older version is marked as such (Q4).
     version: StrictInt = Field(ge=1)
+    version_in_use: StrictInt = Field(ge=1)
     candidate_reference: StrictStr = Field(min_length=1, max_length=512)
     strength: Literal["strong", "likely"]
     rules: list[_CoverTasteReason] = Field(min_length=1, max_length=3)
@@ -5469,7 +5474,8 @@ def _register_taste_routes(
         x_csrf_token: str = Header(),
     ) -> _TasteProfileResponse:
         """Try again for the works whose check against the version in use
-        failed; `stale` when that version changed or none failed."""
+        failed; `stale` only when that version is no longer in use, so a
+        repeat whose first answer was lost succeeds."""
         _require_session(application, ml_session, x_csrf_token)
         try:
             application.retry_taste_judge(request.version)

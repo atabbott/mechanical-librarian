@@ -743,15 +743,21 @@ function useCoverQueue(tab: CoverTab, inList: boolean, setNotice: (notice: strin
   // A decided book stays where it was when the list is read again, after a
   // library update or a full resync, even once its tab no longer holds it.
   const [retained, setRetained] = useState<readonly Retained[]>([])
-  const works = withRetained(
-    pages.data?.pages.flatMap((page) => page.items) ?? [],
-    retained.filter((row) => row.tab === tab),
-  )
+  // The open book is held the same way: a re-read that moves it out of the
+  // tab, as a suggestion arriving moves a book from Kept to To decide, leaves
+  // it open and where it was until the owner moves on (#1372 PR 4b).
+  const [held, setHeld] = useState<(Retained & { listed: boolean }) | null>(null)
+  const selectedId = search.cover
+  const keep =
+    held !== null && held.tab === tab && held.work.review_case_id === selectedId ? held : null
+  const works = withRetained(pages.data?.pages.flatMap((page) => page.items) ?? [], [
+    ...retained.filter((row) => row.tab === tab),
+    ...(keep?.listed ? [keep] : []),
+  ])
   const counts =
     (liveCounts?.tab === tab && liveCounts.pageAt === pages.dataUpdatedAt
       ? liveCounts.counts
       : undefined) ?? pages.data?.pages.at(-1)?.counts
-  const selectedId = search.cover
   const listed = works.find((work) => work.review_case_id === selectedId)
   // A linked book past the loaded pages is read on its own.
   const linked = useQuery({
@@ -762,7 +768,20 @@ function useCoverQueue(tab: CoverTab, inList: boolean, setNotice: (notice: strin
     staleTime: 15_000,
     retry: false,
   })
-  const selected = listed ?? (linked.isSuccess ? linked.data.items[0] : undefined)
+  const selected = listed ?? (linked.isSuccess ? linked.data.items[0] : undefined) ?? keep?.work
+  if (
+    selected !== undefined &&
+    selected.review_case_id === selectedId &&
+    (held?.work !== selected || held.tab !== tab)
+  ) {
+    const at = works.indexOf(selected)
+    setHeld({
+      tab,
+      work: selected,
+      after: at > 0 ? (works[at - 1]?.review_case_id ?? null) : null,
+      listed: at >= 0,
+    })
+  }
   const select = (id: string | undefined, replace = false) =>
     void navigate({
       replace,
@@ -849,7 +868,14 @@ function useCoverQueue(tab: CoverTab, inList: boolean, setNotice: (notice: strin
   // A selection the tab no longer holds is dropped, so a phone never shows
   // neither the list nor a book.
   useEffect(() => {
-    if (inList && selectedId && !listed && linked.isSuccess && linked.data.items.length === 0)
+    if (
+      inList &&
+      selectedId &&
+      !listed &&
+      !keep &&
+      linked.isSuccess &&
+      linked.data.items.length === 0
+    )
       select(undefined, true)
   })
   // On a wide screen To decide and Kept open their first undecided book

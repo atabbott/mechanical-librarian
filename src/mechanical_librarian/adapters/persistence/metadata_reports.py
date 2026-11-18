@@ -396,7 +396,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
         )
         self._review_scans = SQLiteReviewScanRepository(connection)
-        self._cover_taste = SQLiteCoverTasteRepository(connection)
+        self._cover_taste = SQLiteCoverTasteRepository(
+            connection, self._judge_cover_read
+        )
         self._cover_taste_judge = SQLiteCoverTasteJudgeRepository(
             connection, self._judge_cover_read
         )

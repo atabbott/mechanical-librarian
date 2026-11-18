@@ -15,6 +15,7 @@ from typing import cast
 import pytest
 
 from mechanical_librarian.application.contained_reviewer_contract import canonical_json
+from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.cover_taste_build import (
     CoverTasteBuildService,
     CoverTasteRetryError,
@@ -33,7 +34,13 @@ from mechanical_librarian.application.review_web import (
 from mechanical_librarian.domain.cover_taste import TASTE_JUDGE_SETTLE_SECONDS
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.cover_taste import judge_profile
-from tests.unit.test_cover_taste_judge import WORKS, _Library, _library, _version
+from tests.unit.test_cover_taste_judge import (
+    WORKS,
+    _Library,
+    _library,
+    _report,
+    _version,
+)
 
 NOW = 1_000_000
 # item -> (decision, confidence, rules); a missing item's check fails.
@@ -176,6 +183,28 @@ def _other(library: _Library, item: str, *not_these: str) -> str:
     )
 
 
+def _judgements(library: _Library, item: str = "keep_many") -> list[tuple[object, ...]]:
+    return [
+        tuple(row)
+        for row in library.repository._connection.execute(
+            "SELECT trigger,state,failure FROM cover_taste_judgements "
+            "WHERE consideration_id=? ORDER BY rowid",
+            (library.considerations[item]["consideration_id"],),
+        )
+    ]
+
+
+def _detail_suggestion(library: _Library, item: str) -> object:
+    detail = InspectCurrentReviewCase(library.repository, library.service).run(
+        library.cases[item]
+    )
+    return next(
+        row
+        for row in cast("list[dict[str, object]]", detail["fields"])
+        if row["destination"] == "cover"
+    )["cover_taste_suggestion"]
+
+
 def _decide(library: _Library) -> list[tuple[str, object, object]]:
     page = cover_page(library.repository, "decide", None)
     return [
@@ -264,8 +293,48 @@ def test_keep_and_abstain_change_nothing_and_an_answer_removes_a_suggestion(
         },
     )
     assert [item for item, _g, _s in _decide(library)] == ["wrong_shape", "below_floor"]
+    assert _detail_suggestion(library, "wrong_shape") is not None
+    assert _detail_suggestion(library, "below_floor") is not None
     _choose(library, "wrong_shape", _suggested(library, "wrong_shape"), NOW + 10)
     assert [item for item, _g, _s in _decide(library)] == ["below_floor"]
+    # Once the owner answers, the work's detail drops the suggestion (B3);
+    # keeping the current cover answers it too.
+    assert _detail_suggestion(library, "wrong_shape") is None
+    _choose(library, "below_floor", None, NOW + 20)
+    assert _detail_suggestion(library, "below_floor") is None
+
+
+def test_a_new_comparison_removes_a_suggestion(library, tmp_path: Path) -> None:
+    """B1: a verdict belongs to the comparison it judged; once the work has a
+    new comparison it suggests nothing until that one is judged."""
+    _judge(library, {"keep": ("choose", 95, [1])})
+    assert _decide(library)[0][0] == "keep"
+    assert _detail_suggestion(library, "keep") is not None
+    case_id = library.cases["keep"]
+    before = _pointer(library, case_id)
+    library.service.update_policy(CoverPolicy(prefer_edition=True))
+    case = ReviewCase.create_from_data(
+        json.loads(library.repository.get_review_case(case_id))["case"]
+    )
+    library.service.ensure(
+        case_id,
+        _report(tmp_path, "keep", WORKS["keep"]).to_json(),
+        next(row for row in case.proposals if row["destination"] == "cover"),
+    )
+    assert _pointer(library, case_id) != before
+    assert "keep" not in [item for item, _g, _s in _decide(library)]
+    assert _detail_suggestion(library, "keep") is None
+
+
+def _pointer(library: _Library, case_id: str) -> str:
+    return cast(
+        str,
+        library.repository._connection.execute(
+            "SELECT consideration_id FROM current_cover_considerations "
+            "WHERE review_case_id=?",
+            (case_id,),
+        ).fetchone()[0],
+    )
 
 
 def test_a_verdict_under_an_older_version_still_shows_with_its_rules(library) -> None:
@@ -279,14 +348,14 @@ def test_a_verdict_under_an_older_version_still_shows_with_its_rules(library) ->
         for row in cast("list[dict[str, object]]", detail["fields"])
         if row["destination"] == "cover"
     )
-    rules = {rule.number: rule.text for rule in judge_profile().rules}
+    rules = {rule.number: rule for rule in judge_profile().rules}
     suggestion = cast("dict[str, object]", field["cover_taste_suggestion"])
     assert suggestion["candidate_reference"] == _suggested(library, "keep")
     assert suggestion["strength"] == "strong"
-    assert suggestion["version"] == 1
+    assert (suggestion["version"], suggestion["version_in_use"]) == (1, 1)
     assert suggestion["rules"] == [
-        {"number": 3, "text": rules[3]},
-        {"number": 1, "text": rules[1]},
+        {"number": 3, "section": rules[3].section, "text": rules[3].text},
+        {"number": 1, "section": rules[1].section, "text": rules[1].text},
     ]
     connection = library.repository._connection
     # An owner edit replaces rule 3's text in version 2.
@@ -308,7 +377,8 @@ def test_a_verdict_under_an_older_version_still_shows_with_its_rules(library) ->
         for row in cast("list[dict[str, object]]", detail["fields"])
         if row["destination"] == "cover"
     )
-    assert field["cover_taste_suggestion"] == suggestion
+    # The older version's rules, now beside the version in use (Q4).
+    assert field["cover_taste_suggestion"] == {**suggestion, "version_in_use": 2}
     assert [item for item, _g, _s in _decide(library)][0] == "keep"
     # Judged again under version 2: the stored keep ends the suggestion.
     _judge(
@@ -336,8 +406,12 @@ def test_the_judge_state_and_try_again(library) -> None:
         "retry_after": None,
         "failed": 0,
     }
+    # With nothing failed, Try again under the version in use asks for
+    # nothing and still succeeds; under any other version it is stale.
+    taste.retry_judge(1)
     with pytest.raises(CoverTasteRetryError):
-        taste.retry_judge(1)
+        taste.retry_judge(2)
+    assert _judgements(library) == []
     answered: Plan = {
         "keep": ("choose", 95, [1]),
         "wrong_shape": ("abstain", 10, [1]),
@@ -348,19 +422,36 @@ def test_the_judge_state_and_try_again(library) -> None:
     # A failed pair is not sent again on its own.
     _judge(library, {"keep_many": ("choose", 95, [1])}, NOW + 1)
     assert cast("dict[str, object]", taste.read()["judge"])["failed"] == 1
+    # A failed field counts only while it could be sent again: held for the
+    # owner it is neither counted nor asked for.
+    connection = library.repository._connection
+    connection.execute(
+        "INSERT INTO field_effect_manual_holds VALUES(?,?,?,?,?)",
+        (library.cases["keep_many"], "cover", 1, 60, "{}"),
+    )
+    assert cast("dict[str, object]", taste.read()["judge"])["failed"] == 0
+    taste.retry_judge(1)
+    assert len(_judgements(library)) == 1
+    connection.execute("DELETE FROM field_effect_manual_holds")
+    assert cast("dict[str, object]", taste.read()["judge"])["failed"] == 1
     with pytest.raises(CoverTasteRetryError):
         taste.retry_judge(2)
     taste.retry_judge(1)
     assert cast("dict[str, object]", taste.read()["judge"])["failed"] == 0
-    with pytest.raises(CoverTasteRetryError):
-        taste.retry_judge(1)
+    # A repeat, as after a lost answer, succeeds and asks for nothing more.
+    taste.retry_judge(1)
+    assert [row[:2] for row in _judgements(library)] == [
+        ("cadence", "failed"),
+        ("retry", "requested"),
+    ]
+    # A restart before it is sent leaves the waiting Try again waiting.
+    library.repository.cover_taste_judge_store().interrupt_recovered(NOW + 1)
+    assert [row[:2] for row in _judgements(library)] == [
+        ("cadence", "failed"),
+        ("retry", "requested"),
+    ]
     _judge(library, {"keep_many": ("choose", 95, [1])}, NOW + 2)
-    states = library.repository._connection.execute(
-        "SELECT trigger,state,failure FROM cover_taste_judgements WHERE consideration_id=? "
-        "ORDER BY rowid",
-        (library.considerations["keep_many"]["consideration_id"],),
-    ).fetchall()
-    assert states == [
+    assert _judgements(library) == [
         ("cadence", "failed", "invalid_output"),
         ("retry", "succeeded", None),
     ]

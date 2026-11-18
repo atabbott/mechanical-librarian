@@ -654,12 +654,15 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             (destination, value) for destination, (_, value) in sorted(earlier.items())
         )
 
-    def _cover_taste_verdict(self, review_case_id: str) -> tuple[str, str, str] | None:
+    def _cover_taste_verdict(
+        self, review_case_id: str
+    ) -> tuple[str, str, str, int] | None:
         """The newest verdict on the case's current comparison, with its
         profile version, when it chose a cover and no owner selection, nor an
         automatic one on that comparison, has answered the work (J8)."""
         row = self._connection.execute(
-            "SELECT verdict.verdict_id,version.document,verdict.document "
+            "SELECT verdict.verdict_id,version.document,verdict.document,"
+            "(SELECT max(newest.version) FROM cover_taste_profile_versions newest) "
             "FROM current_review_case_lineages lineage "
             "JOIN current_cover_considerations pointer "
             "ON pointer.review_case_id=lineage.review_case_id "
@@ -683,9 +686,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         ).fetchone()
         if row is None:
             return None
-        if any(type(value) is not str for value in row):
+        if any(type(value) is not str for value in row[:3]) or type(row[3]) is not int:
             raise MetadataReportError("review case snapshot is unavailable")
-        return cast("tuple[str, str, str]", tuple(row))
+        return cast("tuple[str, str, str, int]", tuple(row))
 
     def _current_cover_automatic_decision_id(self, review_case_id: str) -> str | None:
         row = self._connection.execute(

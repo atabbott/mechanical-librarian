@@ -475,10 +475,10 @@ INVENTORY: dict[tuple[str, str], Row] = {
         (409, "stale"): "pre-commit",
         (503, "unavailable"): "post-commit",
     },
-    # `retry_taste_judge`: no service, a version that is not the one in use,
-    # or nothing failed under it refuses before any retry is inserted; the
-    # profile read that follows the committed retries can answer
-    # `unavailable` (#1372 PR 4b).
+    # `retry_taste_judge`: no service, or a version that is not the one in
+    # use, refuses before any retry is inserted; a repeat with nothing failed
+    # succeeds; the profile read that follows the committed retries can
+    # answer `unavailable` (#1372 PR 4b).
     ("POST", "/api/v1/covers/taste/suggestions/retry"): {
         (409, "stale"): "pre-commit",
         (503, "unavailable"): "post-commit",

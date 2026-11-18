@@ -353,7 +353,7 @@ class CurrentReviewCaseSnapshot:
     # The newest verdict on the current comparison when it chose a cover and
     # nothing has answered the work since: its id, its profile version's
     # document and its own (#1372 PR 4b, J8).
-    cover_taste_verdict: tuple[str, str, str] | None = None
+    cover_taste_verdict: tuple[str, str, str, int] | None = None
     cover_history: tuple[dict[str, object], ...] = ()
     current_cover_selection: tuple[str, str, str | None] | None = None
     current_cover_automatic_decision_id: str | None = None
@@ -1601,31 +1601,38 @@ def _pin_control(
 
 
 def _cover_taste_suggestion(
-    verdict: tuple[str, str, str] | None,
+    verdict: tuple[str, str, str, int] | None,
 ) -> dict[str, object] | None:
-    """The suggested cover with its cited rules as that verdict's profile
-    version holds them, shown until the field is judged again (J8, Q4)."""
+    """The suggested cover with its cited rules, each with its section, as
+    that verdict's profile version holds them, shown until the field is
+    judged again, and the version in use beside it (J8, Q4)."""
     if verdict is None:
         return None
-    verdict_id, profile_document, verdict_document = verdict
+    verdict_id, profile_document, verdict_document, in_use = verdict
     value = json.loads(verdict_document)
-    texts = {
-        rule.number: rule.text
+    rules = {
+        rule.number: rule
         for rule in TasteProfile.from_rules(json.loads(profile_document)["rules"]).rules
     }
     if value["decision"] != "choose" or any(
-        number not in texts for number in value["rules"]
+        number not in rules for number in value["rules"]
     ):
         raise ReviewWebError("unavailable")
     return {
         "verdict_id": verdict_id,
         "version": value["version"],
+        "version_in_use": in_use,
         "candidate_reference": value["candidate_reference"],
         "strength": "strong"
         if value["confidence"] >= TASTE_STRONG_CONFIDENCE
         else "likely",
         "rules": [
-            {"number": number, "text": texts[number]} for number in value["rules"]
+            {
+                "number": number,
+                "section": rules[number].section,
+                "text": rules[number].text,
+            }
+            for number in value["rules"]
         ],
     }
 

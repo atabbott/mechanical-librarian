@@ -186,7 +186,7 @@ class CoverTasteBuildService:
         """Ask again for each work whose check failed under `version`, the
         version in use; each counts against the judge's ceiling when sent."""
         if not self._repository().request_judge_retry(version, self._clock()):
-            raise CoverTasteRetryError("no taste judgement is retryable")
+            raise CoverTasteRetryError("taste profile version is not in use")
 
     def retry(self, build_id: str) -> None:
         """Request the owner's Try again; it counts against the ceiling when sent."""

@@ -61,8 +61,8 @@ _LATEST_VERDICT_AT_SQL = (
 # under a fault-free keep of a readable cover beside another art (a) or a
 # fault the stage would cure among at least two arts (b). J6: never attempted
 # under this version, and not one whose newest verdict kept the current cover
-# or abstained.
-_DUE_FROM_SQL = (
+# or abstained. `_ELIGIBLE_FROM_SQL` is all but J6's attempt condition.
+_ELIGIBLE_FROM_SQL = (
     "FROM current_review_packages ml "
     "JOIN current_cover_considerations pointer "
     "ON pointer.review_case_id=ml.review_case_id "
@@ -105,6 +105,10 @@ _DUE_FROM_SQL = (
     "AND NOT EXISTS (SELECT 1 FROM field_effect_manual_holds held "
     "WHERE held.review_case_id=ml.review_case_id AND held.destination='cover' "
     "AND held.active=1) "
+    f"AND COALESCE({_LATEST_VERDICT_SQL},'choose')='choose' "
+)
+_DUE_FROM_SQL = (
+    _ELIGIBLE_FROM_SQL +
     # Never attempted under this version, or its newest attempt is the
     # owner's Try again, still waiting (#1372 PR 4b).
     "AND (NOT EXISTS (SELECT 1 FROM cover_taste_judgements attempted "
@@ -112,29 +116,18 @@ _DUE_FROM_SQL = (
     "AND attempted.version=?) OR EXISTS (SELECT 1 FROM cover_taste_judgements "
     "retried WHERE retried.consideration_id=consideration.consideration_id "
     "AND retried.version=? AND retried.state='requested')) "
-    f"AND COALESCE({_LATEST_VERDICT_SQL},'choose')='choose' "
 )
-# The current comparisons whose newest attempt under a version failed, and
-# that no owner has answered or decided since: what Try again sends again.
+# The fields still eligible for a check whose newest attempt under a version
+# failed: what Try again sends again, so it never clears a count it does not
+# send (#1372 PR 4b).
 _FAILED_SQL = (
-    "SELECT attempted.judgement_id FROM current_review_packages ml "
-    "JOIN current_cover_considerations pointer "
-    "ON pointer.review_case_id=ml.review_case_id "
-    "JOIN cover_taste_judgements attempted "
-    "ON attempted.consideration_id=pointer.consideration_id "
-    "WHERE attempted.version=? AND attempted.state='failed' "
-    "AND attempted.rowid=(SELECT newest.rowid FROM cover_taste_judgements newest "
-    "WHERE newest.consideration_id=pointer.consideration_id "
-    "AND newest.version=attempted.version ORDER BY newest.rowid DESC LIMIT 1) "
-    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities answered "
-    "ON answered.selection_id=current.selection_id "
-    "WHERE current.connection_name=ml.connection_name "
-    "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
-    "AND (answered.kind='owner' "
-    "OR answered.consideration_id=pointer.consideration_id)) "
-    "AND NOT EXISTS (SELECT 1 FROM human_decisions decided "
-    "WHERE decided.review_case_id=ml.review_case_id AND decided.destination='cover')"
+    "SELECT judgement_id FROM cover_taste_judgements "
+    "WHERE state='failed' AND judgement_id IN (SELECT "
+    "(SELECT newest.judgement_id FROM cover_taste_judgements newest "
+    "WHERE newest.consideration_id=consideration.consideration_id "
+    "AND newest.version=? ORDER BY newest.rowid DESC LIMIT 1) "
+    + _ELIGIBLE_FROM_SQL
+    + ")"
 )
 # The verdict in force at a selection: the newest stored for its comparison
 # no later than the selection (J9).
@@ -271,8 +264,27 @@ def _day(now: int) -> int:
     return now // _DAY_SECONDS
 
 
+def _failed(
+    connection: sqlite3.Connection,
+    authority: tuple[str | None, str | None],
+    version: int,
+) -> list[str]:
+    policy, replay = authority
+    if policy is None or replay is None:
+        return []
+    return [
+        row[0]
+        for row in connection.execute(
+            _FAILED_SQL, (version, policy, replay, TASTE_MIN_ARTS, TASTE_MIN_ARTS)
+        )
+    ]
+
+
 def taste_judge_facts(
-    connection: sqlite3.Connection, now: int, daily_limit: int
+    connection: sqlite3.Connection,
+    authority: tuple[str | None, str | None],
+    now: int,
+    daily_limit: int,
 ) -> dict[str, object]:
     """What Covers → Taste profile says of the judge: today's stop and when it
     lifts, the works whose check failed under the version in use, and the
@@ -299,26 +311,27 @@ def taste_judge_facts(
         "retry_after": None if stopped is None else (_day(now) + 1) * _DAY_SECONDS,
         "failed": 0
         if version is None
-        else len(connection.execute(_FAILED_SQL, (version,)).fetchall()),
+        else len(_failed(connection, authority, version)),
         "confirmed": {"confirmed": confirmed, "suggested": suggested},
     }
 
 
 def request_taste_judge_retries(
-    connection: sqlite3.Connection, version: int, now: int
+    connection: sqlite3.Connection,
+    authority: tuple[str | None, str | None],
+    version: int,
+    now: int,
 ) -> bool:
-    """Ask again for each failed check under `version`, the newest version;
-    False when it is not the newest or nothing failed. The caller holds the
-    transaction; the retries are counted only when sent (J7)."""
+    """Ask again for each failed check under `version`; False only when it is
+    not the version in use. With nothing failed, such as a repeat whose first
+    answer was lost, it asks for nothing and still succeeds. The caller holds
+    the transaction; the retries are counted only when sent (J7)."""
     newest = connection.execute(
         "SELECT max(version) FROM cover_taste_profile_versions"
     ).fetchone()[0]
-    failed = (
-        []
-        if newest != version
-        else [row[0] for row in connection.execute(_FAILED_SQL, (version,))]
-    )
-    for judgement_id in failed:
+    if newest != version:
+        return False
+    for judgement_id in _failed(connection, authority, version):
         connection.execute(
             "INSERT INTO cover_taste_judgements SELECT ?,consideration_id,version,"
             "'retry',judgement_id,'requested',NULL,NULL,?,?,? "
@@ -331,7 +344,7 @@ def request_taste_judge_retries(
                 judgement_id,
             ),
         )
-    return bool(failed)
+    return True
 
 
 class SQLiteCoverTasteJudgeRepository(ConnectionScoped):

@@ -24,6 +24,7 @@ import { picksSaved, tasteQuery } from '../coverPicks'
 import { focusAfterRetry } from '../focusAfterRetry'
 import { useRequiredQuery as useQuery } from '../queryWork'
 import { routeFailureCopy } from '../routeFailure'
+import { tasteSectionHeadings } from '../tasteSections'
 import { useReviewContext } from '../router'
 
 // Covers → Taste profile (#1372): the profile the builder model wrote from the
@@ -33,12 +34,7 @@ import { useReviewContext } from '../router'
 // rendered as React text.
 
 type Rule = NonNullable<TasteProfile['profile']>['rules'][number]
-const sectionHeadings = {
-  drawn_to: 'What you’re drawn to',
-  avoid: 'What you avoid',
-  trade_offs: 'How you trade them off',
-  keep_or_switch: 'When to keep or switch',
-} satisfies Record<Rule['section'], string>
+const sectionHeadings = tasteSectionHeadings satisfies Record<Rule['section'], string>
 const lostCopy = 'No answer came back. Check whether the taste profile is being written.'
 
 const failureCopy = (
@@ -221,22 +217,41 @@ function BuildState({
   )
 }
 
+// A stop lifts at the start of a day, which reads as midnight, not a time
+// like 0:00 that could be the end of one (#1372 PR 4b).
+const clockOrMidnight = (seconds: number) => {
+  const clock = formatClock(seconds)
+  return /^0?0[:.]00$/u.test(clock) ? 'midnight' : clock
+}
+const works = (count: number) => (count === 1 ? '1 work' : `${count.toLocaleString('en-GB')} works`)
+
 // The suggestion model's state, said under the build's (#1372 PR 4b): not set
 // up, stopped for the day, and the works whose check failed with Try again.
+// Try again's answer is said in a status line that stays mounted, and focus
+// moves to it; any refusal re-reads the profile, so the count shown is the
+// server's, and only a version no longer in use reads as stale.
 function JudgeState({ view }: { view: TasteProfile }) {
   const { http } = useReviewContext()
   const cache = useQueryClient()
-  const region = useRef<HTMLDivElement>(null)
+  const status = useRef<HTMLParagraphElement>(null)
+  const [asked, setAsked] = useState<number | null>(null)
   const { judge, profile } = view
   const retry = useMutation({
-    mutationFn: (version: number) => http.retryTasteJudge(version),
+    mutationFn: ({ version }: { version: number; count: number }) => http.retryTasteJudge(version),
     retry: false,
-    onSuccess: (next) => {
+    onMutate: () => {
+      setAsked(null)
+    },
+    onSuccess: (next, { count }) => {
       cache.setQueryData(['covers', 'taste'], next)
+      setAsked(count)
       focusAfterRetry(
-        () => region.current,
-        () => region.current,
+        () => status.current,
+        () => status.current?.parentElement,
       )
+    },
+    onError: () => {
+      void cache.invalidateQueries({ queryKey: ['covers', 'taste'] })
     },
   })
   const waiting = useWaitsUntil(judge.retry_after)
@@ -253,7 +268,7 @@ function JudgeState({ view }: { view: TasteProfile }) {
         </p>
       </div>
     )
-  const at = formatClock(judge.retry_after ?? 0)
+  const at = clockOrMidnight(judge.retry_after ?? 0)
   const error = retry.error
   const stopped =
     judge.stopped === null || !waiting
@@ -261,17 +276,24 @@ function JudgeState({ view }: { view: TasteProfile }) {
       : judge.stopped === 'ceiling'
         ? `Mechanical Librarian has asked for ${judge.daily_limit.toLocaleString('en-GB')} suggestions today, the daily limit. Suggestions resume after ${at}.`
         : `OpenRouter did not confirm what the last request cost, so suggestions wait until ${at}.`
-  if (stopped === null && judge.failed === 0 && !error) return null
+  const confirming =
+    asked === null || judge.failed > 0 || error
+      ? ''
+      : `The suggestion model will check ${works(asked)} again.`
+  if (stopped === null && judge.failed === 0 && !error && confirming === '') return null
   return (
-    <div ref={region} tabIndex={-1} className="taste-build taste-judge">
+    <div className="taste-build taste-judge">
       {stopped === null ? null : <p>{stopped}</p>}
+      <p className="taste-judge-status" role="status" tabIndex={-1} ref={status}>
+        {confirming}
+      </p>
       {judge.failed === 0 && !error ? null : (
         <div className="taste-failure" role="alert">
           {judge.failed === 0 ? null : (
             <p>
-              {judge.failed === 1
-                ? '1 work could not be checked against your taste profile.'
-                : `${judge.failed.toLocaleString('en-GB')} works could not be checked against your taste profile.`}
+              {`The suggestion model could not check ${works(judge.failed)} against your taste profile.`}
+              {/* Try again is offered again once the stop lifts. */}
+              {stopped === null ? null : ` Try again after ${at}.`}
             </p>
           )}
           {judge.failed === 0 || stopped !== null ? null : (
@@ -279,7 +301,8 @@ function JudgeState({ view }: { view: TasteProfile }) {
               type="button"
               aria-disabled={retry.isPending || undefined}
               onClick={() => {
-                if (!retry.isPending) retry.mutate(profile.version)
+                if (!retry.isPending)
+                  retry.mutate({ version: profile.version, count: judge.failed })
               }}
             >
               Try again
@@ -288,10 +311,13 @@ function JudgeState({ view }: { view: TasteProfile }) {
           {error ? (
             <p>
               {uncertainWriteOutcome(error)
-                ? 'No answer came back. Check whether the works are being checked again.'
+                ? 'No answer came back. Check whether the suggestion model is checking the works again.'
                 : error instanceof ApiError && error.status === 409 && error.code === 'stale'
                   ? staleCopy
-                  : refusalCopy(error, 'The works were not checked again. Reload and try again.')}
+                  : refusalCopy(
+                      error,
+                      'The suggestion model did not check the works again. Reload and try again.',
+                    )}
             </p>
           ) : null}
         </div>

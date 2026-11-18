@@ -441,7 +441,7 @@ an outdated comparison shows the current one.
 
 ### Covers view
 
-Works and Covers, beside Library's title, switch its two views. Covers
+Works and Covers, beside Library's title, switch views. Covers
 groups every work with a case by what its cover asks of you, under four counted
 tabs. To decide lists suggested switches under Switch suggested, then open
 choices under Choose. Kept lists works keeping their current cover while you
@@ -452,12 +452,12 @@ Your choice, with the cover Audiobookshelf holds now.
 A suggested switch is a cover the measured cover rules would replace
 ([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md))
 but Current covers or the missing qualification keeps from switching itself,
-or one that your [taste profile](cover-taste-profile.md#suggestions) prefers.
-Its row's pill names the fault, and its work says why. To decide counts the
-works whose cover field is in Attention plus the suggested switches; Library's
-Needs attention counts only the first. A readable cover with no fault,
-confirmed or not, is kept without asking, under Kept, unless your taste profile
-suggests another cover. A held cover's row under
+or one your [taste profile](cover-taste-profile.md#suggestions) prefers.
+A rule's switch shows its fault in a pill; its work says why. To decide counts
+the works whose cover field is in Attention plus the suggested switches;
+Library's Needs attention counts only the first, and both follow each decision.
+A readable, fault-free cover, confirmed or not, is kept without asking under
+Kept unless your taste profile suggests another. A held cover's row under
 Choose names the hold in a pill. A current cover Audiobookshelf did not return
 is kept until the next scan. Keeping a current cover that could
 not be read lists it under Kept, and covers not shown leave out its own source.
@@ -472,7 +472,7 @@ the list. At 1024 or narrower the list comes first, and Back to works returns
 to it. One tap records your choice and opens the next work. Skip for now
 decides nothing. In All, a work opens below its row with Close, and a choice
 closes it. If a work's covers changed since the page loaded, Covers refuses
-the choice under its covers and offers Reload. An unconfirmed choice asks you
+the choice below its covers and offers Reload. An unconfirmed choice asks you
 there to check before choosing again.
 
 Switched lists automatic cover writes you have not answered since, newest

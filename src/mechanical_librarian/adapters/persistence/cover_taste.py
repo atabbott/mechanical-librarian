@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from typing import Literal, cast
 
 from mechanical_librarian.adapters.persistence.cover_taste_judge import (
@@ -152,7 +154,17 @@ def validate_cover_taste_versions(connection: sqlite3.Connection) -> None:
 
 class SQLiteCoverTasteRepository(ConnectionScoped):
     """Each update keeps `updated_at` from going back, so a wall clock that
-    steps backwards never fails a build's own write."""
+    steps backwards never fails a build's own write. `cover_read` yields the
+    live cover authority, so a failed check counts only while it could be
+    sent again (#1372 PR 4b)."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        cover_read: Callable[[], AbstractContextManager[tuple[str | None, str | None]]],
+    ) -> None:
+        super().__init__(connection)
+        self._cover_read = cover_read
 
     @local_operation
     def eligible_count(self) -> int:
@@ -557,18 +569,33 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
         sources = (_decision_source(*row) for row in rows)
         return tuple(source for source in sources if source is not None)
 
-    @local_operation
     def judge_read(self, now: int, daily_limit: int) -> dict[str, object]:
         """The judge's facts Covers → Taste profile shows (#1372 PR 4b)."""
-        return taste_judge_facts(self._connection, now, daily_limit)
+        with self._cover_read() as authority:
+            return self._judge_read(authority, now, daily_limit)
 
     @local_operation
+    def _judge_read(
+        self, authority: tuple[str | None, str | None], now: int, daily_limit: int
+    ) -> dict[str, object]:
+        return taste_judge_facts(self._connection, authority, now, daily_limit)
+
     def request_judge_retry(self, version: int, now: int) -> bool:
-        """The owner's Try again for every failed check under `version`."""
+        """The owner's Try again for every failed check under `version`;
+        False only when `version` is no longer in use."""
+        with self._cover_read() as authority:
+            return self._request_judge_retry(authority, version, now)
+
+    @local_operation
+    def _request_judge_retry(
+        self, authority: tuple[str | None, str | None], version: int, now: int
+    ) -> bool:
         transaction = self._transaction("taste_judge_retry")
         try:
             transaction.begin()
-            requested = request_taste_judge_retries(self._connection, version, now)
+            requested = request_taste_judge_retries(
+                self._connection, authority, version, now
+            )
             transaction.commit()
             return requested
         except BaseException:
