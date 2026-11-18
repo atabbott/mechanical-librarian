@@ -50,6 +50,8 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+    ProviderObservation,
+    ProviderStatus,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -1291,6 +1293,199 @@ def test_extraction_publication_rebinds_an_item_read_again_after_a_write(
     else:
         assert item == ("failed", "stale", report.report_id)
         assert (current.state, current.failed) == ("completed_with_failures", 1)
+    repository.close()
+
+
+def test_a_kept_scheduled_search_leaves_the_written_work_failed_for_retry(
+    state_directory: Path,
+) -> None:
+    """A search that keeps the old report does not count the work as checked.
+
+    The scheduled search had already fired when the policy changed, so the
+    activation left its extraction as it was. Its providers then failed, and
+    the search kept the work's previous report, which predates a verified
+    write and has no case. The item fails stale on that report, so a retry
+    reads the work again, rather than completing on a report the work does
+    not hold.
+    """
+    repository, report, _, case_id = _current_case_with_completed_work(
+        state_directory / "kept-search.sqlite"
+    )
+    repository._connection.execute(
+        "INSERT INTO field_effects(plan_id,decision_id,connection_name,"
+        "library_name,work_id,destination,state,attempt,updated_at,document) "
+        "SELECT ?,'human_decision_raw',?,?,?,'title','verified',1,24,"
+        "json_object('plan',json_object('target_fingerprint',"
+        "json_extract(document,'$.target_fingerprint'))) "
+        "FROM review_cases WHERE review_case_id=?",
+        (
+            "effect_plan_" + "e" * 64,
+            report.target.connection,
+            report.target.library,
+            report.target.item,
+            case_id,
+        ),
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='extraction',state='queued',"
+        "attempt=0,report_id=NULL,proposal_set_id=NULL,review_case_id=NULL,"
+        "outcome=NULL,research_not_before=20,updated_at=24"
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='processing',updated_at=24"
+    )
+    repository._connection.commit()
+    _activate_changed_policy(repository, report, 25)
+    search = repository.claim_review_pipeline_action(26)
+    assert search is not None and (search.stage, search.research) == (
+        "extraction",
+        True,
+    )
+    changed = _report("Changed title")
+    failed = MetadataReport.create(
+        target=changed.target,
+        file=changed.file,
+        local_claims=changed.local_claims,
+        local_reasons=changed.local_reasons,
+        providers=(
+            *changed.providers,
+            ProviderObservation(
+                "open_library_primary",
+                ProviderStatus.UNAVAILABLE,
+                authority="open_library",
+            ),
+        ),
+    )
+    repository.publish(
+        failed,
+        lambda: True,
+        report.report_id,
+        lambda value, exact: value.complete_review_extraction_publication(
+            search, exact.report_id, 27
+        ),
+    )
+
+    # The search kept the previous report, caseless.
+    assert repository._connection.execute(
+        "SELECT stage,state,report_id,review_case_id FROM review_preparation_work"
+    ).fetchone() == ("complete", "complete", report.report_id, None)
+    assert repository._connection.execute(
+        "SELECT state,failure_code,report_id FROM metadata_policy_transition_items"
+    ).fetchone() == ("failed", "stale", report.report_id)
+    transition = repository.metadata_policy_transition()
+    assert transition is not None and transition.failed == 1
+    repository.retry_metadata_policy_transition(transition.transition_id, 28)
+    assert repository._connection.execute(
+        "SELECT stage,state,report_id FROM review_preparation_work"
+    ).fetchone() == ("extraction", "queued", None)
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "item_state", ("pending", "complete"), ids=("pending", "complete")
+)
+def test_a_discovery_that_drops_a_work_releases_its_transition_items(
+    state_directory: Path, item_state: str
+) -> None:
+    """A work that left the library takes no transition item down with it.
+
+    Discovery deletes the work of an item it no longer lists, and every
+    transition item that names the work refers to it. A pending item fails
+    as one whose work is unavailable, so the transition can finish; a settled
+    one keeps its outcome. Both stop naming the deleted work.
+    """
+    repository, report, _, _ = _current_case_with_completed_work(
+        state_directory / f"dropped-{item_state}.sqlite"
+    )
+    _activate_changed_policy(repository, report, 30)
+    if item_state == "complete":
+        repository._connection.execute(
+            "UPDATE metadata_policy_transition_items SET state='complete'"
+        )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed'"
+    )
+    repository._connection.commit()
+    repository.request_review_scan(
+        report.target.connection, report.target.library, "lib-1", _PRODUCER, 40
+    )
+    discovery = repository.claim_review_pipeline_action(41)
+    assert discovery is not None and discovery.stage == "discovery"
+
+    repository.complete_review_discovery(discovery, 2, "b" * 64, (), 42)
+
+    assert repository._connection.execute(
+        "SELECT count(*) FROM review_preparation_work"
+    ).fetchone() == (0,)
+    assert repository._connection.execute(
+        "SELECT state,failure_code,work_id FROM metadata_policy_transition_items"
+    ).fetchone() == (
+        ("failed", "pipeline_unavailable", None)
+        if item_state == "pending"
+        else ("complete", None, None)
+    )
+    if item_state == "pending":
+        transition = repository.metadata_policy_transition()
+        assert transition is not None
+        assert (transition.state, transition.failed) == ("completed_with_failures", 1)
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "later_write", (False, True), ids=("written_last", "written_back")
+)
+def test_only_the_write_that_landed_last_dates_a_report(
+    state_directory: Path, later_write: bool
+) -> None:
+    """A report predates a write only when the item's latest write was planned on it.
+
+    `written_last`: the one verified write was planned on this report's case,
+    so the work is read again. `written_back`: a later write, planned on
+    another target, landed after it (the library went A to B and back to A),
+    so this report's target is what the library holds and the work restarts
+    from it, as an unwritten work does. Raw rows stand in for both writes and
+    their verified events: the predicate reads only the item, the state, the
+    planned target fingerprint and the order the verified events landed in.
+    """
+    repository, report, _, case_id = _current_case_with_completed_work(
+        state_directory / f"landed-{later_write}.sqlite"
+    )
+    (fingerprint,) = repository._connection.execute(
+        "SELECT json_extract(document,'$.target_fingerprint') FROM review_cases "
+        "WHERE review_case_id=?",
+        (case_id,),
+    ).fetchone()
+    writes = [("e", fingerprint)] + ([("f", "f" * 64)] if later_write else [])
+    for sequence, (digit, planned_on) in enumerate(writes, start=1):
+        plan_id = "effect_plan_" + digit * 64
+        repository._connection.execute(
+            "INSERT INTO field_effects(plan_id,decision_id,connection_name,"
+            "library_name,work_id,destination,state,attempt,updated_at,document) "
+            "VALUES(?,'human_decision_raw',?,?,?,'authors','verified',1,?,"
+            "json_object('plan',json_object('target_fingerprint',?)))",
+            (
+                plan_id,
+                report.target.connection,
+                report.target.library,
+                report.target.item,
+                23 + sequence,
+                planned_on,
+            ),
+        )
+        repository._connection.execute(
+            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,"
+            "occurred_at,document) VALUES(?,?,1,'verified',?,'{}')",
+            ("effect_event_" + digit * 64, plan_id, 23 + sequence),
+        )
+    repository._connection.commit()
+
+    _activate_changed_policy(repository, report, 30)
+
+    assert repository._connection.execute(
+        "SELECT stage,report_id FROM review_preparation_work"
+    ).fetchone() == (
+        ("proposal", report.report_id) if later_write else ("extraction", None)
+    )
     repository.close()
 
 

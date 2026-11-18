@@ -64,6 +64,7 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     reopen_preparation_projection,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _LANDED_LAST_SQL,
     _LATEST_VERIFIED_WRITE_SQL,
     _active_generation_automatic_sql,
 )
@@ -124,18 +125,22 @@ _COMPLETE_CURRENT_CASE_WORK_SQL = (
     "AND p.report_id=c.report_id AND p.proposal_set_id=c.proposal_set_id "
     "AND p.review_case_id=c.review_case_id AND p.checkpoint=c.checkpoint "
 )
-# Whether a report predates a write the product verified: a verified field
-# effect on the item was planned against a case built on that report's target.
-# Such a report no longer says what the library holds, so proposal refuses it
-# as stale, and a restart from it reads the work again instead (ADR-0034).
-# `field_effects.work_id` is the item id. In-flight writes do not count: one
-# landing after the restart is refused at proposal, as before.
+# Whether a report predates a write the product verified: the item's verified
+# write that landed last was planned against a case built on that report's
+# target. Such a report no longer says what the library holds, so proposal
+# refuses it as stale, and a restart from it reads the work again instead
+# (ADR-0034). Only the last write counts: after a later write puts a value
+# back, the earlier target is what the library holds again. In-flight writes
+# do not count: one landing after the restart is refused at proposal, as
+# before. `field_effects.work_id` is the item id.
 _PREDATES_VERIFIED_WRITE_SQL = (
-    "SELECT EXISTS(SELECT 1 FROM review_cases bound JOIN field_effects written "
-    "ON written.connection_name=? AND written.library_name=? AND written.work_id=? "
-    "AND written.state='verified' "
-    "AND json_extract(written.document,'$.plan.target_fingerprint')="
-    "json_extract(bound.document,'$.target_fingerprint') WHERE bound.report_id=?)"
+    "SELECT EXISTS(SELECT 1 FROM review_cases bound WHERE bound.report_id=? "
+    "AND json_extract(bound.document,'$.target_fingerprint')=("
+    "SELECT json_extract(effect.document,'$.plan.target_fingerprint') "
+    "FROM field_effects effect WHERE effect.connection_name=? "
+    "AND effect.library_name=? AND effect.work_id=? AND effect.state='verified' "
+    + _LANDED_LAST_SQL
+    + "))"
 )
 _COMPLETE_CASE_WORK_WHERE_SQL = (
     "WHERE w.state='complete' AND w.stage='complete' AND w.outcome='case' "
@@ -1115,6 +1120,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 (action.scan_id,),
             ).fetchall():
                 if item_id not in eligible_items:
+                    self._release_transition_items(work_id, completed_at)
                     self._connection.execute(
                         "DELETE FROM review_preparation_work WHERE work_id=?",
                         (work_id,),
@@ -1154,6 +1160,36 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             else:
                 raise
         raise interruption from None
+
+    def _release_transition_items(self, work_id: str, released_at: int) -> None:
+        """Let go of a work's policy-transition items before discovery deletes it.
+
+        The items name the work they were checked by. A pending one can no
+        longer complete, so it fails as one whose preparation work is
+        unavailable, which lets its transition finish and offers the retry;
+        a settled one keeps its outcome. Neither names the work any more, so
+        the work can go (a retry finds a later work by its item).
+        """
+        transitions = [
+            str(transition_id)
+            for (transition_id,) in self._connection.execute(
+                "SELECT transition_id FROM metadata_policy_transition_items "
+                "WHERE work_id=? AND state='pending'",
+                (work_id,),
+            ).fetchall()
+        ]
+        self._connection.execute(
+            "UPDATE metadata_policy_transition_items SET state='failed',"
+            "failure_code='pipeline_unavailable',updated_at=? "
+            "WHERE work_id=? AND state='pending'",
+            (released_at, work_id),
+        )
+        self._connection.execute(
+            "UPDATE metadata_policy_transition_items SET work_id=NULL WHERE work_id=?",
+            (work_id,),
+        )
+        for transition_id in transitions:
+            self._refresh_metadata_policy_transition(transition_id, released_at)
 
     def _reconcile_discovered_work(
         self,
@@ -1949,7 +1985,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         receipt and the pipeline's advance, settle the item here.
         """
         row = self._connection.execute(
-            "SELECT item.transition_id,item.report_id,work.state "
+            "SELECT item.transition_id,item.report_id,work.state,work.report_id "
             "FROM metadata_policy_transition_items item "
             "JOIN review_preparation_work work ON work.work_id=item.work_id "
             "WHERE item.work_id=? AND item.state='pending'",
@@ -1957,12 +1993,18 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         ).fetchone()
         if row is None:
             return
-        transition_id, item_report_id, work_state = row
-        rebound = report_id != item_report_id and self._predates_verified_write(
-            action.connection,
-            action.library,
-            cast(str, action.item_id),
-            item_report_id,
+        transition_id, item_report_id, work_state, work_report_id = row
+        # A scheduled search that kept the previous report leaves the work on
+        # it, not on the report just published: the item is not rebound.
+        rebound = (
+            report_id != item_report_id
+            and work_report_id == report_id
+            and self._predates_verified_write(
+                action.connection,
+                action.library,
+                cast(str, action.item_id),
+                item_report_id,
+            )
         )
         if report_id != item_report_id and not rebound:
             state, failure_code = "failed", "stale"
@@ -1994,7 +2036,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         self, connection: str, library: str, item_id: str, report_id: str
     ) -> bool:
         (predates,) = self._connection.execute(
-            _PREDATES_VERIFIED_WRITE_SQL, (connection, library, item_id, report_id)
+            _PREDATES_VERIFIED_WRITE_SQL, (report_id, connection, library, item_id)
         ).fetchone()
         return bool(predates)
 

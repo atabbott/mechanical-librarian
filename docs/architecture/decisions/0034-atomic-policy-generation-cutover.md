@@ -70,11 +70,12 @@ not: proposal and admission refuse it as stale, so the item failed and the
 work waited, caseless, for the next library scan. Leaving Automatic after an
 automatic write reached this every time.
 
-- **The predicate.** A report predates a verified write when a `verified`
-  field effect on its item was planned against a case built on that report's
-  target. A write still in flight does not count: one that lands after the
-  restart is refused at proposal, as before, and a retry then reads the work
-  again.
+- **The predicate.** A report predates a verified write when the item's
+  `verified` field effect that landed last was planned against a case built on
+  that report's target. Only the last one counts: once a later write puts a
+  value back, the earlier target is what the library holds again. A write
+  still in flight does not count: one that lands after the restart is refused
+  at proposal, as before, and a retry then reads the work again.
 - **Read again, not re-proposed.** Activation, leaving Automatic (which
   reactivates the unchanged policy), transition retry and the projection
   recovery that restarts a work from its current report restart such a work at
@@ -91,7 +92,11 @@ automatic write reached this every time.
   the item's, the item fails stale as before unless its report predates a
   verified write. Then it is rebound to the published report, stays pending
   and completes with the work, or completes at once when that publication
-  completes the work.
+  completes the work. A scheduled search that keeps the previous report leaves
+  the work on it, so its item fails stale and a retry reads the work again.
+- **A work that leaves the library.** Discovery deletes the work of an item it
+  no longer lists. Its transition items stop naming it first, and a pending
+  one fails as `pipeline_unavailable`, so the transition can finish.
 
 This reverses "no provider is reacquired solely for cutover" for these works
 only: a re-read with changed authors or title can ask providers again. A
