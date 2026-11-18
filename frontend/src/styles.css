@@ -1036,6 +1036,18 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
    previews on a lighter wash than chosen. Chosen fills the ring beside a 2px
    edge and the words "Your choice"; recommended keeps only its words (#1290). */
 .metadata-choice .choice-select > small { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
+/* A card label wraps between its words, never inside one. Where a card is too narrow for its longest label word beside the key badge, as with enlarged text on a phone, the label line takes its own row below the badge and the radio's column (#1523). */
+.metadata-choice .choice-select { container:choice / inline-size; }
+.metadata-choice .choice-select > small > * { overflow-wrap:normal; }
+@container choice (width < 8.75rem) {
+  .metadata-choice .choice-select > small { margin-inline-start:-32px; }
+}
+@media not all and (hover:none) and (pointer:coarse) {
+  @container choice (width < 8.75rem) {
+    :root[data-review-keys='on'] .library-page .metadata-choice .choice-select:has(> .review-key-badge):not(:disabled) > small:not(:empty) { margin-top:calc(2.3rem - 16px); padding-inline-end:0; }
+    :root[data-review-keys='on'] .library-page .metadata-choice .choice-select:has(> .review-key-badge):not(:disabled) > small:not(:empty) ~ strong > :is(.review-key-space, .review-key-break) { display:none; }
+  }
+}
 .metadata-choice .choice-select > strong::before { content:''; flex:none; box-sizing:border-box; width:20px; height:20px; border:2px solid var(--field-line); border-radius:50%; background:var(--surface-strong); }
 .metadata-choice:hover .choice-select:not(:disabled) > strong::before { border-color:var(--accent); box-shadow:inset 0 0 0 4px var(--surface-strong), inset 0 0 0 10px color-mix(in srgb, var(--accent) 30%, var(--surface-strong)); }
 .metadata-choice.is-selected, .metadata-choice.is-selected:hover { background:var(--accent-soft); box-shadow:inset 0 0 0 2px var(--accent); }

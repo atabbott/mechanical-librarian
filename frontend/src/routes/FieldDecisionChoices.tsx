@@ -306,6 +306,7 @@ export function MetadataChoice({
   const choiceName = beforeChange
     ? `Choose the ${longDescription ? 'description before your change' : `value before your change: ${value}`}`
     : `Choose ${kind} ${longDescription ? 'description' : `value: ${value}`}`
+  const eyebrow = `${label}${context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}`
   // A pin carried from an earlier case marks a card no decision of this case chose.
   const badge = selected
     ? `${automatic ? 'Automatic’s choice' : 'Your choice'}${pinned ? ' · Pinned' : ''}`
@@ -333,8 +334,7 @@ export function MetadataChoice({
       >
         <KeyBadge position={radio['aria-posinset']} />
         <small>
-          {label}
-          {context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}
+          {eyebrow ? <span className="choice-eyebrow">{eyebrow}</span> : null}
           {badge ? <b className="choice-chosen">{badge}</b> : null}
         </small>
         <strong id={valueId}>
