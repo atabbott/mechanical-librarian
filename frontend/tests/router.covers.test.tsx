@@ -4073,6 +4073,44 @@ describe('Switching by taste (#1372 part 5)', () => {
     expect(within(region).queryByRole('button', { name: 'Looks right' })).toBeNull()
   })
 
+  // The preview read is the owner's current selection: once it is read again
+  // after an answer, a change made in another tab shows here (Codex P2).
+  it('shows the answer the preview reads again, not only the one given here', async () => {
+    const user = userEvent.setup()
+    const http = switchingHttp({}, settingsWith({}), previewOf({ found: [switchItem('case-1')] }))
+    renderRoute(tasteRoute, http)
+    await user.click(
+      await within(await switchingGroup()).findByRole('radio', { name: 'Automatic' }),
+    )
+    const region = await screen.findByRole('region', { name: 'Found 1 switch in 40 covers.' })
+    http.getTastePreview.mockResolvedValue(
+      previewOf({ found: [switchItem('case-1', { answer: 'kept_current' })] }),
+    )
+    await user.click(within(region).getByRole('button', { name: 'Looks right' }))
+    expect(await within(region).findByText('Current cover kept')).toBeVisible()
+    expect(within(region).queryByText('New cover chosen')).toBeNull()
+  })
+
+  // A Reload whose read fails keeps the refusal and its Reload (Codex P2).
+  it('keeps a refused save and its Reload when the Reload read fails', async () => {
+    const user = userEvent.setup()
+    const http = switchingHttp({}, settingsWith({ taste_switching: 'automatic' }))
+    http.writeSettings.mockRejectedValueOnce(new ApiError(409, 'stale_revision'))
+    renderRoute(tasteRoute, http)
+    const group = await switchingGroup()
+    await user.click(await within(group).findByRole('radio', { name: 'Suggest only' }))
+    await within(group).findByRole('alert')
+    http.getSettings.mockRejectedValueOnce(new ApiError(500, 'unavailable'))
+    const reads = http.getSettings.mock.calls.length
+    const reload = within(group).getByRole('button', { name: 'Reload' })
+    await user.click(reload)
+    await waitFor(() => expect(http.getSettings.mock.calls.length).toBeGreaterThan(reads))
+    await waitFor(() => expect(within(group).getByRole('button', { name: 'Reload' })).toHaveFocus())
+    expect(within(group).getByRole('alert')).toHaveTextContent(
+      'Switching was not saved. Reload, then try again.',
+    )
+  })
+
   // Under Never, Suggest only is the setting in force whatever is stored
   // (Q10): Automatic is never shown chosen beside the Never line.
   it('shows Suggest only in force under Never even with Automatic stored', async () => {

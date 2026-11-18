@@ -144,7 +144,12 @@ export function useTasteSwitching(qualified: boolean) {
   // A Reload replaces itself: focus goes to the checked choice once the
   // settings are read again.
   const reload = (button: () => HTMLElement | null) => {
-    void settings.refetch().then(() => {
+    void settings.refetch().then((result) => {
+      // A Reload that fails keeps the refusal and its Reload in place.
+      if (result.isError) {
+        button()?.focus()
+        return
+      }
       setFailure(null)
       focusAfterRetry(checkedRadio, button)
     })

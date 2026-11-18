@@ -61,13 +61,17 @@ const switchReference = (item: Item) => {
 
 function PreviewItem({ item, onAnswered }: { item: Item; onAnswered: () => Promise<unknown> }) {
   const { http, queryClient } = useReviewContext()
-  const [answer, setAnswer] = useState<Answer | null>(null)
+  // The answer given here shows until the preview is read again; from then
+  // the read's own answer (the owner's current selection) is shown, so a
+  // change made in another tab is not hidden by this one.
+  const [given, setGiven] = useState<{ outcome: Answer; of: Item } | null>(null)
+  const answer = given?.outcome ?? null
   const [pending, setPending] = useState(false)
   const [failure, setFailure] = useState<Failure | null>(null)
   const state = useRef<HTMLParagraphElement>(null)
   const looksRight = useRef<HTMLButtonElement>(null)
   const staleReload = useRef<HTMLButtonElement>(null)
-  const shown = answer ?? item.answer
+  const shown = given !== null && given.of === item ? given.outcome : item.answer
   const recorded = useRef(false)
   useEffect(() => {
     if (answer !== null && !recorded.current) {
@@ -104,7 +108,7 @@ function PreviewItem({ item, onAnswered }: { item: Item; onAnswered: () => Promi
           ? coverCommand(field, 'accept', { kind: 'cover', value: candidate.artifactId })
           : coverCommand(field, 'keep_current', null),
       )
-      setAnswer(outcome)
+      setGiven({ outcome, of: item })
       void onAnswered()
     } catch (error) {
       setFailure(failureOf(error, field))
