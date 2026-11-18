@@ -104,15 +104,21 @@ describe('the real review API document', () => {
   it('decodes every non-empty JSON 2xx response and nothing else', () => {
     const methods = ['get', 'put', 'post', 'delete', 'patch'] as const
     const expected = new Set<string>()
-    // Every component a response schema reaches, through $ref or a discriminator mapping.
+    // Every component a response schema reaches, through $ref or a discriminator mapping;
+    // any other string that looks like a reference (a description, an enum value) is not one.
     const prefix = '#/components/schemas/'
     const schemas: Record<string, unknown> = document.components.schemas
     const reached = new Set<string>()
     const visit = (node: unknown): void => {
-      if (typeof node === 'string' && node.startsWith(prefix) && !reached.has(node)) {
-        reached.add(node)
-        visit(schemas[node.slice(prefix.length)])
-      } else if (node && typeof node === 'object') Object.values(node).forEach(visit)
+      if (!node || typeof node !== 'object') return
+      const schema = node as { $ref?: unknown; discriminator?: { mapping?: object } }
+      for (const ref of [schema.$ref, ...Object.values(schema.discriminator?.mapping ?? {})]) {
+        if (typeof ref === 'string' && ref.startsWith(prefix) && !reached.has(ref)) {
+          reached.add(ref)
+          visit(schemas[ref.slice(prefix.length)])
+        }
+      }
+      Object.values(node).forEach(visit)
     }
     for (const [template, item] of Object.entries(document.paths)) {
       for (const method of methods) {

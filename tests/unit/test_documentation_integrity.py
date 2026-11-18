@@ -472,8 +472,10 @@ def _changelog(corpus: Path, text: str) -> None:
         "- Library has a lens, after All,\n- Library has a lens, second\n  after All (#3).\n",
         # Half an entry left behind the entry added beside it.
         "- One side's entry (#4).\n- Added beside it (#5).\n  the other side's ending (#4).\n",
+        # Text a blank line cut from its entry.
+        "- A whole first paragraph (#8).\n\n  A second paragraph (#9).\n",
     ],
-    ids=["unfinished", "spliced"],
+    ids=["unfinished", "spliced", "blank line inside"],
 )
 def test_a_changelog_entry_a_union_merge_broke_is_reported(
     corpus: Path, entries: str

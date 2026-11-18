@@ -414,7 +414,8 @@ def broken_changelog_entries(root: Path) -> tuple[str, ...]:
     if not (root / CHANGELOG).is_file():
         return ()
     entries: list[list[str]] = []
-    open_section = False
+    gapped: set[int] = set()  # entries with a blank line inside
+    open_section = gap = False
     entry: list[str] | None = None
     for line in (root / CHANGELOG).read_text(encoding="utf-8").splitlines():
         if line.startswith("## "):
@@ -423,15 +424,20 @@ def broken_changelog_entries(root: Path) -> tuple[str, ...]:
         elif open_section and line.startswith("- "):
             entry = [line[2:]]
             entries.append(entry)
-        elif entry is not None and line.startswith("  "):
+            gap = False
+        elif entry is not None and line.startswith("  ") and line.strip():
             entry.append(line.strip())
+            if gap:
+                gapped.add(len(entries) - 1)
+        elif entry is not None and not line.strip():
+            gap = True
         else:
             entry = None
     return tuple(
         f"{CHANGELOG.as_posix()} has a broken entry, as a union merge leaves one:"
         f" {text[:70]!r}; restore each entry from the two sides of the merge"
-        for text in (" ".join(parts) for parts in entries)
-        if not text.endswith(".") or _SPLICED_ENTRY.search(text)
+        for index, text in enumerate(" ".join(parts) for parts in entries)
+        if index in gapped or not text.endswith(".") or _SPLICED_ENTRY.search(text)
     )
 
 
