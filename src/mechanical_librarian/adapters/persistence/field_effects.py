@@ -79,7 +79,10 @@ from mechanical_librarian.adapters.persistence.transactions import (
     local_operation,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    AutomaticDecisionError,
+)
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.field_effect import (
@@ -1001,9 +1004,21 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 self._resume_automatic_cover(review_case_id, changed_at)
             transaction.commit()
             return context if updated == 1 else None
-        except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            sqlite3.Error,
+            TypeError,
+            # Cover Resume re-runs admission, which refuses stored state it
+            # cannot trust; the release is then undone with it (K9).
+            MetadataReportError,
+            AutomaticDecisionError,
+        ) as error:
             transaction.rollback()
             raise FieldEffectError("persistence") from error
+        except BaseException:
+            transaction.rollback()
+            raise
 
     @local_operation
     def next_field_effect_plan_id(

@@ -46,6 +46,7 @@ from mechanical_librarian.application.cover_taste_judge_contract import (
 from mechanical_librarian.application.cover_taste_switching import (
     CoverTasteSwitching,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.operations import support_preparation_incidents
 from mechanical_librarian.application.review_covers import cover_page
 from mechanical_librarian.application.review_web import (
@@ -53,6 +54,7 @@ from mechanical_librarian.application.review_web import (
     RecordHumanDecision,
 )
 from mechanical_librarian.domain import cover_qualification_policy
+from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.cover_taste import COVER_TASTE_VERDICT_SCHEMA
 from mechanical_librarian.domain.field_effect import FieldEffectError
@@ -982,6 +984,52 @@ def test_cover_resume_hands_the_cover_back_to_automatic(
         assert _marks(prepared) == []
         field = _cover_field(prepared, service)
         assert field["manual_hold"] is False
+
+
+@pytest.mark.parametrize("error", (MetadataReportError, AutomaticDecisionError))
+def test_a_resume_that_cannot_admit_leaves_everything_as_it_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+) -> None:
+    """Review N1: when admission refuses stored state during Resume, the
+    whole release rolls back. The hold, the owner's cover and the mark
+    stay, and no transaction is left open."""
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with _prepared(tmp_path) as prepared:
+        repository = prepared.repository
+        service = _service(prepared)
+        (switch,) = _selections(repository)
+        _keep_cover(prepared, switch["selection_id"])
+        service.update_policy(CoverPolicy(prefer_edition=True))
+        _reprepare(service, prepared)
+        marks = _marks(prepared)
+        assert len(marks) == 1
+        (kept,) = _selections(repository)
+        token = repository.field_effect_manual_hold_token(
+            prepared.review_case_id, "cover"
+        )
+        assert token is not None
+
+        def refused(_document: str, _occurred_at: int) -> None:
+            raise error("synthetic refusal")
+
+        monkeypatch.setattr(
+            repository._cover_considerations, "_admit_automatic_cover", refused
+        )
+        with pytest.raises(FieldEffectError):
+            repository.clear_field_effect_manual_hold(
+                prepared.review_case_id, "cover", 20, token
+            )
+        assert not repository._connection.in_transaction
+        assert (
+            repository.field_effect_manual_hold_token(prepared.review_case_id, "cover")
+            == token
+        )
+        assert _selections(repository) == [kept]
+        assert _marks(prepared) == marks
 
 
 @pytest.mark.parametrize("outcome", ("accept", "keep_current", "reject"))
