@@ -473,18 +473,18 @@ to it. One tap records your choice and opens the next work. Skip for now
 decides nothing. In All, a work opens below its row with Close, and a choice
 closes it. If a work's covers changed since the page loaded, Covers refuses
 the choice below its covers and offers Reload. An unconfirmed choice asks you
-there to check before choosing again.
+there to check first.
 
 Switched lists automatic cover writes you have not answered since, newest
-first. Each row shows Before and Now with each cover's size; a write that
-filled an empty cover reads "No cover" under Before. A replacement names its
-fault in a pill and says why in one line; an unreadable one says whether
-Audiobookshelf had no image or the old cover could not be read. A Show menu
-narrows the list to one fault; a fill has none, so it appears only under All.
+first. Each row shows Before and Now with their sizes; a fill reads "No
+cover" under Before. A replacement names its fault in a pill and says why in
+one line; an unreadable one says whether Audiobookshelf had no image or the old
+cover could not be read. A taste switch names its profile version and rules,
+and a Show menu narrows the list to one version or one fault; a fill has
+neither, so it appears only under All.
 A replacement stays listed only while Mechanical Librarian keeps a copy of the
-old cover. Keep records that you keep the current cover, releases that copy
-and marks the row Kept. Others opens the comparison. Both appear only when you
-can choose another cover.
+old cover. Keep keeps the current cover, releases that copy and marks the row
+Kept. Others opens the comparison. Both need another cover to choose from.
 
 Once a replaced cover's work is prepared again, its row also offers Put back,
 and the comparison names the old cover Replaced cover; an unreadable one shows
