@@ -81,7 +81,9 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
     stored_level_offer_documents,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _LANDED_IN_EPISODE_SQL,
     _LANDED_LAST_SQL,
+    _LANDED_SQL,
     _active_generation_automatic_sql,
     _episode_decision_sql,
 )
@@ -1812,8 +1814,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def _episode_write(
         self, review_case_id: str, destination: str, before: str | None
     ) -> sqlite3.Row | tuple[str, ...] | None:
-        """The case's verified write to a field in its episode that landed
-        last, or the last of its decisions before ``before``.
+        """The case's verified write to a field that landed last in its
+        episode, or the last of its decisions before ``before``. A write is in
+        the episode when it landed after the case was last admitted, whichever
+        episode planned it (#ISSUE).
 
         One read for both of its uses: the write an owner decision follows,
         whose desired value is its plan's pre-value, and the value a case that
@@ -1835,12 +1839,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "earlier.review_case_id=? AND earlier.destination=?"
             ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
             + _FIELD_EFFECT_COMPANION_DECISION_SQL
-            + ") WHERE effect.state='verified' "
-            # A write planned before the case was admitted again is not
+            + ") WHERE effect.state='verified' AND "
+            # A write that landed before the case was admitted again is not
             # what the library holds now: the work has left that content
-            # and returned to the case's own (#1358).
-            "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
-            "review_case_episodes WHERE review_case_id=?),0) " + _LANDED_LAST_SQL,
+            # and returned to the case's own (#1358). One that lands after
+            # is, whichever episode planned it (#ISSUE).
+            + _LANDED_IN_EPISODE_SQL
+            + _LANDED_LAST_SQL,
             (
                 review_case_id,
                 destination,
@@ -1861,9 +1866,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def _written_field_values(
         self, review_case_id: str
     ) -> tuple[tuple[str, object], ...]:
-        """What the case's own latest verified write in its episode put in
-        each field but the cover; ``None`` is a write that emptied it (#1523,
-        S5).
+        """What the case's own write that landed last in its episode put in
+        each field but the cover, whichever episode planned it; ``None`` is a
+        write that emptied it (#1523, S5, #ISSUE).
 
         Owner entry on the case that wrote a field compares with this value
         rather than the target its report read before the write, so the
@@ -1891,7 +1896,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def _human_predecessor(
         self, decision: HumanDecision
     ) -> sqlite3.Row | tuple[str, ...] | None:
-        """Find the verified effect an owner decision follows."""
+        """Find the verified effect an owner decision follows: the case's
+        write to the field that landed last in its episode. A description
+        follows the case's advice write instead when that landed later, by
+        landing order, never by a clock in whole seconds (#ISSUE)."""
         predecessor = self._episode_write(
             decision.review_case_id, decision.destination, decision.decision_id
         )
@@ -1899,49 +1907,57 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             authored_predecessor = self._connection.execute(
                 "SELECT effect.document FROM field_effects effect "
                 "JOIN description_decisions authored ON authored.decision_id=effect.decision_id "
-                "WHERE authored.review_case_id=? AND effect.state='verified' "
-                "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
-                "review_case_episodes WHERE review_case_id=?),0) "
-                "ORDER BY effect.updated_at DESC,effect.rowid DESC LIMIT 1",
-                (decision.review_case_id, decision.review_case_id),
+                "WHERE authored.review_case_id=? AND effect.state='verified' AND "
+                + _LANDED_IN_EPISODE_SQL
+                + "AND "
+                + _LANDED_SQL
+                + ">COALESCE((SELECT MAX(rowid) FROM field_effect_events "
+                "WHERE plan_id=? AND kind='verified'),0) " + _LANDED_LAST_SQL,
+                (
+                    decision.review_case_id,
+                    decision.review_case_id,
+                    None
+                    if predecessor is None
+                    else FieldEffectOperation.from_json(predecessor[0]).plan.plan_id,
+                ),
             ).fetchone()
-            if authored_predecessor is not None and (
-                predecessor is None
-                or FieldEffectOperation.from_json(authored_predecessor[0]).updated_at
-                > FieldEffectOperation.from_json(predecessor[0]).updated_at
-            ):
+            if authored_predecessor is not None:
                 predecessor = authored_predecessor
         return predecessor
 
-    def _kept_write(
-        self, decision: HumanDecision
-    ) -> sqlite3.Row | tuple[str, ...] | None:
-        """The write a keep goes back on, frozen with it when it is recorded
-        (#1523): its predecessor, unless that write already holds the value
-        the case read. Going back would then change nothing, so the keep is a
-        plain keep, as owner entry calls an entry of the written value
-        unchanged. `field_value_version` normalises both values as planning
-        does, so they are equal exactly when planning would write nothing."""
+    def _recorded_follows(self, decision: HumanDecision) -> str | None:
+        """The decision whose write an owner decision follows, frozen with it
+        when the store records it (#1523, #ISSUE): its predecessor's, on
+        every outcome. The record holds the write lock, so this is exactly
+        the write that landed last in its episode before it, which History's
+        From reads and a keep goes back on.
+
+        A keep whose predecessor already holds the value the case read names
+        none: going back would change nothing, so it is a plain keep, as owner
+        entry calls an entry of the written value unchanged.
+        `field_value_version` normalises both values as planning does, so
+        they are equal exactly when planning would write nothing."""
         predecessor = self._human_predecessor(decision)
         if predecessor is None:
             return None
-        written = _written_plan(
-            predecessor[0], decision.review_case_id, decision.destination
-        ).desired_value
-        before = self._case_target_pre_value(
-            self._recorded_case(decision.review_case_id), decision.destination
-        )
-        if field_value_version(decision.destination, written) == field_value_version(
-            decision.destination, before
-        ):
-            return None
-        return predecessor
+        if decision.outcome == "keep_current":
+            written = _written_plan(
+                predecessor[0], decision.review_case_id, decision.destination
+            ).desired_value
+            before = self._case_target_pre_value(
+                self._recorded_case(decision.review_case_id), decision.destination
+            )
+            if field_value_version(
+                decision.destination, written
+            ) == field_value_version(decision.destination, before):
+                return None
+        return FieldEffectOperation.from_json(predecessor[0]).plan.authority.decision_id
 
     def _followed_write(
         self, decision: HumanDecision
     ) -> sqlite3.Row | tuple[str, ...] | None:
-        """The verified write a keep went back on, by the reference frozen
-        when it was recorded (#1523): never read again from episodes."""
+        """The verified write a decision follows, by the reference frozen
+        when it was recorded (#1523, #ISSUE): never read again from episodes."""
         if decision.follows is None:
             return None
         row: sqlite3.Row | tuple[str, ...] | None = self._connection.execute(

@@ -39,6 +39,10 @@ from mechanical_librarian.domain.owner_link import (
     OwnerLinkTarget,
 )
 from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
+from tests.support.metadata_report_schemas import (
+    PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL,
+    PRIOR_REVIEW_CASE_EPISODES_SQL,
+)
 
 ITEM = OwnerLinkItem("abs", "Books", "item-1")
 WORK = OwnerLinkTarget(OwnerLinkScope.WORK, "open_library", "/works/OL1W", "A Title")
@@ -730,6 +734,14 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
     clean rebuild: it is refused before anything is written (ADR-0013)."""
     fixture = json.loads(_PREDECESSORS.read_text(encoding="utf-8"))
     path = tmp_path / "state.sqlite"
+    # Its episodes floored by field effect row and its `follows` CHECK admitted
+    # a keep only (#ISSUE).
+    monkeypatch.setattr(
+        schema, "_REVIEW_CASE_EPISODES_SQL", PRIOR_REVIEW_CASE_EPISODES_SQL
+    )
+    monkeypatch.setattr(
+        schema, "_HUMAN_DECISIONS_SQL", PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL
+    )
     # Its automatic cover selection CHECK named decision v5 (#1372 PR 5).
     monkeypatch.setattr(
         schema,

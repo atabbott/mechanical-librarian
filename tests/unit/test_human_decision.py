@@ -1165,11 +1165,11 @@ def test_a_chosen_clear_is_pinned_as_the_empty_state() -> None:
         chosen_value_fingerprint("title", dict(_EMPTY))
 
 
-def test_only_a_keep_names_the_write_it_goes_back_on(case: ReviewCase) -> None:
-    """`follows` is frozen by the store when a keep is recorded and is no part
-    of the request: it round-trips on a keep, leaves the decision's identity
-    and request digest alone, and is refused anywhere else or malformed
-    (#1523)."""
+def test_every_decision_names_the_write_it_follows(case: ReviewCase) -> None:
+    """`follows` is frozen by the store when a decision is recorded and is no
+    part of the request: it round-trips on any outcome, leaves the decision's
+    identity and request digest alone, and is refused malformed (#1523,
+    #ISSUE)."""
     keep = _owner(case, "title", None, outcome="keep_current")
     written = "human_decision_" + "a" * 64
     frozen = dataclasses.replace(keep, follows=written)
@@ -1180,12 +1180,14 @@ def test_only_a_keep_names_the_write_it_goes_back_on(case: ReviewCase) -> None:
     )
     raw = json.loads(keep.to_json())
     assert raw["follows"] is None
-    other = json.loads(_owner(case, "title", "Another Title").to_json())
+    other = _owner(case, "title", "Another Title")
+    followed = dataclasses.replace(other, follows=written)
+    assert HumanDecision.from_json(followed.to_json()) == followed
+    assert json.loads(followed.to_json())["follows"] == written
     for document in (
         {**raw, "follows": "effect_" + "a" * 64},
         {**raw, "follows": ""},
         {**raw, "follows": 1},
-        {**other, "follows": written},
         {key: value for key, value in raw.items() if key != "follows"},
     ):
         with pytest.raises(HumanDecisionError):

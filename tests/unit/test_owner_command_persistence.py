@@ -1805,6 +1805,140 @@ def test_history_reads_what_a_decision_replaced_not_a_later_automatic_write(
         store.close()
 
 
+_DRAMA = {"kind": "list", "value": ["Drama"]}
+
+
+def _genres_automatic(store: OwnerStore) -> AutomaticDecision:
+    (decision,) = (
+        AutomaticDecision.from_json(raw)
+        for raw in store.repository.get_review_case_decisions(store.case.review_case_id)
+        if json.loads(raw)["schema_version"] == "automatic-decision-v1"
+        and json.loads(raw)["destination"] == "genres"
+    )
+    return decision
+
+
+def _leave_and_return(store: OwnerStore) -> None:
+    """The work leaves the case's content and returns to it: the same case
+    is admitted again and starts a new episode (#1358)."""
+    first = store.case.review_case_id
+    store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    assert store.case.review_case_id != first
+    store.publish(_HELD)
+    assert store.case.review_case_id == first
+
+
+@pytest.mark.parametrize("planned", ["reused", "revived"])
+def test_a_write_landing_in_a_later_episode_is_the_cases_own(
+    tmp_path: Path, planned: str
+) -> None:
+    """An automatic plan made in the first episode that lands after the case
+    was admitted again is the case's write: an episode holds the writes that
+    landed in it, whichever episode planned them (#ISSUE)."""
+    store = OwnerStore(tmp_path, None)
+    try:
+        store.automatic("genres", "replace", _HELD.target.library)
+        store.publish(_HELD)
+        automatic = _genres_automatic(store)
+        early = store.plan(automatic)
+        if planned == "revived":
+            store.decide("accept", _FANTASY, destination="genres")
+        _leave_and_return(store)
+        if planned == "revived":
+            assert store.repository.clear_field_effect_manual_hold(
+                store.case.review_case_id, "genres", store.clock(), _hold(store)
+            )
+        assert store.write(automatic).plan.plan_id == early.plan.plan_id
+        assert store.repository.written_field_values(store.case.review_case_id) == (
+            ("genres", ["Fantasy"]),
+        )
+        keep = store.decide("keep_current", destination="genres")
+        assert keep.follows == automatic.decision_id
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("first_episode", ["planned", "verified"])
+def test_a_plan_from_an_earlier_episode_still_waits(
+    tmp_path: Path, first_episode: str
+) -> None:
+    """A write planned before the case was admitted again and not yet landed
+    still waits, so a pin is refused as it is in the first episode
+    (ADR-0085, Amendment 2); one that landed before is history (#ISSUE)."""
+    store = OwnerStore(tmp_path, None)
+    try:
+        store.automatic("genres", "replace", _HELD.target.library)
+        store.publish(_HELD)
+        automatic = _genres_automatic(store)
+        if first_episode == "planned":
+            store.plan(automatic)
+        else:
+            store.write(automatic)
+        _leave_and_return(store)
+        if first_episode == "planned":
+            _refused(store, "pin_change_waiting", "pin", destination="genres")
+        else:
+            assert store.decide("pin", destination="genres").outcome == "pin"
+    finally:
+        store.close()
+
+
+class _SameSecond(OwnerStore):
+    """A store whose clock stops while ``frozen``: everything then happens
+    in one second."""
+
+    frozen = False
+
+    def clock(self) -> int:
+        if not self.frozen:
+            self.ticks += 1
+        return self.ticks
+
+
+@pytest.mark.parametrize("same_second", [False, True], ids=["later", "same_second"])
+def test_history_reads_the_write_before_a_decision_in_its_second(
+    tmp_path: Path, same_second: bool
+) -> None:
+    """History's From is the write a decision followed when it was recorded,
+    never one placed before it by a clock in whole seconds: an automatic
+    write planned in the decision's second after a return to automatic is
+    not what it replaced (#ISSUE)."""
+    store = _SameSecond(tmp_path, None)
+    try:
+        store.automatic("genres", "replace", _HELD.target.library)
+        store.publish(_HELD)
+        automatic = _genres_automatic(store)
+        store.frozen = same_second
+        accept = store.decide("accept", _FANTASY, destination="genres")
+        assert store.repository.clear_field_effect_manual_hold(
+            store.case.review_case_id, "genres", store.clock(), _hold(store)
+        )
+        written = store.write(automatic)
+        store.frozen = False
+        assert (written.plan.created_at == accept.occurred_at) is same_second
+        assert _keep_history(store, accept)["previous_value"] == _DRAMA
+    finally:
+        store.close()
+
+
+def test_history_of_an_earlier_episode_decision_reads_its_own_episode(
+    tmp_path: Path,
+) -> None:
+    """A decision's From stays the write of its own episode after the case
+    returns again: it is frozen when the decision is recorded, never read
+    again from floors a later return moves (#ISSUE, #1358)."""
+    store = OwnerStore(tmp_path, _HELD)
+    try:
+        store.write(store.decide("accept", _FANTASY, destination="genres"))
+        _leave_and_return(store)
+        again = store.decide("accept", _FANTASY, destination="genres")
+        assert _keep_history(store, again)["previous_value"] == _DRAMA
+        _leave_and_return(store)
+        assert _keep_history(store, again)["previous_value"] == _DRAMA
+    finally:
+        store.close()
+
+
 def _keep_history(store: OwnerStore, keep: HumanDecision) -> dict[str, object]:
     (entry,) = (
         event
@@ -1927,9 +2061,9 @@ def test_a_keep_where_the_field_holds_what_the_case_read_is_a_plain_keep(
         store.close()
 
 
-def test_the_store_admits_a_named_write_only_on_a_keep(store: OwnerStore) -> None:
-    """The `human_decisions` table holds `follows` as null, or as text on a
-    keep only (#1523)."""
+def test_the_store_admits_a_named_write_on_any_decision(store: OwnerStore) -> None:
+    """The `human_decisions` table holds `follows` as null or as text, on any
+    outcome (#1523, #ISSUE)."""
     accept = store.decide(
         "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
     )
@@ -1975,4 +2109,5 @@ def test_the_store_admits_a_named_write_only_on_a_keep(store: OwnerStore) -> Non
     assert admitted("keep_current", None)
     assert admitted("accept", None)
     assert not admitted("keep_current", 1)
-    assert not admitted("accept", accept.decision_id)
+    assert admitted("accept", accept.decision_id)
+    assert not admitted("accept", 1)
