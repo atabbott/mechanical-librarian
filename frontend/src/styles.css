@@ -1506,7 +1506,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .description-value { max-width:68ch; min-width:0; }
 .description-value p, .description-advice-text { margin:0; font:400 1rem/1.65 Inter,ui-sans-serif,system-ui,sans-serif; white-space:pre-wrap; overflow-wrap:anywhere; }
 /* A description's formatting (ADR-0106) takes its context's type; a newline in it collapses. */
-.description-formatted { white-space:normal; overflow-wrap:anywhere; }
+.description-formatted, .description-value .description-formatted p { white-space:normal; overflow-wrap:anywhere; }
 .description-value .description-formatted { font:400 1rem/1.65 Inter,ui-sans-serif,system-ui,sans-serif; }
 .diagnostic-entry .description-formatted { font-size:.86rem; line-height:1.58; }
 .description-formatted p, .diagnostic-entry .description-formatted p, .description-formatted ul, .description-formatted ol { margin:0 0 .75em; }

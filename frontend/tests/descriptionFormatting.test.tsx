@@ -232,6 +232,11 @@ describe('description formatting', () => {
       '<p onclick=x>a…',
       '<p>a</p><a href="https://example.invalid/">b…',
       '<p>a</b>…',
+      // A cut tag that could open a link or a refused element.
+      '<p>a</p><scr…',
+      '<p>a</p><a…',
+      '<p>a</p></sty…',
+      '<p>a</p><…',
     ])
       expect(readFormatting(value, true)).toBeNull()
   })
@@ -251,6 +256,10 @@ describe('description formatting', () => {
       '<b>a</b><script>x</script>',
       '<a href="https://example.invalid/">a</a>',
       '&lt;img src=x onerror=alert(1)&gt;<b>b</b>',
+      // Names of properties every object inherits are not elements.
+      '<constructor>a</constructor><b>b</b>',
+      '<toString>a</toString> <valueOf>b</valueOf> <__proto__>c</__proto__>',
+      '<hasOwnProperty>d</hasOwnProperty><isPrototypeOf>e</isPrototypeOf>',
     ]
     const allowed = new Set(['STRONG', 'EM', 'U', 'DEL', 'P', 'BR', 'UL', 'OL', 'LI'])
     for (const value of corpus) {

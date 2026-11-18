@@ -177,7 +177,8 @@ const append = (target: FormatNode[], nodes: readonly FormatNode[]) => {
 }
 const close = (stack: Open[], closed: Open) => {
   const parent = stack.at(-1)?.children ?? []
-  const shown = SHOWN[closed.name]
+  // Only the table's own names: a tag named after an inherited property is no element.
+  const shown = Object.hasOwn(SHOWN, closed.name) ? SHOWN[closed.name] : undefined
   if (shown) parent.push({ kind: 'element', tag: shown, children: closed.children })
   else append(parent, closed.children)
 }
@@ -225,6 +226,10 @@ export function readFormatting(value: string, cut = false): FormatNode[] | null 
     }
     if (end >= source.length) {
       if (!tolerant || !STARTS_TAG.test(source.slice(start, start + 2))) return null
+      // A cut tag is dropped only when it can't be the start of a link or a
+      // refused element; otherwise the value is shown as written.
+      const partial = /^<\/?([A-Za-z0-9]*)/u.exec(source.slice(start))?.[1]?.toLowerCase() ?? ''
+      if (['a', ...REFUSED].some((name) => name.startsWith(partial))) return null
       source = source.slice(0, start)
       break
     }

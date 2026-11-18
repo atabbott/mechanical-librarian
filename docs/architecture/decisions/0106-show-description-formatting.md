@@ -21,8 +21,8 @@ shows bold.
 ## Decision
 
 1. The browser reads a description's markup into React elements from a closed
-   set: `b` and `strong` as strong, `i` and `em` as emphasis, `u`, `del`, `s`
-   and `strike` as deleted text, `p`, `div` and `h1` to `h6` as paragraphs,
+   set: `b` and `strong` as strong, `i` and `em` as emphasis, `u` as
+   underline, `del`, `s` and `strike` as deleted text, `p`, `div` and `h1` to `h6` as paragraphs,
    `br` and `hr` as breaks, and `ul`, `ol` and `li`. Every attribute is
    dropped. Any other tag is dropped and its words kept.
 2. A description is shown as written, as before, when it holds a refused
