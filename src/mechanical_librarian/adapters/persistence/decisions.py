@@ -49,6 +49,7 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
     request_matching_check,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _LANDED_LAST_SQL,
     _SHADOW_OUTCOME_HISTORY_SQL,
     _WORK_LATEST_MANUAL_HOLDS_SQL,
     _active_generation_automatic_sql,
@@ -294,9 +295,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             [str, str, str], tuple[tuple[str, object], ...]
         ],
         written_field_values: Callable[[str], tuple[tuple[str, object], ...]],
-        human_predecessor: Callable[
-            [HumanDecision], sqlite3.Row | tuple[str, ...] | None
-        ],
+        kept_write: Callable[[HumanDecision], sqlite3.Row | tuple[str, ...] | None],
         followed_write: Callable[[HumanDecision], sqlite3.Row | tuple[str, ...] | None],
     ) -> None:
         super().__init__(connection, binding)
@@ -312,7 +311,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self._validate_shadow_outcome_row = validate_shadow_outcome_row
         self._previous_field_values = previous_field_values
         self._written_field_values = written_field_values
-        self._human_predecessor = human_predecessor
+        self._kept_write = kept_write
         self._followed_write = followed_write
 
     def _record_automatic_outcomes(
@@ -716,7 +715,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 # The write a keep goes back on is frozen with it, by the rule
                 # planning reads now, so neither a later return nor a later
                 # write changes what it went back on (#1523).
-                predecessor = self._human_predecessor(decision)
+                predecessor = self._kept_write(decision)
                 if (
                     predecessor is not None
                     and decision.destination not in CLEARABLE_DESTINATIONS
@@ -1874,7 +1873,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
         previous = target.get("value") if target.get("state") == "value" else None
         # A keep goes back on the write frozen with it when it was recorded,
         # never one read again from episode floors that later returns move
-        # (#1523); every other decision follows the latest earlier write.
+        # (#1523); every other decision follows the write that landed last
+        # before it. An automatic write counts only when it was planned by
+        # then: one planned later follows a return to automatic.
         prior = (
             self._followed_write(decision)
             if decision.outcome == "keep_current"
@@ -1894,7 +1895,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "AND (?<=COALESCE((SELECT decision_floor FROM review_case_episodes "
                 "WHERE review_case_id=?),0) OR +effect.rowid>COALESCE((SELECT "
                 "effect_floor FROM review_case_episodes WHERE review_case_id=?),0)) "
-                "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
+                "AND (recorded.ordinal>=0 OR "
+                "json_extract(effect.document,'$.plan.created_at')<=?) "
+                + _LANDED_LAST_SQL,
                 (
                     review_case_id,
                     decision.destination,
@@ -1904,6 +1907,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     decision_row[0],
                     review_case_id,
                     review_case_id,
+                    decision.occurred_at,
                 ),
             ).fetchone()
         )

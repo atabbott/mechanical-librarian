@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
   ApiError,
@@ -25,7 +25,10 @@ import {
   library,
   renderRoute,
   wholeText,
+  loadRouteModules,
 } from './fixtures'
+
+beforeAll(loadRouteModules)
 
 const reducedMotion = () => ({
   matches: true,

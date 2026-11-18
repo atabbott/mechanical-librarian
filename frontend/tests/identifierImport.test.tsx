@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   AmbiguousMutationError,
@@ -9,8 +9,10 @@ import {
   type ReviewHttp,
 } from '../src/api/http'
 import { routeFailureCopy } from '../src/routeFailure'
-import { activity, createHttp, renderRoute } from './fixtures'
+import { activity, createHttp, renderRoute, loadRouteModules } from './fixtures'
 import { view } from './settingsFixtures'
+
+beforeAll(loadRouteModules)
 
 // Import identifiers (#1478) in Settings › Libraries, and Withdraw this import
 // in an import's Activity Details.

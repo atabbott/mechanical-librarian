@@ -20,6 +20,14 @@ _LATEST_VERIFIED_WRITE_SQL = (
     "AND event.kind='verified' WHERE effect.connection_name=? "
     "AND effect.library_name=? AND effect.work_id=?"
 )
+# The case's write that landed last: ordered by the append-only event that
+# took its plan to verified, a global append order. Never by the plan's row:
+# a superseded automatic plan revived after a return to automatic keeps its
+# old row while it lands after the owner's newer writes (#1523).
+_LANDED_LAST_SQL = (
+    "ORDER BY (SELECT MAX(landed.rowid) FROM field_effect_events landed "
+    "WHERE landed.plan_id=effect.plan_id AND landed.kind='verified') DESC LIMIT 1"
+)
 _CURRENT_REVIEW_FROM_SQL = (
     "FROM current_review_packages c "
     "JOIN current_review_packages ml ON ml.connection_name=c.connection_name "
@@ -508,6 +516,7 @@ __all__ = [
     "_CURRENT_REVIEW_CASE_COUNT_SQL",
     "_CURRENT_REVIEW_FROM_SQL",
     "_EPUB_INAPPLICABLE_ATTENTION_SQL",
+    "_LANDED_LAST_SQL",
     "_COVER_UNRESOLVED_OUTCOME_SQL",
     "_VERIFIED_CURRENT_COVER_SQL",
     "_LATEST_PREPARATION_FAILED_SQL",

@@ -268,8 +268,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             checkpoint = 1 if prior is None else prior[3] + 1
             # The same proposal set replays its recorded admission answer,
             # unless the pointer's last actor retired the case without
-            # answering: preparation tombstoning it or finding it ineligible,
-            # or a policy activation retiring it for its successor. Leaving
+            # answering: preparation tombstoning it, finding it ineligible or
+            # identifying nothing, or a policy activation retiring it for its successor. Leaving
             # Automatic reactivates the unchanged policy, so that successor is
             # this same proposal set, admitted again as its same case (#1568).
             # Nor is a case kept for a recent write replayed once that write

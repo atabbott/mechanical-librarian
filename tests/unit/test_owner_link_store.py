@@ -39,6 +39,9 @@ from mechanical_librarian.domain.owner_link import (
     OwnerLinkTarget,
 )
 from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
+from tests.support.metadata_report_schemas import (
+    WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL,
+)
 
 ITEM = OwnerLinkItem("abs", "Books", "item-1")
 WORK = OwnerLinkTarget(OwnerLinkScope.WORK, "open_library", "/works/OL1W", "A Title")
@@ -737,6 +740,12 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
         schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
             f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v5'"
         ),
+    )
+    # Nor did it record an unidentified retirement (#1953).
+    monkeypatch.setattr(
+        schema,
+        "_REVIEW_TRANSITIONS_SQL",
+        WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL,
     )
     open_repository(path).close()
     monkeypatch.undo()

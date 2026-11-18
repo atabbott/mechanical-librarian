@@ -83,7 +83,6 @@ _ORIGINAL_RELEASED = _ORIGINAL_PREDICATE.replace(
 _DECISION_ARM = (
     "SEARCH field_effects USING INDEX field_effects_decision (decision_id=?)"
 )
-_PRIOR_ARM = "SEARCH prior USING INDEX field_effects_decision (decision_id=?)"
 _REPLANS = itertools.count()
 _COMPANION_ARM = (
     "SEARCH field_effects USING INDEX field_effects_companion_decision (<expr>=?)"
@@ -207,6 +206,16 @@ def _effect(
             updated_at,
             document,
         ),
+    )
+
+
+def _landed(connection: sqlite3.Connection, label: str) -> None:
+    """Append the event that took the effect `label` to verified: the write
+    lands when it is appended (#1523)."""
+    connection.execute(
+        "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,"
+        "document) VALUES(?,?,1,'verified',1,'{}')",
+        ("effect_event_" + _digest("landed-" + label), "effect_plan_" + _digest(label)),
     )
 
 
@@ -479,7 +488,7 @@ def _replanned(connection: sqlite3.Connection, statement: str) -> tuple[str, ...
 
 # Every name these statements give field_effects. A scan, or an index SQLite
 # builds for one statement, walks every effect ever recorded.
-_EFFECTS = r"(field_effects|effect|prior)\b"
+_EFFECTS = r"(field_effects|effect)\b"
 
 
 def _scans_effects(plan: tuple[str, ...]) -> bool:
@@ -499,20 +508,13 @@ def test_every_pending_call_shape_reaches_effects_by_index_only(
         plan = _plan(connection, statement, ())
         assert not _scans_effects(plan), name
         assert _DECISION_ARM in plan and _COMPANION_ARM in plan, name
-        # The corrective keep_current's predecessor, through the case's
-        # description decisions rather than an automatic index over effects.
-        assert _PRIOR_ARM in plan, name
         # The original predicate is the per-candidate scan being removed.
         assert _scans_effects(_plan(connection, _original(statement), ()))
 
 
 @pytest.mark.parametrize(
     "index_name",
-    [
-        "field_effects_decision",
-        "field_effects_companion_decision",
-        "description_decisions_case",
-    ],
+    ["field_effects_decision", "field_effects_companion_decision"],
 )
 def test_dropping_any_index_restores_the_effect_scan(
     store: tuple[sqlite3.Connection, list[str]], index_name: str
@@ -616,6 +618,27 @@ _ORIGINAL_LOOKUPS = {
     "OR (effect.state='verified' AND recorded.destination='cover') "
     "ORDER BY recorded.destination",
 }
+_RECORDED_ORDER = "ORDER BY recorded.ordinal DESC LIMIT 1"
+# #1523 later read the write that landed last rather than the latest
+# decision's, by the event that took it to verified, and History an automatic
+# write only when it was planned by the time of the decision it reads for.
+_LANDED_LAST_ORDER = (
+    "ORDER BY (SELECT MAX(landed.rowid) FROM field_effect_events landed "
+    "WHERE landed.plan_id=effect.plan_id AND landed.kind='verified') DESC LIMIT 1"
+)
+_LANDED_LAST = {
+    "history": "AND (recorded.ordinal>=0 OR "
+    "json_extract(effect.document,'$.plan.created_at')<=?) " + _LANDED_LAST_ORDER,
+    "authority": _LANDED_LAST_ORDER,
+}
+
+
+def _original_lookup(name: str) -> str:
+    original = _ORIGINAL_LOOKUPS[name]
+    if name not in _LANDED_LAST:
+        return original
+    assert original.count(_RECORDED_ORDER) == 1
+    return original.replace(_RECORDED_ORDER, _LANDED_LAST[name])
 
 
 def _authority_unbound(
@@ -725,7 +748,14 @@ def _lookups(
     parameters: dict[str, tuple[object, ...]] = {
         "revoke": (earlier_id, earlier_id),
         "replacement": (earlier_id, earlier_id, False),
-        "history": (case_id, destination, ordinal, case_id, destination),
+        "history": (
+            case_id,
+            destination,
+            ordinal,
+            case_id,
+            destination,
+            accept.occurred_at,
+        ),
         "authority": (case_id, destination, later.decision_id, case_id, destination),
         "override": (case_id, case_id, case_id),
     }
@@ -742,7 +772,7 @@ def _assert_lookup_oracle(
 ) -> None:
     originals = _before_1204(
         connection,
-        [(_ORIGINAL_LOOKUPS[name], values) for name, (_, values) in lookups.items()],
+        [(_original_lookup(name), values) for name, (_, values) in lookups.items()],
     )
     for (name, (statement, _)), original in zip(
         lookups.items(), originals, strict=True
@@ -765,13 +795,17 @@ def test_remaining_authority_lookups_equal_the_original(
         for name, (statement, _) in lookups.items():
             seen[name].add(repr(connection.execute(statement).fetchall()))
 
+    # A plan whose row predates every write below, verified only after them.
+    _effect(connection, "own-revived", earlier, json.dumps({"plan": {"n": 3}}))
+    compare()
     # Own authority, verified: the predecessor and history lookups find it.
     _effect(
         connection, "own-verified", earlier, json.dumps({"plan": {"n": 1}}), "verified"
     )
+    _landed(connection, "own-verified")
     compare()
     # A later companion claim on the same decision ties on its ordinal; the
-    # lower rowid wins, as the original's scan order made it.
+    # write that landed later wins.
     _effect(
         connection,
         "companion-verified",
@@ -779,11 +813,9 @@ def test_remaining_authority_lookups_equal_the_original(
         _companion(earlier),
         "verified",
     )
+    _landed(connection, "companion-verified")
     compare()
-    connection.execute(
-        "DELETE FROM field_effects WHERE plan_id=?",
-        ("effect_plan_" + _digest("own-verified"),),
-    )
+    # Another own write landing after both wins over them.
     _effect(
         connection,
         "own-verified-later",
@@ -791,7 +823,19 @@ def test_remaining_authority_lookups_equal_the_original(
         json.dumps({"plan": {"n": 2}}),
         "verified",
     )
+    _landed(connection, "own-verified-later")
     compare()
+    # Revived in its old row, it lands last and wins over the later rows.
+    connection.execute(
+        "UPDATE field_effects SET state='verified' WHERE plan_id=?",
+        ("effect_plan_" + _digest("own-revived"),),
+    )
+    _landed(connection, "own-revived")
+    compare()
+    for name in _LANDED_LAST:
+        assert connection.execute(lookups[name][0]).fetchall() == [
+            (json.dumps({"plan": {"n": 3}}),)
+        ], name
     # Live states each lookup filters on, by either authority, in either order.
     for state in ("planned", "claimed", "retryable", "applying", "superseded"):
         _effect(
@@ -835,7 +879,14 @@ def test_remaining_authority_lookups_reach_effects_by_index_only(
         assert any(
             "INDEX field_effects_companion_decision " in step for step in plan
         ), name
-        assert _scans_effects(_plan(connection, _ORIGINAL_LOOKUPS[name], parameters))
+        if name in _LANDED_LAST:
+            # When each write landed is read by the events' (plan_id,sequence) key.
+            assert any(
+                step.startswith("SEARCH landed USING INDEX ") and "(plan_id=?)" in step
+                for step in plan
+            ), name
+            assert not any(step.startswith("SCAN landed") for step in plan), name
+        assert _scans_effects(_plan(connection, _original_lookup(name), parameters))
     for index_name, definition in (
         ("field_effects_decision", _FIELD_EFFECTS_DECISION_INDEX_SQL),
         (
@@ -1428,6 +1479,39 @@ def _before_1523(statement: str) -> str:
     return statement
 
 
+# A keep is pending when it follows the write frozen with it when it was
+# recorded, no longer when some earlier verified write of its case exists.
+_FOLLOWS_FROZEN = (
+    (
+        "human.outcome='keep_current' AND json_extract(human.document,'$.follows') "
+        "IS NOT NULL AND ",
+        "human.outcome='keep_current' AND ",
+    ),
+    (
+        "length(json_extract(target.value,'$.value'))>0))))",
+        "length(json_extract(target.value,'$.value'))>0))) AND EXISTS (SELECT 1 FROM "
+        "field_effects prior JOIN (SELECT decision_id,ordinal FROM human_decisions "
+        "earlier WHERE earlier.review_case_id=human.review_case_id AND "
+        "earlier.destination=human.destination AND earlier.ordinal<human.ordinal "
+        "UNION ALL SELECT decision_id,-1 FROM automatic_decisions earlier WHERE "
+        "earlier.review_case_id=human.review_case_id AND "
+        "earlier.destination=human.destination UNION ALL SELECT decision_id,-1 FROM "
+        "description_decisions earlier WHERE earlier.review_case_id=human.review_case_id "
+        "AND human.destination='description') recorded ON "
+        "recorded.decision_id=prior.decision_id WHERE prior.state='verified' AND "
+        "+prior.rowid>COALESCE((SELECT effect_floor FROM review_case_episodes WHERE "
+        "review_case_id=human.review_case_id),0)))",
+    ),
+)
+
+
+def _before_frozen_follows(statement: str) -> str:
+    for after, before in _FOLLOWS_FROZEN:
+        assert statement.count(after) == 1
+        statement = statement.replace(after, before)
+    return statement
+
+
 _HELD_DESCRIPTION = (
     " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
     "SELECT 1 FROM field_effect_manual_holds hold WHERE "
@@ -1528,10 +1612,15 @@ def test_lineage_membership_restores_the_1204_text(
     # #1358 then left an earlier episode's decision unplanned, and #1568 left
     # an automatic one unplanned outside the Automatic posture, and #1573
     # one of an earlier policy generation; #1346 left pin and unpin rows out
-    # of the owner's latest decision.
+    # of the owner's latest decision; a keep then read the write frozen with
+    # it rather than any earlier write of its case.
     restored = {
         name: hashlib.sha256(
-            _before_1523(_before_1568(_before_1573(_before_1205(name, statement))))
+            _before_1523(
+                _before_frozen_follows(
+                    _before_1568(_before_1573(_before_1205(name, statement)))
+                )
+            )
             .replace(_HUMAN_PLANS, "human.outcome='accept'", 1)
             .replace(_HELD_DESCRIPTION, "", 1)
             .replace(_FIELD_EFFECT_HOLDS_DECISION_SQL, _HELD_1204)
@@ -1664,8 +1753,8 @@ def test_lineage_membership_refuses_malformed_documents_as_before(
         "AND destination='authors'",
         (case_id,),
     ).fetchone()
-    # A corrective keep_current after a verified effect of the case's earlier
-    # owner decision reads the case's review document.
+    # A corrective keep_current that follows a verified effect of the case's
+    # earlier owner decision reads the case's review document.
     later_id = "human_decision_" + _digest("corrective")
     connection.execute(
         "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
@@ -1678,7 +1767,7 @@ def test_lineage_membership_refuses_malformed_documents_as_before(
             later_id,
             _digest("corrective-idempotency"),
             _digest("corrective-request"),
-            json.dumps({"decision_id": later_id}),
+            json.dumps({"decision_id": later_id, "follows": earlier_id}),
             ordinal,
         ),
     )
