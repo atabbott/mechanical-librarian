@@ -58,11 +58,13 @@ export function useTasteSwitching(qualified: boolean) {
       setFailure(null)
       setStatus('')
     },
-    onSuccess: (saved, { done }) => {
+    onSuccess: (saved, { change, done }) => {
       cache.setQueryData(['settings'], saved)
       setStatus(done)
       setPreviewing(false)
-      if (saved.document.cover_preferences.taste_switching === 'automatic') focusChecked()
+      // Turn on lands focus on the Automatic choice it saved; the checkbox
+      // and Suggest only keep focus where the owner put it.
+      if (change.taste_switching === 'automatic') focusChecked()
     },
     onError: (error) => {
       if (error instanceof BuildMismatchError) {
@@ -93,7 +95,11 @@ export function useTasteSwitching(qualified: boolean) {
       : pending
   // The preview is moot once the stored settings are Never or already
   // Automatic, for example after another tab saved them.
-  if (previewing && (never || automatic)) setPreviewing(false)
+  // Focus that was in the preview goes to the checked choice, not the page.
+  if (previewing && (never || automatic)) {
+    setPreviewing(false)
+    focusAfterRetry(checkedRadio)
+  }
   const write = (change: Change, done: string) => {
     if (!save.isPending) save.mutate({ change, done })
   }

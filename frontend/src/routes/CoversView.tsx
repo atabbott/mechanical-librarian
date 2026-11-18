@@ -439,7 +439,9 @@ function SwitchedRow({
         </h3>
         <p>{byline(work)}</p>
         <p>{switchedLead(switched.at, new Date())}</p>
-        {switched.taste ? <p>{`Taste profile version ${String(switched.taste.version)}`}</p> : null}
+        {switched.taste ? (
+          <p>{`Taste profile version\u00a0${String(switched.taste.version)}`}</p>
+        ) : null}
         {switched.reason ? (
           <>
             <FaultPill work={work} />
@@ -1001,7 +1003,7 @@ function SwitchedList({
     .sort((left, right) => right - left)
     .map((version) => ({
       value: `taste-${String(version)}`,
-      label: `Taste profile version ${String(version)}`,
+      label: `Taste profile version\u00a0${String(version)}`,
     }))
   const faults = coverFaultCodes.flatMap((code) => {
     const first = works.find((work) => work.group === 'auto' && work.switched?.reason === code)

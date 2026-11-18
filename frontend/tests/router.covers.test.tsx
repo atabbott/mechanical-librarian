@@ -3844,6 +3844,9 @@ describe('Switching by taste (#1372 part 5)', () => {
     await waitFor(() =>
       expect(within(group).getByRole('status')).toHaveTextContent('Switching saved.'),
     )
+    // Saving the checkbox leaves focus on it (round 2).
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    expect(box).toHaveFocus()
     expect(http.writeSettings.mock.calls[0]?.[0].document.cover_preferences).toMatchObject({
       taste_switching: 'automatic',
       current_protection: 'unprotected',
@@ -4118,6 +4121,47 @@ describe('Switching by taste (#1372 part 5)', () => {
     expect(http.writeSettings).toHaveBeenCalledTimes(1)
   })
 
+  // Turn on's answer is lost but it saved: the re-read closes the preview,
+  // and focus goes to the checked choice, not the page (round 2).
+  it('moves focus to Automatic when a lost Turn on turns out to have saved', async () => {
+    const user = userEvent.setup()
+    const http = switchingHttp()
+    http.writeSettings.mockRejectedValueOnce(
+      new UncertainMutationError({
+        operation: 'PATCH /api/v1/settings',
+        responseStatus: 0,
+        at: '',
+        reason: 'network',
+      }),
+    )
+    renderRoute(tasteRoute, http)
+    const group = await switchingGroup()
+    await user.click(await within(group).findByRole('radio', { name: 'Automatic' }))
+    const preview = await screen.findByRole('region', { name: 'Found 1 switch in 40 covers.' })
+    http.getSettings.mockResolvedValue(settingsWith({ taste_switching: 'automatic' }))
+    await user.click(within(preview).getByRole('button', { name: 'Turn on' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull())
+    const automatic = within(group).getByRole('radio', { name: 'Automatic' })
+    expect(automatic).toBeChecked()
+    await waitFor(() => expect(automatic).toHaveFocus())
+  })
+
+  // A failed preview read's Reload replaces itself: focus goes to the
+  // preview's line (experience S3).
+  it('focuses the preview line after a failed read is reloaded', async () => {
+    const user = userEvent.setup()
+    const http = switchingHttp()
+    http.getTastePreview.mockRejectedValueOnce(new ApiError(500, 'unavailable'))
+    renderRoute(tasteRoute, http)
+    await user.click(
+      await within(await switchingGroup()).findByRole('radio', { name: 'Automatic' }),
+    )
+    const reload = await screen.findByRole('button', { name: 'Reload' })
+    await user.click(reload)
+    const line = await screen.findByText('Found 1 switch in 40 covers.')
+    await waitFor(() => expect(line).toHaveFocus())
+  })
+
   it('says Automatic switching on after Turn on once the check has passed', async () => {
     const user = userEvent.setup()
     renderRoute(tasteRoute, switchingHttp({ automatic_available: true }))
@@ -4316,11 +4360,11 @@ describe('Switching by taste (#1372 part 5)', () => {
     await user.click(show)
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
       'All',
-      'Taste profile version 2',
-      'Taste profile version 1',
+      'Taste profile version\u00a02',
+      'Taste profile version\u00a01',
       'Square on an ebook',
     ])
-    await user.click(screen.getByRole('option', { name: 'Taste profile version 1' }))
+    await user.click(screen.getByRole('option', { name: 'Taste profile version\u00a01' }))
     await waitFor(() =>
       expect(
         screen.getAllByRole('listitem').filter((row) => row.matches('.covers-switched-row')),
