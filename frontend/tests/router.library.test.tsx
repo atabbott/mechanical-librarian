@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, onTestFinished, vi } from 'vitest'
+import { beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
   ApiError,
@@ -48,6 +48,7 @@ import {
   recordedAcknowledgement,
   renderRoute,
   wholeText,
+  loadRouteModules,
 } from './fixtures'
 import { formatWhen } from '../src/dates'
 import {
@@ -62,6 +63,8 @@ import {
 // recorded time (#1765).
 const finishedLine = (seconds: number) => `Finished ${formatWhen(seconds, new Date())}`
 import { view as settingsView } from './settingsFixtures'
+
+beforeAll(loadRouteModules)
 
 // jsdom has no native dialog methods; real focus trapping/Escape are browser proof.
 Object.defineProperties(HTMLDialogElement.prototype, {
@@ -143,7 +146,9 @@ it('keeps resync debt with its exact collection while search and cursor replace 
   expect(reads[0]?.signal?.aborted).toBe(false)
   const search = screen.getByRole('searchbox')
   await user.click(search)
-  await user.keyboard('later')
+  // One input, so a slow runner's gap between keys cannot let the search's
+  // debounce send part of the word as a read of its own.
+  await user.paste('later')
   await waitFor(() => expect(reads).toHaveLength(2))
   // The unsearched read is the library summary, which the toolbar still needs.
   expect(reads[0]?.search.q).toBeUndefined()
@@ -1380,6 +1385,27 @@ describe('Library route', () => {
     },
   )
 
+  it('keeps search focused when the run arriving from setup is read after it', async () => {
+    const runId = `preparation_run_${'8'.repeat(64)}`
+    let answer: (view: PreparationView) => void = () => undefined
+    const http = createHttp()
+    http.getPreparation = vi.fn(
+      () =>
+        new Promise<PreparationView>((resolve) => {
+          answer = resolve
+        }),
+    )
+    renderRoute(`/library?lens=all&preparation=${runId}`, http)
+
+    const search = await screen.findByRole('searchbox')
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalled())
+    search.focus()
+    answer(terminalPreparation(runId))
+    await screen.findByRole('heading', { name: 'Preparation completed with failures' })
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    expect(search).toHaveFocus()
+  })
+
   it('routes every completed book into Works and states what a failed one becomes', async () => {
     const runId = `preparation_run_${'c'.repeat(64)}`
     const base = terminalPreparation(runId)
@@ -1402,7 +1428,9 @@ describe('Library route', () => {
     }
     const http = createHttp()
     http.getPreparation = vi.fn(async () => running)
-    const { queryClient } = renderRoute('/library?lens=all', http)
+    // With live updates connected nothing polls preparation, so a slow
+    // runner's 1.5-second poll never replaces the states this test sets.
+    const { queryClient } = renderRoute('/library?lens=all', http, createLiveStream())
 
     fireEvent.click(
       await screen.findByRole('button', {
@@ -15522,6 +15550,103 @@ it('commits an explicitly cleared search together with Attention', async () => {
     expect(router.state.location.search).toEqual({ lens: 'all', attention: 'open' }),
   )
   expect(query).toHaveValue('')
+})
+
+// On a wide screen the first work is selected as the list arrives. An
+// Attention press just before that selection lands still opens the queue.
+it('keeps an Attention press made as the wide default selection lands', async () => {
+  const previousMatchMedia = window.matchMedia
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 761px)',
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(() => true),
+  }))
+  onTestFinished(() => {
+    vi.stubGlobal('matchMedia', previousMatchMedia)
+  })
+  const http = createHttp()
+  let releaseLibrary: (value: LibraryView) => void = () => undefined
+  http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(
+    () =>
+      new Promise((resolve) => {
+        releaseLibrary = resolve
+      }),
+  )
+  http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => ({ total: 1, items: [] }))
+  const { router } = renderRoute('/library?lens=all', http)
+  const toggle = await screen.findByRole('button', { name: /^Attention/u })
+  await waitFor(() => expect(http.getLibrary).toHaveBeenCalled())
+  // The press lands while the default selection's navigation is under way.
+  const unsubscribe = router.subscribe('onBeforeNavigate', ({ toLocation }) => {
+    if ((toLocation.search as { preview?: string }).preview !== 'case-1') return
+    unsubscribe()
+    fireEvent.click(toggle)
+  })
+  onTestFinished(unsubscribe)
+  await act(async () => releaseLibrary(library))
+  await waitFor(() =>
+    expect(router.state.location.search).toEqual({
+      lens: 'all',
+      preview: 'case-1',
+      attention: 'open',
+    }),
+  )
+  expect(await screen.findByLabelText('Attention queue')).toBeVisible()
+})
+
+// A work the owner chooses is a later choice than an Attention press still on
+// its way, so that press does not open the queue over it.
+it('lets a chosen work cancel an Attention press still on its way', async () => {
+  const previousMatchMedia = window.matchMedia
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 761px)',
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(() => true),
+  }))
+  onTestFinished(() => {
+    vi.stubGlobal('matchMedia', previousMatchMedia)
+  })
+  const http = createHttp()
+  const work = library.works[0]
+  if (!work) throw new Error('public work fixture required')
+  http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async () => ({
+    ...library,
+    works: [
+      work,
+      {
+        ...work,
+        id: 'case-2',
+        reviewCaseId: 'case-2',
+        workId: 'library_work_2',
+        title: 'Another Book',
+      },
+    ],
+  }))
+  http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => ({ total: 1, items: [] }))
+  const { router } = renderRoute('/library?lens=all', http)
+  await waitFor(() => expect(router.state.location.search.preview).toBe('case-1'))
+  const toggle = screen.getByRole('button', { name: /^Attention/u })
+  // The press lands while the owner's choice of another work is under way.
+  const unsubscribe = router.subscribe('onBeforeNavigate', ({ toLocation }) => {
+    if ((toLocation.search as { preview?: string }).preview !== 'case-2') return
+    unsubscribe()
+    fireEvent.click(toggle)
+  })
+  onTestFinished(unsubscribe)
+  fireEvent.click(await screen.findByRole('button', { name: /^Another Book\./u }))
+  await waitFor(() => expect(router.state.location.search.preview).toBe('case-2'))
+  await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+  expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-2' })
 })
 
 it.each([

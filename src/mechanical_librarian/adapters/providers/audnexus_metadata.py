@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import random
 import time
-from dataclasses import replace
 from typing import Any, Callable
 
 import httpx
@@ -29,7 +28,9 @@ from mechanical_librarian.adapters.providers.sdk import (
     BoundedProviderSession,
     ProviderClocks,
     ProviderResponseFacts,
+    SchemaRejections,
     decode_json,
+    observed_result,
     provider_bounds,
     provider_client_lifetime,
 )
@@ -41,31 +42,19 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
-    ProviderFailureSnapshot,
     ProviderLaneResult,
     ProviderResult,
     provider_observation,
     qualify_provider_lane,
 )
-from mechanical_librarian.application.provider_evidence import (
-    ProviderOperationalEvidence,
-)
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
-)
-from mechanical_librarian.domain.failure_diagnostics import (
-    MAX_DIAGNOSTIC_COUNT,
-    FailureCategory,
-    FailureComponent,
-    FailureDiagnostic,
-    FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_MARKETPLACES,
     MAX_DESCRIPTION_CHARACTERS,
     MAX_PROVIDER_CHAPTER_DURATIONS,
-    MAX_PROVIDER_EVIDENCE,
     MAX_SCALAR_CHARACTERS,
     ClaimKind,
     ClaimScope,
@@ -80,6 +69,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     canonical_asin,
+    canonical_provider_evidence,
     claim_scope,
     comparison_links,
     finalize_candidate_comparisons,
@@ -135,7 +125,7 @@ _REGION_UNAVAILABLE = "REGION_UNAVAILABLE"
 _UNPROJECTABLE = object()
 
 
-class AudnexusMetadataProvider:
+class AudnexusMetadataProvider(SchemaRejections):
     """Observe one Audnexus book, and its chapter vector, per ASIN."""
 
     def __init__(
@@ -213,28 +203,8 @@ class AudnexusMetadataProvider:
         *,
         deadline: float | None = None,
     ) -> ProviderResult:
-        failure: BaseException | None = None
-        try:
-            observation = self._observe(plan, deadline=deadline)
-        except BaseException as error:
-            failure = error
-        try:
-            snapshot = ProviderFailureSnapshot(
-                (),
-                ProviderOperationalEvidence(
-                    self._session.accessed_at,
-                    self._session.attempt_records,
-                    self._session.incomplete_causes,
-                ),
-            )
-        except BaseException:
-            if failure is not None:
-                raise failure from None
-            raise
-        if failure is not None:
-            snapshot.raise_from(failure)
-        return ProviderResult(
-            observation, snapshot.cover_descriptors, snapshot.evidence
+        return observed_result(
+            lambda: self._observe(plan, deadline=deadline), self._session
         )
 
     def _observe(
@@ -390,26 +360,6 @@ class AudnexusMetadataProvider:
         except (TypeError, ValueError, UnicodeError, RecursionError):
             self._reject_schema_members(1)
             return None
-
-    def _reject_schema_members(self, count: int = 1) -> None:
-        if count <= 0:
-            return
-        self._schema_rejections = min(
-            MAX_DIAGNOSTIC_COUNT,
-            self._schema_rejections + count,
-        )
-
-    def _schema_diagnostics(self) -> tuple[FailureDiagnostic, ...]:
-        if not self._schema_rejections:
-            return ()
-        return (
-            FailureDiagnostic(
-                FailureCategory.SCHEMA_CONSTRUCTION,
-                FailureComponent.PROVIDER,
-                FailureStage.SCHEMA,
-                count=self._schema_rejections,
-            ),
-        )
 
     def _result(
         self,
@@ -697,7 +647,7 @@ def _candidate(
             identity,
             "unresolved",
             tuple(claims),
-            _canonical_evidence(evidence),
+            canonical_provider_evidence(evidence),
         ),
         local_claims,
         provider,
@@ -742,35 +692,6 @@ def _chapter_structure(
         tuple(durations),
         truncated,
     )
-
-
-def _canonical_evidence(
-    evidence: list[ProviderEvidence],
-) -> tuple[ProviderEvidence, ...]:
-    """Order one candidate's evidence exactly as the report document requires."""
-    ordered = tuple(
-        sorted(
-            (
-                replace(value, source_ordinal=index)
-                for index, value in enumerate(evidence)
-            ),
-            key=lambda value: (
-                value.scope.value,
-                value.kind.value,
-                value.value,
-                value.role or "",
-                "" if value.date_event is None else value.date_event.value,
-                "" if value.date_precision is None else value.date_precision.value,
-                value.date_normalized or "",
-                value.taxonomy_type or "",
-                "" if value.date_confidence is None else value.date_confidence.value,
-                value.source_ordinal,
-            ),
-        )
-    )
-    if len(ordered) > MAX_PROVIDER_EVIDENCE:
-        raise ValueError("provider rich evidence exceeds its bound")
-    return ordered
 
 
 def _names(

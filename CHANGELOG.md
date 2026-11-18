@@ -12,6 +12,10 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- Attention now opens when pressed just as Library's first work is selected.
+  Search keeps the cursor when a preparation run opened from setup loads after
+  you click into it. In Covers, the selected tab stays in view when its counts
+  arrive (#1959).
 - **Clean rebuild required.** When a refresh or a changed file leaves a book
   unidentified, its old case now closes too: it no longer accepts choices,
   and a change waiting on it for Audiobookshelf is dropped rather than

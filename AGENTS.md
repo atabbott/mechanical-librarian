@@ -130,7 +130,9 @@ Run the static architecture-boundary test whenever imports or packages move.
   dependencies allow may add structure; it must not leave two copies behind.
 - Split a function over about 200 lines, or a frontend route file over about
   1,500, when a unit already changes it. Never split as a standalone change:
-  splitting adds lines and churn with no behaviour change.
+  splitting adds lines and churn with no behaviour change. The exception is a
+  test file: it may be split as a change of its own when the pull request
+  states the measured run-time gain.
 - Bootstrap holds wiring and entry points. When
   `tests/architecture/test_bootstrap_ratchet.py` fails, edit its constants in
   the same pull request: lowering is always allowed; raising a span, `CEILING`

@@ -8332,6 +8332,15 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                                 search = page.locator(
                                     "#main-content input[type=search]"
                                 )
+                                # Start opens the run it began. Once that run
+                                # is read its detail shows, and on a phone it
+                                # replaces the list and its search.
+                                if "preparation=" in page.url:
+                                    expect(
+                                        page.locator(
+                                            ".preparation-detail [data-route-focus]"
+                                        )
+                                    ).to_be_visible()
                                 if not search.is_visible():
                                     page.locator(".compact-workspace-back").click()
                                 search.focus()
@@ -13187,9 +13196,14 @@ def test_keyboard_only_triage_journey(width):
         page.keyboard.type("j2?")
         expect(search).to_have_value("j2?")
         expect(page.get_by_role("dialog", name="Keys")).to_be_hidden()
+        # The search reaches the address after a short delay and its rows
+        # after a read; until both settle the earlier rows stay on screen. Tab
+        # then follows whichever list is there, so each search settles first.
+        expect(page.get_by_text("No works match this search.")).to_be_visible()
         assert "field=" not in page.url and ("preview=" in page.url) == opened
         page.keyboard.press("Control+A")
         page.keyboard.press("Backspace")
+        expect(page).not_to_have_url(re.compile(r"[?&]q="))
         expect(row).to_be_visible()
         page.keyboard.press("Tab")
         expect(row).to_be_focused()
@@ -13331,6 +13345,13 @@ def test_keyboard_only_triage_journey(width):
                 "keep_current",
                 "withdraw",
             ]
+            # The response can reach the test before the page has settled the
+            # withdrawal, and no key acts while a decision records.
+            expect(
+                page.get_by_text(
+                    "Withdrawn. This field needs a decision again.", exact=True
+                )
+            ).to_be_focused()
             page.set_viewport_size({"width": width, "height": height})
 
         # E opens the entry empty: the key itself is not typed into it.
@@ -15705,6 +15726,14 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
         fixture.recovery.enqueue_jobs(
             tuple(_job(f"member-{index}") for index in range(3)), enqueued_at=now
         )
+        discovered = threading.Event()
+        discover = preparation._pipeline._discover
+
+        def held_discover(connection: str, library: str):
+            discovered.wait()
+            return discover(connection, library)
+
+        monkeypatch.setattr(preparation._pipeline, "_discover", held_discover)
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             try:
@@ -15752,12 +15781,16 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                 expect(resume).to_be_focused()
                 resume.click()
                 expect(trigger).to_have_accessible_name(f"Preparation idle. {waiting}")
+                # A one-work library can finish its scan before the masthead
+                # next reads it, so discovery waits until the busy state is
+                # seen.
                 popover.get_by_role("button", name="Scan now", exact=True).first.click()
                 expect(trigger).to_have_accessible_name(
                     f"Preparing libraries. {waiting}"
                 )
                 # Idle had no progress at all; the press started a real scan.
                 progress, paused = preparation.status()
+                discovered.set()
                 assert not paused
                 assert progress[0] is not None
                 assert progress[0].scan_id
@@ -15795,6 +15828,7 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                     "SECTION.settings-route"
                 }, arrivals
             finally:
+                discovered.set()
                 browser.close()
 
 
@@ -16531,8 +16565,24 @@ def _check_cover_tabs_after_swipe_back_and_tab(page: Page, origin: str) -> None:
     assert not page.evaluate(_COVER_TAB_IN_VIEW, ".covers-tabs button:nth-child(2)"), (
         "the swipe must hide Kept for the tap to prove anything"
     )
+    # Kept's read is held past the tap, so every count still shows "…", wider
+    # than its number: the tab is brought into view once now and again when
+    # the counts arrive and the tabs narrow. A read not yet routed when the
+    # rest are released is still unanswered, so it is released on arrival.
+    held: list[Route] = []
+    released = False
+    page.route(
+        "**/api/v1/covers?view=kept",
+        lambda route: route.continue_() if released else held.append(route),
+    )
     _tap_cover_tab(page, 1)
     expect(buttons.nth(1)).to_have_attribute("aria-pressed", "true")
+    expect(buttons.nth(0)).to_have_text("To decide …")
+    page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
+    released = True
+    for route in held:
+        route.continue_()
+    expect(buttons.nth(0)).to_have_text("To decide 1")
     page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
     # Taste profile, then a swipe back to the start and To decide; Back
     # returns to Taste profile and brings it into view again.

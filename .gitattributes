@@ -8,3 +8,9 @@
 *.ico binary
 *.zip binary
 *.woff2 binary
+
+# Keep both sides' lines where two branches add entries at the same place
+# (docs/development/documentation-standards.md). The documentation integrity
+# check reports a changelog entry such a merge breaks.
+CHANGELOG.md merge=union
+docs/README.md merge=union

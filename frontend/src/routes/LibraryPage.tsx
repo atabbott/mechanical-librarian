@@ -280,8 +280,14 @@ export default function LibraryPage({
     searchIdentity,
   })
   const { cleaningUp } = preparationDismissal
-  const { queryText, searchPending, runSearch, changeAttentionSearch, submitSearch } =
-    useLibrarySearchNavigation({ urlQuery, searchIdentity, navigate, revealWorkspace })
+  const {
+    queryText,
+    searchPending,
+    runSearch,
+    changeAttentionSearch,
+    submitSearch,
+    expectAutomaticSelection,
+  } = useLibrarySearchNavigation({ urlQuery, searchIdentity, navigate, revealWorkspace })
   const selectedReviewCaseId = search.preview ?? ''
   // A search or lens may temporarily hide the open work's card. The row the
   // owner opened is kept so the summary does not vanish mid-inspection and
@@ -617,9 +623,25 @@ export default function LibraryPage({
   const staleCoverNotice = staleCover.notice
   const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.attention ?? ''}:${search.preparation ?? ''}`
   useRouteReadyFocus(routeIdentity, true)
+  // Where focus was when the address chose a run: the page itself on arrival,
+  // or the control that chose it.
+  const preparationChosenFrom = useRef<Element | null>(null)
+  useEffect(() => {
+    preparationChosenFrom.current = search.preparation ? document.activeElement : null
+  }, [search.preparation])
   useEffect(() => {
     if (!preparationSelected) return
     const frame = requestAnimationFrame(() => {
+      // The run is shown only once it is read, and by then the owner may be
+      // in a control, such as typing in search: the heading never takes
+      // focus from one they chose since.
+      const active = document.activeElement
+      if (
+        active instanceof HTMLElement &&
+        active !== preparationChosenFrom.current &&
+        active.tabIndex >= 0
+      )
+        return
       document
         .querySelector<HTMLElement>('.preparation-detail [data-route-focus]')
         ?.focus({ preventScroll: true })
@@ -857,16 +879,18 @@ export default function LibraryPage({
       if (reviewCaseId)
         void navigate({
           replace: true,
-          search: (current) =>
-            current.preview || current.work || current.preparation
-              ? current
-              : { ...current, preview: reviewCaseId },
+          search: (current) => {
+            if (current.preview || current.work || current.preparation) return current
+            const next = { ...current, preview: reviewCaseId }
+            expectAutomaticSelection(next)
+            return next
+          },
         })
     }
     selectWideDefault()
     media.addEventListener('change', selectWideDefault)
     return () => media.removeEventListener('change', selectWideDefault)
-  }, [currentWorks, navigate, searchPending])
+  }, [currentWorks, expectAutomaticSelection, navigate, searchPending])
 
   const selectCase = (
     reviewCaseId: string,
