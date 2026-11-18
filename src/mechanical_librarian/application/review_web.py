@@ -3626,7 +3626,8 @@ def _owner_control(
         ):
             withdraw = "automatic_hold"
         else:
-            resumed = True
+            # Only an entered value has a recorded line to keep showing.
+            resumed = decision.outcome == "owner_entered"
     entered = (entry, subset, names) != (None, None, None)
     if not entered and withdraw is None and not resumed:
         return None

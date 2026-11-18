@@ -242,10 +242,12 @@ def test_the_hold_refusal_shows_only_until_resume_is_chosen(tmp_path: Path) -> N
         store.close()
 
 
-# With nothing to enter, a resumed answer keeps its controls, which show the
-# recorded value, rather than losing them with the refusal.
-def test_a_resumed_answer_keeps_its_controls_without_entry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+# With nothing to enter, a resumed entered value keeps its controls, which
+# show the recorded value, rather than losing them with the refusal. Any
+# other answer has no recorded line there, so it keeps no empty controls.
+@pytest.mark.parametrize("outcome", ["owner_entered", "accept"])
+def test_a_resumed_answer_without_entry_keeps_only_a_recorded_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
     import mechanical_librarian.application.review_web as review_web
 
@@ -255,23 +257,25 @@ def test_a_resumed_answer_keeps_its_controls_without_entry(
         case_id, _ = publish_genre_case(store.repository, genre_report())
         store.load(case_id)
         decision = store.decide(
-            "owner_entered",
-            {"kind": "list", "value": ["Fantasy"]},
-            destination="genres",
+            outcome, {"kind": "list", "value": ["Fantasy"]}, destination="genres"
         )
         held = _field(store, "genres")["owner_control"]
         assert cast(dict, held)["withdraw"] == "automatic_hold"
         assert store.repository.clear_field_effect_manual_hold(
             case_id, "genres", store.clock(), decision.decision_id
         )
-        assert _field(store, "genres")["owner_control"] == {
-            "entry": None,
-            "subset": None,
-            "names": None,
-            "clear": False,
-            "current": None,
-            "withdraw": None,
-        }
+        assert _field(store, "genres")["owner_control"] == (
+            {
+                "entry": None,
+                "subset": None,
+                "names": None,
+                "clear": False,
+                "current": None,
+                "withdraw": None,
+            }
+            if outcome == "owner_entered"
+            else None
+        )
     finally:
         store.close()
 
