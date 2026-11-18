@@ -575,8 +575,16 @@ def test_taste_automatic_never_replaces_an_owner_cover_choice(
 def _successor_case(library: _Library, item: str) -> None:
     """Publish the work again with another publisher, so it is reviewed as
     a new case, and compare its cover under the same policy."""
-    repository = library.repository
-    report = _current_report(library, item)
+    case_id, successor = _republished(
+        library.repository, _current_report(library, item)
+    )
+    _ensure(library, item, case_id, successor)
+    library.service.refresh_authority()
+
+
+def _republished(repository: Any, report: MetadataReport) -> tuple[str, MetadataReport]:
+    """Publish `report`'s work again with another publisher and admit it as
+    a new review case; return that case and the report it reviews."""
     target = report.target
     fields = tuple(
         TargetField(field.destination, TargetFieldState.VALUE, "Another Publisher")
@@ -606,8 +614,7 @@ def _successor_case(library: _Library, item: str) -> None:
     )
     repository.publish_proposal(proposal_set)
     case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
-    _ensure(library, item, case_id, successor)
-    library.service.refresh_authority()
+    return case_id, successor
 
 
 def replace_policy(library: _Library, item: str) -> CoverConsiderationService:
@@ -1224,6 +1231,79 @@ def test_an_admission_that_stops_at_its_basis_removes_the_mark(
         connection.commit()
         assert _marks(prepared) == ([] if paused else marks)
         assert [row["kind"] for row in _selections(repository)] == ["owner"]
+
+
+def test_a_resume_on_an_earlier_case_keeps_an_answer_on_its_successor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review S2: Resume is asked on case A, the work is reviewed again as
+    case B, and the owner answers the cover on B. When A's hold then clears
+    under its token, B's newer answer stays current: the clear refuses the
+    earlier case, and the release frees only the selection A's hold names."""
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with _prepared(tmp_path) as prepared:
+        repository = prepared.repository
+        service = _service(prepared)
+        (switch,) = _selections(repository)
+        _keep_cover(prepared, switch["selection_id"])
+        service.update_policy(CoverPolicy(prefer_edition=True))
+        _reprepare(service, prepared)
+        earlier = prepared.review_case_id
+        token = repository.field_effect_manual_hold_token(earlier, "cover")
+        assert token is not None
+        (kept,) = _selections(repository)
+        report = MetadataReport.from_json(
+            repository._connection.execute(
+                "SELECT document FROM metadata_reports WHERE report_id=?",
+                (json.loads(repository.get_review_case(earlier))["case"]["report_id"],),
+            ).fetchone()[0]
+        )
+        case_id, successor = _republished(repository, report)
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        proposal = next(row for row in case.proposals if row["destination"] == "cover")
+        service.ensure(case_id, successor.to_json(), proposal)
+        later = repository.current_cover_consideration_document(case_id)
+        assert later is not None
+        repository.record_human_decision(
+            HumanDecision.create(
+                case,
+                proposal_id=str(proposal["proposal_id"]),
+                target_fingerprint=case.target_fingerprint,
+                destination="cover",
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="synthetic-owner-answers-successor",
+                occurred_at=15,
+            ),
+            cover_consideration_id=json.loads(later)["consideration_id"],
+            cover_confirmation={
+                "expected_selection_id": kept["selection_id"],
+                "confirm_unverified_match": False,
+            },
+        )
+        (answered,) = _selections(repository)
+        assert answered["kind"] == "owner"
+        assert answered["selection_id"] != kept["selection_id"]
+        # A's checks complete. The clear itself refuses a case that is no
+        # longer the work's current one, so it releases nothing ...
+        assert (
+            repository.clear_field_effect_manual_hold(earlier, "cover", 20, token)
+            is None
+        )
+        assert _selections(repository) == [answered]
+        # ... and the release it would run, asked directly for A's hold,
+        # frees only the selection that hold names, never B's answer.
+        repository._connection.execute("BEGIN")
+        repository._cover_considerations._resume_automatic_cover(earlier, token, 20)
+        repository._connection.commit()
+        assert _selections(repository) == [answered]
 
 
 def test_a_later_comparison_with_no_switch_clears_the_mark(
