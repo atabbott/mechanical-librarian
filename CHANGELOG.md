@@ -220,6 +220,10 @@ brackets are GitHub issues.
   covers with your taste profile, through Codex or an OpenRouter model.
   Nothing shows its answers yet. `review.cover_taste_judge_daily_requests`
   (default 5,000) caps its requests (#1372).
+- To decide suggests cover switches from your taste profile under Switch
+  suggested, Strong first, each with the rules behind it and Edit taste
+  profile. Settings › Suggestions chooses the model, and Taste profile counts
+  the suggestions you confirmed (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when

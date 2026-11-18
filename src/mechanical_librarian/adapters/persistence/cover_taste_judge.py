@@ -61,8 +61,8 @@ _LATEST_VERDICT_AT_SQL = (
 # under a fault-free keep of a readable cover beside another art (a) or a
 # fault the stage would cure among at least two arts (b). J6: never attempted
 # under this version, and not one whose newest verdict kept the current cover
-# or abstained.
-_DUE_FROM_SQL = (
+# or abstained. `_ELIGIBLE_FROM_SQL` is all but J6's attempt condition.
+_ELIGIBLE_FROM_SQL = (
     "FROM current_review_packages ml "
     "JOIN current_cover_considerations pointer "
     "ON pointer.review_case_id=ml.review_case_id "
@@ -105,10 +105,52 @@ _DUE_FROM_SQL = (
     "AND NOT EXISTS (SELECT 1 FROM field_effect_manual_holds held "
     "WHERE held.review_case_id=ml.review_case_id AND held.destination='cover' "
     "AND held.active=1) "
-    "AND NOT EXISTS (SELECT 1 FROM cover_taste_judgements attempted "
-    "WHERE attempted.consideration_id=consideration.consideration_id "
-    "AND attempted.version=?) "
     f"AND COALESCE({_LATEST_VERDICT_SQL},'choose')='choose' "
+)
+_DUE_FROM_SQL = (
+    _ELIGIBLE_FROM_SQL +
+    # Never attempted under this version, or its newest attempt is the
+    # owner's Try again, still waiting (#1372 PR 4b).
+    "AND (NOT EXISTS (SELECT 1 FROM cover_taste_judgements attempted "
+    "WHERE attempted.consideration_id=consideration.consideration_id "
+    "AND attempted.version=?) OR EXISTS (SELECT 1 FROM cover_taste_judgements "
+    "retried WHERE retried.consideration_id=consideration.consideration_id "
+    "AND retried.version=? AND retried.state='requested')) "
+)
+# The fields still eligible for a check whose newest attempt under a version
+# failed: what Try again sends again, so it never clears a count it does not
+# send (#1372 PR 4b).
+_FAILED_SQL = (
+    "SELECT judgement_id FROM cover_taste_judgements "
+    "WHERE state='failed' AND judgement_id IN (SELECT "
+    "(SELECT newest.judgement_id FROM cover_taste_judgements newest "
+    "WHERE newest.consideration_id=consideration.consideration_id "
+    "AND newest.version=? ORDER BY newest.rowid DESC LIMIT 1) "
+    + _ELIGIBLE_FROM_SQL
+    + ")"
+)
+# The verdict in force at a selection: the newest stored for its comparison
+# in an earlier second than the selection (J9). Both times are whole seconds,
+# so a verdict stored in the selection's own second cannot be told apart from
+# one that arrived after the owner answered; and the owner cannot have read a
+# suggestion in the second it was stored.
+VERDICT_IN_FORCE_SQL = (
+    "(SELECT verdict.document FROM cover_taste_verdicts verdict "
+    "WHERE verdict.consideration_id=selection.consideration_id "
+    "AND verdict.created_at<selection.occurred_at "
+    "ORDER BY verdict.created_at DESC,verdict.rowid DESC LIMIT 1)"
+)
+# Each current owner selection whose verdict in force chose a cover, and
+# whether the owner chose that cover (J9).
+_CONFIRMED_SQL = (
+    "SELECT count(*),COALESCE(sum(json_extract(selection.document,"
+    "'$.candidate_reference')=json_extract(in_force,'$.candidate_reference')),0) "
+    f"FROM (SELECT selection.document,{VERDICT_IN_FORCE_SQL} AS in_force "
+    "FROM current_cover_selection_authorities current "
+    "JOIN cover_selection_authorities selection "
+    "ON selection.selection_id=current.selection_id "
+    "WHERE selection.kind='owner') selection "
+    "WHERE json_extract(in_force,'$.decision')='choose'"
 )
 # One scan for a batch of due fields: pending suggestions first, oldest
 # verdict first, then the rest by when each comparison was prepared.
@@ -225,6 +267,89 @@ def _day(now: int) -> int:
     return now // _DAY_SECONDS
 
 
+def _failed(
+    connection: sqlite3.Connection,
+    authority: tuple[str | None, str | None],
+    version: int,
+) -> list[str]:
+    policy, replay = authority
+    if policy is None or replay is None:
+        return []
+    return [
+        row[0]
+        for row in connection.execute(
+            _FAILED_SQL, (version, policy, replay, TASTE_MIN_ARTS, TASTE_MIN_ARTS)
+        )
+    ]
+
+
+def taste_judge_facts(
+    connection: sqlite3.Connection,
+    authority: tuple[str | None, str | None],
+    now: int,
+    daily_limit: int,
+) -> dict[str, object]:
+    """What Covers → Taste profile says of the judge: today's stop and when it
+    lifts, the works whose check failed under the version in use, and the
+    suggestions the owner confirmed (#1372 PR 4b, J9)."""
+    row = connection.execute(
+        "SELECT requests,stopped FROM reviewer_task_requests WHERE task=? AND day=?",
+        (_TASK, _day(now)),
+    ).fetchone()
+    stopped = (
+        None
+        if row is None
+        else "unknown_charge"
+        if row[1] is not None
+        else "ceiling"
+        if row[0] >= daily_limit
+        else None
+    )
+    version = connection.execute(
+        "SELECT max(version) FROM cover_taste_profile_versions"
+    ).fetchone()[0]
+    suggested, confirmed = connection.execute(_CONFIRMED_SQL).fetchone()
+    return {
+        "stopped": stopped,
+        "retry_after": None if stopped is None else (_day(now) + 1) * _DAY_SECONDS,
+        "failed": 0
+        if version is None
+        else len(_failed(connection, authority, version)),
+        "confirmed": {"confirmed": confirmed, "suggested": suggested},
+    }
+
+
+def request_taste_judge_retries(
+    connection: sqlite3.Connection,
+    authority: tuple[str | None, str | None],
+    version: int,
+    now: int,
+) -> bool:
+    """Ask again for each failed check under `version`; False only when it is
+    not the version in use. With nothing failed, such as a repeat whose first
+    answer was lost, it asks for nothing and still succeeds. The caller holds
+    the transaction; the retries are counted only when sent (J7)."""
+    newest = connection.execute(
+        "SELECT max(version) FROM cover_taste_profile_versions"
+    ).fetchone()[0]
+    if newest != version:
+        return False
+    for judgement_id in _failed(connection, authority, version):
+        connection.execute(
+            "INSERT INTO cover_taste_judgements SELECT ?,consideration_id,version,"
+            "'retry',judgement_id,'requested',NULL,NULL,?,?,? "
+            "FROM cover_taste_judgements WHERE judgement_id=?",
+            (
+                "taste_judgement_" + uuid.uuid4().hex,
+                _day(now),
+                now,
+                now,
+                judgement_id,
+            ),
+        )
+    return True
+
+
 class SQLiteCoverTasteJudgeRepository(ConnectionScoped):
     """`cover_read` yields the live cover policy and replay references with
     provider fetching captured once, so the due statements read currentness
@@ -288,7 +413,15 @@ class SQLiteCoverTasteJudgeRepository(ConnectionScoped):
             row[0]
             for row in self._connection.execute(
                 _DUE_SQL,
-                (policy, replay, TASTE_MIN_ARTS, TASTE_MIN_ARTS, version, limit),
+                (
+                    policy,
+                    replay,
+                    TASTE_MIN_ARTS,
+                    TASTE_MIN_ARTS,
+                    version,
+                    version,
+                    limit,
+                ),
             )
         )
 
@@ -305,7 +438,15 @@ class SQLiteCoverTasteJudgeRepository(ConnectionScoped):
     ) -> JudgeDue | None:
         row = self._connection.execute(
             _DUE_ONE_SQL,
-            (policy, replay, TASTE_MIN_ARTS, TASTE_MIN_ARTS, version, consideration_id),
+            (
+                policy,
+                replay,
+                TASTE_MIN_ARTS,
+                TASTE_MIN_ARTS,
+                version,
+                version,
+                consideration_id,
+            ),
         ).fetchone()
         if row is None:
             return None
@@ -328,6 +469,20 @@ class SQLiteCoverTasteJudgeRepository(ConnectionScoped):
         model: str | None,
         now: int,
     ) -> str:
+        """Start the pair's waiting Try again in `state`, or else insert its
+        cadence attempt; the pair index refuses a second cadence attempt."""
+        retry = self._connection.execute(
+            "SELECT judgement_id FROM cover_taste_judgements WHERE consideration_id=? "
+            "AND version=? AND state='requested'",
+            (consideration_id, version),
+        ).fetchone()
+        if retry is not None:
+            self._connection.execute(
+                "UPDATE cover_taste_judgements SET state=?,failure=?,model=?,day=?,"
+                "updated_at=max(?,requested_at) WHERE judgement_id=?",
+                (state, failure, model, _day(now), now, retry[0]),
+            )
+            return cast(str, retry[0])
         judgement_id = "taste_judgement_" + uuid.uuid4().hex
         self._connection.execute(
             "INSERT INTO cover_taste_judgements VALUES(?,?,?,'cadence',NULL,?,?,?,?,?,?)",
@@ -484,14 +639,15 @@ class SQLiteCoverTasteJudgeRepository(ConnectionScoped):
 
     @local_operation
     def interrupt_recovered(self, now: int) -> None:
-        """A judgement in flight when the process stopped ends `interrupted`."""
+        """A judgement in flight when the process stopped ends `interrupted`;
+        a Try again still waiting was never sent, so it stays waiting."""
         transaction = self._transaction("taste_judge_interrupt")
         try:
             transaction.begin()
             self._connection.execute(
                 "UPDATE cover_taste_judgements SET state='failed',"
                 "failure='interrupted',updated_at=max(updated_at,?) "
-                "WHERE state IN ('requested','running')",
+                "WHERE state='running'",
                 (now,),
             )
             transaction.commit()
@@ -500,4 +656,10 @@ class SQLiteCoverTasteJudgeRepository(ConnectionScoped):
             raise
 
 
-__all__ = ["SQLiteCoverTasteJudgeRepository", "validate_cover_taste_verdicts"]
+__all__ = [
+    "VERDICT_IN_FORCE_SQL",
+    "SQLiteCoverTasteJudgeRepository",
+    "request_taste_judge_retries",
+    "taste_judge_facts",
+    "validate_cover_taste_verdicts",
+]

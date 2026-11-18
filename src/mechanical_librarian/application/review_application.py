@@ -1156,6 +1156,16 @@ class ReviewApplication:
             raise ReviewApplicationError("stale") from None
         self._updates.publish("library")
 
+    def retry_taste_judge(self, version: int) -> None:
+        """Try again for the works whose check failed under `version`."""
+        if self._cover_taste is None:
+            raise ReviewApplicationError("unavailable")
+        try:
+            self._cover_taste.retry_judge(version)
+        except CoverTasteRetryError:
+            raise ReviewApplicationError("stale") from None
+        self._updates.publish("library")
+
     def edit_taste_rule(
         self,
         version: int,

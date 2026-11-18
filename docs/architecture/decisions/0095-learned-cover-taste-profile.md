@@ -377,8 +377,8 @@ nothing reads it. Three decisions made while building it amend the text above:
 
 ## Note: the judge (#1372 PR 4)
 
-The status stays proposed. The judge runs and stores its verdicts; nothing
-reads them yet.
+The status stays proposed. The judge runs and stores its verdicts, and since
+PR 4b a `choose` verdict is a suggestion the owner sees.
 
 - **Either engine.** The judge is its own task mapping, Codex or an OpenRouter
   model, chosen apart from the builder. Each request is one attempt and one
@@ -407,3 +407,20 @@ reads them yet.
   kept the current cover or abstained is not judged again. An engine failure
   pauses judging for 10 minutes; a failed field waits for the owner's Try
   again or a new version.
+- **Suggestions (PR 4b).** The newest verdict on a current comparison that
+  chose a cover, with no owner selection answering the work, is a suggestion:
+  Strong at a confidence of 90 or more, otherwise Likely (Q11, Q12). Strength
+  orders To decide and never changes Attention (Q14). A verdict under an older
+  version is shown with that version's rule texts until the work is judged
+  again (Q4); the suggestion carries each rule's section and the version in
+  use. Try again asks again for the failed fields under the version in use
+  that could still be judged, as a requested attempt the next wake takes up;
+  a repeat with nothing failed succeeds, so a lost answer is never stale.
+- **Confirmations.** The verdict in force for an owner selection is the
+  newest stored in an earlier second (times are whole seconds, so one stored
+  in the selection's own second may have come after it). A selection under a
+  `choose` counts toward
+  "Confirmed {n} of {m}", and toward n when it took that candidate; one total
+  is shown, not one per medium. A selection that differs from a `choose` or
+  `keep_current` verdict in force is a correction: the builder sends up to 25,
+  newest first, ahead of its sample.

@@ -352,7 +352,7 @@ export const idlePreparation: PreparationView = {
 type ScriptedPolicyCommand = (path: string, body?: unknown) => Promise<never>
 // Covers → Taste profile before any build: configured, nothing chosen yet.
 export const tasteProfile: TasteProfileView = {
-  schema_version: 'review-taste-profile-v2',
+  schema_version: 'review-taste-profile-v3',
   configured: true,
   chosen: 0,
   required: 25,
@@ -360,6 +360,8 @@ export const tasteProfile: TasteProfileView = {
   build: null,
   profile: null,
   versions: [],
+  judge: { configured: false, daily_limit: 5000, stopped: null, retry_after: null, failed: 0 },
+  confirmed: { confirmed: 0, suggested: 0 },
 }
 // Find this book is not offered unless a test says so (#1477).
 export const unofferedLinkView: OwnerLinkView = {
@@ -455,15 +457,16 @@ export const createHttp = (): ReviewHttp => ({
     counts: { decide: 0, kept: 0, switched: 0, all: 0 },
     items: [],
     next_cursor: null,
-    schema_version: 'review-covers-v1' as const,
+    schema_version: 'review-covers-v2' as const,
     view,
   })),
   getCoverCalibration: vi.fn(async () => ({
     items: [],
-    schema_version: 'review-cover-calibration-v1' as const,
+    schema_version: 'review-cover-calibration-v2' as const,
   })),
   getTasteProfile: vi.fn(async () => tasteProfile),
   retryTasteBuild: vi.fn(async () => tasteProfile),
+  retryTasteJudge: vi.fn(async () => tasteProfile),
   editTasteRule: vi.fn(async () => tasteProfile),
   getCaseDetail: vi.fn(async () => detail),
   getCaseSuccessor: vi.fn(async () => null),

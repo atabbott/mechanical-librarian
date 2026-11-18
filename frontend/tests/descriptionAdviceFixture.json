@@ -50,6 +50,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "series",
         "state": "missing",
@@ -140,6 +141,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "genres",
         "state": "missing",
@@ -251,6 +253,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "isbn",
         "state": "missing",
@@ -350,6 +353,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "title",
         "state": "value",
@@ -420,6 +424,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "subtitle",
         "state": "missing",
@@ -510,6 +515,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "authors",
         "state": "value",
@@ -581,6 +587,7 @@
       "classification_reason": "Nothing to decide for this field.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "publishedDate",
         "state": "missing",
@@ -641,6 +648,7 @@
       "classification_reason": "Nothing to decide for this field.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "publisher",
         "state": "missing",
@@ -735,6 +743,7 @@
       "classification_reason": "Automatic decided this field. You can change it here.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "description",
         "state": "value",
@@ -839,6 +848,7 @@
       "classification_reason": "Nothing to decide for this field.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "asin",
         "state": "missing",
@@ -899,6 +909,7 @@
       "classification_reason": "Nothing to decide for this field.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "language",
         "state": "missing",
@@ -976,6 +987,7 @@
       "classification_reason": "Tags are off in your settings, so your tags are left as they are and no review is needed. You can still choose proposed tags.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "tags",
         "state": "missing",
@@ -1041,6 +1053,7 @@
       "classification_reason": "Nothing to decide for this field.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "cover",
         "state": "missing",
@@ -1081,7 +1094,7 @@
   "recording_admission_basis": null,
   "recording_identity_basis": null,
   "review_case_id": "review_case_c2cc1b111cf058886df69a6af7e08b2904e7d734699482b9978fa255d2cacac6",
-  "schema_version": "review-case-detail-v10",
+  "schema_version": "review-case-detail-v11",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",

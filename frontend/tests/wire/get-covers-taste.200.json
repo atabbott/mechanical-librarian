@@ -31,7 +31,7 @@
       "version": 1
     },
     "required": 25,
-    "schema_version": "review-taste-profile-v2",
+    "schema_version": "review-taste-profile-v3",
     "versions": [
       {
         "created_at": 1000,
@@ -39,7 +39,18 @@
         "kind": "built",
         "version": 1
       }
-    ]
+    ],
+    "judge": {
+      "configured": false,
+      "daily_limit": 5000,
+      "stopped": null,
+      "retry_after": null,
+      "failed": 0
+    },
+    "confirmed": {
+      "confirmed": 0,
+      "suggested": 0
+    }
   },
   "method": "GET",
   "path": "/api/v1/covers/taste",

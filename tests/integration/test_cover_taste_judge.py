@@ -2,7 +2,8 @@
 
 Fields are prepared by the real producers, the engine is selected through
 the real reviewer access operations, and the profile's second version is an
-owner edit over HTTP. Verdicts are stored and shown nowhere yet.
+owner edit over HTTP. Since PR 4b a `choose` verdict is a suggestion that
+To decide lists, and the owner's answer counts toward Confirmed.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from mechanical_librarian.application.cover_taste_judge_contract import (
     TasteJudgeReply,
 )
 from mechanical_librarian.application.operations import support_preparation_incidents
+from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.application.reviewer_access import (
     OpenRouterFactory,
     ReviewerAccessOperations,
@@ -44,6 +46,7 @@ from mechanical_librarian.domain.cover_taste import (
 )
 from tests.integration.test_cover_taste_build import _Built, _client
 from tests.unit.test_cover_taste_judge import WORKS, _Library, _library
+from tests.unit.test_cover_taste_suggestions import _choose
 from tests.unit.test_reviewer_access_application import _Auth
 
 MODEL = "example/vision"
@@ -300,6 +303,79 @@ def test_fields_are_judged_once_and_a_new_version_rejudges_only_suggestions(
         assert request.current is None and request.version == 2
         [*_, latest] = _verdicts(judged)
         assert (latest["version"], latest["decision"]) == (2, "choose")
+
+
+def test_a_suggestion_is_listed_shown_confirmed_and_learned_from(
+    tmp_path: Path,
+) -> None:
+    """#1372 PR 4b end to end: a `choose` verdict is listed under To decide
+    and shown on its work; the owner's pick of that card is the ordinary
+    accept, counts as confirmed, and the next build reads it as chosen."""
+    with _judged(tmp_path) as judged:
+        judged.run(NOW)
+        [(item, reference)] = [
+            (
+                next(
+                    name
+                    for name, consideration in judged.library.considerations.items()
+                    if consideration["consideration_id"] == verdict["consideration_id"]
+                ),
+                cast(str, verdict["candidate_reference"]),
+            )
+            for verdict in _verdicts(judged)
+            if verdict["decision"] == "choose"
+        ]
+        case_id = judged.library.cases[item]
+        store = judged.library.repository.cover_taste_store()
+        built = CoverTasteBuildService(
+            lambda: store,
+            judged.access,
+            judged.library.artifacts.read_preview_digest,
+            daily_limit=1,
+            clock=lambda: NOW + 60,
+        )
+        with _client(
+            _Built(tmp_path, judged.library.repository, judged.access, built, [])
+        ) as (http, _headers):
+            decide = http.get("/api/v1/covers", params={"view": "decide"}).json()
+            [row] = [row for row in decide["items"] if row["review_case_id"] == case_id]
+            assert row["group"] == "proposal"
+            # Confidence 64 is below the Strong threshold of 90.
+            assert row["suggestion"]["taste"] == {"strength": "likely"}
+            # The work's detail, as the composed application reads it: the
+            # transport test app has no cover comparison reader.
+            detail = InspectCurrentReviewCase(
+                judged.library.repository, judged.library.service
+            ).run(case_id)
+            [cover] = [
+                field
+                for field in cast("list[dict[str, object]]", detail["fields"])
+                if field["destination"] == "cover"
+            ]
+            suggestion = cast("dict[str, object]", cover["cover_taste_suggestion"])
+            assert suggestion["candidate_reference"] == reference
+            assert (suggestion["version"], suggestion["strength"]) == (1, "likely")
+            assert suggestion["rules"] == [
+                {"number": 1, "section": "drawn_to", "text": "Calm colour."}
+            ]
+            assert suggestion["version_in_use"] == 1
+            taste = http.get("/api/v1/covers/taste").json()
+            assert taste["judge"]["configured"] is True
+            assert taste["judge"]["failed"] == 0
+            assert taste["confirmed"] == {"confirmed": 0, "suggested": 0}
+
+            _choose(judged.library, item, reference, NOW + 30)
+
+            decide = http.get("/api/v1/covers", params={"view": "decide"}).json()
+            assert case_id not in {row["review_case_id"] for row in decide["items"]}
+            taste = http.get("/api/v1/covers/taste").json()
+            assert taste["confirmed"] == {"confirmed": 1, "suggested": 1}
+        decisions = store.decisions()
+        assert [
+            (decision.chosen_reference, decision.correction)
+            for decision in decisions
+            if decision.chosen_reference == reference
+        ] == [(reference, False)]
 
 
 def test_the_judge_runs_on_codex_with_the_contained_model(tmp_path: Path) -> None:

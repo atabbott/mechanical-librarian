@@ -230,12 +230,14 @@ def test_the_due_statements_and_verdict_reads_search_their_indexes(
         row[-1]
         for row in library.repository._connection.execute(
             "EXPLAIN QUERY PLAN " + statement,
-            (policy, replay, TASTE_MIN_ARTS, TASTE_MIN_ARTS, 1, last),
+            (policy, replay, TASTE_MIN_ARTS, TASTE_MIN_ARTS, 1, 1, last),
         )
     )
     assert "SEARCH attempted USING COVERING INDEX cover_taste_judgements_pair" in plan
+    assert "SEARCH retried USING INDEX cover_taste_judgements_pair" in plan
     assert "SEARCH verdict USING INDEX cover_taste_verdicts_consideration" in plan
     assert "SCAN attempted" not in plan and "SCAN verdict" not in plan
+    assert "SCAN retried" not in plan
     assert "SCAN consideration" not in plan
 
 

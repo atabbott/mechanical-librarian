@@ -95,6 +95,10 @@ class CoverTasteRepository(Protocol):
 
     def read(self) -> dict[str, object]: ...
 
+    def judge_read(self, now: int, daily_limit: int) -> dict[str, object]: ...
+
+    def request_judge_retry(self, version: int, now: int) -> bool: ...
+
 
 class CoverTasteRetryError(RuntimeError):
     """A retry names a build that is not the latest failed one."""
@@ -148,24 +152,41 @@ class CoverTasteBuildService:
         read_preview: Callable[[str], bytes],
         *,
         daily_limit: int,
+        judge_daily_limit: int = 5_000,
         clock: Callable[[], int] = lambda: int(time.time()),
     ) -> None:
         self._repository = repository
         self._access = access
         self._read_preview = read_preview
         self._daily_limit = daily_limit
+        self._judge_daily_limit = judge_daily_limit
         self._clock = clock
         self._scheduled_at: int | None = None
         self._recovered = False
 
     def read(self) -> dict[str, object]:
         """The stored build and version facts, whether the task is configured,
-        and the daily limit the owner reads."""
+        and the daily limit the owner reads; then the same of the judge that
+        suggests switches, and the suggestions the owner confirmed."""
+        repository = self._repository()
+        judge = repository.judge_read(self._clock(), self._judge_daily_limit)
         return {
-            **self._repository().read(),
+            **repository.read(),
             "configured": self._access.current_taste_build_model() is not None,
             "daily_limit": self._daily_limit,
+            "confirmed": judge.pop("confirmed"),
+            "judge": {
+                **judge,
+                "configured": self._access.current_taste_judge_model() is not None,
+                "daily_limit": self._judge_daily_limit,
+            },
         }
+
+    def retry_judge(self, version: int) -> None:
+        """Ask again for each work whose check failed under `version`, the
+        version in use; each counts against the judge's ceiling when sent."""
+        if not self._repository().request_judge_retry(version, self._clock()):
+            raise CoverTasteRetryError("taste profile version is not in use")
 
     def retry(self, build_id: str) -> None:
         """Request the owner's Try again; it counts against the ceiling when sent."""

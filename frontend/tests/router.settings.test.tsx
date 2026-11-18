@@ -4237,11 +4237,15 @@ describe('taste profile model (#1372)', () => {
         '0.000003 per input token, 0.000015 per output token, 0.0048 per image, Unavailable per request.',
       ),
     ).toBeVisible()
-    expect(http.testTasteModel).toHaveBeenCalledWith({
-      expected_revision: 3,
-      api_key: '',
-      model: metadata.model,
-    })
+    expect(http.testTasteModel).toHaveBeenCalledWith(
+      {
+        expected_revision: 3,
+        api_key: '',
+        model: metadata.model,
+      },
+      undefined,
+      'cover_taste_build',
+    )
     await user.click(within(taste).getByRole('button', { name: 'Use for taste profile' }))
     await waitFor(() =>
       expect(http.configureOpenRouter).toHaveBeenCalledWith({
@@ -4301,17 +4305,18 @@ describe('taste profile model (#1372)', () => {
     ).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('names the taste profile among the users of the shared key', async () => {
+  it('says every model shares the key, under each saved-key field', async () => {
     const http = createHttp()
     http.getSettings = vi.fn(async () => view())
     http.getReviewerAccess = vi.fn(async () => initial)
     renderRoute('/settings?group=reviewer', http)
     await section()
-    expect(
-      screen.getByText(
-        'Leave blank to use the saved key. Cover review and the taste profile use the same key, and replacing it keeps every model choice.',
-      ),
-    ).toBeVisible()
+    const notes = screen.getAllByText(
+      'Leave blank to use the saved key. Every model on this page uses the same key, and replacing it keeps every model choice.',
+    )
+    // Description advice, the taste profile and suggestions (#1372 PR 4b).
+    expect(notes).toHaveLength(3)
+    for (const note of notes) expect(note).toBeVisible()
   })
 
   it.each([
@@ -4866,5 +4871,170 @@ describe('Theme in Settings (#1341)', () => {
     expect(window.document.documentElement.dataset.theme).toBe('dark')
     expect(window.document.cookie).toContain('ml_theme=dark')
     expect(http.writeSettings).not.toHaveBeenCalled()
+  })
+})
+
+describe('suggestion model (#1372 PR 4b)', () => {
+  const metadata = {
+    model: 'openai/gpt-6-luna',
+    observed_at: 100,
+    prompt_price: '0.000002',
+    completion_price: '0.000008',
+    image_price: '0.001',
+    request_price: null,
+  }
+  const initial: ReviewerAccessView = { ...reviewerView, openrouter_key_configured: true }
+  const section = async () => {
+    const heading = await screen.findByRole('heading', { level: 3, name: 'Suggestions' })
+    const found = heading.closest('section')
+    if (!found) throw new Error('the suggestions section is required')
+    return found
+  }
+
+  it('sits under Taste profile and says what the model receives, the limit and no selection', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => initial)
+    renderRoute('/settings?group=reviewer', http)
+    const suggestions = await section()
+    const taste = screen.getByRole('heading', { level: 3, name: 'Taste profile' })
+    expect(
+      taste.compareDocumentPosition(suggestions) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(
+      within(suggestions).getByText(
+        'A vision model compares each work’s covers with your taste profile and suggests a switch.',
+      ),
+    ).toBeVisible()
+    expect(
+      within(suggestions).getByText(
+        'The model receives those covers with their sizes, the book’s format and your taste profile’s rules. It never receives the book’s title or files.',
+      ),
+    ).toBeVisible()
+    expect(within(suggestions).getByText('No suggestion model selected.')).toBeVisible()
+    expect(
+      within(suggestions).getByText(
+        'Mechanical Librarian asks for at most 5,000 suggestions a day.',
+      ),
+    ).toBeVisible()
+    expect(within(suggestions).getByRole('button', { name: 'Use for suggestions' })).toBeDisabled()
+  })
+
+  it('tests the recommended model through the suggestion route and saves it for suggestions', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => initial)
+    http.testTasteModel = vi.fn(async () => metadata)
+    http.configureOpenRouter = vi.fn(async () => ({
+      ...initial,
+      revision: 4,
+      judge_mapping: { engine: 'openrouter' as const, model: metadata.model },
+      judge_metadata: metadata,
+    }))
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const suggestions = await section()
+    await user.click(within(suggestions).getByRole('combobox', { name: 'Suggestion model' }))
+    await user.click(screen.getByRole('option', { name: /openai\/gpt-6-luna/u }))
+    expect(screen.getByText('Recommended. Measured for suggestions.')).toBeVisible()
+    await user.click(
+      within(suggestions).getByRole('button', { name: 'Test suggestion model and prices' }),
+    )
+    expect(
+      await within(suggestions).findByText(
+        '0.000002 per input token, 0.000008 per output token, 0.001 per image, Unavailable per request.',
+      ),
+    ).toBeVisible()
+    expect(http.testTasteModel).toHaveBeenCalledWith(
+      { expected_revision: 3, api_key: '', model: metadata.model },
+      undefined,
+      'cover_taste_judge',
+    )
+    await user.click(within(suggestions).getByRole('button', { name: 'Use for suggestions' }))
+    await waitFor(() =>
+      expect(http.configureOpenRouter).toHaveBeenCalledWith({
+        expected_revision: 3,
+        api_key: '',
+        model: metadata.model,
+        task: 'cover_taste_judge',
+      }),
+    )
+    const saved = await within(suggestions).findByText('Suggestion model saved.')
+    await waitFor(() => expect(saved).toHaveFocus())
+    expect(
+      within(suggestions).getByText(`Selected: ${metadata.model} on OpenRouter.`),
+    ).toBeVisible()
+    // The taste profile's group is untouched.
+    const taste = screen
+      .getByRole('heading', { level: 3, name: 'Taste profile' })
+      .closest('section')
+    if (!taste) throw new Error('the taste profile section is required')
+    expect(within(taste).getByText('No taste profile model selected.')).toBeVisible()
+  })
+
+  it('continues without suggestions, clearing only that task, and says a lost answer', async () => {
+    const http = createHttp()
+    const selected = {
+      ...initial,
+      judge_mapping: { engine: 'openrouter' as const, model: metadata.model },
+      judge_metadata: metadata,
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => selected)
+    http.selectReviewer = vi
+      .fn<ReviewHttp['selectReviewer']>()
+      .mockRejectedValueOnce(
+        new UncertainMutationError({
+          operation: 'PUT /api/v1/reviewer-access',
+          responseStatus: 200,
+          at: '/revision',
+          reason: 'required',
+        }),
+      )
+      .mockResolvedValue({ ...initial, revision: 4 })
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const suggestions = await section()
+    const without = within(suggestions).getByRole('button', {
+      name: 'Continue without suggestions',
+    })
+    await user.click(without)
+    expect(
+      await within(suggestions).findByText(
+        'No answer came back. Check whether the suggestion model was cleared before trying again.',
+      ),
+    ).toBeVisible()
+    await user.click(without)
+    await waitFor(() =>
+      expect(http.selectReviewer).toHaveBeenLastCalledWith(null, 3, undefined, 'cover_taste_judge'),
+    )
+    expect(await within(suggestions).findByText('No suggestion model selected.')).toBeVisible()
+  })
+
+  it('offers Codex for suggestions once Codex is signed in', async () => {
+    const http = createHttp()
+    const signedIn: ReviewerAccessView = {
+      ...initial,
+      codex: { ...initial.codex, state: 'usable', reason: null },
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => signedIn)
+    http.selectReviewer = vi.fn(async () => ({
+      ...signedIn,
+      revision: 4,
+      judge_mapping: { engine: 'codex' as const },
+    }))
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const suggestions = await section()
+    expect(
+      within(suggestions).getByText(
+        'Suggestions count against your plan’s usage limits, so no cost is shown.',
+      ),
+    ).toBeVisible()
+    await user.click(within(suggestions).getByRole('button', { name: 'Use Codex for suggestions' }))
+    await waitFor(() =>
+      expect(http.selectReviewer).toHaveBeenCalledWith('codex', 3, undefined, 'cover_taste_judge'),
+    )
   })
 })

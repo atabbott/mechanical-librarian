@@ -43,7 +43,10 @@ from mechanical_librarian.application.review_covers import (
     PutBack,
     SwitchCover,
 )
-from mechanical_librarian.domain.cover_taste import TASTE_MIN_ARTS
+from mechanical_librarian.domain.cover_taste import (
+    TASTE_MIN_ARTS,
+    TASTE_STRONG_CONFIDENCE,
+)
 
 _PREVIEW_VARIANT = "preview-320x480-rgba-png-v1"
 # Each work's newest verified cover write, when it is automatic and the owner
@@ -150,6 +153,31 @@ _STAGE_SQL = (
     "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
     "AND (answered.kind='owner' OR answered.consideration_id=pointed.consideration_id)))"
 )
+# The taste judge's current suggestion (#1372 PR 4b, J8): the confidence of
+# the newest verdict on the work's current comparison, when that verdict
+# chose another cover, the comparison is current under the live authority and
+# nothing has answered it. A verdict from an older profile version stands
+# until the field is judged again. It binds the cover authority again.
+_TASTE_SQL = (
+    "(SELECT json_extract(verdict.document,'$.confidence') "
+    "FROM current_cover_considerations pointer JOIN cover_considerations pointed "
+    "ON pointed.consideration_id=pointer.consideration_id "
+    "JOIN cover_taste_verdicts verdict "
+    "ON verdict.consideration_id=pointed.consideration_id "
+    "WHERE pointer.review_case_id=ml.review_case_id "
+    "AND verdict.rowid=(SELECT newest.rowid FROM cover_taste_verdicts newest "
+    "WHERE newest.consideration_id=pointed.consideration_id "
+    "ORDER BY newest.created_at DESC,newest.rowid DESC LIMIT 1) "
+    "AND json_extract(verdict.document,'$.decision')='choose' "
+    "AND json_extract(pointed.document,'$.policy_reference')=? "
+    "AND ml_cover_consideration_current(pointed.currentness_document,?)=1 "
+    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
+    "JOIN cover_selection_authorities answered "
+    "ON answered.selection_id=current.selection_id "
+    "WHERE current.connection_name=ml.connection_name "
+    "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
+    "AND (answered.kind='owner' OR answered.consideration_id=pointed.consideration_id)))"
+)
 # The measured rule's reason an automatic switch recorded, and the edition
 # language that reason names, from the decision and its comparison.
 _SWITCH_REASON_SQL = (
@@ -205,7 +233,11 @@ _WORKS_SQL = (
     + _CHOOSABLE_SQL
     + " AS choosable,switch.plan_id,switch.switched_at,switch.sequence,"
     "switch.original_digest,switch.replacement,ml.suggestion_reason,"
-    "ml.hold_reason,CASE WHEN "
+    "ml.hold_reason,ml.cover_taste,"
+    # Within To decide: Strong taste suggestions, then Likely, then the rest
+    # (J8, S21).
+    f"CASE WHEN ml.cover_taste>={TASTE_STRONG_CONFIDENCE} THEN 0 "
+    "WHEN ml.cover_taste IS NOT NULL THEN 1 ELSE 2 END AS taste_rank,CASE WHEN "
     + _DECIDING_SQL
     + " THEN CASE WHEN "
     + _COVER_OUTCOME_SQL
@@ -213,7 +245,7 @@ _WORKS_SQL = (
     # A suggestion with no decision the owner can record, such as an
     # unreadable current cover the comparison cannot act on, is not To
     # decide; it is listed where its other facts put it (S9, Q16).
-    "WHEN ml.suggestion_reason IS NOT NULL AND "
+    "WHEN (ml.suggestion_reason IS NOT NULL OR ml.cover_taste IS NOT NULL) AND "
     + _CHOOSABLE_SQL
     + "=1 THEN 'proposal' "
     "WHEN switch.plan_id IS NOT NULL THEN 'auto' WHEN "
@@ -227,7 +259,9 @@ _WORKS_SQL = (
     "'hold' THEN json_extract(staged.cover_stage,'$[1]') END AS hold_reason "
     "FROM (SELECT ml.*,"
     + _STAGE_SQL
-    + " AS cover_stage FROM current_review_packages ml) staged) ml "
+    + " AS cover_stage,"
+    + _TASTE_SQL
+    + " AS cover_taste FROM current_review_packages ml) staged) ml "
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
     "JOIN metadata_report_browse_facts facts ON facts.report_id=mr.report_id "
     "LEFT JOIN switch ON switch.connection_name=ml.connection_name "
@@ -291,12 +325,13 @@ _VIEW_FILTER_SQL: dict[CoverView, str] = {
     "switched": "cover_group='auto'",
     "all": "1",
 }
-# Suggestions before choices, as the queue groups them; Switched newest first
+# Suggestions before choices, as the queue groups them, Strong taste
+# suggestions first, then Likely, then the measured rules'; Switched newest first
 # in the release rule's order, a fill placed by when it was verified. Each
 # order is its row key, so a page resumes strictly after the last row it
 # showed (application/review_covers.py).
 _VIEW_KEY_SQL: dict[CoverView, str] = {
-    "decide": "cover_group='choice',title_key,item_id,review_case_id",
+    "decide": "cover_group='choice',taste_rank,title_key,item_id,review_case_id",
     "kept": "title_key,item_id,review_case_id",
     "switched": "switched_at,COALESCE(sequence,0),plan_id",
     "all": "title_key,item_id,review_case_id",
@@ -394,8 +429,9 @@ def read_cover_page(
     With ``review_case_id`` the page holds only that book, if the tab has it.
     """
     where = [_VIEW_FILTER_SQL[view]]
-    # The authority is bound for attention, then for the suggestion.
-    authority = (*cover_authority, *cover_authority)
+    # The authority is bound for attention, the suggestion and the taste
+    # suggestion.
+    authority = (*cover_authority, *cover_authority, *cover_authority)
     parameters: list[object] = list(authority)
     if after is not None:
         where.append(
@@ -415,8 +451,7 @@ def read_cover_page(
         _WORKS_SQL + "SELECT review_case_id,report_document,cover_group,choosable,"
         "switched_at,plan_id,original_digest,replacement,"
         "connection_name,library_name,item_id,suggestion_reason,hold_reason,"
-        + _VIEW_KEY_SQL[view]
-        + " FROM work "
+        "cover_taste," + _VIEW_KEY_SQL[view] + " FROM work "
         "WHERE "
         + " AND ".join(where)
         + " ORDER BY "
@@ -439,8 +474,8 @@ def read_cover_page(
         )
         # The work's target, for its owner's current Put back (#1363, Q18).
         target = (row[8], row[9], row[10])
-        suggestion, hold = row[11], row[12]
-        key = row[13:]
+        suggestion, hold, taste = row[11], row[12], row[13]
+        key = row[14:]
         if (
             type(case_id) is not str
             or type(report) is not str
@@ -449,6 +484,7 @@ def read_cover_page(
             or any(type(value) not in (int, str) for value in key)
             or (suggestion is not None and type(suggestion) is not str)
             or (hold is not None and type(hold) is not str)
+            or (taste is not None and type(taste) is not int)
         ):
             raise MetadataReportError("review covers are unavailable")
         auto = group == "auto"
@@ -481,6 +517,11 @@ def read_cover_page(
                 language,
                 suggestion if group == "proposal" else None,
                 None if auto else hold,
+                None
+                if group != "proposal" or taste is None
+                else "strong"
+                if taste >= TASTE_STRONG_CONFIDENCE
+                else "likely",
             )
         )
     return CoverPageSnapshot(
@@ -500,7 +541,7 @@ def read_calibration_rows(
     """Every work calibration may offer, in its order (#1372 S2, S3)."""
     rows = connection.execute(
         _WORKS_SQL + _CALIBRATION_SQL,
-        (*cover_authority, *cover_authority, *cover_authority, TASTE_MIN_ARTS),
+        (*cover_authority,) * 4 + (TASTE_MIN_ARTS,),
     ).fetchall()
     calibration: list[CalibrationRow] = []
     for case_id, report, group, author, series_document in rows:

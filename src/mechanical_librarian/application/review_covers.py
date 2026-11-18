@@ -29,7 +29,7 @@ import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Final, Literal, Protocol
 from urllib.parse import urlencode
 
 from mechanical_librarian.application.review_web import (
@@ -41,7 +41,16 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.domain.review_browse import LibraryReportFacts
 
+# v2: a suggestion carries the taste judge's strength beside the measured
+# rule's reason, either of which may be absent (#1372 PR 4b).
+ReviewCoversSchemaVersion = Literal["review-covers-v2"]
+REVIEW_COVERS_SCHEMA: Final[ReviewCoversSchemaVersion] = "review-covers-v2"
+ReviewCoverCalibrationSchemaVersion = Literal["review-cover-calibration-v2"]
+REVIEW_COVER_CALIBRATION_SCHEMA: Final[ReviewCoverCalibrationSchemaVersion] = (
+    "review-cover-calibration-v2"
+)
 CoverView = Literal["decide", "kept", "switched", "all"]
+TasteStrength = Literal["strong", "likely"]
 CoverGroup = Literal["proposal", "choice", "kept", "chosen", "auto", "none"]
 COVER_VIEWS: tuple[CoverView, ...] = ("decide", "kept", "switched", "all")
 COVER_GROUPS: tuple[CoverGroup, ...] = (
@@ -59,13 +68,13 @@ COVER_PAGE_SIZE = 50
 CALIBRATION_SIZE = 25
 _CALIBRATION_SHARE = 2
 # A row's place in its tab's order, as the store sorts it: decide by
-# (choice, title, item, case), kept and all by (title, item, case), switched
+# (choice, taste rank, title, item, case), kept and all by (title, item, case), switched
 # by (verified at, listing sequence, plan), newest first. A page resumes after
 # the last row's key, so a decision on an earlier page never shifts the next
 # one (#1633 review B1).
 CoverKey = tuple[int | str, ...]
 _KEY_TYPES: dict[CoverView, tuple[type, ...]] = {
-    "decide": (int, str, str, str),
+    "decide": (int, int, str, str, str),
     "kept": (str, str, str),
     "switched": (int, int, str),
     "all": (str, str, str),
@@ -129,6 +138,8 @@ class CoverRow:
     suggestion_reason: str | None = None
     # Why the measured rules hold this cover's switch, for a hold.
     hold_reason: str | None = None
+    # The taste judge's suggestion, for a suggestion it made (J8).
+    taste_strength: TasteStrength | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,8 +249,13 @@ def _cover_item(
         "review_case_id": row.review_case_id,
         "hold": None if row.hold_reason is None else {"reason": row.hold_reason},
         "suggestion": None
-        if row.suggestion_reason is None
-        else {"reason": row.suggestion_reason},
+        if row.suggestion_reason is None and row.taste_strength is None
+        else {
+            "reason": row.suggestion_reason,
+            "taste": None
+            if row.taste_strength is None
+            else {"strength": row.taste_strength},
+        },
         "switched": switched,
         "title": target.current_title or "Untitled",
         "unreadable_cover": cover is None and report.cover_unreadable,
@@ -323,7 +339,7 @@ def cover_page(
         "next_cursor": _encode_cover_cursor(page[-1].key, view)
         if len(snapshot.rows) > COVER_PAGE_SIZE
         else None,
-        "schema_version": "review-covers-v1",
+        "schema_version": REVIEW_COVERS_SCHEMA,
         "view": view,
     }
 
@@ -377,7 +393,7 @@ def cover_calibration(store: CoverBrowseStore) -> dict[str, object]:
         # As a page: the store declares no error type, and a set this view
         # cannot render fails whole.
         raise ReviewWebError("unavailable") from error
-    return {"items": items, "schema_version": "review-cover-calibration-v1"}
+    return {"items": items, "schema_version": REVIEW_COVER_CALIBRATION_SCHEMA}
 
 
 def replaced_cover_preview(store: CoverBrowseStore, plan: str, preview: str) -> str:

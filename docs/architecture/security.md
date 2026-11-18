@@ -410,7 +410,10 @@ Owner taste rules reach the builder and the
 [judge](ai-boundary.md#taste-judge) only as sealed packet data; edits are
 capped at 8 KiB. A judge verdict is admitted only by a reference sent in that
 request and rule numbers of its version, so it can pick only among the covers
-it was shown.
+it was shown. A verdict only marks and orders a suggestion: the owner's answer
+is the ordinary cover decision, with its own checks. Try again needs the
+owner session and its request token, and is refused unless it names the
+profile version in use.
 
 ### OpenRouter
 

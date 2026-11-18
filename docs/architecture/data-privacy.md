@@ -213,8 +213,13 @@ All owner surfaces need a session and are `private, no-store`.
   library, with each library's name, and works needing the owner per field.
   Never a title, item, path, digest or run identifier.
 - **Covers → Taste profile** shows the profile's rules, versions and build
-  state. Rule text is model output or the owner's, shown as text only, and
-  never reaches a log, status, diagnostic or support bundle.
+  state, the suggestion model's state as counts and a time, and how many
+  suggestions the owner confirmed. Rule text is model output or the owner's,
+  shown as text only, and never reaches a log, status, diagnostic or support
+  bundle.
+- **Covers → To decide** shows a suggested work's strength and, in its open
+  work, the texts of the rules the suggestion cites, read from the profile
+  version it was made under. The verdict itself still holds no rule text.
 - **Preparation status** shows only connection and library names, an opaque
   scan identifier, a closed state, counts and whether a request was
   coalesced: never titles, file names, queries, failure text or values.

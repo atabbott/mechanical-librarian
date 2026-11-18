@@ -170,6 +170,7 @@ COHORTS = {
             ("tests/unit", "test_activity_reprojection.py"),
             ("tests/unit", "test_cover_taste_judge_persistence.py"),
             ("tests/unit", "test_cover_taste_persistence.py"),
+            ("tests/unit", "test_cover_taste_suggestions.py"),
             ("tests/unit", "test_pending_field_effect_lookup.py"),
             ("tests/unit", "test_provider_recovery.py"),
             ("tests/unit", "test_provider_response_store.py"),

@@ -78,9 +78,9 @@ no fallback: the contained Codex reviewer or its own OpenRouter model under
 the shared key ([ADR-0095](decisions/0095-learned-cover-taste-profile.md)).
 It reads owner
 cover choices already recorded and writes only its own append-only profile
-versions; only the taste judge reads a profile, and nothing reads its
-verdicts yet, so it cannot influence an observation, recommendation, decision
-or write.
+versions; only the taste judge reads a profile, and its verdicts only suggest
+a switch the owner answers, so it cannot make an observation, decision or
+write.
 
 - **Inputs.** Up to 50 recorded choices, each with up to 4 previews and at
   most 100 images per request. A choice whose preview bytes are missing is
@@ -139,7 +139,9 @@ or write.
 
 The taste judge (#1372) compares one work's covers with the active profile
 version on either engine, chosen separately as the suggestion model. It
-writes only its own append-only verdicts; nothing reads them yet.
+writes only its own append-only verdicts. A `choose` verdict is shown to the
+owner as a suggestion with its rules' texts; choosing it is the owner's
+ordinary decision, and Attention never counts it.
 
 - **Inputs.** The current cover when readable, marked current, and one cover
   of each other acceptable art, at most 12, as the normalised PNG previews,
@@ -157,7 +159,8 @@ writes only its own append-only verdicts; nothing reads them yet.
   judgement is counted durably before dispatch against
   `cover_taste_judge_daily_requests`. A new version is judged after it has
   stood 120 seconds; an engine failure pauses judging for 10 minutes. A
-  failed field waits for a new version.
+  failed field waits for a new version or the owner's Try again, which
+  counts like any other judgement.
 - **Storage and redaction.** Verdicts name the comparison's own reference and
   are append-only by trigger; opening the database refuses one that no
   succeeded judgement of that field and version wrote. Failures are closed

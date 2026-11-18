@@ -348,6 +348,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 cover_consideration_document=(
                     self.current_cover_consideration_document(review_case_id)
                 ),
+                cover_taste_verdict=self._cover_taste_verdict(review_case_id),
                 cover_history=(
                     ()
                     if history_limit is None
@@ -652,6 +653,42 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         return tuple(values), tuple(
             (destination, value) for destination, (_, value) in sorted(earlier.items())
         )
+
+    def _cover_taste_verdict(
+        self, review_case_id: str
+    ) -> tuple[str, str, str, int] | None:
+        """The newest verdict on the case's current comparison, with its
+        profile version, when it chose a cover and no owner selection, nor an
+        automatic one on that comparison, has answered the work (J8)."""
+        row = self._connection.execute(
+            "SELECT verdict.verdict_id,version.document,verdict.document,"
+            "(SELECT max(newest.version) FROM cover_taste_profile_versions newest) "
+            "FROM current_review_case_lineages lineage "
+            "JOIN current_cover_considerations pointer "
+            "ON pointer.review_case_id=lineage.review_case_id "
+            "JOIN cover_taste_verdicts verdict "
+            "ON verdict.consideration_id=pointer.consideration_id "
+            "JOIN cover_taste_profile_versions version "
+            "ON version.version=verdict.version "
+            "WHERE lineage.review_case_id=? "
+            "AND verdict.rowid=(SELECT newest.rowid FROM cover_taste_verdicts newest "
+            "WHERE newest.consideration_id=pointer.consideration_id "
+            "ORDER BY newest.created_at DESC,newest.rowid DESC LIMIT 1) "
+            "AND json_extract(verdict.document,'$.decision')='choose' "
+            "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
+            "JOIN cover_selection_authorities answered "
+            "ON answered.selection_id=current.selection_id "
+            "WHERE current.connection_name=lineage.connection_name "
+            "AND current.library_name=lineage.library_name "
+            "AND current.item_id=lineage.item_id AND (answered.kind='owner' "
+            "OR answered.consideration_id=pointer.consideration_id))",
+            (review_case_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        if any(type(value) is not str for value in row[:3]) or type(row[3]) is not int:
+            raise MetadataReportError("review case snapshot is unavailable")
+        return cast("tuple[str, str, str, int]", tuple(row))
 
     def _current_cover_automatic_decision_id(self, review_case_id: str) -> str | None:
         row = self._connection.execute(

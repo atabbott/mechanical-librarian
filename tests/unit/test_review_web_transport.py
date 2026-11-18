@@ -3122,6 +3122,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("get", "/api/v1/covers/replaced"),
         ("get", "/api/v1/covers/taste"),
         ("post", "/api/v1/covers/taste/retry"),
+        ("post", "/api/v1/covers/taste/suggestions/retry"),
         ("post", "/api/v1/covers/taste/rules"),
         ("get", "/api/v1/operations/status"),
         ("get", "/api/v1/operations/support/preview"),
@@ -4076,6 +4077,39 @@ def test_taste_profile_routes_are_owner_only_no_store_and_csrf_bound(
         headers={**web.origin, "x-csrf-token": session["csrf_token"]},
     )
     assert malformed.status_code == 422
+    # Try again for suggestions is bound the same way (#1372 PR 4b).
+    suggestions = "/api/v1/covers/taste/suggestions/retry"
+    assert (
+        web.client.post(
+            suggestions, json={"version": 1}, headers=web.origin
+        ).status_code
+        == 422
+    )
+    assert (
+        web.client.post(
+            suggestions,
+            json={"version": 1},
+            headers={**web.origin, "x-csrf-token": "bad"},
+        ).status_code
+        == 403
+    )
+    assert (
+        web.client.post(
+            suggestions,
+            json={"version": 1},
+            headers={"x-csrf-token": session["csrf_token"]},
+        ).status_code
+        == 403
+    )
+    for body, status in (({"version": 0}, 422), ({"version": 1}, 503)):
+        assert (
+            web.client.post(
+                suggestions,
+                json=body,
+                headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+            ).status_code
+            == status
+        )
 
 
 class _TasteEdits:
@@ -4108,6 +4142,14 @@ class _TasteEdits:
             "versions": [(1, 900, document)],
             "configured": True,
             "daily_limit": 8,
+            "judge": {
+                "configured": False,
+                "daily_limit": 5000,
+                "stopped": None,
+                "retry_after": None,
+                "failed": 0,
+            },
+            "confirmed": {"confirmed": 0, "suggested": 0},
         }
 
     def edit(self, version, action, number, section, text) -> None:

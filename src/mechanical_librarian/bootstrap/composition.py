@@ -3398,6 +3398,7 @@ def _compose_cover_taste(
         reviewer_access,
         lambda digest: artifacts().read_preview_digest(digest),
         daily_limit=review.cover_taste_build_daily_requests,
+        judge_daily_limit=review.cover_taste_judge_daily_requests,
     )
 
 
