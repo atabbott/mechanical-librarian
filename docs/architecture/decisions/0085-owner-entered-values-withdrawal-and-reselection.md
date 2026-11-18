@@ -338,3 +338,48 @@ and `test_offer_change_closes_a_pinned_choice`; by
 `tests/unit/test_human_decision.py`; and by
 `test_choose_then_pin_through_the_decision_route` in
 `tests/unit/test_review_web_transport.py`.
+
+## Amendment 3: cover Resume where Automatic would switch (2026-11-18)
+
+- Status: proposed. Only the owner's own answer makes this amendment
+  accepted. Until then, the body above and Amendments 1 and 2 stay the
+  accepted record.
+
+Before this amendment a cover never offered Resume. A cover's automatic
+decision is shown only while it is the work's current selection, and an owner
+answer makes the owner's selection current. Clearing a cover hold would not
+have helped either: the owner's selection still refused every mint.
+
+- **When Resume shows.** The owner has taken a cover over from Automatic
+  (Keep, Put back or Others on a switched cover, which holds the field). Later
+  the measured stage would switch that work's cover on a newer comparison,
+  with every gate passing except the owner's hold or choice. The comparison is
+  then marked in the derived table `cover_automatic_held`, and the cover field
+  offers Resume while the hold is in force and nothing is pinned. Resume shows
+  only at the next case where Automatic decides, never on the comparison the
+  owner answered.
+- **What Resume does.** It asks for fresh checks, as for any field. When the
+  checks complete and the hold clears, the same transaction releases the
+  owner's selection pointer for the work and runs admission again for the
+  marked comparison. Automatic may then switch the cover: the stage, and later
+  the taste profile while Switching is Automatic. That transaction reads and
+  writes only the application database.
+- **Who never gets it.** A cover chosen in To decide has no hold, so it never
+  shows Resume and is never switched. Taste alone never marks a comparison,
+  because the judge never looks at an owner-chosen cover.
+- **The mark.** A new comparison removes it, and so does each admission of the
+  case's current comparison, before the mark is worked out again. Clearing the
+  hold also removes it. A table is used rather than an event kind, because
+  events show as Activity rows.
+- **Consequence.** After Resume, the owner's earlier pick leaves the taste
+  builder's input and "Confirmed {n} of {m}", because both read the current
+  pointer.
+- **Before #1418.** No stage replacement is admitted, so no comparison is
+  marked and Resume never shows in production.
+
+Proof: `test_cover_resume_shows_only_where_the_stage_would_switch_but_for_the_owner`,
+`test_cover_resume_hands_the_cover_back_to_automatic` and
+`test_a_later_comparison_with_no_switch_clears_the_mark` in
+`tests/integration/test_cover_taste_automatic.py`;
+`test_a_cover_answer_without_an_automatic_cover_decision_sets_no_hold` in
+`tests/unit/test_owner_answer_holds.py` stays green.

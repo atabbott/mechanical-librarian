@@ -514,10 +514,24 @@ It also needs room to keep the replaced cover to put back; while that store is
 full, the replacement is suggested, unless Audiobookshelf had no image to
 keep. Automatic fills only an ebook cover known to be empty, with a confirmed cover and no lookup for that report running or
 being checked; lookups waiting to retry do not hold it back. An audiobook cover
-is never filled or replaced automatically. Once you choose a cover, Automatic
-no longer changes it, and changing Current covers stops any automatic change
-not yet written. What you may choose is in the
+is never filled or replaced automatically. A cover you choose in To decide
+stays yours, and Automatic never changes it. Changing Current covers stops any
+automatic change not yet written. When you take a cover over from Automatic
+(Keep, Put back or Others on a switched cover), the work offers Resume
+automatic handling for its cover on a later check where the measured rules
+would fix a fault in it. Resume lets Automatic switch it again, including by
+your taste profile. What you may choose is in the
 [review experience](review-experience.md#covers).
+
+Switching on Taste profile lets your taste profile switch covers
+automatically too. It is Suggest only by default. Under Automatic, "Only
+covers with a fault" switches a cover only to cure a fault the measured rules
+found, and the checkbox under it also lets the profile switch a cover with no
+fault. Switching by taste needs its own qualification, and no release has it
+yet, so until then every taste switch stays a suggestion. A switch is tied to
+the profile version that chose it: if the profile changes, or you go back to
+Suggest only, before the switch is written, it waits for the work to be
+checked again. Switched names the profile version behind each switch.
 
 Book matching in Policy, set wider than "Confirmed matches only", lets a cover
 from a source record with the book's title and author be labelled "Same title

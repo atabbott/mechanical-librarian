@@ -683,3 +683,16 @@ table of `cover-taste-verdict-v1` documents, and the daily request count admits
 the new task. No report, consideration, decision or profile version moves.
 Every earlier application database is rejected before mutation and needs a
 clean rebuild; no adoption is supplied.
+
+Issue #1372's automatic switching (PR 5a) takes the clean-rebuild branch.
+`cover-automatic-decision-v6` names the taste verdict and the profile version,
+so a v5 decision is refused. `owner-settings-v7` adds
+`cover_preferences.taste_switching`, so a v6 document is refused. `config-v14`
+adds `review.cover_taste_switching`, and a `config-v13` file must be rewritten
+by hand. The application database gains the index
+`cover_taste_verdicts_version` and the derived table `cover_automatic_held`.
+`review-taste-profile-v4`, `review-covers-v3` and
+`review-cover-calibration-v3` move, and `review-taste-preview-v1` is new. No
+report, consideration, verdict or profile version moves. Every earlier
+application database is rejected before mutation and needs a clean rebuild; no
+adoption is supplied.

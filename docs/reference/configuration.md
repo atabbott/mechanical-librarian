@@ -3,7 +3,7 @@
 Settings come from one of two places, never both:
 
 - **File mode.** When `/data/config.json` exists, it is the complete authority.
-  It is one strict UTF-8 JSON document with schema version `config-v13`,
+  It is one strict UTF-8 JSON document with schema version `config-v14`,
   described below.
 - **Store mode.** When that file is absent, settings live in
   `/data/application.sqlite3` and the owner edits them on the Settings page.
@@ -98,7 +98,7 @@ section:
 
 ```json
 {
-  "schema_version": "config-v13",
+  "schema_version": "config-v14",
   "provider_recovery_generation": 1,
   "connections": [
     {
@@ -170,7 +170,7 @@ section:
 
 | Field | Required | Rule |
 | --- | --- | --- |
-| `schema_version` | Yes | Exactly `config-v13` |
+| `schema_version` | Yes | Exactly `config-v14` |
 | `provider_recovery_generation` | Yes | Integer, at least 1 |
 | `connections` | Yes | 1–32 Audiobookshelf connections |
 | `libraries` | Yes | 1–128 libraries |
@@ -443,6 +443,7 @@ environment.
 | `cover_prefer_minimal_composition` | Boolean | `false` |
 | `cover_current_protection` | `protected`, `unprotected` or `proposals_only` | `protected` |
 | `cover_prefer_edition` | Boolean | `false` |
+| `cover_taste_switching` | `suggest_only` or `automatic` | `suggest_only` |
 | `description_remove_marketing` | Boolean | `true` |
 | `description_remove_sales_boasts` | Boolean | `true` |
 | `description_remove_praise` | Boolean | `true` |
@@ -579,7 +580,7 @@ images, within 24 MB. What is sent is in
 
 `cover_taste_judge_daily_requests` is how many requests the suggestion model
 may be sent in one UTC day, one per work it compares with the profile, with
-the same counting and stops; its answers are not shown yet (#1372).
+the same counting and stops; its answers are suggestions in To decide (#1372).
 
 ### Current covers
 
@@ -596,6 +597,16 @@ any planned automatic cover change before it writes, and a store-mode save
 requests a scan that compares each prepared cover again under the new policy.
 No release yet has the qualification to replace a cover automatically, so
 today `protected` and `unprotected` suggest the replacements they would make.
+
+`cover_taste_switching` says whether the taste profile may switch covers
+automatically: `suggest_only` keeps every switch it suggests a suggestion, and
+`automatic` lets it switch a cover once switching by taste is qualified. Under
+`automatic`, `protected` lets it cure only a fault the measured rules found,
+and `unprotected` also lets it switch a cover with no fault. In store mode it
+is the owner settings' `cover_preferences.taste_switching`. It is not part of
+the cover policy, so changing it prepares nothing again; going back to
+`suggest_only` withdraws every taste switch not yet written. No release yet has
+that qualification, so today every taste switch is a suggestion (#1372).
 
 An automatic replacement keeps the replaced original so it can be put back.
 The store holds at most 2,000 originals and 2 GiB; while it is full, a

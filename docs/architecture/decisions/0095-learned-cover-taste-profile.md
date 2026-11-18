@@ -424,3 +424,62 @@ PR 4b a `choose` verdict is a suggestion the owner sees.
   is shown, not one per medium. A selection that differs from a `choose` or
   `keep_current` verdict in force is a correction: the builder sends up to 25,
   newest first, ahead of its sample.
+
+## Note: automatic switching (#1372 PR 5)
+
+The status stays proposed. A `choose` verdict can become an automatic
+decision once switching by taste is qualified; until #1418 records that
+qualification, every verdict stays a suggestion.
+
+- **One identity (K1).** `cover_order:fixed_source_order:taste_replacement`
+  covers both a confirmed and an unconfirmed current cover. Its record is
+  `None` until the owner-run qualification sets it. The decision binds the
+  target state it saw, and the write checks it again.
+- **The decision (K2).** `cover-automatic-decision-v6` names the verdict and
+  the profile version. A taste decision must name both; any other decision
+  names neither. The write reads the stored verdict row, not the decision's
+  copy. The row must bind the same comparison, candidate and version, and the
+  stage must give the same reason as at admission.
+- **Switching (K3).** Owner settings `cover_preferences.taste_switching`
+  (`suggest_only` by default, or `automatic`), mirrored as
+  `review.cover_taste_switching`. Switching is not part of the cover policy,
+  so changing it prepares nothing again. Each runtime generation binds it when
+  it is composed. "Only covers with a fault" maps to `protected`, the
+  checkbox under Automatic to `unprotected`.
+- **Admission order (K4).** The first gate that fails stores nothing, and the
+  gates run in this order:
+  1. Switching is Automatic.
+  2. The record exists.
+  3. The stage's admission basis holds.
+  4. The verdict is the comparison's newest, under the version in use, and
+     chooses a selectable candidate that is not the current cover and has a
+     rank and citations.
+  5. Either the stage kept a fault-free cover under `unprotected`, or it
+     would replace a fault the judge may cure.
+  6. The target state is one the identity covers.
+  7. There is room to keep the original.
+  8. No hold.
+  9. The mint, which refuses over an owner's choice.
+- **Retirement (K6).** Each wake of lane 1 first revokes an unwritten taste
+  switch (up to 50) whose version is no longer the one in use, or every
+  unwritten switch while Switching is Suggest only. A write that started
+  stays. An unwritten switch under an older version no longer answers its
+  comparison, so the judge judges it again first. Lane 1 then runs build,
+  then switching, then judge.
+- **Preview (K7).** A read over stored verdicts only. Under the version in
+  use it walks each current comparison's newest verdict, oldest first, through
+  `cover_taste_verdicts_version`. Each verdict is one checked cover, up to 100
+  in all. A switch is a `choose` that meets gates 4-6 under the protection
+  asked about. The walk stops at the fifth switch. Posture, record, room and
+  holds are not asked. An owner answer since the verdict shows as Looks right
+  (the same candidate) or Keep current; any other answer takes the switch out.
+- **Looks right (K8)** is the work's ordinary `accept` of that candidate,
+  and Keep current its `keep_current`.
+- **Cover Resume (K9).** See ADR-0085, Amendment 3. Taste alone never offers
+  Resume, because the judge never looks at a cover the owner chose.
+- **Cost (C4).** Changing the protection gives every work a new comparison,
+  and a new comparison is judged again. One change can spend up to a library's
+  worth of judge requests against the daily ceiling. The preview stays honest
+  because it reads only what has been judged.
+- **What the owner sees.** Switched names the version and the cited rules as
+  that version holds them. Activity names only the version.
