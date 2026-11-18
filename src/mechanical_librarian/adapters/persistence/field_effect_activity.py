@@ -273,7 +273,10 @@ _WRITTEN_DESTINATIONS = tuple(
 )
 
 _CORRECTIVE_KEEP_CURRENT_SQL = (
-    "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
+    # A keep goes back on the write frozen with it when it was recorded
+    # (#1523): one that follows none is a plain keep.
+    "human.outcome='keep_current' AND json_extract(human.document,'$.follows') IS NOT NULL "
+    "AND EXISTS (SELECT 1 FROM review_cases review, "
     "json_each(review.document,'$.target.fields') target WHERE review.review_case_id=human.review_case_id "
     "AND json_extract(target.value,'$.destination')=human.destination "
     # A clearable field the case read empty goes back to empty (#1523).
@@ -290,19 +293,7 @@ _CORRECTIVE_KEEP_CURRENT_SQL = (
     "(human.destination NOT IN "
     "('authors','genres','narrators','tags','series','cover') "
     "AND json_type(target.value,'$.value')='text' "
-    "AND length(json_extract(target.value,'$.value'))>0))) AND EXISTS (SELECT 1 FROM field_effects prior "
-    "JOIN (SELECT decision_id,ordinal FROM human_decisions earlier WHERE "
-    "earlier.review_case_id=human.review_case_id AND earlier.destination=human.destination "
-    "AND earlier.ordinal<human.ordinal UNION ALL SELECT decision_id,-1 FROM "
-    "automatic_decisions earlier WHERE earlier.review_case_id=human.review_case_id "
-    "AND earlier.destination=human.destination UNION ALL SELECT decision_id,-1 FROM "
-    "description_decisions earlier WHERE earlier.review_case_id=human.review_case_id "
-    "AND human.destination='description') recorded ON recorded.decision_id=prior.decision_id "
-    "WHERE prior.state='verified' "
-    # Only a write in the case's own episode, as `_episode_write` reads it: a
-    # returned case's earlier write is not what the library holds (#1358).
-    "AND +prior.rowid>COALESCE((SELECT effect_floor FROM review_case_episodes "
-    "WHERE review_case_id=human.review_case_id),0)))"
+    "AND length(json_extract(target.value,'$.value'))>0))))"
 )
 
 
@@ -1820,12 +1811,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def _episode_write(
         self, review_case_id: str, destination: str, before: str | None
     ) -> sqlite3.Row | tuple[str, ...] | None:
-        """The verified effect of the case's latest decision on a field that
-        wrote it in the case's episode, or of the latest before ``before``.
+        """The case's verified write to a field in its episode that landed
+        last, or the last of its decisions before ``before``.
 
         One read for both of its uses: the write an owner decision follows,
         whose desired value is its plan's pre-value, and the value a case that
-        wrote a field treats as current for owner entry (#1523, S5).
+        wrote a field treats as current for owner entry (#1523, S5). It orders
+        by the write, not the decision: an automatic decision returned to
+        after the owner's writes writes after them. Its automatic arm needs no
+        bound by ``before``: when a decision is recorded nothing is after it,
+        and when it is planned it is pending, which a return rules out, so no
+        automatic write follows it.
         """
         row: sqlite3.Row | tuple[str, ...] | None = self._connection.execute(
             "SELECT effect.document FROM field_effects effect JOIN ("
@@ -1843,7 +1839,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # and returned to the case's own (#1358).
             "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
             "review_case_episodes WHERE review_case_id=?),0) "
-            "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
+            "ORDER BY effect.rowid DESC LIMIT 1",
             (
                 review_case_id,
                 destination,
@@ -1914,6 +1910,29 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 > FieldEffectOperation.from_json(predecessor[0]).updated_at
             ):
                 predecessor = authored_predecessor
+        return predecessor
+
+    def _kept_write(
+        self, decision: HumanDecision
+    ) -> sqlite3.Row | tuple[str, ...] | None:
+        """The write a keep goes back on, frozen with it when it is recorded
+        (#1523): its predecessor, unless that write already holds the value
+        the case read. Going back would then change nothing, so the keep is a
+        plain keep, as owner entry calls an entry of the written value
+        unchanged; `field_value_version` is the comparison planning makes."""
+        predecessor = self._human_predecessor(decision)
+        if predecessor is None:
+            return None
+        written = _written_plan(
+            predecessor[0], decision.review_case_id, decision.destination
+        ).desired_value
+        before = self._case_target_pre_value(
+            self._recorded_case(decision.review_case_id), decision.destination
+        )
+        if field_value_version(decision.destination, written) == field_value_version(
+            decision.destination, before
+        ):
+            return None
         return predecessor
 
     def _followed_write(
