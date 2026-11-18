@@ -3,7 +3,9 @@
 Every metadata adapter carried its own copy of the same dispatch machinery:
 the three-axis retry bound, the aggregate response budget, the deadline
 arithmetic, the transport classification, and the attempt and incomplete-cause
-evidence.  This module owns that machinery once.  What a provider actually
+evidence.  This module owns that machinery once, with the observation wrapper
+that keeps session evidence when an observation fails and the schema-rejection
+counter.  What a provider actually
 means -- its URL, its query grammar, its payload schema, and its status
 vocabulary -- stays in the adapter, which supplies the request and one
 classifier for the statuses it recognises.
@@ -36,12 +38,26 @@ from mechanical_librarian.adapters.providers.retry_safety import (
     bounded_retry_after,
     transient_transport_failure,
 )
+from mechanical_librarian.application.metadata_report import (
+    ProviderCoverDescriptor,
+    ProviderFailureSnapshot,
+    ProviderResult,
+)
 from mechanical_librarian.application.provider_evidence import (
     ProviderAttemptRecord,
     ProviderIncompleteCause,
     ProviderIncompleteCauseRecord,
+    ProviderOperationalEvidence,
+)
+from mechanical_librarian.domain.failure_diagnostics import (
+    MAX_DIAGNOSTIC_COUNT,
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ProviderObservation,
     ProviderStatus,
     provider_access_time,
 )
@@ -853,13 +869,70 @@ def run_owner_search(
     return replace(answer, requested=session.attempt_count > 0)
 
 
+def observed_result(
+    observe: Callable[[], ProviderObservation],
+    session: BoundedProviderSession,
+    covers: Callable[[], tuple[ProviderCoverDescriptor, ...]] = lambda: (),
+) -> ProviderResult:
+    """Run one observation, keeping its session evidence if it fails."""
+    failure: BaseException | None = None
+    try:
+        observation = observe()
+    except BaseException as error:
+        failure = error
+    try:
+        snapshot = ProviderFailureSnapshot(
+            covers(),
+            ProviderOperationalEvidence(
+                session.accessed_at,
+                session.attempt_records,
+                session.incomplete_causes,
+            ),
+        )
+    except BaseException:
+        if failure is not None:
+            raise failure from None
+        raise
+    if failure is not None:
+        snapshot.raise_from(failure)
+    return ProviderResult(observation, snapshot.cover_descriptors, snapshot.evidence)
+
+
+class SchemaRejections:
+    """Count an observation's rejected schema members as one diagnostic."""
+
+    _schema_rejections: int
+
+    def _reject_schema_members(self, count: int = 1) -> None:
+        if count <= 0:
+            return
+        self._schema_rejections = min(
+            MAX_DIAGNOSTIC_COUNT,
+            self._schema_rejections + count,
+        )
+
+    def _schema_diagnostics(self) -> tuple[FailureDiagnostic, ...]:
+        if not self._schema_rejections:
+            return ()
+        return (
+            FailureDiagnostic(
+                FailureCategory.SCHEMA_CONSTRUCTION,
+                FailureComponent.PROVIDER,
+                FailureStage.SCHEMA,
+                count=self._schema_rejections,
+            ),
+        )
+
+
 __all__ = [
     "BoundedProviderSession",
     "ProviderBounds",
     "ProviderClocks",
     "ProviderResponseClassifier",
     "ProviderResponseFacts",
+    "SchemaRejections",
     "decode_json",
+    "observed_result",
     "owner_search_page",
     "provider_bounds",
     "run_owner_search",

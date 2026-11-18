@@ -25,6 +25,8 @@ from mechanical_librarian.adapters.providers.sdk import (
     BoundedProviderSession,
     ProviderClocks,
     ProviderResponseFacts,
+    SchemaRejections,
+    observed_result,
     owner_search_page,
     provider_bounds,
     provider_client_lifetime,
@@ -37,7 +39,6 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
     ProviderCoverDescriptor,
-    ProviderFailureSnapshot,
     ProviderLaneResult,
     ProviderResult,
     QualifiedLaneObservation,
@@ -49,9 +50,6 @@ from mechanical_librarian.application.metadata_report import (
     provider_isbn_applicability,
     provider_observation,
     qualify_provider_observation,
-)
-from mechanical_librarian.application.provider_evidence import (
-    ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverContext,
@@ -71,10 +69,7 @@ from mechanical_librarian.domain.evidence_bounds import (
 )
 from mechanical_librarian.domain.failure_diagnostics import (
     MAX_DIAGNOSTIC_COUNT,
-    FailureCategory,
-    FailureComponent,
     FailureDiagnostic,
-    FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_DESCRIPTION_CHARACTERS,
@@ -201,7 +196,7 @@ class _CoverId:
 OpenLibraryPacer = ProviderRequestPacer
 
 
-class OpenLibraryMetadataProvider:
+class OpenLibraryMetadataProvider(SchemaRejections):
     """Fetch one exact ISBN-family observation through the fixed public API."""
 
     def __init__(
@@ -262,28 +257,10 @@ class OpenLibraryMetadataProvider:
         *,
         deadline: float | None = None,
     ) -> ProviderResult:
-        failure: BaseException | None = None
-        try:
-            observation = self._observe(plan, deadline=deadline)
-        except BaseException as error:
-            failure = error
-        try:
-            snapshot = ProviderFailureSnapshot(
-                self._cover_descriptors,
-                ProviderOperationalEvidence(
-                    self._session.accessed_at,
-                    self._session.attempt_records,
-                    self._session.incomplete_causes,
-                ),
-            )
-        except BaseException:
-            if failure is not None:
-                raise failure from None
-            raise
-        if failure is not None:
-            snapshot.raise_from(failure)
-        return ProviderResult(
-            observation, snapshot.cover_descriptors, snapshot.evidence
+        return observed_result(
+            lambda: self._observe(plan, deadline=deadline),
+            self._session,
+            lambda: self._cover_descriptors,
         )
 
     def _observe(
@@ -989,26 +966,6 @@ class OpenLibraryMetadataProvider:
             )
 
         return run_owner_search(session, search)
-
-    def _reject_schema_members(self, count: int) -> None:
-        if count > 0:
-            self._schema_rejections = min(
-                MAX_DIAGNOSTIC_COUNT, self._schema_rejections + count
-            )
-
-    def _schema_diagnostics(self) -> tuple[FailureDiagnostic, ...]:
-        return (
-            ()
-            if not self._schema_rejections
-            else (
-                FailureDiagnostic(
-                    FailureCategory.SCHEMA_CONSTRUCTION,
-                    FailureComponent.PROVIDER,
-                    FailureStage.SCHEMA,
-                    count=self._schema_rejections,
-                ),
-            )
-        )
 
     def _request(
         self,
