@@ -237,6 +237,76 @@ def test_settings_commit_updates_live_cover_policy_inside_the_application_gate(
     assert covers.policy == CoverPolicy(True, True, True)
 
 
+def test_a_save_of_only_switching_binds_the_same_cover_policy(
+    repository: FakeReviewRepository,
+) -> None:
+    """Switching is not part of the cover policy, so saving only it gives
+    the live binding the policy it already had: no comparison is prepared
+    again (#1372 PR 5, K3; dry proof b)."""
+    base: dict[str, object] = {
+        "schema_version": OWNER_SETTINGS_SCHEMA,
+        "revision": 2,
+        "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
+        "libraries": [
+            {
+                "name": "books",
+                "connection": "primary",
+                "library_id": "library",
+                "media_kind": "ebook",
+            }
+        ],
+    }
+    documents = [
+        OwnerSettingsDocument.model_validate(
+            {**base, "cover_preferences": {"taste_switching": switching}}
+        )
+        for switching in ("suggest_only", "automatic")
+    ]
+    saved: list[object] = []
+
+    class Settings:
+        def read(self):
+            return SimpleNamespace(document=documents[0])
+
+        def write(
+            self, document, _revision, _secrets, live_update=None, *, accepted_at=0
+        ):
+            with live_update or nullcontext():
+                saved.append(document)
+                return SimpleNamespace(document=document)
+
+    bound: list[CoverPolicy] = []
+
+    class Covers:
+        @contextmanager
+        def policy_update(self, policy: CoverPolicy, _level: object):
+            bound.append(policy)
+            yield
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        settings=OwnerSettingsOperations(cast("OwnerSettingsRepository", Settings())),
+        cover_considerations=cast("CoverConsiderationService", Covers()),
+    )
+    for document in documents:
+        application.write_owner_settings(document, 1, ())
+
+    assert saved == documents
+    assert bound[0] == bound[1] == CoverPolicy()
+    assert bound[0].reference == bound[1].reference
+
+
 def test_live_cover_binding_fault_is_a_fixed_settings_failure(
     repository: FakeReviewRepository,
 ) -> None:

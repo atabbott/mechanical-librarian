@@ -9,6 +9,7 @@ planned, written, read back and put back by the real guarded writer.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -21,6 +22,7 @@ import pytest
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
+from mechanical_librarian.adapters.operational_evidence import SupportBundle
 from mechanical_librarian.adapters.persistence import retained_covers
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
@@ -35,6 +37,7 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.cover_taste_build import CoverTasteBuildService
 from mechanical_librarian.application.cover_taste_judge import CoverTasteJudgeService
 from mechanical_librarian.application.cover_taste_judge_contract import (
     AdmittedTasteJudgeRequest,
@@ -43,6 +46,7 @@ from mechanical_librarian.application.cover_taste_judge_contract import (
 from mechanical_librarian.application.cover_taste_switching import (
     CoverTasteSwitching,
 )
+from mechanical_librarian.application.operations import support_preparation_incidents
 from mechanical_librarian.application.review_covers import cover_page
 from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
@@ -1013,3 +1017,83 @@ def test_a_later_comparison_with_no_switch_clears_the_mark(
             is not None
         )
         assert [row["kind"] for row in _selections(prepared.repository)] == ["owner"]
+
+
+def test_switching_content_never_reaches_operational_output(
+    tmp_path: Path,
+    record: None,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Admission, retirement, the preview and Switched carry no rule text,
+    reference or verdict into stderr, logs, failure history, status or the
+    support bundle (S12, A16)."""
+    caplog.set_level(logging.DEBUG)
+    with _switching(tmp_path) as library:
+        repository = library.repository
+        _automatic(library)
+        assert _wakes(library) == 2
+        taste = CoverTasteBuildService(
+            repository.cover_taste_store,
+            cast("Any", SimpleNamespace()),
+            lambda _digest: b"",
+            daily_limit=8,
+            clock=lambda: NOW + 2,
+        )
+        preview = taste.preview("unprotected")
+        assert preview["found"]
+        assert cover_page(repository, "all", None)["items"]
+        repository.bind_cover_taste_switching("suggest_only")
+        assert _wakes(library, NOW + 3) >= 1
+        connection = repository._connection
+        texts = [
+            rule["text"]
+            for (document,) in connection.execute(
+                "SELECT document FROM cover_taste_profile_versions"
+            )
+            for rule in json.loads(document)["rules"]
+        ]
+        verdicts = [
+            cast(str, document)
+            for (document,) in connection.execute(
+                "SELECT document FROM cover_taste_verdicts"
+            )
+        ]
+        references = {
+            cast(str, json.loads(document)["candidate_reference"])
+            for document in verdicts
+        }
+        assert texts and verdicts and references
+        bundle = (
+            SupportBundle(
+                (
+                    (
+                        "operational_incidents",
+                        lambda: support_preparation_incidents(
+                            repository.operational_snapshot()
+                        ),
+                    ),
+                )
+            )
+            .export()
+            .decode()
+        )
+        failures = json.dumps(
+            connection.execute("SELECT * FROM cover_taste_judgements").fetchall()
+        )
+        status = json.dumps(repository.operational_snapshot(), default=str)
+    captured = capsys.readouterr()
+    for name, text in {
+        "stdout": captured.out,
+        "stderr": captured.err,
+        "log": caplog.text,
+        "support bundle": bundle,
+        "failure history": failures,
+        "status": status,
+    }.items():
+        for rule in texts:
+            assert rule not in text, name
+        for reference in references:
+            assert reference not in text, name
+        for verdict in verdicts:
+            assert verdict not in text, name
