@@ -126,7 +126,7 @@ export const commandSelected = (
 // is the recorded answer has to be readable. The owner's own decision is the
 // answer whenever there is one; an automatic decision only speaks for a field
 // they have not decided themselves.
-const recordedSelected = (
+export const recordedSelected = (
   field: ReviewField,
   outcome: 'accept' | 'keep_current',
   selectedValue: DecisionCommand['selectedValue'] = null,

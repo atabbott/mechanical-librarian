@@ -1068,7 +1068,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
   }
 }
 .metadata-choice .choice-select > strong::before { content:''; flex:none; box-sizing:border-box; width:20px; height:20px; border:2px solid var(--field-line); border-radius:50%; background:var(--surface-strong); }
-.metadata-choice:hover .choice-select:not(:disabled) > strong::before { border-color:var(--accent); box-shadow:inset 0 0 0 4px var(--surface-strong), inset 0 0 0 10px color-mix(in srgb, var(--accent) 30%, var(--surface-strong)); }
+.metadata-choice:not(.is-selected):hover .choice-select:not(:disabled) > strong::before { border-color:var(--accent); box-shadow:inset 0 0 0 4px var(--surface-strong), inset 0 0 0 10px color-mix(in srgb, var(--accent) 30%, var(--surface-strong)); }
 .metadata-choice.is-selected, .metadata-choice.is-selected:hover { background:var(--accent-soft); box-shadow:inset 0 0 0 2px var(--accent); }
 .metadata-choice.is-selected .choice-select > strong::before { border-color:var(--accent-strong); background:var(--accent-strong); box-shadow:inset 0 0 0 4px var(--surface-strong); }
 .choice-chosen { margin-left:auto; color:var(--accent-strong); }
