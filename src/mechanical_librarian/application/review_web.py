@@ -3603,9 +3603,10 @@ def _owner_control(
     # An answer cannot be withdrawn while its field is pinned (ADR-0085,
     # Amendment 2). Beside an automatic decision the store refuses a withdraw
     # whatever the hold's state, but the refusal names Resume automatic
-    # handling, so it shows only while the hold stands and no Resume is out:
-    # once Resume is requested or done, the field offers no withdraw at all,
-    # and still shows the owner's recorded value with its controls.
+    # handling, so it shows only while the hold stands and no Resume was asked
+    # of it. Once Resume is requested, failed (whose own line names Resume) or
+    # done, the field offers no withdraw at all, and still shows the owner's
+    # recorded value with its controls.
     withdraw = None
     resumed = False
     if (
@@ -3621,6 +3622,7 @@ def _owner_control(
         elif (
             destination in snapshot.held_destinations
             and destination not in snapshot.return_requested_destinations
+            and destination not in snapshot.return_failed_destinations
         ):
             withdraw = "automatic_hold"
         else:

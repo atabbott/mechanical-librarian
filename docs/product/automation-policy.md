@@ -55,8 +55,8 @@ field alone on every later read of the work until you choose Resume automatic
 handling, which the field offers once Automatic has a decision for it
 ([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
 Amendment 1). Withdrawing a decision removes the hold it set. While Automatic
-has a decision for the field, yours cannot be withdrawn. Resume automatic
-handling releases it instead. Clearing a subtitle, publisher, genres or
+has a decision for the field, you cannot withdraw yours. Resume automatic
+handling removes the hold instead. Clearing a subtitle, publisher, genres or
 narrators is an answer like any other: it holds the field and ends a pin on
 it, and the cleared field can be pinned, so a source still offering a value
 does not ask again

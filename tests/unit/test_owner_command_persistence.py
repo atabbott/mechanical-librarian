@@ -1147,8 +1147,8 @@ def test_a_requested_return_whose_checks_fail_can_be_requested_again(
         False,
         True,
     )
-    # Resume is offered again, so the refusal that names it shows again.
-    assert cast(dict, field["owner_control"])["withdraw"] == "automatic_hold"
+    # The failure line names Resume, so the refusal does not say it twice.
+    assert cast(dict, field["owner_control"])["withdraw"] is None
     again, _ = _request_return(store, token)
     assert again == scan_id
     assert store.repository._connection.execute(
