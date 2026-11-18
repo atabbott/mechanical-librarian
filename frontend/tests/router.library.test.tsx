@@ -5605,6 +5605,32 @@ describe('Library route', () => {
     }
     return { consideration, coverField }
   }
+  // A cover the owner took over from Automatic shows the existing Resume
+  // panel once Automatic would switch it again, after the covers, so the
+  // cards do not move (#1372 PR 5, K9).
+  it('shows Resume automatic handling for a held cover after its choices', async () => {
+    const { consideration, coverField } = coverChecks()
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...coverField,
+            manualHold: true,
+            coverConsideration: { ...consideration, providerFetching: false, ready: true },
+          },
+        ],
+      })),
+    })
+    const comparison = await screen.findByLabelText('Choose a cover')
+    const resume = await screen.findByRole('button', { name: 'Resume automatic handling' })
+    expect(
+      comparison.compareDocumentPosition(resume) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(comparison).not.toContainElement(resume)
+  })
+
   it.each(['epub', 'm4b'] as const)('retains %s cover checks', async (mediaKind) => {
     const user = userEvent.setup()
     const { consideration, coverField } = coverChecks()
