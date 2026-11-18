@@ -192,6 +192,17 @@ _PREVIEW_ANSWER_SQL = (
     "ON selection.selection_id=current.selection_id "
     "WHERE lineage.review_case_id=? AND selection.kind='owner'"
 )
+# A judgement under one version still waiting or in flight on a work's
+# current comparison: the preview is still checking until it ends (K7).
+_PREVIEW_IN_FLIGHT_SQL = (
+    "SELECT 1 FROM cover_taste_judgements judgement "
+    "JOIN current_cover_considerations pointer "
+    "ON pointer.consideration_id=judgement.consideration_id "
+    "JOIN current_review_case_lineages lineage "
+    "ON lineage.review_case_id=pointer.review_case_id "
+    "WHERE judgement.version=? AND judgement.state IN ('requested','running') "
+    "LIMIT 1"
+)
 _PREVIEW_RERUN_SQL = (
     "SELECT 1 FROM cover_taste_verdicts earlier WHERE earlier.consideration_id=? "
     "AND earlier.version<? AND json_extract(earlier.document,'$.decision')='choose' "
@@ -498,6 +509,8 @@ def taste_preview_walk(
         )
     policy, replay = authority
     due = (
+        connection.execute(_PREVIEW_IN_FLIGHT_SQL, (version,)).fetchone() is not None
+    ) or (
         policy is not None
         and replay is not None
         and connection.execute(

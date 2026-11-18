@@ -1033,3 +1033,23 @@ def test_the_preview_shows_a_work_once_from_its_current_case(previewed) -> None:
     walk = _walk(previewed, "unprotected")
     assert [switch.review_case_id for switch in walk.switches] == [current]
     assert walk.checked == 1
+
+
+def test_the_preview_keeps_checking_while_a_judgement_is_in_flight(
+    previewed,
+) -> None:
+    """A field whose judgement under the version in use is claimed and not
+    yet answered is still being checked: the preview says `checking`, not
+    `done`, until it ends."""
+    taste = _taste(previewed)
+    store = previewed.repository.cover_taste_judge_store()
+    due = store.due(1, 64)
+    assert due
+    claimed = [store.claim(field, 1, NOW, "example/vision", 50) for field in due]
+    assert all(claimed)
+    assert store.due(1, 64) == ()
+    in_flight = taste.preview("unprotected")
+    assert (in_flight["checked"], in_flight["state"]) == (0, "checking")
+    for judgement_id in claimed:
+        store.fail(cast(str, judgement_id), NOW + 1, "invalid_output")
+    assert taste.preview("unprotected")["state"] == "done"
