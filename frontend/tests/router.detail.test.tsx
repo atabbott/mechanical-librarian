@@ -337,6 +337,45 @@ describe('Library review ownership', () => {
     await waitFor(() => expect(router.state.location.search.subview).toBe('history'))
   })
 
+  it('shows a description observation formatted on Evidence, and other fields as text', async () => {
+    const getEvidence = vi.fn<ReviewHttp['getEvidence']>(async () => ({
+      items: [
+        {
+          destinations: ['description' as const],
+          language: null,
+          observation: 'Description: <p>Kept <b>bold</b></p>',
+          role: 'external_corroboration',
+          source: 'Open Library',
+        },
+        {
+          destinations: ['title' as const],
+          language: null,
+          observation: 'Title: A <b>title</b>',
+          role: 'local_presence',
+          source: 'This library',
+        },
+      ],
+      missingLineageCount: 0,
+      sourceLedger: [],
+    }))
+    const [title] = detail.fields
+    if (!title) throw new Error('the fixture offers a title')
+    renderRoute('/review/case-1?field=description&subview=evidence', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [title, { ...title, destination: 'description' as const }],
+      })),
+      getEvidence,
+    })
+    await screen.findByText('A <b>title</b>', { selector: '.evidence-values p' })
+    expect(document.querySelector('.evidence-values .description-formatted')?.innerHTML).toBe(
+      '<p>Kept <strong>bold</strong></p>',
+    )
+    expect(screen.getByText('A <b>title</b>', { selector: '.evidence-values p' })).toBeVisible()
+    expect(document.querySelectorAll('.evidence-values strong')).toHaveLength(1)
+  })
+
   it('renders semantic evidence, limitations, provider outcomes, and pagination', async () => {
     const getEvidence = vi.fn<ReviewHttp['getEvidence']>(async (_id, cursor) =>
       cursor
