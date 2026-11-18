@@ -650,6 +650,7 @@ def _field(
         "uncertainty": [],
         # Absent members the lenient reader took as none.
         "cover_consideration": None,
+        "cover_taste_suggestion": None,
         "current_cover_selection_artifact_id": None,
         "current_cover_selection_id": None,
         "description_advice": None,
