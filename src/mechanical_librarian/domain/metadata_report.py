@@ -2595,6 +2595,39 @@ class ProviderCandidate:
         }
 
 
+def canonical_provider_evidence(
+    evidence: list[ProviderEvidence],
+) -> tuple[ProviderEvidence, ...]:
+    """Order one candidate's evidence exactly as the report document requires.
+
+    Source ordinals are allocated before canonical ordering so a repeated
+    provider value stays independently attributable to this candidate.
+    """
+    ordered = tuple(
+        sorted(
+            (
+                replace(value, source_ordinal=index)
+                for index, value in enumerate(evidence)
+            ),
+            key=lambda value: (
+                value.scope.value,
+                value.kind.value,
+                value.value,
+                value.role or "",
+                "" if value.date_event is None else value.date_event.value,
+                "" if value.date_precision is None else value.date_precision.value,
+                value.date_normalized or "",
+                value.taxonomy_type or "",
+                "" if value.date_confidence is None else value.date_confidence.value,
+                value.source_ordinal,
+            ),
+        )
+    )
+    if len(ordered) > MAX_PROVIDER_EVIDENCE:
+        raise ValueError("provider rich evidence exceeds its bound")
+    return ordered
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderLaneCandidate:
     reference: str
