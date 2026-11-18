@@ -196,14 +196,29 @@ export const noWayBack = (field: ReviewField) =>
   field.decisionActions.includes('keep_current') &&
   emptyRaw(field.currentRaw) &&
   !CLEARABLE.includes(field.destination)
+// Whether the field's recorded owner entry or clear holds the value the case
+// read: the field is back at it, and the recorded outcome already says so
+// (#1523).
+const enteredBack = (field: ReviewField) => {
+  const decision = field.humanDecision
+  const selected = decision?.outcome === 'owner_entered' ? decision.selected_value : null
+  if (!selected) return false
+  const before = field.currentRaw
+  if (selected.kind === 'empty') return emptyRaw(before)
+  if (!Array.isArray(selected.value)) return selected.value === before
+  return field.destination === 'genres'
+    ? sameGenres(selected.value, before)
+    : sameNames(selected.value, before)
+}
 // The card that keeps the value the case read. Elsewhere it is Keep current
 // value. On the case that wrote the field that value is no longer the
 // library's, so it reads Before your change, and pressing it writes that value
 // back. It is left out where owner entry already offers the same way back, and
-// where there is none: nothing to restore and a field that can't be emptied
-// (#1523, ADR-0105).
+// where there is none: nothing to restore and a field that can't be emptied.
+// It is left out too where the owner's recorded entry or clear already holds
+// that value (#1523, ADR-0105).
 export const keepCard = (field: ReviewField): 'keep' | 'before' | null =>
-  !field.decisionActions.includes('keep_current')
+  !field.decisionActions.includes('keep_current') || enteredBack(field)
     ? null
     : field.writtenByCase !== true
       ? 'keep'

@@ -869,6 +869,85 @@ describe('the keep card on a field this case wrote (#1523)', () => {
     expect(card).toHaveTextContent('Your choice')
   })
 
+  // A field the case wrote, then took back to the value it read with an
+  // owner entry or a clear: no longer written, and the entry is the outcome.
+  const genresBack = (before: readonly string[] | null, entered: unknown): Field => {
+    const back = decided(
+      offered('genres', {
+        writtenByCase: false,
+        currentValue: before ? before.join(' · ') : 'Not set in Audiobookshelf',
+        currentRaw: before,
+        proposedValues: [{ kind: 'list', value: ['Fantasy'] }],
+        ownerControl: control({
+          clear: true,
+          current: before,
+          subset: {
+            maxItems: 32,
+            options: [
+              ...(before ?? []).map((value) => ({
+                value,
+                current: true,
+                proposed: false,
+                previous: false,
+              })),
+              { value: 'Fantasy', current: false, proposed: true, previous: false },
+            ],
+          },
+        }),
+      }),
+      entered,
+    )
+    return { ...back, editable: true, needsAttention: false }
+  }
+
+  it.each([
+    ['a clear back to empty genres', null, EMPTY, 'You cleared the genres.'],
+    [
+      'an entry back to the genres read',
+      ['Drama'],
+      { kind: 'list', value: ['Drama'] },
+      'You chose 1 genre.',
+    ],
+  ] as const)('leaves it out after %s', async (_, before, entered, said) => {
+    renderRoute('/library?lens=all&preview=case-1&field=genres', owner(genresBack(before, entered)))
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(keepCardShown()).toBeNull()
+    expect(screen.queryByRole('radio', { name: /^Choose current value/u })).toBeNull()
+    expect(screen.getByText(said)).toBeVisible()
+  })
+
+  it('leaves it out after a subtitle entered back as it was read', async () => {
+    const back = decided(
+      offered('subtitle', {
+        writtenByCase: false,
+        currentValue: 'Original subtitle',
+        currentRaw: 'Original subtitle',
+        proposedValues: [{ kind: 'text', value: 'A Quiet Subtitle' }],
+        ownerControl: textControl('Original subtitle', true),
+      }),
+      { kind: 'text', value: 'Original subtitle' },
+    )
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=subtitle',
+      owner({ ...back, editable: true, needsAttention: false }),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(keepCardShown()).toBeNull()
+  })
+
+  it('still offers it beside an entry of another value', async () => {
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=genres',
+      owner(genresBack(['Drama'], { kind: 'list', value: ['Fantasy'] })),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(screen.getByText('Keep current value')).toBeVisible()
+    expect(screen.getByRole('radio', { name: /^Choose current value: Drama/u })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    )
+  })
+
   it('says it in the plural on authors written over nothing', async () => {
     const written = decided(
       offered('authors', {
