@@ -1068,12 +1068,14 @@ def _cover_selection_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> st
 def _field_effect_no_change_arm(
     scope: _ActivityArmScope, scalar: dict[str, str]
 ) -> str:
-    """Every decision that needed no write."""
+    """Every decision that needed no write; an owner's is the owner's own
+    choice, listed with the owner's (ADR-0105)."""
     return f"""
             SELECT no_change.event_id, no_change.connection_name, no_change.destination,
                    no_change.library_name, no_change.occurred_at, no_change.origin,
                    no_change.report_id, 'no_change_required', no_change.work_id, '{{}}',
-                   'metadata', {scalar["title"]},
+                   CASE no_change.origin WHEN 'human' THEN 'review' ELSE 'metadata' END,
+                   {scalar["title"]},
                    NULL, 'field_effect_no_change', NULL, no_change.review_case_id,
                    NULL, no_change.decision_id, NULL, NULL, 1, 0, 0
               FROM field_effect_no_changes no_change

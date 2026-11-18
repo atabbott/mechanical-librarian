@@ -1219,6 +1219,20 @@ def test_choosing_automatics_written_value_needs_no_write(
     )
     (kept,) = (event for event in activity if event["state"] == "no_change_required")
     assert kept["change"] == "Kept Ada Example"
+    # It is the owner's choice: Activity lists it with the owner's, not
+    # Automatic's.
+    assert (kept["event_type"], kept["category"]) == ("review", "owner")
+    for event_type, listed in (("review", True), ("metadata", False)):
+        filtered = scheduler.activity(
+            search=None, event_type=event_type, range_days=30, page=1, page_size=25
+        )
+        assert (
+            kept["event_id"]
+            in {
+                event["event_id"]
+                for event in cast(list[dict[str, Any]], filtered["events"])
+            }
+        ) is listed
     assert {fact["label"]: fact["value"] for fact in kept["evidence"]} == {
         "Current value": "Ada Example",
         "Chosen by": "You",
