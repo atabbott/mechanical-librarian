@@ -73,33 +73,38 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    case Keep current writes back the value the case read: a clearable field
    it read empty goes back to empty as a clear does, and any other field
    refuses the keep as `owner_value_required`. The case detail's
-   `written_by_case` marks each field the case wrote in its current
-   episode. There the browser shows that keep as a card headed "Before your
-   change", holding the value the case read, and never calls it current. It
-   leaves the card out where owner entry already offers the same way back
-   (Clear for an empty value, or that value as the previous value, names or
-   genres), and where there is none, a field read empty that cannot be
-   emptied, saying so in one sentence. History reads that keep as "You went
-   back to the value before your change.", its To an empty value as Not set,
-   and Activity reads it as a change from the written value to that value,
-   from the keep's own first plan, or before one exists from the write it
-   follows. Every owner decision freezes, when it is recorded, the write it
-   follows; a keep goes back on it. The stored decision names the decision
-   of the write planning resolves for it then, or null when it follows none,
-   or, for a keep, when that write already holds the value the case read,
-   which makes the keep a plain keep. While the owner decision that made
-   that write is still the field's answer, an accept of the value it holds
-   is refused as `owner_value_unchanged` and records nothing, since
-   planning would write nothing for it. The pending set holds a keep only
-   while it names a write. History's From for every decision, and Activity's
-   written value for a keep, read that write's own verified effect, never
-   episode floors or a clock in whole seconds, so a later return or a write
-   in the same second changes none of them. Its result is Went back once that write back
-   verifies; until then it is the write's own word (Planned, Closed and so
-   on, with the reason), or Recorded while unplanned, and never Kept
-   current. Activity's shared fact store re-reads an owner decision's row
-   when its own effects or the named write's effects move (ADR-0082). The
-   server path and its refusal stay for API callers.
+   `written_by_case` marks each field the case wrote in its current episode; a
+   description written with the adviser's text counts, by the same rule as the
+   write a keep follows. On such a field the browser shows that keep as a card
+   headed "Before your change", holding the value the case read, and never
+   calls it current. It leaves the card out where owner entry already offers
+   the same way back (Clear for an empty value, or that value as the previous
+   value, names or genres), and where there is none, a field read empty that
+   cannot be emptied, saying so in one sentence. A field whose latest write
+   holds the value the case read again, after a keep, a clear or an entry, is
+   not written: after a keep its card is Keep current value, and after a clear
+   or an entry of that value, in the same order, the browser leaves the card
+   out because the recorded value already holds it. History reads a keep that
+   goes back as "You went back to the value before your change.", its To an
+   empty value as Not set, and Activity reads it as a change from the written
+   value to that value, from the keep's own first plan, or before one exists
+   from the write it follows. Every owner decision freezes, when it is
+   recorded, the write it follows; a keep goes back on it. The stored decision
+   names the decision of the write planning resolves for it then, or null when
+   it follows none, or, for a keep, when that write already holds the value the
+   case read, which makes the keep a plain keep. While the owner decision that
+   made that write is still the field's answer, an accept of the value it holds
+   is refused as `owner_value_unchanged` and records nothing, since planning
+   would write nothing for it. The pending set holds a keep only while it names
+   a write. History's From for every decision, and Activity's written value for
+   a keep, read that write's own verified effect, never episode floors or a
+   clock in whole seconds, so a later return or a write in the same second
+   changes none of them. Its result is Went back once that write back verifies;
+   until then it is the write's own word (Planned, Closed and so on, with the
+   reason), or Recorded while unplanned, and never Kept current. Activity's
+   shared fact store re-reads an owner decision's row when its own effects or
+   the named write's effects move (ADR-0082). The server path and its refusal
+   stay for API callers.
 5. **The kept case.** When the pipeline admits a ProposalSet with nothing
    actionable while the work's latest verified write, of any origin and
    destination, covers included, is under 2,592,000 seconds old by the

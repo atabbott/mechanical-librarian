@@ -47,6 +47,10 @@ brackets are GitHub issues.
   narrators, and enter authors and narrators by name. A cleared field stays out
   of automatic handling until you choose Resume automatic handling. A character
   or name count shows only once a value is over its limit (#1523).
+- After the description adviser's text is written, the description's first
+  card reads Before your change and writes back the description it replaced.
+  Once you keep the value a field had before your change, its card reads Keep
+  current value again (#1976).
 
 ## 0.38.0 — Owner-directed matching (in progress)
 

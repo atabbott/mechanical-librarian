@@ -650,6 +650,8 @@ is not written.
 - An owner's final choice wins, and in-flight effects are not raced.
 - Identical text records no change and sends no PATCH or Attention item.
 - Free replacement text is not accepted. Keep current reverses a choice.
+  Once the result is written, Before your change writes back the description
+  it replaced.
 - A request made while preparation is paused starts when preparation
   resumes. Work accepted before the pause completes normally.
 
