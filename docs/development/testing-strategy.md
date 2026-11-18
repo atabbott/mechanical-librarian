@@ -315,8 +315,10 @@ These rules apply to every new test, beside the code economy rules in
 - **Regenerate the browser's wire fixtures; never edit or hand-merge them.**
   The JSON files `tests/unit/test_browser_wire_fixtures.py` checks are written
   by `ML_WRITE_WIRE_FIXTURES=1 uv run pytest tests/unit/test_browser_wire_fixtures.py`
-  with sorted keys. After a response changes, or a merge from `main` conflicts
-  in one of them, take either side, run that command and review the diff.
+  with sorted keys, formatted by the frontend's Prettier (run `npm ci` in
+  `frontend/` first). After a response changes, or a merge from `main`
+  conflicts in one of them, take either side, run that command and review the
+  diff.
 
 ## Fixtures, hostile input and privacy
 
