@@ -201,3 +201,7 @@ def _environment(
         )
     finally:
         repository.close()
+
+
+# Stands in for the taste switch's record, which no build has (#1372 PR 5).
+SYNTHETIC_TASTE_RECORD = "7" * 64

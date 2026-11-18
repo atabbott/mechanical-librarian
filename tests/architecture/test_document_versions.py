@@ -175,7 +175,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.cover_automatic_decision",
         "SCHEMA_VERSION",
-        "cover-automatic-decision-v5",
+        "cover-automatic-decision-v6",
     ),
     (
         "mechanical_librarian.application.continuous_field_effects",

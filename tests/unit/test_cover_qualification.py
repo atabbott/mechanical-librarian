@@ -508,3 +508,25 @@ def test_unconfirmed_identity_is_absent_from_every_shipped_manifest():
         UNCONFIRMED_REPLACEMENT_IDENTITY not in identities
         for identities in F46_IDENTITIES_BY_DESTINATION.values()
     )
+
+
+def test_the_taste_identity_has_no_record_and_never_fills() -> None:
+    """#1372 PR 5 K1: one taste identity, unqualified until #1418."""
+    from mechanical_librarian.domain import cover_qualification_policy as policy
+
+    assert policy.TASTE_REPLACEMENT_IDENTITY == (
+        "cover_order:fixed_source_order:taste_replacement"
+    )
+    assert policy.taste_replacement_record() is None
+    assert policy.replacement_record(policy.TASTE_REPLACEMENT_IDENTITY) is None
+    assert policy.TASTE_REPLACEMENT_TARGET_STATES == {"confirmed", "unknown"}
+    # A separate set, so the one-state-per-identity map keeps its readers.
+    assert policy.TASTE_REPLACEMENT_IDENTITY not in policy.REPLACEMENT_TARGET_STATES
+    assert policy.TASTE_REPLACEMENT_IDENTITY in policy.RECORDED_IDENTITIES
+    root = Path(__file__).parents[2]
+    for path in (
+        path
+        for folder in ("docs/reference", "src")
+        for path in (root / folder).rglob("*.json")
+    ):
+        assert policy.TASTE_REPLACEMENT_IDENTITY not in path.read_text(encoding="utf-8")
