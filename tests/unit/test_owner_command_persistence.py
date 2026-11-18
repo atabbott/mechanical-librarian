@@ -1794,15 +1794,43 @@ def test_history_reads_what_a_decision_replaced_not_a_later_automatic_write(
             "kind": "list",
             "value": ["Drama"],
         }
-        again = store.decide(
-            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
-        )
+        # Accepting Fantasy again would change nothing, so it is refused; a
+        # keep is the decision that follows the automatic write (#1523).
+        again = store.decide("keep_current", destination="genres")
         assert _keep_history(store, again)["previous_value"] == {
             "kind": "list",
             "value": ["Fantasy"],
         }
     finally:
         store.close()
+
+
+def test_accepting_the_value_the_case_wrote_is_unchanged(store: OwnerStore) -> None:
+    """An accept of the value the case's latest write already holds would
+    plan nothing and wait for ever, so it is refused as unchanged and records
+    nothing; the first accept still replays, and a keep still records."""
+    first = store.decide("accept", _FANTASY, destination="genres")
+    store.write(first)
+    hold = _hold_document(store)
+    _refused(store, "owner_value_unchanged", "accept", _FANTASY, destination="genres")
+    assert _pending(store) == []
+    assert _hold_document(store) == hold
+    replay = HumanDecision.create(
+        store.case,
+        proposal_id=first.proposal_id,
+        target_fingerprint=first.target_fingerprint,
+        destination="genres",
+        actor="owner",
+        outcome="accept",
+        selected_value=first.selected_value,
+        idempotency_key=f"owner-command-{first.occurred_at - 1:08d}",
+        occurred_at=first.occurred_at,
+    )
+    assert (
+        HumanDecision.from_json(store.repository.record_human_decision(replay)) == first
+    )
+    keep = store.decide("keep_current", destination="genres")
+    assert _pending(store) == [keep.decision_id]
 
 
 _DRAMA = {"kind": "list", "value": ["Drama"]}

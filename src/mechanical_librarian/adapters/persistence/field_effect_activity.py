@@ -1934,22 +1934,37 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
 
         A keep whose predecessor already holds the value the case read names
         none: going back would change nothing, so it is a plain keep, as owner
-        entry calls an entry of the written value unchanged.
-        `field_value_version` normalises both values as planning does, so
-        they are equal exactly when planning would write nothing."""
+        entry calls an entry of the written value unchanged. An accept of the
+        value that write holds is refused as `owner_value_unchanged` before
+        anything is recorded, since planning would write nothing and the
+        accept would wait for ever. `field_value_version` normalises both
+        values as planning does, so they are equal exactly when planning
+        would write nothing."""
         predecessor = self._human_predecessor(decision)
         if predecessor is None:
             return None
-        if decision.outcome == "keep_current":
-            written = _written_plan(
-                predecessor[0], decision.review_case_id, decision.destination
-            ).desired_value
-            before = self._case_target_pre_value(
-                self._recorded_case(decision.review_case_id), decision.destination
+        if decision.outcome in {"accept", "keep_current"}:
+            written = field_value_version(
+                decision.destination,
+                _written_plan(
+                    predecessor[0], decision.review_case_id, decision.destination
+                ).desired_value,
             )
-            if field_value_version(
-                decision.destination, written
-            ) == field_value_version(decision.destination, before):
+            if decision.outcome == "accept":
+                if written == field_value_version(
+                    decision.destination,
+                    project_decision_value(
+                        decision.destination, decision.selected_value
+                    ),
+                ):
+                    raise HumanDecisionError("owner_value_unchanged")
+            elif written == field_value_version(
+                decision.destination,
+                self._case_target_pre_value(
+                    self._recorded_case(decision.review_case_id),
+                    decision.destination,
+                ),
+            ):
                 return None
         return FieldEffectOperation.from_json(predecessor[0]).plan.authority.decision_id
 
