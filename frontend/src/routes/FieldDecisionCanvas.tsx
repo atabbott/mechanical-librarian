@@ -213,6 +213,7 @@ export function FieldDecisionCanvas({
   // each position come from a single list (#1290).
   type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
   const keepKind = keepCard(selected)
+  const wayBackSentence = noWayBackSentence(selected)
   // On the case that wrote the field the card holds what the case read before
   // its write, and never calls it current (#1523).
   const before = keepKind === 'before'
@@ -445,8 +446,8 @@ export function FieldDecisionCanvas({
                 : selected.humanDecision === null && selected.manualHold
                   ? 'Your earlier decision still holds this field. '
                   : 'The recorded outcome is marked below. '}
-              {noWayBackSentence(selected) ?? ''}
-              {noWayBackSentence(selected) && anotherOffered ? ' ' : ''}
+              {wayBackSentence ?? ''}
+              {wayBackSentence && anotherOffered ? ' ' : ''}
               {anotherOffered ? 'You can choose another value.' : ''}
             </p>
           ) : selectedOptional ? (

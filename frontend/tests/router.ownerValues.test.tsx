@@ -1437,12 +1437,14 @@ describe('a pin on each value', () => {
     const { http } = pins(waiting)
     const foot = await show(http)
     expect(foot).toHaveTextContent(
-      'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
+      'You can pin this field after the next scan reads its new value.',
     )
     expect(screen.queryByRole('button', { name: 'Pin this value' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Unpin' })).toBeNull()
     // An explanation, not a state: plain supporting text, not a pin's box.
-    expect(foot.querySelector('.pin-why')).toHaveTextContent('A change to this field is recorded.')
+    expect(foot.querySelector('.pin-why')).toHaveTextContent(
+      'You can pin this field after the next scan reads its new value.',
+    )
     expect(foot.querySelector('.pin-note')).toBeNull()
     expect(foot).not.toHaveClass('has-note')
   })

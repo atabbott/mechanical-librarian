@@ -6,12 +6,7 @@ import type { KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 import { displayValue, isClear } from '../api/http'
 import type { DecisionCommand } from '../api/http'
 import type { ReviewField } from '../fieldDecision'
-import {
-  clearedSentence,
-  destinationLabel,
-  destinationPhrase,
-  listPhrase,
-} from '../labels'
+import { clearedSentence, destinationLabel, destinationPhrase, listPhrase } from '../labels'
 import { writtenRefusal } from '../reviewDecisionController'
 import { StatusPill } from '../components/StatusPill'
 import type { PinControl } from '../fieldPin'

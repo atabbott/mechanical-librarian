@@ -399,7 +399,7 @@ describe('names entry', () => {
       outcome: 'owner_entered',
       selectedValue: { kind: 'list', value: ['Old Writer', 'Ada Example'] },
     })
-    const recorded = await within(panel).findByText('You entered 2 names.')
+    const recorded = await within(panel).findByText('You entered Old Writer and Ada Example.')
     await waitFor(() => expect(recorded).toHaveFocus())
   })
 
@@ -412,7 +412,7 @@ describe('names entry', () => {
     await user.clear(names)
     await user.type(names, 'Bo Reader')
     await user.click(within(panel).getByRole('button', { name: 'Record these names' }))
-    expect(await within(panel).findByText('You entered 1 name.')).toBeVisible()
+    expect(await within(panel).findByText('You entered Bo Reader.')).toBeVisible()
   })
 
   it.each([
@@ -557,6 +557,93 @@ describe('keeping an empty value on the case that wrote it', () => {
         'The ISBN can’t be emptied. Choose a new value.',
       ),
     )
+  })
+})
+
+describe('a description this case wrote over formatting (#1424)', () => {
+  const FORMATTED = 'The earlier description has formatting, so restore it in Audiobookshelf.'
+  const over = (rest: Partial<Field> = {}): Field => ({
+    ...base,
+    destination: 'description',
+    classification: 'actionable',
+    decisionActions: ['keep_current', 'accept'],
+    currentValue: 'Fish & chips for the earlier text.',
+    currentRaw: 'Fish & chips for the earlier text.',
+    proposedValues: [{ kind: 'text', value: 'A qualified description.' }],
+    proposalId: 'proposal-description',
+    targetFingerprint: 'fingerprint-description',
+    ownerControl: null,
+    writtenByCase: true,
+    restoreUnavailable: true,
+    ...rest,
+  })
+  const keepCardShown = () => screen.queryByText(/^(Keep current value|Before your change)$/u)
+
+  it('offers no card while the field asks', async () => {
+    renderRoute('/library?lens=all&preview=case-1&field=description', owner(over()))
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(keepCardShown()).toBeNull()
+  })
+
+  it('still offers Before your change where the earlier description can be restored', async () => {
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=description',
+      owner(over({ restoreUnavailable: false })),
+    )
+    expect(await screen.findByText('Before your change')).toBeVisible()
+  })
+
+  it.each([
+    ['nothing else', [{ kind: 'text', value: 'A qualified description.' }], false],
+    [
+      'another proposal',
+      [
+        { kind: 'text', value: 'A qualified description.' },
+        { kind: 'text', value: 'Another description.' },
+      ],
+      true,
+    ],
+  ] as const)(
+    'says why under the question once it is decided, with %s on offer',
+    async (_, proposedValues, another) => {
+      const written = decided(over({ proposedValues: [...proposedValues] }), {
+        kind: 'text',
+        value: 'A qualified description.',
+      })
+      if (!written.humanDecision) throw new Error('a recorded decision is required')
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=description',
+        owner({
+          ...written,
+          editable: true,
+          needsAttention: false,
+          ownerControl: control({ withdraw: 'written' }),
+          pinControl: null,
+          humanDecision: { ...written.humanDecision, outcome: 'accept' },
+        }),
+      )
+      const heading = await screen.findByRole('heading', { name: 'Description' })
+      const said = heading.parentElement?.querySelector('p')
+      expect(said).toHaveTextContent(`The recorded outcome is marked below. ${FORMATTED}`)
+      if (another) expect(said).toHaveTextContent(`${FORMATTED} You can choose another value.`)
+      else expect(said).not.toHaveTextContent('You can choose another value.')
+      expect(keepCardShown()).toBeNull()
+    },
+  )
+
+  it('says why when the store refuses a keep pressed on a page from before the write', async () => {
+    const user = userEvent.setup()
+    const http = owner(
+      over({ writtenByCase: false, restoreUnavailable: false }),
+      undefined,
+      async () => {
+        throw new ApiError(409, 'restore_unavailable')
+      },
+    )
+    renderRoute('/library?lens=all&preview=case-1&field=description', http)
+    await user.click(await screen.findByRole('radio', { name: /^Choose current value/u }))
+    expect(sent(http)[0]).toMatchObject({ outcome: 'keep_current', destination: 'description' })
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(FORMATTED))
   })
 })
 
@@ -988,7 +1075,9 @@ describe('names the store keeps apart (#1523)', () => {
     await user.click(names)
     await user.paste('Nilay Yılmaz\nNilay Yilmaz')
     await user.click(within(panel).getByRole('button', { name: 'Record these names' }))
-    expect(await within(panel).findByText('You entered 2 names.')).toBeVisible()
+    expect(
+      await within(panel).findByText('You entered Nilay Yılmaz and Nilay Yilmaz.'),
+    ).toBeVisible()
     expect(http.recordDecision).toHaveBeenCalledOnce()
   })
 })

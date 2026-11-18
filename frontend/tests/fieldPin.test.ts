@@ -258,8 +258,7 @@ describe('the sentence at the foot of the field', () => {
   it('says a recorded change comes first where no pin is offered', () => {
     const waiting = field({ pinControl: { pin: 'change_waiting', unpin: false } })
     expect(pinFoot(waiting, { pinOnScreen: false })).toEqual({
-      sentence:
-        'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
+      sentence: 'You can pin this field after the next scan reads its new value.',
       unpin: false,
       quiet: true,
     })
@@ -292,7 +291,7 @@ describe('the sentence at the foot of the field', () => {
       >,
     })
     expect(pinFoot(advised, shown).sentence).toBe(
-      'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
+      'You can pin this field after the next scan reads its new value.',
     )
     // Automatic's own advised text is no choice of the owner's.
     const automatic = {

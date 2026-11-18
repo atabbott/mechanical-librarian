@@ -673,4 +673,10 @@ describe('a pin after a value command', () => {
       'This field is pinned. Unpin it to withdraw the decision.',
     )
   })
+
+  it('says why a keep of a description with formatting is refused (#1424)', () => {
+    expect(ownerRefusalCopy(new ApiError(409, 'restore_unavailable'), offered)).toBe(
+      'The earlier description has formatting, so restore it in Audiobookshelf.',
+    )
+  })
 })

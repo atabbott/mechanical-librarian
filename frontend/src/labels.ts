@@ -68,7 +68,8 @@ export const destinationIsPlural = (destination: TargetDestination) =>
 // An owner's clear, said the same way where it was recorded and in History.
 export const clearedSentence = (destination: TargetDestination, already = false) =>
   `You ${already ? 'already ' : ''}cleared the ${destinationPhrase(destination)}.`
-// The values of a list in one phrase: `Drama`, `Drama and Fantasy`.
+// The values of a list in one phrase: `Drama`, `Drama and Fantasy`,
+// `A, B, and C`.
 export const listPhrase = (values: readonly string[]) =>
   new Intl.ListFormat('en', { type: 'conjunction' }).format(values)
 // Names entered, said by their count in History, which lists them below.
