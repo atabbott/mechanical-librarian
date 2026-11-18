@@ -31,11 +31,15 @@ import { createHttp, idlePreparation, renderRoute } from './fixtures'
 import { document, savedDocument, view } from './settingsFixtures'
 
 const reviewerView: ReviewerAccessView = {
-  schema_version: 'reviewer-access-view-v5',
+  schema_version: 'reviewer-access-view-v6',
   taste_mapping: null,
   taste_metadata: null,
   taste_daily_requests: 8,
   taste_recommendations: ['anthropic/claude-sonnet-5.5'],
+  judge_mapping: null,
+  judge_metadata: null,
+  judge_daily_requests: 5_000,
+  judge_recommendations: ['openai/gpt-6-luna'],
   cover_metadata: null,
   cost_evidence: { models: [] },
   revision: 3,

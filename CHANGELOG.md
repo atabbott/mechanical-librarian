@@ -216,6 +216,10 @@ brackets are GitHub issues.
   removed are not written again (#1372).
 - Covers offers 25 guided picks while no taste profile exists, and explains
   itself on a first visit (#1372).
+- **Clean rebuild required.** Mechanical Librarian can compare each work's
+  covers with your taste profile, through Codex or an OpenRouter model.
+  Nothing shows its answers yet. `review.cover_taste_judge_daily_requests`
+  (default 5,000) caps its requests (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when

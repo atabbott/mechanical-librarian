@@ -18,7 +18,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import IO, Iterator, cast
+from typing import IO, Iterator, Literal, cast
 
 from mechanical_librarian.adapters.reviewers import process_group as process_groups
 from mechanical_librarian.adapters.reviewers.codex_device_auth import CodexAuthCommand
@@ -48,7 +48,17 @@ from mechanical_librarian.application.cover_taste_contract import (
     TASTE_OUTPUT_SCHEMA,
     AdmittedTasteBuildRequest,
 )
-from mechanical_librarian.domain.cover_taste import TASTE_MAX_IMAGES
+from mechanical_librarian.application.cover_taste_judge_contract import (
+    TASTE_JUDGE_CODEX_OUTPUT_SCHEMA,
+    TASTE_JUDGE_INSTRUCTION,
+    TASTE_JUDGE_OUTPUT_SCHEMA,
+    TASTE_JUDGE_REFERENCE,
+    AdmittedTasteJudgeRequest,
+)
+from mechanical_librarian.domain.cover_taste import (
+    TASTE_JUDGE_MAX_ALTERNATIVES,
+    TASTE_MAX_IMAGES,
+)
 
 PROFILE_SCHEMA = "contained-reviewer-profile-v1"
 MAX_PROFILE_BYTES = 65_536
@@ -235,7 +245,8 @@ class _SchemaBinding:
 
 @dataclass(frozen=True, slots=True)
 class _TasteImage:
-    """One digest-bound JPEG preview from an admitted taste build request."""
+    """One digest-bound preview from an admitted taste request: a build's
+    JPEG or a judgement's canonical PNG."""
 
     reference: str
     digest: str
@@ -244,15 +255,18 @@ class _TasteImage:
 
 @dataclass(frozen=True, slots=True)
 class _TasteReviewRequest:
-    """An admitted taste build restated with the contained engine's schema."""
+    """An admitted taste request restated with the contained engine's schema;
+    `extension` names how its previews mount."""
 
     instruction: str
     input_document: str
     output_schema: str
     images: tuple[_TasteImage, ...]
+    extension: Literal["jpg", "png"] = "jpg"
 
 
 _TASTE_REFERENCE = re.compile(r"^taste_image_[0-9a-f]{64}$")
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _ReviewRequest = ContainedReviewRequest | _CoverReviewRequest | _TasteReviewRequest
 _ReviewImages = tuple[_CoverReviewImage, ...] | tuple[_TasteImage, ...]
 
@@ -757,6 +771,70 @@ class ContainedReviewerAdapter:
             raise ContainedReviewerProcessError("response_format") from error
         return self._run(taste, dispatched, taste.images)
 
+    def run_taste(
+        self,
+        request: AdmittedTasteBuildRequest | AdmittedTasteJudgeRequest,
+        dispatched: Callable[[int, int, str], None],
+    ) -> ContainedReviewResult:
+        """Run one admitted taste build or judgement, by its exact type."""
+        if type(request) is AdmittedTasteJudgeRequest:
+            return self.run_taste_judge(request, dispatched)
+        return self.run_taste_build(
+            cast("AdmittedTasteBuildRequest", request), dispatched
+        )
+
+    def run_taste_judge(
+        self,
+        request: AdmittedTasteJudgeRequest,
+        dispatched: Callable[[int, int, str], None],
+    ) -> ContainedReviewResult:
+        """Run one admitted taste judgement once, its previews mounted as PNGs.
+
+        As a build's, each preview is re-checked and bound to its digest, and
+        one attempt is one counted request (#1372 PR 4, J3).
+        """
+        if type(request) is not AdmittedTasteJudgeRequest:
+            raise ContainedReviewerProcessError("response_format")
+        if cover_profile_contract_mismatch(self._profile.identity) is not None:
+            raise ContainedReviewerProcessError("profile_contract_mismatch")
+        try:
+            images = request.images
+            if (
+                request.instruction != TASTE_JUDGE_INSTRUCTION
+                or request.output_schema != TASTE_JUDGE_OUTPUT_SCHEMA
+                or type(images) is not tuple
+                or not 2 <= len(images) <= TASTE_JUDGE_MAX_ALTERNATIVES + 1
+                or len({reference for reference, _png in images}) != len(images)
+            ):
+                raise ValueError
+            admitted: list[_TasteImage] = []
+            for reference, png in images:
+                if (
+                    type(reference) is not str
+                    or TASTE_JUDGE_REFERENCE.fullmatch(reference) is None
+                    or type(png) is not bytes
+                    or not png.startswith(_PNG_SIGNATURE)
+                ):
+                    raise ValueError
+                admitted.append(
+                    _TasteImage(reference, hashlib.sha256(png).hexdigest(), png)
+                )
+            base = ContainedReviewRequest(
+                TASTE_JUDGE_INSTRUCTION,
+                request.packet_document,
+                TASTE_JUDGE_CODEX_OUTPUT_SCHEMA,
+            )
+            judge = _TasteReviewRequest(
+                base.instruction,
+                base.input_document,
+                base.output_schema,
+                tuple(admitted),
+                "png",
+            )
+        except (ContainedReviewerError, TypeError, ValueError) as error:
+            raise ContainedReviewerProcessError("response_format") from error
+        return self._run(judge, dispatched, judge.images)
+
     def _run(
         self,
         request: _ReviewRequest,
@@ -939,7 +1017,9 @@ class ContainedReviewerAdapter:
                         credential.invocation_path,
                         seccomp_descriptor,
                         model_catalog_descriptor,
-                        "jpg" if type(request) is _TasteReviewRequest else "png",
+                        request.extension
+                        if type(request) is _TasteReviewRequest
+                        else "png",
                     ),
                     codex,
                     sandbox,

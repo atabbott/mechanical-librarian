@@ -13035,6 +13035,34 @@ def test_lane_one_announces_a_library_notice_each_time_the_work_says_it_changed(
     assert announced == [("library", None)] * 3
 
 
+def test_lane_one_runs_the_build_then_one_judgement_and_still_prepares() -> None:
+    """#1372 PR 4 (J6): each lane 1 wake runs the taste build's wake, then at
+    most one judgement when no build ran, and preparation still advances."""
+    from mechanical_librarian.application.cover_taste_judge import (
+        CoverTasteBackground,
+    )
+
+    calls: list[str] = []
+
+    class _Lane:
+        def __init__(self, name: str, ran: bool) -> None:
+            self.name, self.ran = name, ran
+
+        def wake(self, now: int, _changed: Callable[[], object]) -> bool:
+            calls.append(f"{self.name}@{now}")
+            return self.ran
+
+    background = CoverTasteBackground(
+        _Lane("build", False),
+        _Lane("judge", True),
+    )
+    supervisor = ReviewPreparationSupervisor(
+        _ScheduledPipeline(), clock=lambda: 41, background_wake=background.wake
+    )
+    assert _lane_run(supervisor, 1, 3) == 3
+    assert calls == ["build@41", "judge@41"] * 3
+
+
 def test_lane_one_contains_a_background_failure_and_continues() -> None:
     wakes: list[int] = []
 

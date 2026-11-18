@@ -557,7 +557,7 @@ class _ReviewerRevisionRequest(_ClosedModel):
 
 
 _ReviewerTaskName = Literal[
-    "cover_observation", "description_rewrite", "cover_taste_build"
+    "cover_observation", "description_rewrite", "cover_taste_build", "cover_taste_judge"
 ]
 
 
@@ -3359,6 +3359,7 @@ _BODY_PATH_LIMITS = {
     "/api/v1/reviewer-access/openrouter": 4_096,
     "/api/v1/reviewer-access/description-model/test": 4_096,
     "/api/v1/reviewer-access/taste-model/test": 4_096,
+    "/api/v1/reviewer-access/judge-model/test": 4_096,
     "/api/v1/covers/taste/retry": DEFAULT_BODY_LIMIT_BYTES,
     # A 400-code-point rule, even with every code point escaped as JSON
     # surrogate pairs, plus its version, number and framing (#1372 PR 2).
@@ -5303,20 +5304,13 @@ def _register_taste_routes(
     session_cookie: APIKeyCookie,
     authenticated_session_cookie: _SessionDependency,
 ) -> None:
-    """Covers → Taste profile and its model test in Settings (#1372)."""
+    """Covers → Taste profile and its two model tests in Settings (#1372)."""
 
-    @app.post(
-        "/api/v1/reviewer-access/taste-model/test",
-        response_model=CoverModelMetadata,
-        responses={
-            status: {"model": _ErrorResponse}
-            for status in (401, 403, 409, 413, 422, 503)
-        },
-    )
-    def test_taste_model(
+    def test_model(
         request: _OpenRouterWriteRequest,
-        ml_session: str = Depends(authenticated_session_cookie),
-        x_csrf_token: str = Header(),
+        ml_session: str,
+        x_csrf_token: str,
+        task: Literal["cover_taste_build", "cover_taste_judge"],
     ) -> CoverModelMetadata:
         _require_session(application, ml_session, x_csrf_token)
         try:
@@ -5324,11 +5318,40 @@ def _register_taste_routes(
             if access is None:
                 raise HTTPException(503, detail={"code": "reviewer_access_unavailable"})
             return access.test_taste_model(
-                request.api_key.get_secret_value(), request.model
+                request.api_key.get_secret_value(), request.model, task
             )
         except (ValueError, *_REVIEWER_FAILURES) as error:
             status, code = reviewer_failure_response(error)
             raise HTTPException(status, detail={"code": code}) from None
+
+    test_responses: dict[int | str, dict[str, Any]] = {
+        status: {"model": _ErrorResponse} for status in (401, 403, 409, 413, 422, 503)
+    }
+
+    @app.post(
+        "/api/v1/reviewer-access/taste-model/test",
+        response_model=CoverModelMetadata,
+        responses=test_responses,
+    )
+    def test_taste_model(
+        request: _OpenRouterWriteRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> CoverModelMetadata:
+        return test_model(request, ml_session, x_csrf_token, "cover_taste_build")
+
+    @app.post(
+        "/api/v1/reviewer-access/judge-model/test",
+        response_model=CoverModelMetadata,
+        responses=test_responses,
+    )
+    def test_judge_model(
+        request: _OpenRouterWriteRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> CoverModelMetadata:
+        """Observe the suggestion model's image input and prices (#1372 PR 4)."""
+        return test_model(request, ml_session, x_csrf_token, "cover_taste_judge")
 
     @app.get(
         "/api/v1/covers/taste",

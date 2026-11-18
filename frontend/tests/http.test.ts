@@ -193,11 +193,15 @@ const uncertain = (failure: string) => {
 }
 
 const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
-  schema_version: 'reviewer-access-view-v5',
+  schema_version: 'reviewer-access-view-v6',
   taste_mapping: null,
   taste_metadata: null,
   taste_daily_requests: 8,
   taste_recommendations: ['anthropic/claude-sonnet-5.5'],
+  judge_mapping: null,
+  judge_metadata: null,
+  judge_daily_requests: 5_000,
+  judge_recommendations: ['openai/gpt-6-luna'],
   cover_metadata: null,
   cost_evidence: { models: [] },
   revision: 3,
@@ -6990,6 +6994,45 @@ describe('taste profile decoder (#1372)', () => {
         taste_mapping: { engine: 'codex', model: 'gpt-5.6-sol' },
       }),
     ).rejects.toBeInstanceOf(Error)
+  })
+
+  it('binds judge prices to the saved suggestion model (#1372 PR 4)', async () => {
+    const metadata = {
+      model: 'example/vision',
+      observed_at: 1,
+      prompt_price: '0.000001',
+      completion_price: null,
+      image_price: '0',
+      request_price: null,
+    }
+    const value = reviewerAccessPayload({
+      judge_mapping: { engine: 'openrouter', model: 'example/vision' },
+      judge_metadata: metadata,
+    })
+    expect((await readReviewerAccess(value)).judge_metadata).toEqual(metadata)
+    await expect(
+      readReviewerAccess({
+        ...value,
+        judge_mapping: { engine: 'openrouter', model: 'example/other' },
+      }),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_taste_metadata' })
+    const codex = reviewerAccessPayload({ judge_mapping: { engine: 'codex' } })
+    expect((await readReviewerAccess(codex)).judge_mapping).toEqual({ engine: 'codex' })
+    await expect(readReviewerAccess({ ...codex, judge_metadata: metadata })).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_taste_metadata',
+    })
+  })
+
+  it('refuses a reviewer-access answer without the judge members', async () => {
+    // Every answer carries them; a stub without them fails the read whole.
+    const rest = Object.fromEntries(
+      Object.entries(reviewerAccessPayload()).filter(([key]) => !key.startsWith('judge_')),
+    )
+    await expect(readReviewerAccess(rest)).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_response',
+    })
   })
 })
 

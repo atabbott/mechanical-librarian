@@ -46,7 +46,7 @@ def _store() -> ReviewerAccessStore:
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
+            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"cover_taste_judge":null,"description_metadata":null,"description_rewrite":null,"judge_metadata":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
         ),
     )
     return ReviewerAccessStore(connection)
@@ -112,7 +112,7 @@ def _connection_store() -> Iterator[tuple[sqlite3.Connection, ReviewerAccessStor
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
+            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"cover_taste_judge":null,"description_metadata":null,"description_rewrite":null,"judge_metadata":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
         ),
     )
     try:
@@ -195,7 +195,7 @@ def test_reviewer_replace_commit_release_propagates_process_control(
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
+            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"cover_taste_judge":null,"description_metadata":null,"description_rewrite":null,"judge_metadata":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
         ),
     )
     fault = fault_type("private reviewer commit release")
@@ -230,7 +230,7 @@ def test_nested_reviewer_read_release_preserves_outer_authority(
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
+            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"cover_taste_judge":null,"description_metadata":null,"description_rewrite":null,"judge_metadata":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
         ),
     )
     fault = fault_type("private nested reviewer read release")
@@ -274,7 +274,7 @@ def test_compare_and_swap_refuses_a_lost_writer() -> None:
         "DELETE FROM reviewer_access",
         "UPDATE reviewer_access SET revision=x'31'",
         "UPDATE reviewer_access SET document='{}'",
-        f'INSERT INTO reviewer_access VALUES(1,1,\'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}\')',
+        f'INSERT INTO reviewer_access VALUES(1,1,\'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"cover_taste_judge":null,"description_metadata":null,"description_rewrite":null,"judge_metadata":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}\')',
     ),
 )
 def test_corrupt_duplicate_or_missing_singleton_state_fails_closed(
@@ -410,11 +410,11 @@ def test_exact_predecessor_empty_reviewer_table_is_rejected_without_mutation():
 def test_predecessor_description_price_document_reads_as_current() -> None:
     predecessor = (
         '{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,'
-        '"description_metadata":'
+        '"cover_taste_judge":null,"description_metadata":'
         '{"completion_price":"0.000002","model":"example/b","observed_at":1,'
         '"prompt_price":"0.000001","request_price":"0","structured_outputs":true,'
         '"text_input":true,"text_output":true},"description_rewrite":'
-        '{"engine":"openrouter","model":"example/b"},"revision":2,'
+        '{"engine":"openrouter","model":"example/b"},"judge_metadata":null,"revision":2,'
         f'"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}'
     )
     unpriced = predecessor.replace('"request_price":"0"', '"request_price":null')
@@ -459,12 +459,13 @@ def _store_with(payload: str) -> ReviewerAccessStore:
     return ReviewerAccessStore(connection)
 
 
-def test_taste_selection_round_trips_and_v4_is_refused() -> None:
-    """reviewer-access-v5 stores the taste task on either engine (#1372)."""
+def test_taste_selection_round_trips_and_v5_is_refused() -> None:
+    """reviewer-access-v6 stores the taste task on either engine (#1372)."""
     current = (
         '{"cover_metadata":null,"cover_observation":null,"cover_taste_build":'
-        '{"engine":"openrouter","model":"example/vision"},"description_metadata":null,'
-        '"description_rewrite":null,"revision":2,'
+        '{"engine":"openrouter","model":"example/vision"},"cover_taste_judge":null,'
+        '"description_metadata":null,"description_rewrite":null,"judge_metadata":null,'
+        '"revision":2,'
         f'"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":'
         '{"completion_price":null,"image_price":"0.0048","model":"example/vision",'
         '"observed_at":1,"prompt_price":"0.000003","request_price":null}}'
@@ -475,18 +476,18 @@ def test_taste_selection_round_trips_and_v4_is_refused() -> None:
     assert _canonical_json(document.model_dump()) == current
     codex = (
         '{"cover_metadata":null,"cover_observation":null,"cover_taste_build":'
-        '{"engine":"codex"},"description_metadata":null,'
-        '"description_rewrite":null,"revision":2,'
+        '{"engine":"codex"},"cover_taste_judge":null,"description_metadata":null,'
+        '"description_rewrite":null,"judge_metadata":null,"revision":2,'
         f'"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}'
     )
     document, _configured = _store_with(codex).read()
     assert document.cover_taste_build == CodexTaskSelection(engine="codex")
     assert _canonical_json(document.model_dump()) == codex
-    # A v4 reader refuses a Codex taste selection, so v4 is refused whole.
+    # A v5 reader knows no judge task, so v5 is refused whole (#1372 PR 4).
     for frozen in (
-        current.replace(REVIEWER_ACCESS_SCHEMA, "reviewer-access-v4"),
+        current.replace(REVIEWER_ACCESS_SCHEMA, "reviewer-access-v5"),
         '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,'
-        '"description_rewrite":null,"revision":2,"schema_version":"reviewer-access-v3"}',
+        '"description_rewrite":null,"judge_metadata":null,"revision":2,"schema_version":"reviewer-access-v3"}',
     ):
         with pytest.raises(ReviewerAccessStoreError, match="unavailable"):
             _store_with(frozen).read()
@@ -508,3 +509,46 @@ def test_taste_selection_round_trips_and_v4_is_refused() -> None:
                 '"model":"example/other","observed_at"',
             )
         ).read()
+
+
+def test_judge_selection_round_trips_on_either_engine() -> None:
+    """reviewer-access-v6 stores the suggestion task beside the builder's,
+    with prices only for its own OpenRouter model (#1372 PR 4)."""
+    openrouter = (
+        '{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,'
+        '"cover_taste_judge":{"engine":"openrouter","model":"example/judge"},'
+        '"description_metadata":null,"description_rewrite":null,"judge_metadata":'
+        '{"completion_price":null,"image_price":"0.0048","model":"example/judge",'
+        '"observed_at":1,"prompt_price":"0.000003","request_price":null},'
+        f'"revision":2,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}'
+    )
+    document, _configured = _store_with(openrouter).read()
+    assert document.cover_taste_judge == OpenRouterTaskSelection(
+        engine="openrouter", model="example/judge"
+    )
+    assert _canonical_json(document.model_dump()) == openrouter
+    codex = (
+        '{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,'
+        '"cover_taste_judge":{"engine":"codex"},"description_metadata":null,'
+        '"description_rewrite":null,"judge_metadata":null,"revision":2,'
+        f'"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}'
+    )
+    document, _configured = _store_with(codex).read()
+    assert document.cover_taste_judge == CodexTaskSelection(engine="codex")
+    for refused in (
+        # Judge prices for another model, or beside a Codex judge, and the
+        # builder's prices for the judge's model.
+        openrouter.replace(
+            '"model":"example/judge","observed_at"',
+            '"model":"example/other","observed_at"',
+        ),
+        codex.replace(
+            '"judge_metadata":null',
+            '"judge_metadata":{"completion_price":null,"image_price":null,'
+            '"model":"example/judge","observed_at":1,"prompt_price":null,'
+            '"request_price":null}',
+        ),
+        openrouter.replace('"judge_metadata":{', '"judge_metadata":null,"x":{'),
+    ):
+        with pytest.raises(ReviewerAccessStoreError, match="unavailable"):
+            _store_with(refused).read()

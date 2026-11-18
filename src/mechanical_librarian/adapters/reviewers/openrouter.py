@@ -24,12 +24,18 @@ from mechanical_librarian.application.cover_taste_contract import (
     TasteBuildReply,
     TasteChargeUnknownError,
 )
+from mechanical_librarian.application.cover_taste_judge_contract import (
+    TASTE_JUDGE_OUTPUT_TOKENS,
+    AdmittedTasteJudgeRequest,
+    TasteJudgeReply,
+)
 from mechanical_librarian.application.reviewer_contracts import (
     OpenRouterAccountStatus,
     OpenRouterFailure,
     OpenRouterReviewerError,
     openrouter_cover_profile,
     openrouter_profile,
+    openrouter_taste_judge_profile,
     openrouter_taste_profile,
 )
 from mechanical_librarian.domain.description_advice import (
@@ -374,40 +380,92 @@ class OpenRouterReviewer:
     ) -> TasteBuildReply:
         """Send one admitted taste build and parse its closed JSON object.
 
-        A completion that times out after it was sent, or whose 200 body cannot
-        be read, may still be charged, so it raises `TasteChargeUnknownError`
-        instead of a provider failure. Content that is not one JSON object
-        from the selected model returns a reply with no result.
+        Content that is not one JSON object from the selected model returns a
+        reply with no result (#1372 S7).
         """
-        deadline = time.monotonic() + max(self._timeout_seconds, _TASTE_SECONDS)
         if profile != openrouter_taste_profile(self._model):
             raise OpenRouterReviewerError("profile_mismatch")
         if type(request) is not AdmittedTasteBuildRequest:
             raise OpenRouterReviewerError("malformed_request")
+        text, usage_reported = self._taste_completion(
+            request.instruction,
+            request.packet_document,
+            request.data_urls(),
+            TASTE_OUTPUT_TOKENS,
+            "cover_taste_profile",
+            request.output_schema,
+        )
+        try:
+            result = (
+                None
+                if text is None
+                else json.loads(text, object_pairs_hook=unique_json_object)
+            )
+        except (ValueError, RecursionError):
+            result = None
+        return TasteBuildReply(result if type(result) is dict else None, usage_reported)
+
+    def run_taste_judge(
+        self, profile: bytes, request: AdmittedTasteJudgeRequest
+    ) -> TasteJudgeReply:
+        """Send one admitted taste judgement and return its reply text.
+
+        The verdict is admitted by the caller (#1372 PR 4, J4); a reply with
+        no readable content from the selected model has no text.
+        """
+        if profile != openrouter_taste_judge_profile(self._model):
+            raise OpenRouterReviewerError("profile_mismatch")
+        if type(request) is not AdmittedTasteJudgeRequest:
+            raise OpenRouterReviewerError("malformed_request")
+        return TasteJudgeReply(
+            *self._taste_completion(
+                request.instruction,
+                request.packet_document,
+                request.data_urls(),
+                TASTE_JUDGE_OUTPUT_TOKENS,
+                "cover_taste_verdict",
+                request.output_schema,
+            )
+        )
+
+    def _taste_completion(
+        self,
+        instruction: str,
+        packet_document: str,
+        data_urls: tuple[str, ...],
+        max_tokens: int,
+        schema_name: str,
+        output_schema: str,
+    ) -> tuple[str | None, bool]:
+        """One strict structured completion over sealed images: its content
+        text, or None, and whether the provider reported usage.
+
+        A completion that times out after it was sent, or whose 200 body cannot
+        be read, may still be charged, so it raises `TasteChargeUnknownError`
+        instead of a provider failure.
+        """
+        deadline = time.monotonic() + max(self._timeout_seconds, _TASTE_SECONDS)
         _status, reasoning_supported = self._probe_capabilities(deadline)
         content: list[dict[str, object]] = [
             {
                 "type": "text",
-                "text": request.instruction
-                + "\nSealed packet:\n"
-                + request.packet_document,
+                "text": instruction + "\nSealed packet:\n" + packet_document,
             }
         ]
         content.extend(
-            {"type": "image_url", "image_url": {"url": url}}
-            for url in request.data_urls()
+            {"type": "image_url", "image_url": {"url": url}} for url in data_urls
         )
         chat_body: dict[str, object] = {
-            "max_tokens": TASTE_OUTPUT_TOKENS,
+            "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": content}],
             "model": self._model,
             "provider": {"require_parameters": True, "data_collection": "deny"},
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "cover_taste_profile",
+                    "name": schema_name,
                     "strict": True,
-                    "schema": json.loads(request.output_schema),
+                    "schema": json.loads(output_schema),
                 },
             },
         }
@@ -436,17 +494,17 @@ class OpenRouterReviewer:
                 or error.code == "timed_out"
                 or (error.code == "unreachable" and not unsent)
             ):
-                raise TasteChargeUnknownError("taste build outcome unknown") from None
+                raise TasteChargeUnknownError("taste outcome unknown") from None
             raise
         try:
             response = json.loads(bytes(body).decode("utf-8", "strict"))
         except (UnicodeError, ValueError, RecursionError):
-            raise TasteChargeUnknownError("taste build outcome unknown") from None
+            raise TasteChargeUnknownError("taste outcome unknown") from None
         if type(response) is not dict:
-            raise TasteChargeUnknownError("taste build outcome unknown")
+            raise TasteChargeUnknownError("taste outcome unknown")
         usage_reported = type(response.get("usage")) is dict
-        # The provider answered: a reply that is not one JSON object from the
-        # selected model is an unusable profile, never a provider failure.
+        # The provider answered: content that is not from the selected model
+        # is an unusable reply, never a provider failure.
         try:
             choices = response["choices"]
             if (
@@ -458,12 +516,9 @@ class OpenRouterReviewer:
             text = choices[0]["message"]["content"]
             if type(text) is not str or len(text.encode("utf-8")) > 65_536:
                 raise ValueError
-            result = json.loads(text, object_pairs_hook=unique_json_object)
-            if type(result) is not dict:
-                raise ValueError
-        except (ValueError, TypeError, KeyError, IndexError, RecursionError):
-            return TasteBuildReply(None, usage_reported)
-        return TasteBuildReply(result, usage_reported)
+        except (ValueError, TypeError, KeyError, IndexError):
+            return None, usage_reported
+        return text, usage_reported
 
     def _current_model(self, deadline: float) -> dict[str, object]:
         catalogue = _Catalogue(self._model)

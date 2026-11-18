@@ -1142,6 +1142,13 @@
           "title": "Cover Taste Build Daily Requests",
           "type": "integer"
         },
+        "cover_taste_judge_daily_requests": {
+          "default": 5000,
+          "maximum": 50000,
+          "minimum": 1,
+          "title": "Cover Taste Judge Daily Requests",
+          "type": "integer"
+        },
         "description_automatic_application": {
           "default": false,
           "title": "Description Automatic Application",
@@ -1318,7 +1325,7 @@
       "default": null
     },
     "schema_version": {
-      "const": "config-v12",
+      "const": "config-v13",
       "title": "Schema Version",
       "type": "string"
     }

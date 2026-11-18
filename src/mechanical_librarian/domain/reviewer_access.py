@@ -16,10 +16,12 @@ from pydantic import (
     model_validator,
 )
 
-ReviewerAccessSchemaVersion = Literal["reviewer-access-v5"]
-REVIEWER_ACCESS_SCHEMA: Final[ReviewerAccessSchemaVersion] = "reviewer-access-v5"
+ReviewerAccessSchemaVersion = Literal["reviewer-access-v6"]
+REVIEWER_ACCESS_SCHEMA: Final[ReviewerAccessSchemaVersion] = "reviewer-access-v6"
 
-ReviewerTask = Literal["cover_observation", "description_rewrite", "cover_taste_build"]
+ReviewerTask = Literal[
+    "cover_observation", "description_rewrite", "cover_taste_build", "cover_taste_judge"
+]
 ReviewerEngine = Literal["codex", "openrouter"]
 _OPENROUTER_MODEL_ID = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/"
@@ -109,6 +111,8 @@ class ReviewerAccessDocument(_Closed):
     cover_metadata: CoverModelMetadata | None = None
     cover_taste_build: ReviewerTaskSelection | None = None
     taste_metadata: CoverModelMetadata | None = None
+    cover_taste_judge: ReviewerTaskSelection | None = None
+    judge_metadata: CoverModelMetadata | None = None
 
     @model_validator(mode="after")
     def bound_cover_prices(self) -> ReviewerAccessDocument:
@@ -122,6 +126,11 @@ class ReviewerAccessDocument(_Closed):
             or self.taste_metadata.model != self.cover_taste_build.model
         ):
             raise ValueError("taste prices do not match selection")
+        if self.judge_metadata is not None and (
+            not isinstance(self.cover_taste_judge, OpenRouterTaskSelection)
+            or self.judge_metadata.model != self.cover_taste_judge.model
+        ):
+            raise ValueError("judge prices do not match selection")
         return self
 
 

@@ -372,6 +372,9 @@ class ReviewInput(_Closed):
     # levels. No other source sets it.
     work_identity: WorkIdentityLevelValue = "identifier"
     cover_taste_build_daily_requests: Annotated[StrictInt, Field(ge=1, le=100)] = 8
+    cover_taste_judge_daily_requests: Annotated[StrictInt, Field(ge=1, le=50_000)] = (
+        5_000
+    )
 
     @model_validator(mode="after")
     def validate_transport(self) -> ReviewInput:
@@ -477,6 +480,7 @@ def load_configuration_document(payload: bytes) -> ApplicationConfiguration:
                 description_automatic_application=value.review.description_automatic_application,
                 work_identity=WorkIdentityLevel(value.review.work_identity),
                 cover_taste_build_daily_requests=value.review.cover_taste_build_daily_requests,
+                cover_taste_judge_daily_requests=value.review.cover_taste_judge_daily_requests,
             ),
         )
     except ConfigurationError:

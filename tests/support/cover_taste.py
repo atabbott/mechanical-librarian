@@ -24,7 +24,13 @@ from mechanical_librarian.application.cover_packet_semantics import (
     normalize_cover_preview,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.cover_taste_judge_contract import (
+    AdmittedTasteJudgeRequest,
+    TasteJudgeImage,
+    admit_taste_judge_request,
+)
 from mechanical_librarian.application.review_web import RecordHumanDecision
+from mechanical_librarian.domain.cover_taste import TasteProfile
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -136,3 +142,55 @@ def record_owner_cover_decisions(
                 "confirm_unverified_match": True,
             },
         )
+
+
+def judge_profile() -> TasteProfile:
+    """A three-rule profile, as a stored version's rules read back."""
+    return TasteProfile.from_rules(
+        [
+            {
+                "number": number,
+                "provenance": "model",
+                "section": section,
+                "text": text,
+            }
+            for number, section, text in (
+                (1, "drawn_to", "Calm colour."),
+                (2, "avoid", "Busy layouts."),
+                (3, "keep_or_switch", "Keep a readable title."),
+            )
+        ]
+    )
+
+
+def judge_images(
+    alternatives: int = 2, *, current: bool = True
+) -> tuple[TasteJudgeImage, ...]:
+    """Sealed canonical previews: the current cover first when `current`."""
+    images = []
+    for index in range(alternatives + int(current)):
+        preview = canonical(stored_preview(index + 1))
+        images.append(
+            TasteJudgeImage(
+                f"cover_candidate_{index:02d}",
+                current and index == 0,
+                preview.width,
+                preview.height,
+                hashlib.sha256(preview.payload).hexdigest(),
+                preview.payload,
+            )
+        )
+    return tuple(images)
+
+
+def judge_request(
+    alternatives: int = 2, *, current: bool = True, nonce: bytes = b"n" * 32
+) -> AdmittedTasteJudgeRequest:
+    """One admitted judgement over synthetic previews (#1372 PR 4)."""
+    return admit_taste_judge_request(
+        "ebook",
+        1,
+        judge_profile(),
+        judge_images(alternatives, current=current),
+        nonce=nonce,
+    )

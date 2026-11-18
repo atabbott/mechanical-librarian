@@ -95,7 +95,8 @@ export type ReviewerState = ReviewerEngineStatus['state']
 export type ReviewerReason = NonNullable<ReviewerEngineStatus['reason']>
 export type DescriptionModelMetadata = ResponseSchema<'DescriptionModelMetadata'>
 export type CoverModelMetadata = ResponseSchema<'CoverModelMetadata'>
-export type ReviewerTask = 'cover_observation' | 'description_rewrite' | 'cover_taste_build'
+export type ReviewerTask =
+  'cover_observation' | 'description_rewrite' | 'cover_taste_build' | 'cover_taste_judge'
 export type ReviewerAccessView = ResponseSchema<'ReviewerAccessView'>
 export type CodexDeviceAuthState = ResponseSchema<'_CodexDeviceAuthResponse'>
 export type CodexDeviceStartResult = ResponseSchema<'_CodexDeviceStartResponse'>
@@ -2987,14 +2988,15 @@ const mapReviewerAccess = (value: ReviewerAccessView): ReviewerAccessView => {
   )
     throw new ApiError(502, 'invalid_cover_metadata')
   if (value.description_metadata !== null) mapDescriptionMetadata(value.description_metadata)
-  // Taste prices are observed for exactly the saved OpenRouter taste model.
-  if (value.taste_metadata !== null) {
-    if (
-      value.taste_mapping?.engine !== 'openrouter' ||
-      value.taste_mapping.model !== value.taste_metadata.model
-    )
+  // Taste and judge prices are observed for exactly the saved OpenRouter model.
+  for (const [mapping, metadata] of [
+    [value.taste_mapping, value.taste_metadata],
+    [value.judge_mapping, value.judge_metadata],
+  ] as const) {
+    if (metadata === null) continue
+    if (mapping?.engine !== 'openrouter' || mapping.model !== metadata.model)
       throw new ApiError(502, 'invalid_taste_metadata')
-    mapCoverMetadata(value.taste_metadata)
+    mapCoverMetadata(metadata)
   }
   return value
 }

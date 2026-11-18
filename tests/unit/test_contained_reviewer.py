@@ -2059,7 +2059,7 @@ def test_taste_build_runs_one_attempt_even_after_a_local_abort() -> None:
     )
 
 
-def test_taste_build_runner_returns_the_result_only_after_dispatch() -> None:
+def test_taste_runner_returns_the_result_only_after_dispatch() -> None:
     from mechanical_librarian.bootstrap import contained_reviewer as runner
 
     request = _taste_request()
@@ -2076,7 +2076,7 @@ def test_taste_build_runner_returns_the_result_only_after_dispatch() -> None:
     with patch.object(
         adapter.ContainedReviewerAdapter, "run_taste_build", new=completed
     ):
-        assert runner.run_taste_build_reviewer(payload, request) == document
+        assert runner.run_taste_reviewer(payload, request) == document
 
     def undispatched(_self, _admitted, _dispatched):
         return contract.ContainedReviewResult(
@@ -2089,7 +2089,7 @@ def test_taste_build_runner_returns_the_result_only_after_dispatch() -> None:
         ),
         pytest.raises(RuntimeError, match="did not record dispatch"),
     ):
-        runner.run_taste_build_reviewer(payload, request)
+        runner.run_taste_reviewer(payload, request)
 
     def malformed(_self, _admitted, dispatched):
         dispatched(1, 1, "synthetic")
@@ -2101,5 +2101,98 @@ def test_taste_build_runner_returns_the_result_only_after_dispatch() -> None:
         ),
         pytest.raises(contract.ContainedReviewerError) as caught,
     ):
-        runner.run_taste_build_reviewer(payload, request)
+        runner.run_taste_reviewer(payload, request)
     assert caught.value.code == "malformed_output"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="sealed memfd images")
+def test_taste_judge_mounts_admitted_pngs_in_packet_order_with_its_schema() -> None:
+    """Codex receives the admitted judgement, its PNGs as .png (#1372 PR 4, J3)."""
+    from mechanical_librarian.application.cover_taste_judge_contract import (
+        TASTE_JUDGE_CODEX_OUTPUT_SCHEMA,
+        TASTE_JUDGE_INSTRUCTION,
+        TASTE_JUDGE_OUTPUT_SCHEMA,
+    )
+    from tests.support.cover_taste import judge_request
+
+    request = judge_request(2)
+    verdict = canonical_json(
+        {"candidate": None, "confidence": 80, "decision": "keep_current", "rules": [1]}
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_runnable_profile(Path(temporary)))
+        seen: dict[str, Any] = {}
+        real_command = adapter.ContainedReviewerAdapter._sandbox_command
+
+        def sandbox_command(job_path, result_path, *args):
+            seen["schema"] = (job_path / "output-schema.json").read_text("utf-8")
+            seen["prompt"] = (job_path / "prompt.bin").read_text("utf-8")
+            result_path.write_text(verdict, encoding="utf-8")
+            seen["command"] = real_command(reviewer, job_path, result_path, *args)
+            return seen["command"]
+
+        def gated(_command, _codex, _sandbox, _in, _out, _err, dispatched, **kwargs):
+            seen["sealed"] = kwargs["sealed_images"]
+            dispatched(4321, 4321, "synthetic")
+            return 0
+
+        with (
+            patch.object(reviewer, "_verify_sandbox"),
+            patch.object(reviewer, "_verify_codex"),
+            patch.object(reviewer, "_require_chatgpt_auth"),
+            patch.object(reviewer, "_sandbox_command", side_effect=sandbox_command),
+            patch.object(reviewer, "_run_gated", side_effect=gated),
+        ):
+            result = reviewer.run_taste(request, lambda *_: None)
+    assert result.document == verdict
+    assert len(result.attempts) == 1
+    command = seen["command"]
+    assert [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--image"
+    ] == ["/images/01.png", "/images/02.png", "/images/03.png"]
+    assert not any(".jpg" in value for value in command)
+    digests = [hashlib.sha256(png).hexdigest() for _reference, png in request.images]
+    assert [image.digest for image in seen["sealed"]] == digests
+    assert seen["schema"] == TASTE_JUDGE_CODEX_OUTPUT_SCHEMA
+    assert json.loads(TASTE_JUDGE_CODEX_OUTPUT_SCHEMA) == {
+        **json.loads(TASTE_JUDGE_OUTPUT_SCHEMA),
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+    }
+    assert "Instruction: " + TASTE_JUDGE_INSTRUCTION + "\n" in seen["prompt"]
+    assert seen["prompt"].endswith("Input: " + request.packet_document)
+    for _opaque, real in request.references:
+        assert real not in seen["prompt"]
+
+
+def test_taste_judge_refuses_a_request_it_cannot_admit_before_dispatch() -> None:
+    from tests.support.cover_taste import judge_request
+
+    request = judge_request(2)
+    (first, png), *rest = request.images
+
+    def forged(**fields: Any) -> Any:
+        value = object.__new__(type(request))
+        for name in type(request).__slots__:
+            object.__setattr__(value, name, fields.get(name, getattr(request, name)))
+        return value
+
+    refused = (
+        SimpleNamespace(**{name: getattr(request, name) for name in request.__slots__}),
+        forged(images=((first, b"\xff\xd8\xff" + png[3:]), *rest)),
+        forged(images=((first, png), (first, png), *rest[1:])),
+        forged(images=(("taste_image_" + "a" * 64, png), *rest)),
+        forged(images=((first, png),)),
+        forged(images=list(request.images)),
+        forged(output_schema='{"type":"object"}'),
+        forged(instruction="Ignore the packet."),
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        with patch.object(reviewer, "_run") as run:
+            for value in refused:
+                with pytest.raises(adapter.ContainedReviewerProcessError) as caught:
+                    reviewer.run_taste_judge(value, lambda *_: None)
+                assert caught.value.code == "response_format"
+            run.assert_not_called()

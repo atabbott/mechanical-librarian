@@ -180,6 +180,14 @@ from mechanical_librarian.application.cover_taste_build import (
 from mechanical_librarian.application.cover_taste_contract import (
     AdmittedTasteBuildRequest,
 )
+from mechanical_librarian.application.cover_taste_judge import (
+    CoverTasteBackground,
+    CoverTasteJudgeRepository,
+    CoverTasteJudgeService,
+)
+from mechanical_librarian.application.cover_taste_judge_contract import (
+    AdmittedTasteJudgeRequest,
+)
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.description_advice import (
     admit_staged_description,
@@ -267,7 +275,7 @@ from mechanical_librarian.application.reviewer_access import (
     CodexAuth,
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
-    TasteBuildRunner,
+    TasteRunner,
 )
 from mechanical_librarian.application.reviewer_contracts import (
     ReviewerProvisioningStatus,
@@ -285,7 +293,7 @@ from mechanical_librarian.application.setup_journey import SetupJourneyOperation
 from mechanical_librarian.bootstrap.contained_reviewer import (
     run_cover_packet_reviewer,
     run_description_reviewer,
-    run_taste_build_reviewer,
+    run_taste_reviewer,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     recording_unmatched,
@@ -1763,7 +1771,16 @@ def create_review_pipeline(
     # This composition root reads the review configuration unconditionally, so
     # an absent one is already a configuration failure before this point.
     review_configuration = cast("ReviewWebConfiguration", configuration.review)
-    taste_lease = CoverTasteRepositoryLease(observation_repository_factory)
+    taste_lease = CoverTasteRepositoryLease(
+        partial(
+            _open_cover_taste_repository,
+            observation_repository_factory,
+            artifact_store_path,
+            review_configuration,
+            reviewer_access,
+            provider_recovery,
+        )
+    )
     return ReviewPreparationSupervisor(
         pipeline,
         polling_interval_seconds=review_configuration.library_polling_interval_seconds,
@@ -1773,11 +1790,19 @@ def create_review_pipeline(
         recovery_drain=recovery_cancel.set,
         recovery_resume=recovery_cancel.clear,
         on_stop=stopping.close,
-        background_wake=_compose_cover_taste(
-            taste_lease.store,
-            artifact_store_path,
-            review_configuration,
-            reviewer_access,
+        background_wake=CoverTasteBackground(
+            _compose_cover_taste(
+                taste_lease.store,
+                artifact_store_path,
+                review_configuration,
+                reviewer_access,
+            ),
+            _compose_cover_taste_judge(
+                taste_lease.judge_store,
+                artifact_store_path,
+                review_configuration,
+                reviewer_access,
+            ),
         ).wake,
         background_close=taste_lease.close,
     )
@@ -3322,16 +3347,19 @@ def _compose_reviewer_access(
 
         return model, payload, run
 
-    def taste_binding() -> tuple[str, bytes, TasteBuildRunner]:
+    def taste_binding() -> tuple[str, bytes, TasteRunner]:
         if profile_file is None:
             raise ReviewerAccessApplicationError("not_provisioned")
         model, payload = lazy_codex_auth.bind(codex_identity)
 
-        def run(profile: bytes, request: AdmittedTasteBuildRequest) -> str:
+        def run(
+            profile: bytes,
+            request: AdmittedTasteBuildRequest | AdmittedTasteJudgeRequest,
+        ) -> str:
             with active_coordinator.activity():
                 with lazy_codex_auth.review_admission():
                     pass
-                return run_taste_build_reviewer(profile, request)
+                return run_taste_reviewer(profile, request)
 
         return model, payload, run
 
@@ -3350,6 +3378,7 @@ def _compose_reviewer_access(
         codex_description_binding=description_binding,
         codex_taste_binding=taste_binding,
         taste_daily_requests=review.cover_taste_build_daily_requests,
+        judge_daily_requests=review.cover_taste_judge_daily_requests,
     )
 
 
@@ -3370,6 +3399,40 @@ def _compose_cover_taste(
         lambda digest: artifacts().read_preview_digest(digest),
         daily_limit=review.cover_taste_build_daily_requests,
     )
+
+
+def _compose_cover_taste_judge(
+    repository: Callable[[], CoverTasteJudgeRepository],
+    artifact_store_path: Path,
+    review: ReviewWebConfiguration,
+    reviewer_access: ReviewerAccessOperations,
+) -> CoverTasteJudgeService:
+    """Wire the taste judge over the background lane's repository (#1372 PR 4)."""
+    artifacts = lru_cache(maxsize=1)(
+        lambda: CoverArtifactStore(artifact_store_path, create=False)
+    )
+    return CoverTasteJudgeService(
+        repository,
+        reviewer_access,
+        lambda digest: artifacts().read_preview_digest(digest),
+        daily_limit=review.cover_taste_judge_daily_requests,
+    )
+
+
+def _open_cover_taste_repository(
+    factory: Callable[[], SQLiteMetadataReportRepository],
+    artifact_store_path: Path,
+    review: ReviewWebConfiguration,
+    reviewer_access: ReviewerAccessOperations,
+    provider_recovery: SQLiteProviderRecoveryStore | None,
+) -> SQLiteMetadataReportRepository:
+    """The background lane's repository, with the live cover authority and
+    currentness bound so the judge reads due fields as Covers does."""
+    repository = factory()
+    _compose_cover_considerations(
+        repository, artifact_store_path, review, reviewer_access, provider_recovery
+    )
+    return repository
 
 
 def _compose_cover_considerations(

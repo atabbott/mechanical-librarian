@@ -47,8 +47,8 @@ over, current, and the book's format), never a title, author, identifier,
 path or provider text, with the rules the owner wrote or edited and the texts
 the owner removed. The reply is up to 40 numbered rules in four sections,
 merged with the owner's rules and stored as an append-only version; the owner
-edits it in Covers → Taste profile. It influences nothing yet: no observation,
-recommendation or decision reads it (#1372). Builds are scheduled, at most 4 a day, and every
+edits it in Covers → Taste profile. Its suggestion model's answers are stored
+but not shown yet: no observation, recommendation or decision reads them (#1372). Builds are scheduled, at most 4 a day, and every
 request counts against a daily limit
 ([configuration](../reference/configuration.md#taste-profile)). The owner
 chooses its engine separately from cover review
@@ -78,8 +78,9 @@ no fallback: the contained Codex reviewer or its own OpenRouter model under
 the shared key ([ADR-0095](decisions/0095-learned-cover-taste-profile.md)).
 It reads owner
 cover choices already recorded and writes only its own append-only profile
-versions; nothing reads a profile yet, so it cannot influence an observation,
-recommendation, decision or write.
+versions; only the taste judge reads a profile, and nothing reads its
+verdicts yet, so it cannot influence an observation, recommendation, decision
+or write.
 
 - **Inputs.** Up to 50 recorded choices, each with up to 4 previews and at
   most 100 images per request. A choice whose preview bytes are missing is
@@ -133,6 +134,35 @@ recommendation, decision or write.
 - **Redaction.** Failures are closed codes. Rule text, choices, references,
   previews, prompts and raw output never reach a log, failure history,
   diagnostic, status or support bundle.
+
+## Taste judge
+
+The taste judge (#1372) compares one work's covers with the active profile
+version on either engine, chosen separately as the suggestion model. It
+writes only its own append-only verdicts; nothing reads them yet.
+
+- **Inputs.** The current cover when readable, marked current, and one cover
+  of each other acceptable art, at most 12, as the normalised PNG previews,
+  each re-checked against the digest its comparison recorded. Closed facts:
+  an opaque reference per request, shuffled, the original's decoded size and
+  the medium. The version's numbered rules, the owner's included, travel as
+  sealed packet data; no title, author, identifier, path or provider text.
+- **Codex leg.** The same admitted request, its PNGs mounted read-only as
+  `/images/NN.png` in packet order; one judgement is one attempt.
+- **Output.** `keep_current`, `choose` with one sent reference, or `abstain`,
+  a confidence and 1–3 rule numbers of that version. Anything else is
+  `invalid_output`, never repaired; on OpenRouter a reply without usage or a
+  timeout after sending is `unknown_charge` and stops the day.
+- **Ceilings.** One judgement, or one recorded skip, per runner wake; each
+  judgement is counted durably before dispatch against
+  `cover_taste_judge_daily_requests`. A new version is judged after it has
+  stood 120 seconds; an engine failure pauses judging for 10 minutes. A
+  failed field waits for a new version.
+- **Storage and redaction.** Verdicts name the comparison's own reference and
+  are append-only by trigger; opening the database refuses one that no
+  succeeded judgement of that field and version wrote. Failures are closed
+  codes; rules, references, previews and raw output never reach logs, status
+  or the support bundle.
 
 ## Engines
 

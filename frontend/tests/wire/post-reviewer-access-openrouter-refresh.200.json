@@ -78,6 +78,10 @@
     },
     "description_metadata": null,
     "free_tier_caveat": "OpenRouter limits free models to 20 requests a minute and 50 a day, or 1,000 a day once you have bought $10 of credits.",
+    "judge_daily_requests": 5000,
+    "judge_mapping": null,
+    "judge_metadata": null,
+    "judge_recommendations": ["openai/gpt-6-luna"],
     "mapping": {
       "engine": "openrouter",
       "model": "example/vision"
@@ -93,7 +97,7 @@
     "openrouter_key_configured": true,
     "recommendations": ["openai/gpt-6-luna"],
     "revision": 4,
-    "schema_version": "reviewer-access-view-v5",
+    "schema_version": "reviewer-access-view-v6",
     "taste_daily_requests": 8,
     "taste_mapping": null,
     "taste_metadata": null,

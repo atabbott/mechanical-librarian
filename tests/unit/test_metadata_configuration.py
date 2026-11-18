@@ -551,7 +551,7 @@ def _original_schema_version(source: dict[str, object]) -> None:
 
 
 def _previous_schema_version(source: dict[str, object]) -> None:
-    source["schema_version"] = "config-v10"
+    source["schema_version"] = "config-v12"
 
 
 def _enabled_provider_without_a_secret(source: dict[str, object]) -> None:
@@ -1161,7 +1161,37 @@ def test_book_matching_refuses_any_other_value(level: object) -> None:
         )
 
 
-@pytest.mark.parametrize("version", ("config-v9", "config-v10"))
+@pytest.mark.parametrize(
+    ("value", "accepted"),
+    (
+        (1, True),
+        (5_000, True),
+        (50_000, True),
+        (0, False),
+        (50_001, False),
+        (True, False),
+    ),
+)
+def test_the_taste_judge_ceiling_is_bounded(value: object, accepted: bool) -> None:
+    """#1372 PR 4: the judge's daily requests are 1 to 50,000, default 5,000."""
+    document = json.dumps(
+        _review_with_work_identity(cover_taste_judge_daily_requests=value)
+    ).encode()
+    if not accepted:
+        with pytest.raises(ConfigurationError):
+            load_configuration_document(document)
+        return
+    loaded = load_configuration_document(document)
+    assert loaded.review is not None
+    assert loaded.review.cover_taste_judge_daily_requests == value
+    default = load_configuration_document(
+        json.dumps(_review_with_work_identity()).encode()
+    )
+    assert default.review is not None
+    assert default.review.cover_taste_judge_daily_requests == 5_000
+
+
+@pytest.mark.parametrize("version", ("config-v9", "config-v10", "config-v12"))
 def test_real_predecessor_configuration_is_rejected_without_mutating_input(
     tmp_path: Path, version: str
 ) -> None:

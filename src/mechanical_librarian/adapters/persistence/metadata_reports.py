@@ -37,6 +37,9 @@ from mechanical_librarian.adapters.persistence.cover_considerations import (
 from mechanical_librarian.adapters.persistence.cover_taste import (
     SQLiteCoverTasteRepository,
 )
+from mechanical_librarian.adapters.persistence.cover_taste_judge import (
+    SQLiteCoverTasteJudgeRepository,
+)
 from mechanical_librarian.adapters.persistence.crash_recovery import (
     recover_private_bindings,
 )
@@ -394,6 +397,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._cover_taste = SQLiteCoverTasteRepository(connection)
+        self._cover_taste_judge = SQLiteCoverTasteJudgeRepository(
+            connection, self._judge_cover_read
+        )
         self._retained_covers = SQLiteRetainedCoverRepository(connection, binding)
         self._current_cover_authority: tuple[str | None, str | None] = (None, None)
         self._current_work_identity_level = "identifier"
@@ -685,6 +691,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             self._description_advice,
             self._review_scans,
             self._cover_taste,
+            self._cover_taste_judge,
             self._retained_covers,
             self._field_effects,
             self._review_preparation,
@@ -741,6 +748,17 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise ValueError("work identity level is invalid")
         self._current_cover_authority = (policy_reference, replay_reference)
         self._current_work_identity_level = work_identity_level
+
+    @contextmanager
+    def _judge_cover_read(self) -> Iterator[tuple[str | None, str | None]]:
+        """The live cover authority with provider fetching captured once, as
+        a browse read captures them; the bound pair when nothing captures."""
+        observation = self.capture_browse_observation()
+        if observation is None:
+            yield self._current_cover_authority
+            return
+        with self.install_browse_observation(observation):
+            yield observation[0]
 
     def _cover_read_authority(self) -> tuple[str | None, str | None]:
         return (
@@ -1800,6 +1818,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def cover_taste_store(self) -> SQLiteCoverTasteRepository:
         return self._cover_taste
+
+    def cover_taste_judge_store(self) -> SQLiteCoverTasteJudgeRepository:
+        return self._cover_taste_judge
 
     def read_staged_description_preparation(
         self, action: PipelineAction

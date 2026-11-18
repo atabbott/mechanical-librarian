@@ -3077,6 +3077,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("post", "/api/v1/reviewer-access/description-model/contained"),
         ("post", "/api/v1/reviewer-access/description-model/test"),
         ("post", "/api/v1/reviewer-access/taste-model/test"),
+        ("post", "/api/v1/reviewer-access/judge-model/test"),
         ("post", "/api/v1/review-cases/{review_case_id}/description-advice/retry"),
         ("post", "/api/v1/review-cases/{review_case_id}/description-advice/selection"),
         ("get", "/api/v1/appearance"),

@@ -27,6 +27,10 @@ from mechanical_librarian.application.cover_taste_contract import (
     AdmittedTasteBuildRequest,
     TasteBuildReply,
 )
+from mechanical_librarian.application.cover_taste_judge_contract import (
+    AdmittedTasteJudgeRequest,
+    TasteJudgeReply,
+)
 from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
     DeviceAuthStatus,
@@ -39,6 +43,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     ReviewerStatusReason,
     openrouter_cover_profile,
     openrouter_profile,
+    openrouter_taste_judge_profile,
     openrouter_taste_profile,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
@@ -60,9 +65,9 @@ from mechanical_librarian.domain.reviewer_cost import (
 )
 from mechanical_librarian.domain.validation import credential
 
-ReviewerAccessViewSchemaVersion = Literal["reviewer-access-view-v5"]
+ReviewerAccessViewSchemaVersion = Literal["reviewer-access-view-v6"]
 REVIEWER_ACCESS_VIEW_SCHEMA: Final[ReviewerAccessViewSchemaVersion] = (
-    "reviewer-access-view-v5"
+    "reviewer-access-view-v6"
 )
 # The measured default for taste profile builds (#1372 R5).
 TASTE_RECOMMENDED_MODEL: Final = "anthropic/claude-sonnet-5.5"
@@ -182,36 +187,62 @@ class TasteBuildClient(Protocol):
     def close(self) -> None: ...
 
 
-# Runs one admitted build on the contained engine and returns its result
-# document, already checked against the taste schema.
-TasteBuildRunner = Callable[[bytes, AdmittedTasteBuildRequest], str]
+@runtime_checkable
+class TasteJudgeClient(Protocol):
+    """What a taste judgement needs from the selected engine's client (#1372 PR 4)."""
+
+    def run_taste_judge(
+        self, profile: bytes, request: AdmittedTasteJudgeRequest
+    ) -> TasteJudgeReply: ...
+
+    def close(self) -> None: ...
+
+
+# Runs one admitted build or judgement on the contained engine and returns
+# its result document, already checked against the request's schema.
+TasteRunner = Callable[
+    [bytes, AdmittedTasteBuildRequest | AdmittedTasteJudgeRequest], str
+]
 
 
 class _CodexTasteClient:
-    """One contained taste build, bound to the profile it was admitted with."""
+    """One contained taste build or judgement, bound to the profile it was
+    admitted with.
 
-    def __init__(self, profile: bytes, runner: TasteBuildRunner) -> None:
+    Codex reports no per-request cost, so a reply counts as usage reported.
+    A result that fails the request's schema is a reply with no result
+    (`invalid_output`); every other failure raises, so the request ends
+    `unavailable` without stopping the day (#1372 C6).
+    """
+
+    def __init__(self, profile: bytes, runner: TasteRunner) -> None:
         self._profile = profile
         self._runner = runner
+
+    def _document(
+        self,
+        profile: bytes,
+        request: AdmittedTasteBuildRequest | AdmittedTasteJudgeRequest,
+    ) -> str | None:
+        if profile != self._profile:
+            raise ReviewerAccessApplicationError("access_changed")
+        try:
+            return self._runner(profile, request)
+        except ContainedReviewerError as error:
+            if error.code == "malformed_output":
+                return None
+            raise
 
     def run_taste_build(
         self, profile: bytes, request: AdmittedTasteBuildRequest
     ) -> TasteBuildReply:
-        """Codex reports no per-request cost, so a reply counts as usage reported.
+        document = self._document(profile, request)
+        return TasteBuildReply(None if document is None else json.loads(document), True)
 
-        A result that fails the taste schema is a reply with no result
-        (`invalid_output`); every other failure raises, so the build ends
-        `unavailable` without stopping the day (#1372 C6).
-        """
-        if profile != self._profile:
-            raise ReviewerAccessApplicationError("access_changed")
-        try:
-            document = self._runner(profile, request)
-        except ContainedReviewerError as error:
-            if error.code == "malformed_output":
-                return TasteBuildReply(None, True)
-            raise
-        return TasteBuildReply(json.loads(document), True)
+    def run_taste_judge(
+        self, profile: bytes, request: AdmittedTasteJudgeRequest
+    ) -> TasteJudgeReply:
+        return TasteJudgeReply(self._document(profile, request), True)
 
     def close(self) -> None:
         """The contained engine holds nothing between builds."""
@@ -286,6 +317,12 @@ class ReviewerAccessView(_Closed):
     taste_metadata: CoverModelMetadata | None = None
     taste_daily_requests: Annotated[StrictInt, Field(ge=1, le=100)] = 8
     taste_recommendations: tuple[_OpenRouterModel, ...] = (TASTE_RECOMMENDED_MODEL,)
+    judge_mapping: ReviewerTaskSelection | None = None
+    judge_metadata: CoverModelMetadata | None = None
+    judge_daily_requests: Annotated[StrictInt, Field(ge=1, le=50_000)] = 5_000
+    # The measured judge (#1372 issue contract Q4, settled R5): the cover
+    # reviewer's measured model.
+    judge_recommendations: tuple[_OpenRouterModel, ...] = ("openai/gpt-6-luna",)
     description: ReviewerEngineStatus | None = None
     openrouter_key_configured: StrictBool
     codex: ReviewerEngineStatus
@@ -313,7 +350,7 @@ class ReviewerAccessView(_Closed):
 OpenRouterFactory = Callable[[str, str], OpenRouterClient]
 CodexBinding = Callable[[], tuple[str, bytes, Reviewer]]
 CodexIdentity = Callable[[], tuple[str, bytes]]
-CodexTasteBinding = Callable[[], tuple[str, bytes, TasteBuildRunner]]
+CodexTasteBinding = Callable[[], tuple[str, bytes, TasteRunner]]
 _Runner = TypeVar("_Runner")
 
 
@@ -333,8 +370,10 @@ class ReviewerAccessOperations:
         codex_description_binding: CodexBinding | None = None,
         codex_taste_binding: CodexTasteBinding | None = None,
         taste_daily_requests: int = 8,
+        judge_daily_requests: int = 5_000,
     ) -> None:
         self._taste_daily_requests = taste_daily_requests
+        self._judge_daily_requests = judge_daily_requests
         self._command_lock = RLock()
         self._changed: Callable[[], None] = lambda: None
         self._repository = repository
@@ -535,6 +574,7 @@ class ReviewerAccessOperations:
                 selection,
                 document.description_rewrite,
                 document.cover_taste_build,
+                document.cover_taste_judge,
             )
         ):
             host = self._codex_host()
@@ -602,6 +642,9 @@ class ReviewerAccessOperations:
             taste_mapping=document.cover_taste_build,
             taste_metadata=document.taste_metadata,
             taste_daily_requests=self._taste_daily_requests,
+            judge_mapping=document.cover_taste_judge,
+            judge_metadata=document.judge_metadata,
+            judge_daily_requests=self._judge_daily_requests,
             description=(
                 description
                 or (
@@ -696,14 +739,19 @@ class ReviewerAccessOperations:
 
         return test()
 
-    def test_taste_model(self, api_key: str, model: str) -> CoverModelMetadata:
+    def test_taste_model(
+        self,
+        api_key: str,
+        model: str,
+        task: Literal["cover_taste_build", "cover_taste_judge"] = "cover_taste_build",
+    ) -> CoverModelMetadata:
         """Observe image input, structured output and prices before selecting."""
         document, saved_key = self._snapshot()
         key = api_key or saved_key or ""
         if not credential(key):
             raise ValueError("invalid reviewer credential")
         try:
-            account = self._probe_openrouter(key, model, "cover_taste_build")
+            account = self._probe_openrouter(key, model, task)
         except OpenRouterReviewerError as error:
             raise ReviewerAccessApplicationError(
                 _public_openrouter_failure(error)
@@ -712,14 +760,22 @@ class ReviewerAccessOperations:
         return _cover_metadata(account)
 
     def current_taste_build_model(self) -> str | None:
-        """The selected taste model, without any transport or process.
+        return self._current_taste_model("cover_taste_build")
+
+    def current_taste_judge_model(self) -> str | None:
+        return self._current_taste_model("cover_taste_judge")
+
+    def _current_taste_model(
+        self, task: Literal["cover_taste_build", "cover_taste_judge"]
+    ) -> str | None:
+        """The task's selected model, without any transport or process.
 
         OpenRouter needs its key saved. Codex needs its profile provisioned, a
         host that can run it and its sign-in usable, each read as the access
-        view reads it, so a lapsed sign-in or host schedules no build.
+        view reads it, so a lapsed sign-in or host schedules no request.
         """
         document, key = self._snapshot()
-        selection = document.cover_taste_build
+        selection = getattr(document, task)
         if isinstance(selection, CodexTaskSelection):
             try:
                 model, _profile = self._codex_identity()
@@ -733,30 +789,51 @@ class ReviewerAccessOperations:
 
     def open_taste_build(self) -> tuple[str, bytes, TasteBuildClient]:
         """One client for one taste build, opened at the current access revision."""
+        _engine, model, profile, client = self._open_taste("cover_taste_build")
+        return model, profile, cast("TasteBuildClient", client)
+
+    def open_taste_judge(
+        self,
+    ) -> tuple[ReviewerEngine, str, bytes, TasteJudgeClient]:
+        """One client for one taste judgement, with the engine it runs on."""
+        engine, model, profile, client = self._open_taste("cover_taste_judge")
+        return engine, model, profile, cast("TasteJudgeClient", client)
+
+    def _open_taste(
+        self, task: Literal["cover_taste_build", "cover_taste_judge"]
+    ) -> tuple[ReviewerEngine, str, bytes, object]:
         document, key = self._snapshot()
-        selection = document.cover_taste_build
+        selection = getattr(document, task)
         if selection is None:
             raise ReviewerAccessApplicationError("not_configured")
         if isinstance(selection, CodexTaskSelection):
             model, profile, runner = self._bind_codex(
                 document.revision, self._codex_taste_binding
             )
-            return model, profile, _CodexTasteClient(profile, runner)
+            return "codex", model, profile, _CodexTasteClient(profile, runner)
         if key is None:
             raise ReviewerAccessApplicationError("credential_unavailable")
         try:
             client = self._openrouter_factory(key, selection.model)
         except Exception:
             raise ReviewerAccessApplicationError("unreachable") from None
-        if not isinstance(client, TasteBuildClient):
+        if not isinstance(
+            client,
+            TasteBuildClient if task == "cover_taste_build" else TasteJudgeClient,
+        ):
             client.close()
             raise ReviewerAccessApplicationError("unreachable")
         if not self._repository.revision_is_current(document.revision):
             client.close()
             raise ReviewerAccessApplicationError("access_changed")
         return (
+            "openrouter",
             selection.model,
-            openrouter_taste_profile(selection.model),
+            (
+                openrouter_taste_profile
+                if task == "cover_taste_build"
+                else openrouter_taste_judge_profile
+            )(selection.model),
             client,
         )
 
@@ -799,6 +876,11 @@ class ReviewerAccessOperations:
                     _cover_metadata(account)
                     if task == "cover_taste_build"
                     else document.taste_metadata
+                ),
+                "judge_metadata": (
+                    _cover_metadata(account)
+                    if task == "cover_taste_judge"
+                    else document.judge_metadata
                 ),
                 "description_metadata": (
                     DescriptionModelMetadata.model_validate(
@@ -887,6 +969,12 @@ class ReviewerAccessOperations:
                     else document.cover_taste_build
                 ),
                 "taste_metadata": None,
+                "cover_taste_judge": (
+                    None
+                    if isinstance(document.cover_taste_judge, OpenRouterTaskSelection)
+                    else document.cover_taste_judge
+                ),
+                "judge_metadata": None,
                 "description_rewrite": (
                     None
                     if isinstance(document.description_rewrite, OpenRouterTaskSelection)
@@ -915,6 +1003,7 @@ class ReviewerAccessOperations:
                     document.cover_observation,
                     document.description_rewrite,
                     document.cover_taste_build,
+                    document.cover_taste_judge,
                 )
             )
             if committed:
@@ -981,6 +1070,9 @@ class ReviewerAccessOperations:
                 "cover_taste_build": None
                 if isinstance(document.cover_taste_build, CodexTaskSelection)
                 else document.cover_taste_build,
+                "cover_taste_judge": None
+                if isinstance(document.cover_taste_judge, CodexTaskSelection)
+                else document.cover_taste_judge,
             }
         )
         result = self._replace_document(replacement, expected_revision)
@@ -1143,6 +1235,9 @@ class ReviewerAccessOperations:
                 "taste_metadata": (
                     None if task == "cover_taste_build" else document.taste_metadata
                 ),
+                "judge_metadata": (
+                    None if task == "cover_taste_judge" else document.judge_metadata
+                ),
             }
         )
         result = self._replace_document(replacement, expected_revision)
@@ -1235,6 +1330,8 @@ __all__ = [
     "ReviewerDispatch",
     "ReviewerEngineStatus",
     "OpenRouterRecommendation",
+    "TasteJudgeClient",
+    "TasteRunner",
 ]
 
 
