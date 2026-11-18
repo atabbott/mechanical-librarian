@@ -151,10 +151,10 @@ from mechanical_librarian.domain.shadow_outcome import (
 from mechanical_librarian.domain.validation import owner_password
 from mechanical_librarian.domain.value_flags import value_flags
 
-# v11: a cover field carries the taste judge's pending suggestion (#1372 PR 4b).
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v11"]
+# v12: a field says whether its owner accept needs no write (ADR-0105).
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v12"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v11"
+    "review-case-detail-v12"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
@@ -377,6 +377,9 @@ class CurrentReviewCaseSnapshot:
     pins: tuple[tuple[str, bool, str], ...] = ()
     # Destinations whose change waits to be written, so a pin is refused.
     change_waiting_destinations: tuple[str, ...] = ()
+    # Owner accepts recorded with nothing to write: the case's latest write
+    # already holds their value (ADR-0105).
+    no_change_decisions: tuple[str, ...] = ()
     # Held destinations whose return to automatic handling the owner has
     # requested; the hold stays until the requested checks finish (#1755).
     return_requested_destinations: tuple[str, ...] = ()
@@ -2122,6 +2125,8 @@ class InspectCurrentReviewCase:
             "written_by_case": destination in dict(snapshot.written_values),
             "pin": pin,
             "pin_control": pin_control,
+            "no_change_required": decision is not None
+            and decision.decision_id in snapshot.no_change_decisions,
             # The offer a choice binds: its value, proposal and rule (#1355).
             "offer_digest": offer_digest(proposals, destination),
             "proposal_id": proposal["proposal_id"],

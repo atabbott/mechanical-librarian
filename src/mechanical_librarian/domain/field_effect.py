@@ -226,7 +226,9 @@ def project_decision_value(destination: str, value: object) -> object:
 
 @dataclass(frozen=True, slots=True)
 class FieldEffectNoChange:
-    """Immutable automatic decision terminal fact; it never authorizes a write."""
+    """Immutable terminal fact of a decision with nothing to write: an
+    automatic candidate equal to the current value, or an owner's accept of
+    the value the case's latest write holds. It never authorizes a write."""
 
     decision_id: str
     review_case_id: str

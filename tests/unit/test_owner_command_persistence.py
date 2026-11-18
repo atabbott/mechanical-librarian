@@ -28,6 +28,7 @@ from mechanical_librarian.adapters.persistence.schema import _HUMAN_DECISIONS_SQ
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
     ReviewWebError,
@@ -35,7 +36,9 @@ from mechanical_librarian.application.review_web import (
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
+    FieldEffectNoChange,
     FieldEffectOperation,
+    field_value_version,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
@@ -1815,6 +1818,9 @@ def test_accepting_the_value_the_case_wrote_is_unchanged(store: OwnerStore) -> N
     _refused(store, "owner_value_unchanged", "accept", _FANTASY, destination="genres")
     assert _pending(store) == []
     assert _hold_document(store) == hold
+    assert store.repository._connection.execute(
+        "SELECT COUNT(*) FROM field_effect_no_changes"
+    ).fetchone() == (0,)
     replay = HumanDecision.create(
         store.case,
         proposal_id=first.proposal_id,
@@ -1840,7 +1846,8 @@ def test_accepting_the_written_value_replaces_a_later_unwritten_answer(
     """Read Drama, accept Fantasy, written, then go back to Drama, still
     unwritten. That later decision is the field's answer, so accepting
     Fantasy again records and replaces it before it writes Drama, rather
-    than being refused as unchanged (#1980)."""
+    than being refused as unchanged (#1980). Fantasy is already written, so
+    that accept holds the field with nothing to write (ADR-0105)."""
     store = OwnerStore(tmp_path, _HELD)
     try:
         store.write(store.decide("accept", _FANTASY, destination="genres"))
@@ -1851,9 +1858,108 @@ def test_accepting_the_written_value_replaces_a_later_unwritten_answer(
         )
         assert _pending(store) == [replaced.decision_id]
         again = store.decide("accept", _FANTASY, destination="genres")
-        assert _pending(store) == [again.decision_id]
+        assert _pending(store) == []
+        assert _hold(store) == again.decision_id
+        assert store.repository._connection.execute(
+            "SELECT decision_id,origin,target_version FROM field_effect_no_changes "
+            "WHERE origin='human'"
+        ).fetchall() == [
+            (again.decision_id, "human", field_value_version("genres", ["Fantasy"]))
+        ]
+        # Nothing plans the replaced answer's Drama.
+        assert not any(
+            FieldEffectOperation.from_json(document).plan.desired_value == ["Drama"]
+            for (document,) in store.repository._connection.execute(
+                "SELECT document FROM field_effects"
+            )
+        )
     finally:
         store.close()
+
+
+def _forge_owner_no_change(path: Path, **changes: object) -> None:
+    """Rewrite the owner's no-change row past its append-only trigger."""
+    connection = sqlite3.connect(path)
+    try:
+        (trigger,) = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='field_effect_no_changes_no_update'"
+        ).fetchone()
+        row = connection.execute(
+            "SELECT decision_id,review_case_id,report_id,connection_name,"
+            "library_name,work_id,destination,target_fingerprint,target_version,"
+            "occurred_at FROM field_effect_no_changes WHERE origin='human'"
+        ).fetchone()
+        fields = dict(
+            zip(
+                (
+                    "decision_id",
+                    "review_case_id",
+                    "report_id",
+                    "connection",
+                    "library",
+                    "work_id",
+                    "destination",
+                    "target_fingerprint",
+                    "target_version",
+                    "occurred_at",
+                ),
+                row,
+                strict=True,
+            )
+        )
+        forged = FieldEffectNoChange.create(**{**fields, **changes}, origin="human")
+        connection.execute("DROP TRIGGER field_effect_no_changes_no_update")
+        connection.execute(
+            "UPDATE field_effect_no_changes SET decision_id=?,target_version=?,"
+            "occurred_at=?,event_id=? WHERE decision_id=?",
+            (
+                forged.decision_id,
+                forged.target_version,
+                forged.occurred_at,
+                forged.event_id,
+                row[0],
+            ),
+        )
+        connection.execute(trigger)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("forged", [None, "target_version", "keep"])
+def test_startup_reads_an_owner_accept_recorded_with_nothing_to_write(
+    tmp_path: Path, forged: str | None
+) -> None:
+    """A database holding an owner's no-change accept opens again; a row
+    whose value or decision disagrees with that accept is refused."""
+    store = OwnerStore(tmp_path, _HELD)
+    store.write(store.decide("accept", _FANTASY, destination="genres"))
+    keep = store.decide("keep_current", destination="genres")
+    again = store.decide("accept", _FANTASY, destination="genres")
+    store.close()
+    path = tmp_path / "owner.sqlite"
+    if forged == "target_version":
+        _forge_owner_no_change(
+            path, target_version=field_value_version("genres", ["Drama"])
+        )
+    elif forged == "keep":
+        _forge_owner_no_change(
+            path, decision_id=keep.decision_id, occurred_at=keep.occurred_at
+        )
+    if forged is None:
+        reopened = open_repository(path)
+        try:
+            assert reopened._connection.execute(
+                "SELECT decision_id FROM field_effect_no_changes WHERE origin='human'"
+            ).fetchall() == [(again.decision_id,)]
+        finally:
+            reopened.close()
+    else:
+        with pytest.raises(
+            MetadataReportError, match="database is unavailable or incompatible"
+        ):
+            open_repository(path)
 
 
 _DRAMA = {"kind": "list", "value": ["Drama"]}

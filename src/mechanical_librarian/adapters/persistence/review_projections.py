@@ -436,6 +436,16 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         {"review_case_id": review_case_id},
                     )
                 ),
+                no_change_decisions=tuple(
+                    row[0]
+                    for row in self._connection.execute(
+                        "SELECT no_change.decision_id FROM field_effect_no_changes "
+                        "no_change JOIN human_decisions human "
+                        "ON human.decision_id=no_change.decision_id "
+                        "WHERE no_change.review_case_id=?",
+                        (review_case_id,),
+                    )
+                ),
                 return_requested_destinations=self._return_destinations(
                     review_case_id, failed=False
                 ),

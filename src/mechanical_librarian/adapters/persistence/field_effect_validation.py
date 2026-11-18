@@ -65,6 +65,7 @@ from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
 from mechanical_librarian.domain.field_value_comparison import values_match
+from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
@@ -895,6 +896,61 @@ def _cover_automatic_decision_value(
     return {"kind": "cover", "value": decision.artifact_id}
 
 
+def _validate_owner_no_change(
+    connection: sqlite3.Connection,
+    record: FieldEffectNoChange,
+    row: tuple[str, str] | sqlite3.Row,
+) -> None:
+    """An owner's accept recorded with nothing to write (ADR-0105) names the
+    verified write it follows, and that write, the accept and the row hold
+    one value."""
+    human = HumanDecision.from_json(row[0])
+    case = ReviewCase.from_json(row[1])
+    if (
+        record.origin != "human"
+        or human.outcome != "accept"
+        or human.destination == "cover"
+        or human.review_case_id != record.review_case_id
+        or human.destination != record.destination
+        or human.target_fingerprint != record.target_fingerprint
+        or human.occurred_at != record.occurred_at
+        or case.report_id != record.report_id
+        or case.target.get("connection") != record.connection
+        or case.target.get("library") != record.library
+        or case.target.get("item") != record.work_id
+        or human.follows is None
+    ):
+        raise FieldEffectError("persistence")
+    followed = connection.execute(
+        "SELECT document FROM field_effects WHERE decision_id=? "
+        "AND state='verified' ORDER BY rowid LIMIT 1",
+        (human.follows,),
+    ).fetchone()
+    if followed is None:
+        raise FieldEffectError("persistence")
+    write = FieldEffectOperation.from_json(followed[0]).plan
+    # A subtitle a title plan wrote as its companion is read from the
+    # companion, as `_written_plan` reads it.
+    plan = (
+        write.subtitle_plan()
+        if record.destination == "subtitle" and write.subtitle_companion
+        else write
+    )
+    if (
+        plan is None
+        or plan.authority.review_case_id != record.review_case_id
+        or plan.destination != record.destination
+        or field_value_version(record.destination, plan.desired_value)
+        != record.target_version
+        or record.target_version
+        != field_value_version(
+            record.destination,
+            project_decision_value(record.destination, human.selected_value),
+        )
+    ):
+        raise FieldEffectError("persistence")
+
+
 def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
     """Fail closed on any non-canonical field-effect envelope or row mismatch."""
     try:
@@ -952,6 +1008,15 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                     != field_value_version("description", before)
                 ):
                     raise FieldEffectError("persistence")
+                continue
+            human_row = connection.execute(
+                "SELECT h.document,c.document FROM human_decisions h "
+                "JOIN review_cases c ON c.review_case_id=h.review_case_id "
+                "WHERE h.decision_id=?",
+                (record.decision_id,),
+            ).fetchone()
+            if human_row is not None:
+                _validate_owner_no_change(connection, record, human_row)
                 continue
             decision_row = connection.execute(
                 "SELECT document FROM automatic_decisions WHERE decision_id=? "

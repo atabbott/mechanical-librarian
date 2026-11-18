@@ -20,6 +20,7 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
 )
 from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
+from mechanical_librarian.domain.field_effect import field_value_version
 from mechanical_librarian.domain.human_decision import HumanDecision
 from tests.support.description_advice import (
     _guarded_application,
@@ -534,4 +535,62 @@ def test_a_keep_on_an_offered_description_reads_no_page(
         idempotency_key="keep-an-offered-description",
     )
     assert acknowledgement["outcome"] == "keep_current"
+    repository.close()
+
+
+@pytest.mark.parametrize("origin", ["automatic_policy", "human"])
+def test_accepting_the_adviser_written_text_needs_no_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, origin: str
+) -> None:
+    """The adviser wrote the text a source offers; accepting that source's
+    text records the owner's answer with nothing to write (ADR-0105)."""
+    from tests.support.field_effects import CAPABILITY
+
+    qualify_description_advice(monkeypatch)
+    offered = "A qualified description."
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, automatic=origin == "automatic_policy", description=offered
+    )
+    case_id = binding.review_case_id
+    advice = store.admit(candidate.candidate_id, binding, origin, "a" * 64, 11)
+    authority = PersistedFieldEffectAuthority(repository)
+    application, target = _guarded_application(repository, tmp_path, authority)
+    resolved = authority.resolve(advice)
+    operation = application.plan(
+        advice,
+        connection=resolved.connection,
+        library=resolved.library,
+        work_id=resolved.work_id,
+        destination=resolved.destination,
+        pre_value=resolved.pre_value,
+        desired_value=resolved.decision_value,
+        target_fingerprint=resolved.target_fingerprint,
+        target_version=resolved.target_version,
+        dependency_digests=resolved.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    target.seed(operation.plan)
+    assert application.apply(operation.plan.plan_id).state == "verified"
+    assert _description(repository, case_id)["proposed_values"] == [
+        {"kind": "text", "value": offered}
+    ]
+
+    accept = _decide(
+        repository,
+        case_id,
+        f"accept-the-{origin}-advice-text",
+        40,
+        "accept",
+        {"kind": "text", "value": offered},
+    )
+    assert accept.follows == advice.decision_id
+    assert accept.to_json() not in repository.pending_field_effect_decision_documents(
+        100
+    )
+    assert repository._connection.execute(
+        "SELECT origin,target_version FROM field_effect_no_changes WHERE decision_id=?",
+        (accept.decision_id,),
+    ).fetchall() == [("human", field_value_version("description", offered))]
+    assert _description(repository, case_id)["no_change_required"] is True
     repository.close()

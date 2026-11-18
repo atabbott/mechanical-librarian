@@ -1120,6 +1120,8 @@ class _ReviewField(_ClosedModel):
     written_by_case: bool
     pin: _FieldPin | None
     pin_control: _PinControl | None
+    # The owner's accept holds the value already written (ADR-0105).
+    no_change_required: bool = False
     proposed_values: list[_ProposedValue]
     choice_contexts: list["_FieldChoiceContext"]
     provenance: list[str]

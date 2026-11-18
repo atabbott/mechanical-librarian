@@ -82,8 +82,11 @@ from mechanical_librarian.domain.description_advice import (
 )
 from mechanical_librarian.domain.field_effect import (
     CLEARABLE_DESTINATIONS,
+    FieldEffectNoChange,
     FieldEffectOperation,
     decision_value_kind,
+    field_value_version,
+    project_decision_value,
 )
 from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
@@ -299,7 +302,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             [str, str, str], tuple[tuple[str, object], ...]
         ],
         written_field_values: Callable[[str], tuple[tuple[str, object], ...]],
-        recorded_follows: Callable[[HumanDecision], str | None],
+        recorded_follows: Callable[[HumanDecision], tuple[str | None, bool]],
         followed_write: Callable[[HumanDecision], sqlite3.Row | tuple[str, ...] | None],
     ) -> None:
         super().__init__(connection, binding)
@@ -640,6 +643,48 @@ class SQLiteDecisionRepository(ConnectionScoped):
         except (sqlite3.Error, HumanDecisionError, TypeError) as error:
             raise MetadataReportError("human decision is unavailable") from error
 
+    def _record_owner_no_change(
+        self, decision: HumanDecision, case: ReviewCase
+    ) -> None:
+        """Record an owner's accept of the value the case's latest write
+        holds as settled with nothing to write, so it is never pending."""
+        record = FieldEffectNoChange.create(
+            decision_id=decision.decision_id,
+            review_case_id=decision.review_case_id,
+            report_id=case.report_id,
+            connection=str(case.target["connection"]),
+            library=str(case.target["library"]),
+            work_id=str(case.target["item"]),
+            destination=decision.destination,
+            target_fingerprint=decision.target_fingerprint,
+            target_version=field_value_version(
+                decision.destination,
+                project_decision_value(decision.destination, decision.selected_value),
+            ),
+            occurred_at=decision.occurred_at,
+            origin="human",
+        )
+        self._connection.execute(
+            "INSERT INTO field_effect_no_changes(decision_id,review_case_id,"
+            "report_id,connection_name,library_name,work_id,destination,"
+            "target_fingerprint,target_version,origin,occurred_at,event_id) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                record.decision_id,
+                record.review_case_id,
+                record.report_id,
+                record.connection,
+                record.library,
+                record.work_id,
+                record.destination,
+                record.target_fingerprint,
+                record.target_version,
+                record.origin,
+                record.occurred_at,
+                record.event_id,
+            ),
+        )
+
     @local_operation
     def record_human_decision(
         self,
@@ -718,7 +763,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
             # The write every decision follows is frozen with it, by the rule
             # planning reads now, so neither a later return nor a later write
             # changes what it replaced or a keep goes back on (#1523, #1973).
-            decision = replace(decision, follows=self._recorded_follows(decision))
+            follows, nothing_to_write = self._recorded_follows(decision)
+            decision = replace(decision, follows=follows)
             if (
                 decision.outcome == "keep_current"
                 and decision.follows is not None
@@ -780,6 +826,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 self._close_replaced_authorities(
                     decision, previous, authored, automatic, case=case, pin=pin
                 )
+            if nothing_to_write:
+                # An accept of the value the case's latest write holds is the
+                # owner's answer with nothing to write: settled as recorded,
+                # never pending (ADR-0105).
+                self._record_owner_no_change(decision, case)
             if self._binding is not None:
                 self._binding.require_current()
             transaction.commit()
