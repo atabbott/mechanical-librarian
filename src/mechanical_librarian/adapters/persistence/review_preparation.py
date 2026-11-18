@@ -1424,55 +1424,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "AND library_name=? AND item_id=?",
                 (connection, library, item_id),
             ).fetchone()
-            transition = ReviewTransition(
-                connection,
-                library,
-                item_id,
-                checkpoint + 1,
-                proposal_id,
-                report_id,
-                kind,
-                case_id,
-                None,
-                reason,
-                "review-preparation-v1",
-            )
-            self._connection.execute(
-                "INSERT INTO review_case_transitions("
-                "transition_id,connection_name,library_name,item_id,checkpoint,actor,"
-                "from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason"
-                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    transition.transition_id,
-                    connection,
-                    library,
-                    item_id,
-                    checkpoint + 1,
-                    transition.actor,
-                    case_id,
-                    None,
-                    proposal_id,
-                    report_id,
-                    kind,
-                    reason,
-                ),
-            )
-            self._connection.execute(
-                "UPDATE current_review_case_lineages SET review_case_id=NULL,"
-                "transition_id=?,checkpoint=?,outcome=? "
-                "WHERE connection_name=? AND library_name=? AND item_id=? "
-                "AND review_case_id=? AND checkpoint=?",
-                (
-                    transition.transition_id,
-                    checkpoint + 1,
-                    kind,
-                    connection,
-                    library,
-                    item_id,
-                    case_id,
-                    checkpoint,
-                ),
-            )
+            self._retire_lineage(connection, library, item_id, current, kind, reason)
             # The work has no case now, so every write still waiting on one
             # closes with this transition (#1658).
             self._supersede_displaced_waiting_effects(
@@ -1490,6 +1442,75 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         self._connection.execute(
             "DELETE FROM review_preparation_absences WHERE scan_id=?", (scan_id,)
         )
+
+    def _retire_lineage(
+        self,
+        connection: str,
+        library: str,
+        item_id: str,
+        lineage: tuple[str, str, str, int],
+        kind: str,
+        reason: str,
+    ) -> None:
+        """Move a work's lineage off its case as preparation (ADR-0031).
+
+        The lineage keeps its proposal set and report, and is updated only
+        while it still names the case and checkpoint it was read with.
+        """
+        proposal_id, report_id, case_id, checkpoint = lineage
+        transition = ReviewTransition(
+            connection,
+            library,
+            item_id,
+            checkpoint + 1,
+            proposal_id,
+            report_id,
+            kind,
+            case_id,
+            None,
+            reason,
+            "review-preparation-v1",
+        )
+        self._connection.execute(
+            "INSERT INTO review_case_transitions("
+            "transition_id,connection_name,library_name,item_id,checkpoint,actor,"
+            "from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason"
+            ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                transition.transition_id,
+                connection,
+                library,
+                item_id,
+                checkpoint + 1,
+                transition.actor,
+                case_id,
+                None,
+                proposal_id,
+                report_id,
+                kind,
+                reason,
+            ),
+        )
+        if (
+            self._connection.execute(
+                "UPDATE current_review_case_lineages SET review_case_id=NULL,"
+                "transition_id=?,checkpoint=?,outcome=? "
+                "WHERE connection_name=? AND library_name=? AND item_id=? "
+                "AND review_case_id=? AND checkpoint=?",
+                (
+                    transition.transition_id,
+                    checkpoint + 1,
+                    kind,
+                    connection,
+                    library,
+                    item_id,
+                    case_id,
+                    checkpoint,
+                ),
+            ).rowcount
+            != 1
+        ):
+            raise MetadataReportError("review preparation state changed")
 
     def advance_review_pipeline_action(
         self,
@@ -1881,6 +1902,31 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 # unreachable-evidence failure this registration exists to
                 # prevent, and it must not pass silently.
                 raise MetadataReportError("review preparation state changed")
+            # The work now admits no identity, so a case it still names is
+            # retired as the absence retirement does, and every write still
+            # waiting on a case closes with it (#1953, #1658).
+            lineage = self._connection.execute(
+                "SELECT proposal_set_id,report_id,review_case_id,checkpoint "
+                "FROM current_review_case_lineages WHERE connection_name=? "
+                "AND library_name=? AND item_id=? AND review_case_id IS NOT NULL",
+                (action.connection, action.library, action.item_id),
+            ).fetchone()
+            if lineage is not None:
+                self._retire_lineage(
+                    action.connection,
+                    action.library,
+                    cast(str, action.item_id),
+                    lineage,
+                    "retired",
+                    "unidentified",
+                )
+            self._supersede_displaced_waiting_effects(
+                action.connection,
+                action.library,
+                cast(str, action.item_id),
+                None,
+                completed_at,
+            )
         transition_row = self._connection.execute(
             "SELECT transition_id,report_id FROM metadata_policy_transition_items "
             "WHERE work_id=? AND state='pending'",
