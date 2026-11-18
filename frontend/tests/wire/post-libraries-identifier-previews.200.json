@@ -1,55 +1,55 @@
 {
-  "method": "POST",
-  "path": "/api/v1/libraries/abs/books/identifier-previews",
-  "status": 200,
   "body": {
-    "preview_id": "identifier-preview-placeholder-000000000000",
-    "expires_at": 1900,
-    "rows": 5,
     "counts": {
-      "will_link": 3,
       "already_linked": 0,
-      "no_item": 1,
       "ambiguous": 0,
-      "invalid_identifier": 0,
-      "wrong_medium": 1,
-      "repeated": 0,
       "conflicting": 0,
-      "unreadable": 0
+      "invalid_identifier": 0,
+      "no_item": 1,
+      "repeated": 0,
+      "unreadable": 0,
+      "will_link": 3,
+      "wrong_medium": 1
     },
-    "will_link": [
-      {
-        "row": 2,
-        "title": "Title 1",
-        "authors": ["Author 1"],
-        "identifier_kind": "isbn",
-        "identifier": "9780306406157"
-      },
-      {
-        "row": 3,
-        "title": "Title 2",
-        "authors": ["Author 2"],
-        "identifier_kind": "isbn",
-        "identifier": "9780804429573"
-      },
-      {
-        "row": 4,
-        "title": "Title 3",
-        "authors": ["Author 3"],
-        "identifier_kind": "asin",
-        "identifier": "B00TEST001"
-      }
-    ],
+    "expires_at": 1900,
+    "preview_id": "identifier-preview-placeholder-000000000000",
     "refused": [
       {
-        "row": 5,
-        "reason": "no_item"
+        "reason": "no_item",
+        "row": 5
       },
       {
-        "row": 6,
-        "reason": "asin_for_ebook"
+        "reason": "asin_for_ebook",
+        "row": 6
       }
     ],
-    "schema_version": "identifier-preview-v1"
-  }
+    "rows": 5,
+    "schema_version": "identifier-preview-v1",
+    "will_link": [
+      {
+        "authors": ["Author 1"],
+        "identifier": "9780306406157",
+        "identifier_kind": "isbn",
+        "row": 2,
+        "title": "Title 1"
+      },
+      {
+        "authors": ["Author 2"],
+        "identifier": "9780804429573",
+        "identifier_kind": "isbn",
+        "row": 3,
+        "title": "Title 2"
+      },
+      {
+        "authors": ["Author 3"],
+        "identifier": "B00TEST001",
+        "identifier_kind": "asin",
+        "row": 4,
+        "title": "Title 3"
+      }
+    ]
+  },
+  "method": "POST",
+  "path": "/api/v1/libraries/abs/books/identifier-previews",
+  "status": 200
 }

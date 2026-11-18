@@ -1,7 +1,4 @@
 {
-  "method": "GET",
-  "path": "/api/v1/library/progress",
-  "status": 200,
   "body": {
     "fields": [
       {
@@ -48,5 +45,8 @@
       "not_matched": 1,
       "preparation_failed": 0
     }
-  }
+  },
+  "method": "GET",
+  "path": "/api/v1/library/progress",
+  "status": 200
 }
