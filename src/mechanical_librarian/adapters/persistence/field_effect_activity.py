@@ -1919,7 +1919,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         (#1523): its predecessor, unless that write already holds the value
         the case read. Going back would then change nothing, so the keep is a
         plain keep, as owner entry calls an entry of the written value
-        unchanged; `field_value_version` is the comparison planning makes."""
+        unchanged. `field_value_version` normalises both values as planning
+        does, so they are equal exactly when planning would write nothing."""
         predecessor = self._human_predecessor(decision)
         if predecessor is None:
             return None
