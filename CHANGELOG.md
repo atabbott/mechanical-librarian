@@ -12,6 +12,10 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- Attention now opens when pressed just as Library's first work is selected.
+  Search keeps the cursor when a preparation run opened from setup loads after
+  you click into it. In Covers, the selected tab stays in view when its counts
+  arrive (#1959).
 - When a choice is refused or can't be confirmed, the reason now shows right
   under the choices, with Try the same decision again or Reload current case,
   and the page scrolls just far enough to show it. Before, it appeared below

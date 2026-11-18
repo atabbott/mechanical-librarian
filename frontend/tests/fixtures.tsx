@@ -609,6 +609,25 @@ export const createLiveStream = (): LiveUpdateStream & {
 export const wholeText = (text: string) => (_: string, element: Element | null) =>
   element?.textContent.replace(/\s+/gu, ' ') === text &&
   ![...element.children].some((child) => child.textContent.replace(/\s+/gu, ' ') === text)
+/**
+ * Loads the lazily imported route modules, as a file's `beforeAll`.
+ *
+ * Routes load on first render, as in the browser. Without this, a file's first
+ * test pays their first import and transform inside its own find timeout, which
+ * a runner shared with other test files can exceed (the Library search caret
+ * test failed that way while the route was still loading).
+ */
+export const loadRouteModules = async () => {
+  await Promise.all([
+    import('../src/routes/LibraryPage'),
+    import('../src/routes/CoversView'),
+    import('../src/routes/DetailPage'),
+    import('../src/routes/PolicyPage'),
+    import('../src/routes/ActivityPage'),
+    import('../src/routes/SettingsPage'),
+  ])
+}
+
 export const renderRoute = (entry: string, http = createHttp(), updates?: LiveUpdateStream) => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createApplicationRouter(

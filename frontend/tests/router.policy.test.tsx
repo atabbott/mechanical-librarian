@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   AmbiguousMutationError,
@@ -22,9 +22,18 @@ import type {
   PreviewPostureView,
 } from '../src/api/http'
 import { normalizePolicySearch } from '../src/router'
-import { createHttp, idlePreparation, inertAudiobookQualification, renderRoute } from './fixtures'
+import {
+  createHttp,
+  createLiveStream,
+  idlePreparation,
+  inertAudiobookQualification,
+  renderRoute,
+  loadRouteModules,
+} from './fixtures'
 import { savedDocument, view } from './settingsFixtures'
 import { policyProfile } from './wireFixtures'
+
+beforeAll(loadRouteModules)
 
 // The real client answering every request with `body`, so a test sees what the
 // page makes of an answer the client cannot read (#1692).
@@ -2683,8 +2692,9 @@ it('shows file-managed current cover settings read-only (#1363)', async () => {
   http.writeSettings = vi.fn<ReviewHttp['writeSettings']>()
   renderRoute('/policy?section=curation', http)
   const region = await screen.findByRole('region', { name: 'Current covers' })
+  // The section is drawn while its settings read is still loading.
   expect(
-    within(region).getByText('These settings are managed by deployment configuration.'),
+    await within(region).findByText('These settings are managed by deployment configuration.'),
   ).toBeVisible()
   for (const button of within(region).getAllByRole('button', { pressed: false }))
     expect(button).toBeDisabled()
@@ -3271,7 +3281,10 @@ it.each([
         return {} as T
       },
     }
-    const { queryClient } = renderRoute('/policy', http)
+    // With live updates connected, nothing polls preparation, so the reads
+    // counted below are the release's refresh and nothing else; a slow runner
+    // would otherwise add the degraded mode's 1.5-second poll of a running run.
+    const { queryClient } = renderRoute('/policy', http, createLiveStream())
     await screen.findByRole('heading', { name: 'Library policy' })
     await waitFor(() =>
       expect(queryClient.getQueryData(['review-preparation'])).toMatchObject({

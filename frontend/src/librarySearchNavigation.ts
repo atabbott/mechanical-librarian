@@ -10,6 +10,17 @@ import { librarySearchIdentity } from './libraryPreparation'
 
 const searchNavigationDelay = 150
 
+const selectionKeys = new Set(['preview', 'work', 'field', 'preparation'])
+
+/** Whether two Library search identities differ only in which work is selected. */
+const onlySelectionMoved = (before: string, after: string) => {
+  const query = (identity: string) =>
+    JSON.stringify(
+      (JSON.parse(identity) as [string, unknown][]).filter(([key]) => !selectionKeys.has(key)),
+    )
+  return query(before) === query(after)
+}
+
 export const useLibrarySearchNavigation = ({
   urlQuery,
   searchIdentity,
@@ -47,14 +58,19 @@ export const useLibrarySearchNavigation = ({
   }, [])
   useEffect(() => {
     if (observedSearchIdentity.current === searchIdentity) return
+    const observed = observedSearchIdentity.current
     observedSearchIdentity.current = searchIdentity
     if (expectedSearchIdentity.current === searchIdentity) {
       expectedSearchIdentity.current = null
       return
     }
+    // A selection that lands with no typed text waiting (the wide screen's
+    // first work arriving just after the owner pressed Attention) leaves the
+    // Attention move on its way. A typed draft still yields to a selection.
+    if (!searchPending && onlySelectionMoved(observed, searchIdentity)) return
     invalidateSearch()
     setSearchPending(false)
-  }, [invalidateSearch, searchIdentity])
+  }, [invalidateSearch, searchIdentity, searchPending])
   useEffect(() => {
     return () => {
       invalidateSearch()

@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Dropdown } from '../src/components/Dropdown'
 
@@ -15,6 +15,15 @@ const Fruit = () => {
 }
 
 describe('Dropdown type-to-select (#1466)', () => {
+  // A typed prefix lasts half a second by the keys' time stamps. The test owns
+  // that clock, so a loaded runner's gap between two keys never ends a prefix.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'performance'] })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('moves to the first option starting with what was typed, and Enter chooses it', async () => {
     const user = userEvent.setup()
     render(<Fruit />)
@@ -43,10 +52,10 @@ describe('Dropdown type-to-select (#1466)', () => {
     await user.click(screen.getByRole('combobox', { name: 'Fruit' }))
 
     await user.keyboard('b')
-    await new Promise((resolve) => setTimeout(resolve, 550))
+    vi.advanceTimersByTime(550)
     await user.keyboard('c')
     expect(screen.getByRole('option', { name: 'Cherry' })).toHaveFocus()
-    await new Promise((resolve) => setTimeout(resolve, 550))
+    vi.advanceTimersByTime(550)
     await user.keyboard(' ')
     expect(screen.queryByRole('listbox')).toBeNull()
     expect(screen.getByRole('combobox', { name: 'Fruit' })).toHaveTextContent('Cherry')

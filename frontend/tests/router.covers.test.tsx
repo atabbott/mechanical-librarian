@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, UncertainMutationError } from '../src/api/http'
 import { formatClock } from '../src/dates'
@@ -22,7 +22,10 @@ import {
   library,
   recordedAcknowledgement,
   renderRoute,
+  loadRouteModules,
 } from './fixtures'
+
+beforeAll(loadRouteModules)
 
 afterEach(cleanup)
 // Covers' first-visit walkthrough (#1372 PR 3) is seen unless a test says so.
