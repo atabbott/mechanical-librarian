@@ -5711,6 +5711,15 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     )
                 set_root_text(page, "")
                 page.set_viewport_size({"width": 390, "height": 844})
+                # Covers load lazily (#1290): every cover's image waits until it
+                # nears the viewport. A phone's whole strip of covers is within
+                # the browser's lazy-load distance, now that the frameless
+                # workspace no longer clips it, so the attribute is what holds.
+                lazy = page.evaluate(
+                    "() => [...document.querySelectorAll('.library-cover-image img')]"
+                    ".map(image => image.loading)"
+                )
+                assert lazy and set(lazy) == {"lazy"}, lazy
 
                 assert errors == []
                 # A cover whose bytes never arrive keeps a bounded, labelled
@@ -5733,10 +5742,8 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 page.reload()
                 page.get_by_text("Image unavailable").first.wait_for()
                 page.wait_for_timeout(300)
-                # Covers load lazily (#1290): a card below the fold has not
-                # asked for its image until it nears the viewport.
                 frames = page.locator(".library-cover-image")
-                assert 0 < len(requested) < frames.count(), requested
+                assert 0 < len(requested) <= frames.count(), requested
                 for cover_frame in frames.all():
                     cover_frame.scroll_into_view_if_needed()
                 page.wait_for_function(
