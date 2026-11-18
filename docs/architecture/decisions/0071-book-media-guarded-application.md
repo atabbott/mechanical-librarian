@@ -103,9 +103,11 @@ one field and records the finding, which is the honest outcome.
 
 ## Validation
 
-The `audiobookshelf-field-effect` canary receipt on both pinned images (v3
-when accepted; v4 adds the owner's clears and names of
-[ADR-0105](0105-going-back-after-a-write.md)), with the audiobook item's
+The `audiobookshelf-field-effect` canary receipt on every pinned image, the
+2.26.0 floor included (v3 when accepted; v4 adds the owner's clears and names
+of [ADR-0105](0105-going-back-after-a-write.md); the
+[testing strategy](../../development/testing-strategy.md) names the current
+version and its phases), with the audiobook item's
 per-destination capability and outcome; a fake-service
 end-to-end test in the `required-installed` cohort covering decision, plan,
 apply, read-back, audit, idempotent re-apply and an ambiguous response that is
