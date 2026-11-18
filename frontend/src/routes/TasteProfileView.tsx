@@ -28,8 +28,9 @@ import { useReviewContext } from '../router'
 
 // Covers → Taste profile (#1372): the profile the builder model wrote from the
 // owner's cover choices, which the owner edits rule by rule; each saved change
-// is a new version at once. It influences nothing yet. Rule text is model
-// output or the owner's, so it is only ever rendered as React text.
+// is a new version at once. The suggestion model compares covers with it
+// (#1372 PR 4b). Rule text is model output or the owner's, so it is only ever
+// rendered as React text.
 
 type Rule = NonNullable<TasteProfile['profile']>['rules'][number]
 const sectionHeadings = {
@@ -217,6 +218,85 @@ function BuildState({
         ) : null}
       </div>
     </section>
+  )
+}
+
+// The suggestion model's state, said under the build's (#1372 PR 4b): not set
+// up, stopped for the day, and the works whose check failed with Try again.
+function JudgeState({ view }: { view: TasteProfile }) {
+  const { http } = useReviewContext()
+  const cache = useQueryClient()
+  const region = useRef<HTMLDivElement>(null)
+  const { judge, profile } = view
+  const retry = useMutation({
+    mutationFn: (version: number) => http.retryTasteJudge(version),
+    retry: false,
+    onSuccess: (next) => {
+      cache.setQueryData(['covers', 'taste'], next)
+      focusAfterRetry(
+        () => region.current,
+        () => region.current,
+      )
+    },
+  })
+  const waiting = useWaitsUntil(judge.retry_after)
+  if (profile === null) return null
+  if (!judge.configured)
+    return (
+      <div className="taste-build">
+        <p>
+          Set up the suggestion model in{' '}
+          <Link to="/settings" search={{ group: 'reviewer' }}>
+            Settings
+          </Link>
+          .
+        </p>
+      </div>
+    )
+  const at = formatClock(judge.retry_after ?? 0)
+  const error = retry.error
+  const stopped =
+    judge.stopped === null || !waiting
+      ? null
+      : judge.stopped === 'ceiling'
+        ? `Mechanical Librarian has asked for ${judge.daily_limit.toLocaleString('en-GB')} suggestions today, the daily limit. Suggestions resume after ${at}.`
+        : `OpenRouter did not confirm what the last request cost, so suggestions wait until ${at}.`
+  if (stopped === null && judge.failed === 0 && !error) return null
+  return (
+    <div ref={region} tabIndex={-1} className="taste-build taste-judge">
+      {stopped === null ? null : <p>{stopped}</p>}
+      {judge.failed === 0 && !error ? null : (
+        <div className="taste-failure" role="alert">
+          {judge.failed === 0 ? null : (
+            <p>
+              {judge.failed === 1
+                ? '1 work could not be checked against your taste profile.'
+                : `${judge.failed.toLocaleString('en-GB')} works could not be checked against your taste profile.`}
+            </p>
+          )}
+          {judge.failed === 0 || stopped !== null ? null : (
+            <button
+              type="button"
+              aria-disabled={retry.isPending || undefined}
+              onClick={() => {
+                if (!retry.isPending) retry.mutate(profile.version)
+              }}
+            >
+              Try again
+            </button>
+          )}
+          {error ? (
+            <p>
+              {uncertainWriteOutcome(error)
+                ? 'No answer came back. Check whether the works are being checked again.'
+                : error instanceof ApiError && error.status === 409 && error.code === 'stale'
+                  ? staleCopy
+                  : refusalCopy(error, 'The works were not checked again. Reload and try again.')}
+            </p>
+          ) : null}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -677,6 +757,11 @@ function Profile({ view }: { view: TasteProfile }) {
           <dd>{`${String(profile.rules.length)} of 40`}</dd>
         </div>
       </dl>
+      {view.confirmed.suggested === 0 ? null : (
+        <p className="taste-confirmed">
+          {`Confirmed ${view.confirmed.confirmed.toLocaleString('en-GB')} of ${view.confirmed.suggested.toLocaleString('en-GB')} suggestions`}
+        </p>
+      )}
       <p className="taste-status" role="status" tabIndex={-1}>
         {editor.status}
       </p>
@@ -743,6 +828,7 @@ export default function TasteProfileView({
     <div className="taste-profile">
       {failure}
       <BuildState view={view} onStart={onStart} focusBuild={focusBuild} />
+      <JudgeState view={view} />
       <Profile view={view} />
     </div>
   )

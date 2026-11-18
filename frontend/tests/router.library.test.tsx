@@ -7722,6 +7722,36 @@ describe('Library route', () => {
     },
   )
 
+  // The taste judge's suggestion shows in the Works canvas as in Covers (#1372 PR 4b).
+  it('shows the suggestion box below the cards in the Works canvas', async () => {
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...coverField(retryableCover('completed')),
+            coverTasteSuggestion: {
+              verdict_id: `taste_verdict_${'a'.repeat(32)}`,
+              version: 2,
+              candidate_reference: `cover_transport_ref_${'a'.repeat(64)}`,
+              strength: 'likely',
+              rules: [{ number: 1, text: 'Prefer drawn covers.' }],
+            },
+          },
+        ],
+      })),
+    })
+    const comparison = await screen.findByLabelText('Choose a cover')
+    const card = await within(comparison).findByRole('radio', { name: /Open Library cover/u })
+    expect(card).toHaveTextContent('Suggested')
+    expect(within(comparison).getByText('Switch suggested')).toBeVisible()
+    const box = within(comparison).getByRole('complementary', { name: 'Suggested because' })
+    expect(card.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(box).getByText('Likely')).toBeVisible()
+    expect(within(box).getByRole('listitem')).toHaveTextContent('1Prefer drawn covers.')
+  })
+
   it.each([
     [
       'retry',

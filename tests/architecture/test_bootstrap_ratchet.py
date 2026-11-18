@@ -101,8 +101,9 @@ CEILING = {
     # 3486 since #1372 PR 4 wired the taste judge: one constructor of the
     # judge service, one opener that binds the cover authority to the lane's
     # repository, the two lanes passed to CoverTasteBackground, and one
-    # keyword argument for the judge's daily limit.
-    "composition.py": 3486,
+    # keyword argument for the judge's daily limit. 3487 since #1372 PR 4b
+    # passed that limit to the taste profile read: one keyword argument.
+    "composition.py": 3487,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer; PR 4 renamed it
     # run_taste_reviewer, which takes a build or a judgement: 146 for the

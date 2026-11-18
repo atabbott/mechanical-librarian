@@ -1,9 +1,9 @@
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import type { SyntheticEvent } from 'react'
 
 import { refusalCopy, uncertainWriteOutcome } from '../api/http'
-import type { CoverObservationView, DecisionCommand } from '../api/http'
+import type { CoverObservationView, CoverTasteSuggestion, DecisionCommand } from '../api/http'
 import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useCoverChoiceData } from '../coverChoices'
 import type { CoverPrepareFailure, RecordCoverPrepareFailure } from '../coverChoices'
@@ -308,7 +308,11 @@ const coverExcludedReason = (candidate: CoverCandidate) =>
             : null
 // What a prepared comparison shows: its cards, the current cover's own
 // sources, and the measured rules' stage and recommendation.
-const coverComparisonShape = (consideration: CoverConsideration, mediaKind: string) => {
+const coverComparisonShape = (
+  consideration: CoverConsideration,
+  mediaKind: string,
+  suggestion: CoverTasteSuggestion | null = null,
+) => {
   const candidates = consideration.candidates
   const incumbent = candidates.find((candidate) => candidate.incumbent)
   // A larger copy of the current picture is its own card, so it is neither a
@@ -331,11 +335,20 @@ const coverComparisonShape = (consideration: CoverConsideration, mediaKind: stri
         : incumbent.sourceKinds
   const policyStatus =
     typeof consideration.policy?.status === 'string' ? consideration.policy.status : null
-  const recommendedReference =
-    policyStatus === 'recommended' &&
-    typeof consideration.policy?.recommended_candidate_reference === 'string'
-      ? consideration.policy.recommended_candidate_reference
+  // The taste judge's choice, when it names a card here, is the suggested
+  // card in place of the measured rules' (#1372 PR 4b).
+  const taste =
+    suggestion !== null &&
+    candidates.some((candidate) => candidate.reference === suggestion.candidate_reference)
+      ? suggestion
       : null
+  const recommendedReference =
+    taste !== null
+      ? taste.candidate_reference
+      : policyStatus === 'recommended' &&
+          typeof consideration.policy?.recommended_candidate_reference === 'string'
+        ? consideration.policy.recommended_candidate_reference
+        : null
   // The measured rules' stage (#1363): over a populated cover its choice is a
   // suggestion, shown with the fault that prompted it; a fill is recommended.
   const stage = consideration.stage ?? null
@@ -351,9 +364,11 @@ const coverComparisonShape = (consideration: CoverConsideration, mediaKind: stri
     recommendedReference,
     stage,
     stageReason,
+    taste,
     suggesting:
-      recommendedReference !== null &&
-      (stage?.outcome === 'suggest' || stage?.outcome === 'replace'),
+      taste !== null ||
+      (recommendedReference !== null &&
+        (stage?.outcome === 'suggest' || stage?.outcome === 'replace')),
     faultLabel:
       stageReason !== null && stage?.outcome !== 'fill'
         ? coverFaultLabel(stageReason, audiobook)
@@ -386,6 +401,7 @@ const calibrationShape = (shape: CoverShape, reviewCaseId: string): CoverShape =
     candidates: keyed.map((item) => item.candidate),
     expanded: false,
     recommendedReference: null,
+    taste: null,
     suggesting: false,
   }
 }
@@ -928,7 +944,11 @@ function LibraryCoverChoicesContent({
   const accepts = field.decisionActions.includes('accept')
   if (consideration?.current !== true)
     return <PrepareCoverComparison disabled={disabled} cover={cover} failure={failure} />
-  const prepared = coverComparisonShape(consideration, mediaKind)
+  const prepared = coverComparisonShape(
+    consideration,
+    mediaKind,
+    field.coverTasteSuggestion ?? null,
+  )
   const shape = calibration ? calibrationShape(prepared, reviewCaseId) : prepared
   const { candidates, expanded, incumbent, alternatives } = shape
   const coverContexts = consideration.choiceContexts
@@ -1055,7 +1075,49 @@ function LibraryCoverChoicesContent({
           {candidates.map(card)}
         </div>
       )}
+      {/* Below the cards, never above them, so the choices stay where they
+          were (owner, 2026-11-16). */}
+      {shape.taste === null ? null : <SuggestedBecause suggestion={shape.taste} />}
       <CoverOmissions consideration={consideration} merged={shape.duplicates.length} />
     </section>
+  )
+}
+// Why the taste judge suggests the marked card: its strength and the rules
+// it cited, each the stored rule shown as text (#1372 PR 4b).
+function SuggestedBecause({ suggestion }: { suggestion: CoverTasteSuggestion }) {
+  const navigate = useNavigate()
+  return (
+    <aside className="cover-taste-why" aria-labelledby="cover-taste-why">
+      <header>
+        <strong id="cover-taste-why">Suggested because</strong>
+        <StatusPill tone={suggestion.strength === 'strong' ? 'accent' : 'neutral'}>
+          {suggestion.strength === 'strong' ? 'Strong' : 'Likely'}
+        </StatusPill>
+      </header>
+      <ol>
+        {suggestion.rules.map((rule) => (
+          <li key={rule.number}>
+            <span className="cover-taste-rule">{String(rule.number)}</span>
+            <span>{rule.text}</span>
+          </li>
+        ))}
+      </ol>
+      <button
+        type="button"
+        className="cover-taste-edit"
+        onClick={() => {
+          void navigate({
+            to: '/library',
+            search: { lens: 'all', view: 'covers', tab: 'taste' },
+          }).then(() => {
+            window.requestAnimationFrame(() => {
+              document.querySelector<HTMLElement>('.covers-tabs [aria-pressed="true"]')?.focus()
+            })
+          })
+        }}
+      >
+        Edit taste profile
+      </button>
+    </aside>
   )
 }

@@ -260,3 +260,46 @@ def test_the_byte_budget_starts_from_the_kept_rules_and_removed_texts(
         )
         is None
     )
+
+
+def test_corrections_lead_newest_first_up_to_25_then_the_stable_sample() -> None:
+    """S4, J9: decisions that corrected a suggestion are sent first, newest
+    first, at most 25; the rest, and corrections past 25, follow in the
+    stable sample, and the record counts the corrections sent."""
+    decisions = [
+        replace(_decision(index, (_candidate(index),)), correction=index % 2 == 0)
+        for index in range(60)
+    ]
+    built = assemble_taste_inputs(decisions, _read, kept=(), left_out=(), nonce=NONCE)
+    assert built is not None
+    corrections = [decision for decision in decisions if decision.correction]
+    newest = corrections[::-1][:25]
+    rest = sorted(
+        (decision for decision in decisions if decision not in newest),
+        key=lambda decision: hashlib.sha256(
+            decision.selection_id.encode("utf-8")
+        ).hexdigest(),
+    )
+    expected = [
+        (decision.selection_id, [decision.candidates[0].transport_sha256])
+        for decision in (newest + rest)[:50]
+    ]
+    assert built.record["corrections"] == 25
+    assert built.record["included"] == 50
+    assert (
+        built.record["input_sha256"]
+        == hashlib.sha256(
+            json.dumps(expected, separators=(",", ":"), ensure_ascii=False).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+    )
+    without = assemble_taste_inputs(
+        [replace(decision, correction=False) for decision in decisions],
+        _read,
+        kept=(),
+        left_out=(),
+        nonce=NONCE,
+    )
+    assert without is not None and without.record["corrections"] == 0
+    assert without.record["input_sha256"] != built.record["input_sha256"]

@@ -50,6 +50,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "series",
         "state": "missing",
@@ -140,6 +141,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "genres",
         "state": "missing",
@@ -251,6 +253,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "isbn",
         "state": "missing",
@@ -350,6 +353,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "title",
         "state": "value",
@@ -420,6 +424,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "subtitle",
         "state": "missing",
@@ -510,6 +515,7 @@
       "classification_reason": "This field needs your review.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "authors",
         "state": "value",
@@ -581,6 +587,7 @@
       "classification_reason": "Nothing to decide for this field.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "publishedDate",
         "state": "missing",
@@ -641,6 +648,7 @@
       "classification_reason": "Nothing to decide for this field.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "publisher",
         "state": "missing",
@@ -731,6 +739,7 @@
       "classification_reason": "Every source repeats your current description, so no review is needed. You can still keep it or choose the adviser's text.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "description",
         "state": "value",
@@ -830,6 +839,7 @@
       "classification_reason": "Nothing to decide for this field.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "asin",
         "state": "missing",
@@ -890,6 +900,7 @@
       "classification_reason": "Nothing to decide for this field.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "language",
         "state": "missing",
@@ -967,6 +978,7 @@
       "classification_reason": "Tags are off in your settings, so your tags are left as they are and no review is needed. You can still choose proposed tags.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "tags",
         "state": "missing",
@@ -1032,6 +1044,7 @@
       "classification_reason": "Nothing to decide for this field.",
       "corroboration_sources": [],
       "cover_consideration": null,
+      "cover_taste_suggestion": null,
       "current": {
         "destination": "cover",
         "state": "missing",
@@ -1072,7 +1085,7 @@
   "recording_admission_basis": null,
   "recording_identity_basis": null,
   "review_case_id": "review_case_b62ec3e3209f7ad44663f982fa59cfbe8c9ae3fc88bf1a7413fc3102761699a6",
-  "schema_version": "review-case-detail-v10",
+  "schema_version": "review-case-detail-v11",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",

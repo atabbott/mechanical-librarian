@@ -28,6 +28,8 @@ from mechanical_librarian.application.cover_consideration import (
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.review_covers import (
     COVER_PAGE_SIZE,
+    REVIEW_COVER_CALIBRATION_SCHEMA,
+    REVIEW_COVERS_SCHEMA,
     CalibrationRow,
     CoverRow,
     cover_calibration,
@@ -389,7 +391,7 @@ def test_a_readable_current_cover_with_choices_is_kept(tmp_path: Path) -> None:
         page = _page(library.repository, "all", None)
 
     assert page["counts"] == {"decide": 0, "kept": 1, "switched": 0, "all": 1}
-    assert page["schema_version"] == "review-covers-v1"
+    assert page["schema_version"] == REVIEW_COVERS_SCHEMA
     assert page["next_cursor"] is None
     (item,) = page["items"]
     assert item["group"] == "kept"
@@ -421,7 +423,7 @@ def test_an_unreadable_current_cover_with_a_candidate_is_suggested(
 
     assert decide["counts"]["decide"] == 1
     assert [item["group"] for item in decide["items"]] == ["proposal"]
-    assert decide["items"][0]["suggestion"] == {"reason": "unreadable"}
+    assert decide["items"][0]["suggestion"] == {"reason": "unreadable", "taste": None}
     assert decide["items"][0]["hold"] is None
     # The library holds a cover it could not read, which is not "No cover".
     (item,) = decide["items"]
@@ -1476,7 +1478,7 @@ def test_calibration_offers_works_with_three_arts_first_then_by_preparation(
         # Computed on each read: nothing is written (S1).
         assert connection.total_changes == before
         document = cast(dict[str, Any], cover_calibration(library.repository))
-    assert document["schema_version"] == "review-cover-calibration-v1"
+    assert document["schema_version"] == REVIEW_COVER_CALIBRATION_SCHEMA
     assert {item["group"] for item in document["items"]} == {"kept"}
 
 
@@ -1730,7 +1732,7 @@ def test_the_calibration_route_is_private_and_reads_the_set(tmp_path: Path) -> N
             assert response.headers["cache-control"] == "no-store, private"
             body = response.json()
     assert set(body) == {"items", "schema_version"}
-    assert body["schema_version"] == "review-cover-calibration-v1"
+    assert body["schema_version"] == REVIEW_COVER_CALIBRATION_SCHEMA
     # Three arts first.
     assert [item["review_case_id"] for item in body["items"]] == [
         library.cases["item-1"],

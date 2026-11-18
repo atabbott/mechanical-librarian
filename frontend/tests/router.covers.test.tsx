@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, UncertainMutationError } from '../src/api/http'
+import { formatClock } from '../src/dates'
 import { coalesceMilliseconds, ownerIdleMilliseconds } from '../src/liveInvalidation'
 import type {
   CaseDetailView,
@@ -164,7 +165,7 @@ const page = (
   counts: pageCounts,
   items,
   next_cursor,
-  schema_version: 'review-covers-v1',
+  schema_version: 'review-covers-v2',
   view,
 })
 
@@ -1345,7 +1346,7 @@ describe('Measured cover rules (#1363)', () => {
 
   it('shows a suggestion To decide with its fault and no filter', async () => {
     const decidePage = page('decide', [
-      work('case-1', 'proposal', { suggestion: { reason: 'unreadable' } }),
+      work('case-1', 'proposal', { suggestion: { reason: 'unreadable', taste: null } }),
     ])
     renderRoute('/library?lens=all&view=covers&tab=decide', coversHttp({ decide: decidePage }))
     expect(await screen.findByText('Unreadable image')).toBeVisible()
@@ -1424,7 +1425,7 @@ describe('Measured cover rules (#1363)', () => {
 // Covers → Taste profile (#1372): its states from one read, and the owner's
 // edits (PR 2).
 const tasteView = (value: Partial<TasteProfileView> = {}): TasteProfileView => ({
-  schema_version: 'review-taste-profile-v2',
+  schema_version: 'review-taste-profile-v3',
   configured: true,
   chosen: 0,
   required: 25,
@@ -1432,6 +1433,8 @@ const tasteView = (value: Partial<TasteProfileView> = {}): TasteProfileView => (
   build: null,
   profile: null,
   versions: [],
+  judge: { configured: false, daily_limit: 5000, stopped: null, retry_after: null, failed: 0 },
+  confirmed: { confirmed: 0, suggested: 0 },
   ...value,
 })
 const tasteRoute = '/library?lens=all&view=covers&tab=taste'
@@ -2402,7 +2405,7 @@ describe('Covers → Taste profile edits (#1372 PR 2)', () => {
 describe("Covers' picks (#1372 PR 3)", () => {
   const calibration = (ids: string[]) => ({
     items: ids.map((id) => work(id, 'kept')),
-    schema_version: 'review-cover-calibration-v1' as const,
+    schema_version: 'review-cover-calibration-v2' as const,
   })
   // Five cards: the current cover and four others, with the second others'
   // card recommended, as the measured rules would.
@@ -2443,7 +2446,7 @@ describe("Covers' picks (#1372 PR 3)", () => {
       ...http,
       getCoverCalibration: vi.fn<ReviewHttp['getCoverCalibration']>(async () => calibration(ids)),
       getTasteProfile: vi.fn<ReviewHttp['getTasteProfile']>(async () => ({
-        schema_version: 'review-taste-profile-v2',
+        schema_version: 'review-taste-profile-v3',
         configured: true,
         chosen: typeof chosen === 'function' ? chosen() : chosen,
         required: 25,
@@ -2451,6 +2454,14 @@ describe("Covers' picks (#1372 PR 3)", () => {
         build: null,
         profile: null,
         versions: [],
+        judge: {
+          configured: false,
+          daily_limit: 5000,
+          stopped: null,
+          retry_after: null,
+          failed: 0,
+        },
+        confirmed: { confirmed: 0, suggested: 0 },
         ...taste,
       })),
     }
@@ -3077,4 +3088,333 @@ describe("Covers' picks (#1372 PR 3)", () => {
     const group = await screen.findByRole('radiogroup', { name: question })
     await user.click(within(group).getByRole('radio', { name: /Open Library cover/u }))
   }
+})
+
+// The taste judge's suggestions (#1372 PR 4b): the marked card, the box below
+// the cards, and the Taste profile lines.
+describe('taste suggestions (#1372 PR 4b)', () => {
+  const longRule = `Prefer ${'quiet '.repeat(65)}covers.`.slice(0, 400)
+  const suggestion = (
+    reference: string,
+    strength: 'strong' | 'likely' = 'strong',
+    rules = [{ number: 3, text: 'Prefer illustrated art over photographs.' }],
+  ) => ({
+    verdict_id: `taste_verdict_${'a'.repeat(32)}`,
+    version: 1,
+    candidate_reference: reference,
+    strength,
+    rules,
+  })
+  const judged = (
+    taste: ReturnType<typeof suggestion> | null,
+    stage: { outcome: 'keep' | 'replace'; reason: 'wrong_shape' | null } = {
+      outcome: 'keep',
+      reason: null,
+    },
+    recommended: string | null = null,
+  ) =>
+    vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+      const value = coverDetail(id, titles[id] ?? id)
+      return {
+        ...value,
+        fields: value.fields.map((field) =>
+          field.coverConsideration
+            ? {
+                ...field,
+                coverTasteSuggestion: taste,
+                coverConsideration: {
+                  ...field.coverConsideration,
+                  candidates: [
+                    ...field.coverConsideration.candidates,
+                    { ...candidate('3', false), ordinal: 2 },
+                  ],
+                  stage: { ...stage, language: null },
+                  policy:
+                    recommended === null
+                      ? null
+                      : { status: 'recommended', recommended_candidate_reference: recommended },
+                },
+              }
+            : field,
+        ),
+      }
+    })
+  const ref = (digit: string) => `cover_ref_${digit.repeat(64)}`
+  // A card by its picture, since cards are named by their source alone.
+  const cardOf = (group: HTMLElement, digit: string) => {
+    const card = within(group)
+      .getAllByRole('radio')
+      .find((radio) => radio.querySelector(`img[src*="${digit.repeat(64)}"]`) !== null)
+    if (!card) throw new Error(`no card shows cover ${digit}`)
+    return card
+  }
+  const open = (taste: ReturnType<typeof suggestion> | null, ...rest: unknown[]) => {
+    const http = coversHttp({
+      decide: page('decide', [
+        work('case-1', 'proposal', {
+          suggestion: { reason: null, taste: taste ? { strength: taste.strength } : null },
+        }),
+      ]),
+    })
+    http.getCaseDetail = judged(taste, ...(rest as [never, never]))
+    return http
+  }
+
+  it('marks the judge’s card and lists its rules below the cards, never above them', async () => {
+    const taste = suggestion(ref('3'), 'strong', [
+      { number: 3, text: 'Prefer illustrated art over photographs.' },
+      { number: 7, text: longRule },
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=decide&cover=case-1', open(taste))
+    const group = await screen.findByRole('radiogroup', {
+      name: 'Which cover should this work use?',
+    })
+    const comparison = group.closest('section')
+    if (!comparison) throw new Error('the comparison is required')
+    expect(within(comparison).getByText('Switch suggested')).toBeVisible()
+    // The keep caption gives way to the suggestion.
+    expect(
+      within(comparison).queryByText('The current cover has no fault, so it is kept.'),
+    ).toBeNull()
+    const cards = within(group).getAllByRole('radio')
+    expect(cards.filter((card) => card.textContent.includes('Suggested'))).toHaveLength(1)
+    expect(cardOf(group, '3')).toHaveTextContent('Suggested')
+    const box = within(comparison).getByRole('complementary', { name: 'Suggested because' })
+    expect(group.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(box).getByText('Strong')).toBeVisible()
+    const items = within(box).getAllByRole('listitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      '3Prefer illustrated art over photographs.',
+      `7${longRule}`,
+    ])
+    expect(longRule).toHaveLength(400)
+  })
+
+  it('marks the judge’s card in place of the measured rules’ and keeps the fault', async () => {
+    const taste = suggestion(ref('3'), 'likely')
+    renderRoute(
+      '/library?lens=all&view=covers&tab=decide&cover=case-1',
+      open(taste, { outcome: 'replace', reason: 'wrong_shape' }, ref('2')),
+    )
+    const group = await screen.findByRole('radiogroup', {
+      name: 'Which cover should this work use?',
+    })
+    const comparison = group.closest('section')
+    if (!comparison) throw new Error('the comparison is required')
+    const marked = within(group)
+      .getAllByRole('radio')
+      .filter((card) => card.textContent.includes('Suggested'))
+    expect(marked).toHaveLength(1)
+    expect(marked[0]).toBe(cardOf(group, '3'))
+    expect(within(comparison).getByText('Square on an ebook')).toBeVisible()
+    const box = within(comparison).getByRole('complementary', { name: 'Suggested because' })
+    expect(within(box).getByText('Likely')).toBeVisible()
+  })
+
+  it('shows no box without a suggestion and the measured rules’ card as before', async () => {
+    renderRoute(
+      '/library?lens=all&view=covers&tab=decide&cover=case-1',
+      open(null, { outcome: 'keep', reason: null }),
+    )
+    const group = await screen.findByRole('radiogroup', {
+      name: 'Which cover should this work use?',
+    })
+    const comparison = group.closest('section')
+    if (!comparison) throw new Error('the comparison is required')
+    expect(
+      within(comparison).getByText('The current cover has no fault, so it is kept.'),
+    ).toBeVisible()
+    expect(
+      within(comparison).queryByRole('complementary', { name: 'Suggested because' }),
+    ).toBeNull()
+  })
+
+  it('confirms with the same accept a pick of that card sends', async () => {
+    const user = userEvent.setup()
+    const http = open(suggestion(ref('3')))
+    renderRoute('/library?lens=all&view=covers&tab=decide&cover=case-1', http)
+    const group = await screen.findByRole('radiogroup', {
+      name: 'Which cover should this work use?',
+    })
+    await user.click(cardOf(group, '3'))
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    expect(http.recordDecision.mock.calls[0]?.[1]).toMatchObject({
+      destination: 'cover',
+      outcome: 'accept',
+      selectedValue: { kind: 'cover', value: `cover_${'3'.repeat(64)}` },
+      considerationId: 'cover_consideration_case-1',
+    })
+  })
+
+  it('opens Taste profile from Edit taste profile with focus on its tab', async () => {
+    const user = userEvent.setup()
+    const { router } = renderRoute(
+      '/library?lens=all&view=covers&tab=decide&cover=case-1',
+      open(suggestion(ref('3'))),
+    )
+    const box = await screen.findByRole('complementary', { name: 'Suggested because' })
+    await user.click(within(box).getByRole('button', { name: 'Edit taste profile' }))
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({ lens: 'all', view: 'covers', tab: 'taste' }),
+    )
+    const tabs = screen.getByRole('navigation', { name: 'Cover views' })
+    await waitFor(() =>
+      expect(within(tabs).getByRole('button', { name: 'Taste profile' })).toHaveFocus(),
+    )
+  })
+
+  it('lists rows in the server’s order: Strong, Likely, rule suggestions, then choices', async () => {
+    const strong = work('case-1', 'proposal', {
+      suggestion: { reason: null, taste: { strength: 'strong' } },
+    })
+    const likely = work('case-2', 'proposal', {
+      suggestion: { reason: null, taste: { strength: 'likely' } },
+    })
+    const rule = work('case-3', 'proposal', { suggestion: { reason: 'wrong_shape', taste: null } })
+    const choice = work('case-77', 'choice')
+    renderRoute(
+      '/library?lens=all&view=covers&tab=decide',
+      coversHttp({ decide: page('decide', [strong, likely, rule, choice]) }),
+    )
+    const suggested = await screen.findByRole('region', { name: 'Switch suggested' })
+    const names = within(suggested)
+      .getAllByRole('button')
+      .map((row) => row.textContent)
+      .filter((text) => text.includes('Book'))
+    expect(names.map((text) => text.replace(/An Author.*/u, ''))).toEqual([
+      'First Book',
+      'Second Book',
+      'Third Book',
+    ])
+    expect(screen.getByRole('region', { name: 'Choose' })).toHaveTextContent('Late Book')
+  })
+})
+
+describe('Taste profile suggestion state (#1372 PR 4b)', () => {
+  const profile = {
+    version: 2,
+    kind: 'built' as const,
+    built_at: 100,
+    decisions: 25,
+    rules: [
+      {
+        number: 1,
+        section: 'drawn_to' as const,
+        text: 'Bold art.',
+        provenance: 'model' as const,
+      },
+    ],
+  }
+  const judge = (value: Partial<TasteProfileView['judge']> = {}): TasteProfileView['judge'] => ({
+    configured: true,
+    daily_limit: 5000,
+    stopped: null,
+    retry_after: null,
+    failed: 0,
+    ...value,
+  })
+  const withProfile = (value: Partial<TasteProfileView> = {}) =>
+    tasteView({
+      profile,
+      versions: [{ version: 2, kind: 'built', created_at: 100, decisions: 25 }],
+      ...value,
+    })
+  const later = Math.floor(Date.now() / 1000) + 3600
+
+  it('sends the owner to Settings while no suggestion model is set up', async () => {
+    renderRoute(tasteRoute, tasteHttp(withProfile({ judge: judge({ configured: false }) })))
+    const line = await screen.findByText(/Set up the suggestion model in/u)
+    expect(within(line).getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'href',
+      '/settings?group=reviewer',
+    )
+    expect(screen.queryByText(/Confirmed/u)).toBeNull()
+  })
+
+  it('says the daily limit and when suggestions resume, with no Try again', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp(
+        withProfile({
+          judge: judge({ stopped: 'ceiling', retry_after: later, failed: 2 }),
+        }),
+      ),
+    )
+    expect(
+      await screen.findByText(
+        new RegExp(
+          `^Mechanical Librarian has asked for 5,000 suggestions today, the daily limit\\. Suggestions resume after ${formatClock(later)}\\.$`,
+          'u',
+        ),
+      ),
+    ).toBeVisible()
+    expect(
+      screen.getByText('2 works could not be checked against your taste profile.'),
+    ).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('says an unconfirmed charge and when suggestions wait until', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp(withProfile({ judge: judge({ stopped: 'unknown_charge', retry_after: later }) })),
+    )
+    expect(
+      await screen.findByText(
+        `OpenRouter did not confirm what the last request cost, so suggestions wait until ${formatClock(later)}.`,
+      ),
+    ).toBeVisible()
+  })
+
+  it('tries the failed works again, then says what a lost or refused answer means', async () => {
+    const user = userEvent.setup()
+    const http = tasteHttp(withProfile({ judge: judge({ failed: 1 }) }))
+    const retried = withProfile()
+    const retryTasteJudge = vi
+      .fn<ReviewHttp['retryTasteJudge']>()
+      .mockRejectedValueOnce(new ApiError(503, 'unavailable'))
+      .mockRejectedValueOnce(new ApiError(400, 'invalid_request'))
+      .mockRejectedValueOnce(new ApiError(409, 'stale'))
+      .mockResolvedValue(retried)
+    renderRoute(tasteRoute, { ...http, retryTasteJudge })
+    expect(
+      await screen.findByText('1 work could not be checked against your taste profile.'),
+    ).toBeVisible()
+    const again = screen.getByRole('button', { name: 'Try again' })
+    await user.click(again)
+    expect(retryTasteJudge).toHaveBeenLastCalledWith(2)
+    expect(
+      await screen.findByText(
+        'No answer came back. Check whether the works are being checked again.',
+      ),
+    ).toBeVisible()
+    await user.click(again)
+    expect(
+      await screen.findByText('The works were not checked again. Reload and try again.'),
+    ).toBeVisible()
+    await user.click(again)
+    expect(
+      await screen.findByText(
+        'The taste profile changed since the page loaded. Nothing was changed.',
+      ),
+    ).toBeVisible()
+    await user.click(again)
+    await waitFor(() =>
+      expect(
+        screen.queryByText('1 work could not be checked against your taste profile.'),
+      ).toBeNull(),
+    )
+  })
+
+  it('counts confirmed suggestions under the meta list once one was suggested', async () => {
+    renderRoute(tasteRoute, tasteHttp(withProfile()))
+    await screen.findByText('Bold art.')
+    expect(screen.queryByText(/^Confirmed/u)).toBeNull()
+    cleanup()
+    renderRoute(tasteRoute, tasteHttp(withProfile({ confirmed: { confirmed: 3, suggested: 4 } })))
+    const line = await screen.findByText('Confirmed 3 of 4 suggestions')
+    const meta = document.querySelector('.taste-meta')
+    if (!meta) throw new Error('the meta list is required')
+    expect(meta.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
 })

@@ -451,15 +451,16 @@ Your choice, with the cover Audiobookshelf holds now.
 
 A suggested switch is a cover the measured cover rules would replace
 ([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md))
-but Current covers or the missing qualification keeps from switching itself.
+but Current covers or the missing qualification keeps from switching itself,
+or one that your [taste profile](cover-taste-profile.md#suggestions) prefers.
 Its row's pill names the fault, and its work says why. To decide counts the
 works whose cover field is in Attention plus the suggested switches; Library's
 Needs attention counts only the first. A readable cover with no fault,
-confirmed or not, is kept without asking, under Kept. A held cover's row under
+confirmed or not, is kept without asking, under Kept, unless your taste profile
+suggests another cover. A held cover's row under
 Choose names the hold in a pill. A current cover Audiobookshelf did not return
 is kept until the next scan. Keeping a current cover that could
 not be read lists it under Kept, and covers not shown leave out its own source.
-Counts follow each decision and Prepare cover comparison.
 
 Pages hold 50 works; Show more covers loads the next page.
 The URL keeps the tab and the open work. A wall tile reads "No cover" when the
@@ -490,8 +491,8 @@ and the comparison names the old cover Replaced cover; an unreadable one shows
 "Image unavailable" there and under Before. Put back records choosing
 the old cover and uploads it from the kept copy. The row reads Put back while
 that write runs, and leaves Switched once the write is verified, releasing the
-copy. If the cover was changed in Audiobookshelf first, the row says it was not
-put back and offers Keep and Others again.
+copy. If Audiobookshelf changed the cover first, the row says so and offers Keep
+and Others again.
 
 A cover field's Covers link opens its work in All. The
 fifth tab is [Taste profile](cover-taste-profile.md); its

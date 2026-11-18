@@ -1,8 +1,9 @@
 # Taste profile
 
 Covers → Taste profile shows the taste profile a vision model wrote from the
-covers you chose and passed over, and lets you edit it. It changes no cover,
-suggestion or decision yet (#1372). The tab has no count, and the other tabs keep theirs
+covers you chose and passed over, and lets you edit it. A second vision model
+compares each work's covers with it and [suggests switches](#suggestions); it
+changes no cover itself (#1372). The tab has no count, and the other tabs keep theirs
 while it is open. It belongs to the [review experience](review-experience.md);
 what the model receives is in the
 [AI trust boundary](../architecture/ai-boundary.md#taste-profile-builder).
@@ -66,6 +67,32 @@ from yet."; when the works run out first, it says how many picks are saved
 and that no more works have two different covers. After the 25th pick Covers
 opens Taste profile, which reads "Writing your taste profile".
 
+## Suggestions
+
+Once a profile exists and a suggestion model is set up, each work whose cover
+you can still choose is compared with the profile in use, once per version. A
+work whose comparison names another of its covers is listed under To decide's
+Switch suggested: Strong first, then Likely, then the measured rules'
+suggestions. A suggestion is Strong when the model is at least 90% confident.
+A work you already answered is never suggested.
+
+The open work marks the suggested card "Suggested" and, below the covers,
+"Suggested because" names Strong or Likely and lists the rules it rests on,
+by number and text, with Edit taste profile, which opens this tab. Nothing is
+added above the covers. Choosing the suggested card is the ordinary choice;
+keeping the current cover or choosing another is a correction, which the
+next rebuild reads first. After an edit, a suggestion keeps the rules of the
+version it was made under until the work is compared again.
+
+Under the build's state, the tab says when suggestions wait: "Set up the
+suggestion model in Settings." with no model, the daily limit or an
+unconfirmed charge with the local time they resume, and "{n} works could not
+be checked against your taste profile." with Try again, which compares them
+again. At most 5,000 suggestions are asked for a day by default
+([configuration](../reference/configuration.md#taste-profile)). Under the
+version, "Confirmed {n} of {m} suggestions" counts the suggested works you
+answered and how many took the suggestion.
+
 ## Editing rules
 
 Each rule has a pencil ("Edit rule {n}") that opens it in place: one line of
@@ -102,6 +129,12 @@ profiles a day.", which the configuration sets
 ([configuration](../reference/configuration.md#taste-profile)). Continue
 without a taste profile stops taste profiles and keeps cover review and
 description advice.
+
+Settings → Reviewer › Suggestions, below it, is built the same way for the
+model that suggests switches: it says what that model receives, the daily
+limit, "Mechanical Librarian asks for at most 5,000 suggestions a day.", Use
+Codex for suggestions, Test suggestion model and prices, Use for suggestions,
+and Continue without suggestions, which stops suggestions only.
 
 The Codex row appears once Codex is signed in or selected for any task. It
 names the Codex model, says taste profiles count against the plan's usage

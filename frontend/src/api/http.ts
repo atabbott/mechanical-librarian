@@ -41,6 +41,9 @@ export type CoversTab = CoverTab | 'taste' | 'picks'
 // The works calibration offers now, in the order to pick (#1372 PR 3).
 export type CoverCalibrationView = ResponseSchema<'_CoverCalibrationResponse'>
 export type TasteProfileView = ResponseSchema<'_TasteProfileResponse'>
+// The two taste tasks Settings configures: the profile and the suggestions.
+export type TasteTask = 'cover_taste_build' | 'cover_taste_judge'
+export type CoverTasteSuggestion = ResponseSchema<'_CoverTasteSuggestion'>
 export type TasteBuildFailure = NonNullable<NonNullable<TasteProfileView['build']>['failure']>
 export type TasteSection = ResponseSchema<'_TasteRule'>['section']
 type TasteRuleRequest =
@@ -819,6 +822,8 @@ export interface ReviewFieldView {
   currentCoverSelectionId?: string | null
   currentCoverSelectionArtifactId?: string | null
   coverConsideration?: CoverConsiderationView | null
+  // The taste judge's pending suggestion and the rules it cited (#1372 PR 4b).
+  coverTasteSuggestion?: CoverTasteSuggestion | null
 }
 // F59's owner controls (ADR-0085): each part is what the store would accept now.
 export interface OwnerControlView {
@@ -1403,6 +1408,7 @@ export interface ReviewHttp {
   testTasteModel(
     value: { expected_revision: number; api_key: string; model: string },
     signal?: AbortSignal,
+    task?: TasteTask,
   ): Promise<CoverModelMetadata>
   clearOpenRouter(expectedRevision: number, signal?: AbortSignal): Promise<ReviewerAccessView>
   selectReviewer(
@@ -1453,6 +1459,8 @@ export interface ReviewHttp {
   getTasteProfile(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<TasteProfileView>
   /** Try again after the failed build `buildId`; it counts against the daily limit. */
   retryTasteBuild(buildId: string, signal?: AbortSignal): Promise<TasteProfileView>
+  /** Try again for the works whose check against `version`, in use, failed. */
+  retryTasteJudge(version: number, signal?: AbortSignal): Promise<TasteProfileView>
   /** Covers → Taste profile: save one rule edit as a new version at once. */
   editTasteRule(
     version: number,
@@ -1910,10 +1918,13 @@ export class ReviewApiClient implements ReviewHttp {
   async testTasteModel(
     value: { expected_revision: number; api_key: string; model: string },
     signal?: AbortSignal,
+    task: TasteTask = 'cover_taste_build',
   ) {
     return this.mutate(
-      '/api/v1/reviewer-access/taste-model/test',
-      { ...value, task: 'cover_taste_build' },
+      task === 'cover_taste_build'
+        ? '/api/v1/reviewer-access/taste-model/test'
+        : '/api/v1/reviewer-access/judge-model/test',
+      { ...value, task },
       signal,
       undefined,
       'POST',
@@ -2028,6 +2039,18 @@ export class ReviewApiClient implements ReviewHttp {
     return this.mutate(
       '/api/v1/covers/taste/retry',
       { build_id: buildId },
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      mapTasteProfile,
+    )
+  }
+  async retryTasteJudge(version: number, signal?: AbortSignal) {
+    return this.mutate(
+      '/api/v1/covers/taste/suggestions/retry',
+      { version },
       signal,
       undefined,
       'POST',
@@ -2913,7 +2936,10 @@ export const mapTasteProfile = (value: TasteProfileView): TasteProfileView => {
     (build !== null &&
       ((build.state === 'failed') !== (build.failure !== null) ||
         (build.retry_after !== null) !==
-          (build.failure === 'ceiling' || build.failure === 'unknown_charge')))
+          (build.failure === 'ceiling' || build.failure === 'unknown_charge'))) ||
+    // A stopped judge names when it resumes, and only then (#1372 PR 4b).
+    (value.judge.stopped === null) !== (value.judge.retry_after === null) ||
+    value.confirmed.confirmed > value.confirmed.suggested
   )
     throw new ApiError(502, 'invalid_taste_profile')
   return value
@@ -3473,6 +3499,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
     field.cover_consideration === null ? null : mapCoverConsideration(field.cover_consideration),
   currentCoverSelectionArtifactId: field.current_cover_selection_artifact_id,
   currentCoverSelectionId: field.current_cover_selection_id,
+  coverTasteSuggestion: field.cover_taste_suggestion,
 })
 
 const mapOwnerControl = ({

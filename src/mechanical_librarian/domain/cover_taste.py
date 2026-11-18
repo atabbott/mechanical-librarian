@@ -63,6 +63,9 @@ TASTE_FIRST_BUILD_DECISIONS: Final = 25
 TASTE_REBUILD_DECISIONS: Final = 10
 TASTE_SCHEDULED_BUILDS_PER_DAY: Final = 4
 TASTE_MAX_DECISIONS: Final = 50
+# Decisions that corrected a suggestion go first, newest first, up to this
+# many (S4, #1372 PR 4b J9).
+TASTE_MAX_CORRECTIONS: Final = 25
 TASTE_PREVIEWS_PER_DECISION: Final = 4
 TASTE_MAX_IMAGES: Final = 100
 TASTE_MAX_REQUEST_BYTES: Final = 24_000_000

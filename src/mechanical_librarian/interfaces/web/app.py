@@ -91,6 +91,10 @@ from mechanical_librarian.application.review_application import (
     ReviewApplicationError,
     ReviewPreparationSchemaVersion,
 )
+from mechanical_librarian.application.review_covers import (
+    ReviewCoverCalibrationSchemaVersion,
+    ReviewCoversSchemaVersion,
+)
 from mechanical_librarian.application.review_web import (
     AutomaticWithheldCondition,
     HumanDecisionAckSchemaVersion,
@@ -379,9 +383,10 @@ class _PasswordChangeRequest(BaseModel):
 
 
 REVIEW_SESSION_SCHEMA: Final = "review-session-v1"
-ReviewTasteProfileSchemaVersion = Literal["review-taste-profile-v2"]
+# v3: the suggestion model's state and the suggestions confirmed (#1372 PR 4b).
+ReviewTasteProfileSchemaVersion = Literal["review-taste-profile-v3"]
 REVIEW_TASTE_PROFILE_SCHEMA: Final[ReviewTasteProfileSchemaVersion] = (
-    "review-taste-profile-v2"
+    "review-taste-profile-v3"
 )
 MetadataPolicyNotebookSchemaVersion = Literal["metadata-policy-notebook-v2"]
 METADATA_POLICY_NOTEBOOK_SCHEMA: Final[MetadataPolicyNotebookSchemaVersion] = (
@@ -898,6 +903,22 @@ class _CoverPolicyReport(_StoredDocumentCopy):
     status: Literal["recommended", "abstained"]
 
 
+class _CoverTasteReason(_ClosedModel):
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
+    # The rule as the verdict's profile version stored it, shown as text.
+    text: StrictStr = Field(min_length=1, max_length=MAX_TASTE_RULE_CODE_POINTS)
+
+
+class _CoverTasteSuggestion(_ClosedModel):
+    """The cover the taste judge suggests and the rules it cited (J8)."""
+
+    verdict_id: StrictStr = Field(pattern=r"^taste_verdict_[0-9a-f]{32}$")
+    version: StrictInt = Field(ge=1)
+    candidate_reference: StrictStr = Field(min_length=1, max_length=512)
+    strength: Literal["strong", "likely"]
+    rules: list[_CoverTasteReason] = Field(min_length=1, max_length=3)
+
+
 class _CoverConsiderationResponse(_StoredDocumentCopy):
     # Twelve reviewed previews, at most one larger copy of the current
     # picture and at most one retained original.
@@ -1100,6 +1121,8 @@ class _ReviewField(_ClosedModel):
     current_cover_selection_id: str | None = None
     current_cover_selection_artifact_id: str | None = None
     cover_consideration: _CoverConsiderationResponse | None = None
+    # The taste judge's pending suggestion for this comparison (#1372 PR 4b).
+    cover_taste_suggestion: _CoverTasteSuggestion | None = None
     description_advice: _DescriptionAdviceResponse | None = None
 
 
@@ -1708,6 +1731,17 @@ class _CoverRuleReason(_ClosedModel):
     reason: _CoverStageReason
 
 
+class _CoverTasteStrength(_ClosedModel):
+    strength: Literal["strong", "likely"]
+
+
+class _CoverSuggestion(_ClosedModel):
+    # Why the measured rules suggest a switch, and the taste judge's strength
+    # when it suggests one (#1363, #1372 PR 4b); at least one is present.
+    reason: _CoverStageReason | None
+    taste: _CoverTasteStrength | None
+
+
 class _CoverWork(_ClosedModel):
     authors: list[str]
     choosable: bool
@@ -1717,8 +1751,8 @@ class _CoverWork(_ClosedModel):
     hold: _CoverRuleReason | None
     media_kind: _MediaKind
     review_case_id: str
-    # Why the measured rules suggest switching this cover (#1363).
-    suggestion: _CoverRuleReason | None
+    # Why switching this cover is suggested (#1363, #1372 PR 4b).
+    suggestion: _CoverSuggestion | None
     switched: _CoverSwitch | None
     title: str
     # The library holds a cover that could not be read, as against no cover.
@@ -1764,6 +1798,30 @@ class _TasteBuild(_ClosedModel):
     retry_after: StrictInt | None = Field(ge=0)
 
 
+class _TasteJudge(_ClosedModel):
+    """The suggestion model's state today (#1372 PR 4b)."""
+
+    configured: StrictBool
+    daily_limit: StrictInt = Field(ge=1, le=50_000)
+    # Today's requests are at the limit, or a charge went unconfirmed; the
+    # stop lifts at the next UTC midnight.
+    stopped: Literal["ceiling", "unknown_charge"] | None
+    retry_after: StrictInt | None = Field(ge=0)
+    # Works whose check failed under the version in use, until Try again.
+    failed: StrictInt = Field(ge=0)
+
+
+class _TasteConfirmed(_ClosedModel):
+    """Owner selections made under a suggestion, and those that took it (J9)."""
+
+    confirmed: StrictInt = Field(ge=0)
+    suggested: StrictInt = Field(ge=0)
+
+
+class _TasteJudgeRetryRequest(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+
+
 class _TasteProfileResponse(_ClosedModel):
     """Covers → Taste profile (#1372). It never carries a path, title,
     reference or anything the model saw."""
@@ -1776,6 +1834,8 @@ class _TasteProfileResponse(_ClosedModel):
     build: _TasteBuild | None
     profile: _TasteProfileVersion | None
     versions: list[_TasteVersion] = Field(max_length=50)
+    judge: _TasteJudge
+    confirmed: _TasteConfirmed
 
 
 class _TasteRetryRequest(_ClosedModel):
@@ -1846,6 +1906,8 @@ def _taste_response(data: dict[str, object]) -> _TasteProfileResponse:
             )
             for version, created_at, document in versions
         ],
+        judge=_TasteJudge.model_validate(data["judge"]),
+        confirmed=_TasteConfirmed.model_validate(data["confirmed"]),
     )
 
 
@@ -1853,7 +1915,7 @@ class _CoversResponse(_ClosedModel):
     counts: _CoverCounts
     items: list[_CoverWork] = Field(max_length=50)
     next_cursor: str | None
-    schema_version: Literal["review-covers-v1"]
+    schema_version: ReviewCoversSchemaVersion
     view: Literal["decide", "kept", "switched", "all"]
 
 
@@ -1861,7 +1923,7 @@ class _CoverCalibrationResponse(_ClosedModel):
     """The works calibration offers now, in the order to pick (#1372 PR 3)."""
 
     items: list[_CoverWork] = Field(max_length=25)
-    schema_version: Literal["review-cover-calibration-v1"]
+    schema_version: ReviewCoverCalibrationSchemaVersion
 
 
 class _LibraryValueFlag(_ClosedModel):
@@ -3361,6 +3423,7 @@ _BODY_PATH_LIMITS = {
     "/api/v1/reviewer-access/taste-model/test": 4_096,
     "/api/v1/reviewer-access/judge-model/test": 4_096,
     "/api/v1/covers/taste/retry": DEFAULT_BODY_LIMIT_BYTES,
+    "/api/v1/covers/taste/suggestions/retry": DEFAULT_BODY_LIMIT_BYTES,
     # A 400-code-point rule, even with every code point escaped as JSON
     # surrogate pairs, plus its version, number and framing (#1372 PR 2).
     "/api/v1/covers/taste/rules": 8_192,
@@ -5385,6 +5448,31 @@ def _register_taste_routes(
         _require_session(application, ml_session, x_csrf_token)
         try:
             application.retry_taste_build(request.build_id)
+            return _taste_response(application.taste_profile())
+        except ReviewApplicationError as error:
+            status = 409 if error.code == "stale" else 503
+            raise HTTPException(status, detail={"code": error.code}) from None
+        except ReviewerAccessApplicationError:
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+
+    @app.post(
+        "/api/v1/covers/taste/suggestions/retry",
+        response_model=_TasteProfileResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def retry_taste_judge(
+        request: _TasteJudgeRetryRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _TasteProfileResponse:
+        """Try again for the works whose check against the version in use
+        failed; `stale` when that version changed or none failed."""
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            application.retry_taste_judge(request.version)
             return _taste_response(application.taste_profile())
         except ReviewApplicationError as error:
             status = 409 if error.code == "stale" else 503

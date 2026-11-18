@@ -11,6 +11,11 @@ import sqlite3
 import uuid
 from typing import Literal, cast
 
+from mechanical_librarian.adapters.persistence.cover_taste_judge import (
+    VERDICT_IN_FORCE_SQL,
+    request_taste_judge_retries,
+    taste_judge_facts,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -542,13 +547,33 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
 
     @local_operation
     def decisions(self) -> tuple[TasteDecisionSource, ...]:
+        """Each eligible decision in the order recorded, and whether it
+        corrected the suggestion in force when it was made (J9)."""
         rows = self._connection.execute(
             "SELECT selection.selection_id,selection.document,consideration.document,"
-            f"facts.format {_ELIGIBLE} ORDER BY selection.rowid",
+            f"facts.format,{VERDICT_IN_FORCE_SQL} {_ELIGIBLE} ORDER BY selection.rowid",
             (TASTE_MIN_ARTS,),
         ).fetchall()
         sources = (_decision_source(*row) for row in rows)
         return tuple(source for source in sources if source is not None)
+
+    @local_operation
+    def judge_read(self, now: int, daily_limit: int) -> dict[str, object]:
+        """The judge's facts Covers → Taste profile shows (#1372 PR 4b)."""
+        return taste_judge_facts(self._connection, now, daily_limit)
+
+    @local_operation
+    def request_judge_retry(self, version: int, now: int) -> bool:
+        """The owner's Try again for every failed check under `version`."""
+        transaction = self._transaction("taste_judge_retry")
+        try:
+            transaction.begin()
+            requested = request_taste_judge_retries(self._connection, version, now)
+            transaction.commit()
+            return requested
+        except BaseException:
+            transaction.rollback()
+            raise
 
     @local_operation
     def read(self) -> dict[str, object]:
@@ -585,6 +610,7 @@ def _decision_source(
     selection_document: str,
     consideration_document: str,
     file_format: object,
+    verdict_document: str | None,
 ) -> TasteDecisionSource | None:
     """One recorded decision's previewed covers and stage facts, or None to skip."""
     try:
@@ -629,11 +655,31 @@ def _decision_source(
             candidate.reference for candidate in candidates
         }:
             return None
+        # A keep names the current cover's reference, so a keep under a
+        # suggestion, or another cover under a keep, is a correction.
+        verdict = None if verdict_document is None else json.loads(verdict_document)
+        suggested = (
+            None
+            if verdict is None
+            else verdict["candidate_reference"]
+            if verdict["decision"] == "choose"
+            else next(
+                (
+                    candidate["reference"]
+                    for candidate in consideration["candidates"]
+                    if candidate["incumbent"] is True
+                ),
+                None,
+            )
+            if verdict["decision"] == "keep_current"
+            else None
+        )
         return TasteDecisionSource(
             selection_id,
             "audiobook" if file_format in AUDIO_FILE_FORMATS else "ebook",
             chosen,
             candidates,
+            correction=suggested is not None and suggested != chosen,
         )
     except (KeyError, TypeError, ValueError):
         return None

@@ -85,7 +85,17 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.interfaces.web.app",
         "REVIEW_TASTE_PROFILE_SCHEMA",
-        "review-taste-profile-v2",
+        "review-taste-profile-v3",
+    ),
+    (
+        "mechanical_librarian.application.review_covers",
+        "REVIEW_COVERS_SCHEMA",
+        "review-covers-v2",
+    ),
+    (
+        "mechanical_librarian.application.review_covers",
+        "REVIEW_COVER_CALIBRATION_SCHEMA",
+        "review-cover-calibration-v2",
     ),
     (
         "mechanical_librarian.application.review_application",
@@ -105,7 +115,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_DETAIL_SCHEMA",
-        "review-case-detail-v10",
+        "review-case-detail-v11",
     ),
     (
         "mechanical_librarian.application.review_web",

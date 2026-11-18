@@ -3888,7 +3888,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v10",
+            "const": "review-case-detail-v11",
             "title": "Schema Version",
             "type": "string"
           },
@@ -4304,7 +4304,7 @@
             "type": "array"
           },
           "schema_version": {
-            "const": "review-cover-calibration-v1",
+            "const": "review-cover-calibration-v2",
             "title": "Schema Version",
             "type": "string"
           }
@@ -5554,6 +5554,48 @@
         "title": "_CoverStageGroup",
         "type": "object"
       },
+      "_CoverSuggestion": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "title_names_other_work",
+                  "current_contradicted",
+                  "unreadable",
+                  "wrong_shape",
+                  "below_floor",
+                  "edition_language",
+                  "sharper_copy",
+                  "edition_preference"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "taste": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverTasteStrength"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "reason",
+          "taste"
+        ],
+        "title": "_CoverSuggestion",
+        "type": "object"
+      },
       "_CoverSwitch": {
         "additionalProperties": false,
         "properties": {
@@ -5636,6 +5678,95 @@
         "title": "_CoverSwitch",
         "type": "object"
       },
+      "_CoverTasteReason": {
+        "additionalProperties": false,
+        "properties": {
+          "number": {
+            "maximum": 9999.0,
+            "minimum": 1.0,
+            "title": "Number",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "text"
+        ],
+        "title": "_CoverTasteReason",
+        "type": "object"
+      },
+      "_CoverTasteStrength": {
+        "additionalProperties": false,
+        "properties": {
+          "strength": {
+            "enum": [
+              "strong",
+              "likely"
+            ],
+            "title": "Strength",
+            "type": "string"
+          }
+        },
+        "required": [
+          "strength"
+        ],
+        "title": "_CoverTasteStrength",
+        "type": "object"
+      },
+      "_CoverTasteSuggestion": {
+        "additionalProperties": false,
+        "description": "The cover the taste judge suggests and the rules it cited (J8).",
+        "properties": {
+          "candidate_reference": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Candidate Reference",
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/_CoverTasteReason"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Rules",
+            "type": "array"
+          },
+          "strength": {
+            "enum": [
+              "strong",
+              "likely"
+            ],
+            "title": "Strength",
+            "type": "string"
+          },
+          "verdict_id": {
+            "pattern": "^taste_verdict_[0-9a-f]{32}$",
+            "title": "Verdict Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "verdict_id",
+          "version",
+          "candidate_reference",
+          "strength",
+          "rules"
+        ],
+        "title": "_CoverTasteSuggestion",
+        "type": "object"
+      },
       "_CoverWork": {
         "additionalProperties": false,
         "properties": {
@@ -5701,7 +5832,7 @@
           "suggestion": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/_CoverRuleReason"
+                "$ref": "#/components/schemas/_CoverSuggestion"
               },
               {
                 "type": "null"
@@ -5769,7 +5900,7 @@
             "title": "Next Cursor"
           },
           "schema_version": {
-            "const": "review-covers-v1",
+            "const": "review-covers-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -13013,6 +13144,16 @@
               }
             ]
           },
+          "cover_taste_suggestion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverTasteSuggestion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "current": {
             "$ref": "#/components/schemas/_TargetField"
           },
@@ -14181,6 +14322,100 @@
         "title": "_TasteBuild",
         "type": "object"
       },
+      "_TasteConfirmed": {
+        "additionalProperties": false,
+        "description": "Owner selections made under a suggestion, and those that took it (J9).",
+        "properties": {
+          "confirmed": {
+            "minimum": 0.0,
+            "title": "Confirmed",
+            "type": "integer"
+          },
+          "suggested": {
+            "minimum": 0.0,
+            "title": "Suggested",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "confirmed",
+          "suggested"
+        ],
+        "title": "_TasteConfirmed",
+        "type": "object"
+      },
+      "_TasteJudge": {
+        "additionalProperties": false,
+        "description": "The suggestion model's state today (#1372 PR 4b).",
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "daily_limit": {
+            "maximum": 50000.0,
+            "minimum": 1.0,
+            "title": "Daily Limit",
+            "type": "integer"
+          },
+          "failed": {
+            "minimum": 0.0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "retry_after": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After"
+          },
+          "stopped": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ceiling",
+                  "unknown_charge"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped"
+          }
+        },
+        "required": [
+          "configured",
+          "daily_limit",
+          "stopped",
+          "retry_after",
+          "failed"
+        ],
+        "title": "_TasteJudge",
+        "type": "object"
+      },
+      "_TasteJudgeRetryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "title": "_TasteJudgeRetryRequest",
+        "type": "object"
+      },
       "_TasteProfileResponse": {
         "additionalProperties": false,
         "description": "Covers → Taste profile (#1372). It never carries a path, title,\nreference or anything the model saw.",
@@ -14204,11 +14439,17 @@
             "title": "Configured",
             "type": "boolean"
           },
+          "confirmed": {
+            "$ref": "#/components/schemas/_TasteConfirmed"
+          },
           "daily_limit": {
             "maximum": 100.0,
             "minimum": 1.0,
             "title": "Daily Limit",
             "type": "integer"
+          },
+          "judge": {
+            "$ref": "#/components/schemas/_TasteJudge"
           },
           "profile": {
             "anyOf": [
@@ -14226,7 +14467,7 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "review-taste-profile-v2",
+            "const": "review-taste-profile-v3",
             "title": "Schema Version",
             "type": "string"
           },
@@ -14247,7 +14488,9 @@
           "daily_limit",
           "build",
           "profile",
-          "versions"
+          "versions",
+          "judge",
+          "confirmed"
         ],
         "title": "_TasteProfileResponse",
         "type": "object"
@@ -16052,6 +16295,121 @@
           }
         ],
         "summary": "Edit Taste Rule"
+      }
+    },
+    "/api/v1/covers/taste/suggestions/retry": {
+      "post": {
+        "description": "Try again for the works whose check against the version in use\nfailed; `stale` when that version changed or none failed.",
+        "operationId": "retry_taste_judge_api_v1_covers_taste_suggestions_retry_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_TasteJudgeRetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_TasteProfileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Retry Taste Judge"
       }
     },
     "/api/v1/field-effects/pause": {

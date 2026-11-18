@@ -639,6 +639,14 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         codexManaged={codexManaged && !waiting}
         onCodexRefused={access.refreshAfterCodexRefusal}
       />
+      <TasteReviewerSettings
+        http={http}
+        view={view}
+        codexUsable={codexUsable}
+        codexManaged={codexManaged && !waiting}
+        onCodexRefused={access.refreshAfterCodexRefusal}
+        task="cover_taste_judge"
+      />
     </div>
   )
 }

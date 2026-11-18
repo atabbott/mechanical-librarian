@@ -6682,7 +6682,7 @@ const readTasteProfile = (document: unknown) =>
     fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
   }).getTasteProfile()
 const tasteDocument = {
-  schema_version: 'review-taste-profile-v2',
+  schema_version: 'review-taste-profile-v3',
   configured: true,
   chosen: 30,
   required: 25,
@@ -6702,6 +6702,8 @@ const tasteDocument = {
     { version: 2, kind: 'built', created_at: 20, decisions: 30 },
     { version: 1, kind: 'built', created_at: 10, decisions: 25 },
   ],
+  judge: { configured: true, daily_limit: 5000, stopped: null, retry_after: null, failed: 0 },
+  confirmed: { confirmed: 0, suggested: 0 },
 }
 // An edit version keeps its build's facts and its rules' numbers, with gaps.
 const editedTasteDocument = {
@@ -6758,7 +6760,7 @@ describe('cover calibration read (#1372 PR 3)', () => {
   it('reads the set from its route as decoded', async () => {
     const document = {
       items: [calibrationWork(1), calibrationWork(2)],
-      schema_version: 'review-cover-calibration-v1',
+      schema_version: 'review-cover-calibration-v2',
     }
     const { fetcher, read } = readCalibration(document)
     const view = await read
@@ -6769,13 +6771,13 @@ describe('cover calibration read (#1372 PR 3)', () => {
 
   it('refuses an extra member and more than 25 works', async () => {
     await expect(
-      readCalibration({ items: [], schema_version: 'review-cover-calibration-v1', next: null })
+      readCalibration({ items: [], schema_version: 'review-cover-calibration-v2', next: null })
         .read,
     ).rejects.toMatchObject({ code: 'invalid_response' })
     await expect(
       readCalibration({
         items: Array.from({ length: 26 }, (_, index) => calibrationWork(index)),
-        schema_version: 'review-cover-calibration-v1',
+        schema_version: 'review-cover-calibration-v2',
       }).read,
     ).rejects.toMatchObject({ code: 'invalid_response' })
   })

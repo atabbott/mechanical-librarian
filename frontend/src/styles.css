@@ -2231,3 +2231,16 @@ dialog.find-book-dialog::backdrop { background:rgb(23 32 30 / .42); }
 .identifier-withdrawal-status { margin:.6rem 0 0; padding-top:.65rem; border-top:1px solid var(--line); font-weight:650; }
 .identifier-withdrawal-status.is-empty { margin:0; padding:0; border:0; }
 .identifier-withdrawal.is-loading { min-height:2.75rem; box-sizing:content-box; }
+/* Suggested because (#1372 PR 4b), after the prototype's cr-why: below a
+   work's cards, the judge's strength and the rules it cited. */
+.cover-taste-why { display:grid; gap:.45rem; min-width:0; padding:.75rem .9rem; border:1px solid var(--accent); border-radius:.65rem; background:color-mix(in srgb,var(--accent-soft) 45%,var(--surface-strong)); }
+.cover-taste-why header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.5rem; }
+.cover-taste-why header strong { font-size:.875rem; }
+.cover-taste-why ol { display:grid; gap:.4rem; margin:0; padding:0; list-style:none; }
+.cover-taste-why li { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.6rem; align-items:baseline; font-size:.88rem; line-height:1.35; overflow-wrap:anywhere; }
+.cover-taste-rule { display:inline-grid; place-items:center; min-width:1.6rem; height:1.6rem; box-sizing:border-box; padding:0 .3rem; border:1px solid var(--accent); border-radius:.35rem; color:var(--accent-strong); font-size:.75rem; font-weight:800; font-variant-numeric:tabular-nums; }
+.cover-taste-edit { justify-self:start; min-height:44px; padding:0; border:0; background:none; color:var(--accent-strong); font-size:.8rem; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+.taste-judge { display:grid; gap:.5rem; }
+.taste-judge:focus { outline-offset:4px; }
+.taste-judge > p { margin:0; color:var(--soft); }
+.taste-confirmed { margin:-.5rem 0 0; color:var(--soft); font-size:.85rem; }

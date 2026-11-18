@@ -28,6 +28,7 @@ from mechanical_librarian.application.cover_taste_contract import (
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.cover_taste import (
+    TASTE_MAX_CORRECTIONS,
     TASTE_MAX_DECISIONS,
     TASTE_MAX_IMAGES,
     TASTE_MAX_REQUEST_BYTES,
@@ -66,6 +67,8 @@ class TasteDecisionSource:
     medium: Literal["ebook", "audiobook"]
     chosen_reference: str
     candidates: tuple[TasteCandidateSource, ...]
+    # The owner kept or chose another cover than the suggestion in force (J9).
+    correction: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +137,7 @@ def assemble_taste_inputs(
     left_out: tuple[str, ...],
     nonce: bytes | None = None,
 ) -> TasteBuildInput | None:
-    """Seal up to 50 decisions in stable sample order within the image and byte caps.
+    """Seal up to 50 decisions, corrections first, within the image and byte caps.
 
     A decision whose preview fails re-admission is dropped and counted; it
     never fails the build. None when no decision could be sealed.
@@ -145,8 +148,13 @@ def assemble_taste_inputs(
         "kept": [{"section": rule.section, "text": rule.text} for rule in kept],
         "left_out": list(left_out),
     }
-    ordered = sorted(
-        decisions,
+    # Corrections first, newest first, up to 25; the rest in the stable
+    # sample order (S4, J9). `decisions` arrive in the order recorded.
+    corrections = [decision for decision in decisions if decision.correction][::-1][
+        :TASTE_MAX_CORRECTIONS
+    ]
+    ordered = corrections + sorted(
+        (decision for decision in decisions if decision not in corrections),
         key=lambda decision: hashlib.sha256(
             decision.selection_id.encode("utf-8")
         ).hexdigest(),
@@ -154,6 +162,7 @@ def assemble_taste_inputs(
     packet_decisions: list[dict[str, object]] = []
     images: list[TasteBuildImage] = []
     included: list[tuple[str, list[str]]] = []
+    corrected = 0
     dropped = 0
     capped = False
     budget = taste_request_frame_bytes(canonical_json(owner)) + 64
@@ -201,6 +210,7 @@ def assemble_taste_inputs(
                 }
             )
         packet_decisions.append({"images": packet_images, "medium": decision.medium})
+        corrected += decision in corrections
         included.append(
             (
                 decision.selection_id,
@@ -220,7 +230,7 @@ def assemble_taste_inputs(
         packet,
         tuple(images),
         {
-            "corrections": 0,
+            "corrections": corrected,
             "dropped": dropped,
             "eligible": len(decisions),
             "images": len(images),
