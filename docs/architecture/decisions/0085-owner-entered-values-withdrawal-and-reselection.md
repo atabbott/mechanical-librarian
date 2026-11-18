@@ -368,8 +368,9 @@ have helped either: the owner's selection still refused every mint.
   shows Resume and is never switched. Taste alone never marks a comparison,
   because the judge never looks at an owner-chosen cover.
 - **The mark.** A new comparison removes it, and so does each admission of the
-  case's current comparison, before the mark is worked out again. Clearing the
-  hold also removes it. A table is used rather than an event kind, because
+  case's current comparison, before the mark is worked out again. An admission
+  that stops short, for example while automatic safety is paused, leaves no
+  mark. Clearing the hold also removes it. A table is used rather than an event kind, because
   events show as Activity rows.
 - **Consequence.** After Resume, the owner's earlier pick leaves the taste
   builder's input and "Confirmed {n} of {m}", because both read the current

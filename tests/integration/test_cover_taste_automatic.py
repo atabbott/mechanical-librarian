@@ -1139,6 +1139,42 @@ def test_an_answer_after_resume_was_asked_is_not_released(
         assert _selections(repository) == [answered]
 
 
+@pytest.mark.parametrize("paused", [False, True])
+def test_an_admission_that_stops_at_its_basis_removes_the_mark(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, paused: bool
+) -> None:
+    """Review N4: admitting the marked comparison again works the mark out
+    again. While safety is paused the stage can act on nothing, so the mark
+    goes and Resume does not show; otherwise it is derived again."""
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with _prepared(tmp_path) as prepared:
+        repository = prepared.repository
+        service = _service(prepared)
+        (switch,) = _selections(repository)
+        _keep_cover(prepared, switch["selection_id"])
+        service.update_policy(CoverPolicy(prefer_edition=True))
+        later = json.loads(_reprepare(service, prepared))
+        marks = [(prepared.review_case_id, later["consideration_id"])]
+        assert _marks(prepared) == marks
+        connection = repository._connection
+        if paused:
+            connection.execute(
+                "UPDATE automatic_safety_state SET paused=1 WHERE singleton=1"
+            )
+        document = repository.current_cover_consideration_document(
+            prepared.review_case_id
+        )
+        assert document is not None
+        repository._cover_considerations._admit_automatic_cover(document, 30)
+        connection.commit()
+        assert _marks(prepared) == ([] if paused else marks)
+        assert [row["kind"] for row in _selections(repository)] == ["owner"]
+
+
 def test_a_later_comparison_with_no_switch_clears_the_mark(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

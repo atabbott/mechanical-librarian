@@ -189,11 +189,19 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         replaces nothing (a 404 cover), and no owner choice or hold on the
         field; otherwise it stays the suggestion the policy report records.
         """
+        # The mark is worked out again on each admission of the comparison
+        # (K9): it goes first, so an admission that stops short, say while
+        # safety is paused, leaves no Resume the stage could not act on.
+        admitted = json.loads(document)
+        self._connection.execute(
+            "DELETE FROM cover_automatic_held WHERE review_case_id=? "
+            "AND consideration_id=?",
+            (admitted.get("review_case_id"), admitted.get("consideration_id")),
+        )
         basis = self._cover_admission_basis(document)
         if basis is None:
             return
         value, policy_report, case, report, lineage, resolved, generation = basis
-        # Derived again on each admission of the current comparison (K9).
         self._connection.execute(
             "DELETE FROM cover_automatic_held WHERE review_case_id=?",
             (case.review_case_id,),
