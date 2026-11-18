@@ -2,8 +2,8 @@
 
 Covers → Taste profile shows the taste profile a vision model wrote from the
 covers you chose and passed over, and lets you edit it. A second vision model
-compares each work's covers with it and [suggests switches](#suggestions); it
-changes no cover itself (#1372). The tab has no count, and the other tabs keep theirs
+compares each work's covers with it and [suggests switches](#suggestions),
+or [switches covers itself](#automatic-switching) once you turn that on (#1372). The tab has no count, and the other tabs keep theirs
 while it is open. It belongs to the [review experience](review-experience.md);
 what the model receives is in the
 [AI trust boundary](../architecture/ai-boundary.md#taste-profile-builder).
@@ -35,7 +35,7 @@ A profile shows its version, the day it was built, how many decisions it read
 and its rules as "{n} of 40". Its numbered rules sit under four headings: What
 you’re drawn to, What you avoid, How you trade them off, and When to keep or
 switch. Every heading is shown with Add rule, even one with no rules yet.
-Versions, beside the rules above 1024 pixels, lists every version, newest
+Versions, beside the rules above 1024 pixels under Switching, lists every version, newest
 first, the one in use marked "(in use)": a build reads "Built {date} from {n}
 decisions" and an edit "Edited {date}".
 
@@ -95,9 +95,38 @@ could not check {n} works against your taste profile." with Try again, which
 compares them again and says "The suggestion model will check {n} works
 again.". During a stop, the line says when Try again returns instead. A work
 counts only while it could still be compared. At most 5,000 suggestions are asked for a day by default
-([configuration](../reference/configuration.md#taste-profile)). Under the
-version, "Confirmed {n} of {m} suggestions" counts the suggested works you
+([configuration](../reference/configuration.md#taste-profile)). Inside
+[Switching](#automatic-switching), "Confirmed {n} of {m} suggestions" counts the suggested works you
 answered and how many took the suggestion.
+
+## Automatic switching
+
+Switching sits beside the rules above 1024 pixels and above them on narrower
+screens. It is Suggest only until you choose Automatic, which lets the profile
+switch a cover itself. Under Automatic, Only covers with a fault is Current
+covers' setting in Policy: ticked, a cover is switched only to cure a fault the
+measured rules found; cleared, any cover the profile prefers another for may be
+switched. Changing it prepares every cover again, so each is compared with the
+profile again, up to the daily limit, and Switching says so beside the box.
+While Current covers is Never, Automatic is off and Switching links to it.
+Until your check passes, which a later release records, Automatic only
+suggests switches, and Switching says so.
+
+Choosing Automatic first opens a preview above the rules and saves nothing. It
+shows up to 5 switches the profile would make among at most 100 covers already
+compared under the version in use, each with the Now and New covers, the fault
+if any and the rules behind it. Looks right chooses that cover now as your own
+choice; Keep current keeps the current one, a correction. The preview's line
+says how many switches it found in how many covers, "so far" while covers are
+still being compared, "the limit" at 100, and "starting with last time’s" when
+a switch was suggested under an earlier version too. Turn on saves Automatic at
+once, without waiting for the preview; Not now closes it.
+
+A switch binds the version it was made under. After an edit or a rebuild, a
+switch not yet written is withdrawn, shows as a suggestion again and is
+compared again. Switched names each taste switch's version, "Taste profile
+v{n}", with its rules, and its Show menu narrows the list to one version. Put
+back, Keep and Others work as for any switch. Activity names only the version.
 
 ## Editing rules
 
