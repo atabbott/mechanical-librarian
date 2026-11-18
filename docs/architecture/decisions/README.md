@@ -53,7 +53,7 @@ status line that says who accepted it and when.
 | [0040](0040-source-only-contributor-workbench.md) | accepted; partly superseded by 0050 | Separate the runtime launcher from the contributor workbench |
 | [0041](0041-contract-contained-reviewer-kernel.md) | accepted; partly superseded by 0045 and 0050 | Contract the contained-reviewer kernel |
 | [0042](0042-compose-authenticated-browser-operations.md) | accepted | Compose authenticated browser operations before transport |
-| [0043](0043-reproducible-react-browser-platform.md) | accepted | Build a reproducible React browser platform |
+| [0043](0043-reproducible-react-browser-platform.md) | accepted; amended by 0106 (proposed) | Build a reproducible React browser platform |
 | [0044](0044-activate-persistent-react-workspace.md) | accepted | Activate one persistent authenticated React workspace |
 | [0045](0045-bind-report-cover-packets.md) | accepted | Bind report cover packets to isolated reviewer images |
 | [0046](0046-observe-report-bound-covers.md) | accepted | Observe covers with a small closed vocabulary |
@@ -116,3 +116,4 @@ status line that says who accepted it and when.
 | [0103](0103-keep-the-library-visit-on-the-server.md) | proposed | Keep the owner's Library visit on the server and read New from it |
 | [0104](0104-owner-identity-links.md) | proposed | Link a work to the record that is its book, and read it through that link |
 | [0105](0105-going-back-after-a-write.md) | proposed | Go back after a write: clear a field, enter names, and keep a written work's case for 30 days |
+| [0106](0106-show-description-formatting.md) | proposed | Show a description's formatting from a closed set of tags |

@@ -1830,6 +1830,80 @@ it.each(['evidence', 'history'])(
   },
 )
 
+it("shows a description's formatting in History", async () => {
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const candidate = authored.fields.find((field) => field.destination === 'description')
+    ?.descriptionAdvice?.candidate
+  if (!candidate) throw new Error('description fixture requires its candidate')
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
+  http.getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
+    items: [
+      {
+        category: 'description' as const,
+        occurredAt: 1786000000,
+        outcome: 'description_advice_recorded',
+        state: 'succeeded' as const,
+        engine: candidate.engine,
+        model: candidate.model,
+        candidate: {
+          ...candidate,
+          output: { ...candidate.output, description: '<p>Advised <b>text</b></p>' },
+        },
+        selected: false,
+        chosenBy: null,
+      },
+      {
+        category: 'owner' as const,
+        occurredAt: 1786000000,
+        applicationReason: null,
+        destination: 'description' as const,
+        outcome: 'accept',
+        previousValue: { kind: 'text', value: 'Before <i>this</i><br>line' },
+        selectedValue: { kind: 'text', value: '<ul><li>After</li></ul>' },
+      },
+      {
+        category: 'owner' as const,
+        occurredAt: 1786000000,
+        applicationReason: null,
+        destination: 'description' as const,
+        outcome: 'keep_current',
+        previousValue: { kind: 'text', value: '<p>Kept <u>here</u></p>' },
+        selectedValue: { kind: 'text', value: '<p>Kept <u>here</u></p>' },
+      },
+      {
+        category: 'owner' as const,
+        occurredAt: 1786000000,
+        applicationReason: null,
+        destination: 'title' as const,
+        outcome: 'accept',
+        previousValue: { kind: 'text', value: 'A <b>title</b>' },
+        selectedValue: { kind: 'text', value: 'Plain title' },
+      },
+    ],
+  }))
+  renderRoute('/review/case-1?field=description&subview=history', http)
+  expect(await screen.findByText('Advice was written.', { exact: false })).toBeVisible()
+  const formatted = [...document.querySelectorAll('.diagnostic-entry .description-formatted')]
+  expect(formatted.map((node) => node.innerHTML)).toEqual([
+    '<p>Advised <strong>text</strong></p>',
+    'Before <em>this</em><br>line',
+    '<ul><li>After</li></ul>',
+    '<p>Kept <u>here</u></p>',
+  ])
+  expect(formatted[0]).toHaveClass('description-advice-text')
+  for (const node of formatted.slice(1)) {
+    expect(node.parentElement?.tagName).toBe('DIV')
+    expect(node.parentElement).toHaveClass('diagnostic-value')
+  }
+  // Every other field stays text.
+  const title = [...document.querySelectorAll('.diagnostic-value')].find((node) =>
+    node.textContent.includes('A <b>title</b>'),
+  )
+  expect(title?.tagName).toBe('P')
+  expect(title?.querySelector('strong')).toBeNull()
+})
+
 it('retains unconfirmed incumbent evidence in actual mapped owner history', async () => {
   const http = createHttp()
   http.getHistory = vi.fn(async () =>

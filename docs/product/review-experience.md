@@ -619,8 +619,7 @@ in this browser, in a file-managed deployment too.
 ## Words and values
 
 `DESIGN.md` states the voice. Mechanical Librarian
-never turns a code into words: it refuses an unknown code instead of
-sentence-casing it. Acronyms stay capitalised, languages read by name with
+refuses an unknown code rather than sentence-casing it. Acronyms stay capitalised, languages read by name with
 their tag ("English (en)"), and sizes use MB. Times within the past hour are
 relative, others today show the clock time, and other days add the date. A
 time still ahead is never relative.
@@ -654,7 +653,8 @@ time still ahead is never relative.
 - No page embeds the whole library. Collections come in pages, and detail,
   evidence and covers load on demand.
 - Signed-in responses are private, and shared caches never store them.
-- A strict content-security policy and text-only rendering stop metadata,
-  source content and URLs from becoming markup.
+- A strict content-security policy and React's text rendering stop
+  metadata, source content and URLs from becoming markup; descriptions
+  show bold, italics, paragraphs and lists.
 - Review endpoints never expose library paths, raw source responses or
   copyrighted content.

@@ -1,4 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
+import { FormattedDescription } from '../descriptionFormatting'
 import { Fragment, useRef, useState, type ReactNode } from 'react'
 import { BuildMismatchError } from '../api/http'
 import type { ActivityEventView, ActivityTransitionView } from '../api/http'
@@ -376,7 +377,16 @@ export function ActivityEventRow({
                 <div>
                   <dt>{item.label}</dt>
                   <dd>
-                    {language && item.label.endsWith(' value') ? languages(item.value) : item.value}
+                    {language && item.label.endsWith(' value') ? (
+                      languages(item.value)
+                    ) : event.destination === 'description' && item.label.endsWith(' value') ? (
+                      // Values arrive cut short at 512 characters, so read a cut one.
+                      <FormattedDescription value={item.value} cut>
+                        {item.value}
+                      </FormattedDescription>
+                    ) : (
+                      item.value
+                    )}
                   </dd>
                 </div>
                 {/* An import's links still current, beside what it linked (#1478). */}

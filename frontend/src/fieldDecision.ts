@@ -7,6 +7,7 @@ import type {
 import { CLEARED_TEXT, displayValue, isClear } from './api/http'
 import { coverSourceLabels, destinationPhrase, languageName, writeHoldReasons } from './labels'
 import { automaticChoiceSelected, humanChoiceSelected } from './reviewAutomaticSelection'
+import { isFormatted } from './descriptionFormatting'
 
 export type ReviewField = CaseDetailView['fields'][number]
 // A carried hold pauses an automatic authored choice as it pauses a title's
@@ -211,8 +212,9 @@ export const keepCard = (field: ReviewField): 'keep' | 'before' | null =>
         ? null
         : 'before'
 export const keepOffered = (field: ReviewField) => keepCard(field) !== null
+// A description that carries formatting reads as body text, as a long one does.
 export const isLongDescription = (destination: string, value: string) =>
-  destination === 'description' && value.length > 280
+  destination === 'description' && (value.length > 280 || isFormatted(value))
 export const decisionQuestion = (destination: TargetDestination) =>
   `Which ${destinationPhrase(destination)} should this work use?`
 export const audioFileFormat = (format: string) => ['m4b', 'm4a', 'mp3'].includes(format)

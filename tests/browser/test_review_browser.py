@@ -570,6 +570,7 @@ def _server(
         "retry_failed",
         "retry_succeeded",
         "repeated",
+        "hostile",
     ]
     | None = None,
     long_descriptions: bool = False,
@@ -1674,6 +1675,8 @@ def _server(
                 if description_fixture == "no_change"
                 else "A synthetic reader explores an old library. Its stories bring distant communities together."
                 if description_fixture == "automatic"
+                else _HOSTILE_DESCRIPTION
+                if description_fixture == "hostile"
                 else "A synthetic reader explores an old library.\nIts stories bring distant communities together. <strong>Authored text stays text.</strong>"
             )
             if long_descriptions:
@@ -11885,8 +11888,18 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
             browser.close()
 
 
+# Adviser text that mixes formatting with an event-handler image and a refused
+# element: the whole description is shown as written, and nothing in it runs.
+_HOSTILE_IMAGE = "https://description-hostile.invalid/pixel.png"
+_HOSTILE_DESCRIPTION = (
+    "A synthetic reader explores an old library. <b>Bold words</b> "
+    f'<img src="{_HOSTILE_IMAGE}" onerror="window.__mlDescriptionHostile = 1">'
+    "<script>window.__mlDescriptionHostile = 2</script>"
+)
+
+
 @pytest.mark.parametrize(
-    "state", ("ready", "needs_review", "failed", "automatic", "no_change")
+    "state", ("ready", "needs_review", "failed", "automatic", "no_change", "hostile")
 )
 def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch):
     if state in {"automatic", "no_change"}:
@@ -11921,6 +11934,15 @@ def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch)
                 _closing_context(context),
             ):
                 page = context.new_page()
+                hostile_requests: list[str] = []
+                page.on(
+                    "request",
+                    lambda request: (
+                        hostile_requests.append(request.url)
+                        if "description-hostile" in request.url
+                        else None
+                    ),
+                )
                 _login(page, origin)
                 page.goto(
                     f"{origin}/library?lens=all&preview={case_id}&field=description"
@@ -11938,8 +11960,16 @@ def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch)
                 )
                 expect(current).to_be_enabled()
                 expect(provider).to_be_enabled()
+                # Formatted advice takes the long card, named as a description.
                 select = chooser.get_by_role(
-                    "radio", name=re.compile("^Choose advised value:")
+                    "radio",
+                    name=re.compile(
+                        "^Choose advised description$"
+                        if state in {"ready", "needs_review"}
+                        else "^Choose advised"
+                        if state == "failed"
+                        else "^Choose advised value:"
+                    ),
                 )
                 if state == "failed":
                     expect(chooser.get_by_role("status")).to_contain_text(
@@ -11962,9 +11992,21 @@ def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch)
                             expect(select).to_be_disabled()
                     else:
                         expect(select).to_be_enabled()
-                        expect(select).to_contain_text(
-                            "<strong>Authored text stays text.</strong>"
-                        )
+                        card = select.locator("xpath=ancestor::article[1]")
+                        if state == "hostile":
+                            _assert_hostile_description_inert(page, select)
+                        else:
+                            shown = card.locator(".description-choice-content strong")
+                            expect(shown).to_have_text("Authored text stays text.")
+                            assert shown.evaluate("node => node.attributes.length") == 0
+                            # Only the app's own elements carry attributes.
+                            assert card.locator(".description-formatted").evaluate(
+                                "node => [...node.querySelectorAll('*')]"
+                                ".every((child) => child.attributes.length === 0)"
+                            )
+                            expect(
+                                card.get_by_text("<strong>", exact=False)
+                            ).to_have_count(0)
                         expect(select.locator("strong strong")).to_have_count(0)
                         if state == "needs_review":
                             expect(select).to_contain_text("Automatic never applies it")
@@ -12037,6 +12079,11 @@ def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch)
                 expect(
                     page.get_by_role("heading", name="Description advice").first
                 ).to_be_visible()
+                if state == "hostile":
+                    advice = page.locator("p.description-advice-text").first
+                    expect(advice).to_have_text(_HOSTILE_DESCRIPTION)
+                    _assert_hostile_description_inert(page, advice)
+                    assert hostile_requests == []
                 if state == "automatic":
                     expect(
                         page.get_by_text(
@@ -12059,12 +12106,21 @@ def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch)
                         "radio", name=re.compile("Choose advised|Retry description")
                     )
                 ).to_have_count(0)
-                expect(
-                    page.get_by_text(
-                        "<strong>Authored text stays text.</strong>", exact=False
-                    )
-                ).to_have_count(0)
+                expect(page.get_by_text("Authored text stays text.")).to_have_count(0)
             browser.close()
+
+
+def _assert_hostile_description_inert(page: Any, shown: Any) -> None:
+    """The hostile advice reads as written, and nothing in it became an element."""
+    expect(shown).to_contain_text(f'<img src="{_HOSTILE_IMAGE}" onerror=')
+    expect(shown).to_contain_text("<script>window.__mlDescriptionHostile = 2</script>")
+    expect(shown.locator("img, script")).to_have_count(0)
+    expect(shown.get_by_text("Bold words", exact=True)).to_have_count(0)
+    assert not page.evaluate(
+        "[...document.querySelectorAll('*')].some((node) =>"
+        " [...node.attributes].some((attribute) => attribute.name.startsWith('on')))"
+    )
+    assert page.evaluate("window.__mlDescriptionHostile") is None
 
 
 def test_description_advice_on_a_repeated_description_is_choosable():
@@ -12112,7 +12168,7 @@ def test_description_advice_on_a_repeated_description_is_choosable():
                     )
                 ).to_have_count(0)
                 advised = chooser.get_by_role(
-                    "radio", name=re.compile("^Choose advised value:")
+                    "radio", name=re.compile("^Choose advised description$")
                 )
                 expect(advised).to_be_enabled()
                 expect(advised).to_have_attribute("aria-checked", "false")
@@ -12179,7 +12235,7 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                         )
                     ).to_be_enabled()
                 expect(
-                    page.get_by_role("radio", name=re.compile("^Choose advised value:"))
+                    page.get_by_role("radio", name=re.compile("^Choose advised"))
                 ).to_have_count(0)
                 if state == "no_alternatives":
                     expect(
@@ -12284,7 +12340,7 @@ def test_description_retry_retains_real_selected_choice(state):
                         color_scheme="dark" if theme == "dark" else "light"
                     )
                     choices = page.get_by_role(
-                        "radio", name=re.compile("^Choose advised value:")
+                        "radio", name=re.compile("^Choose advised")
                     )
                     expect(choices).to_have_count(
                         2 if state == "retry_succeeded" else 1
@@ -12348,9 +12404,7 @@ def test_description_retry_retains_real_selected_choice(state):
                     page.goto(url)
                     expect(latest).to_have_attribute("aria-checked", "true")
                     expect(
-                        page.get_by_role(
-                            "radio", name=re.compile("^Choose advised value:")
-                        )
+                        page.get_by_role("radio", name=re.compile("^Choose advised"))
                     ).to_have_count(1)
             browser.close()
 

@@ -239,6 +239,70 @@ describe('Activity route', () => {
     expect(screen.queryByRole('radio', { name: /Choose advised/ })).toBeNull()
   })
 
+  it("shows a description's formatting in Activity values, including a cut value", async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(
+      activity({
+        events: [
+          {
+            event_id: 'description-write-formatted',
+            destination: 'description',
+            field_label: 'Description',
+            state: 'succeeded',
+            origin: 'owner',
+            event_type: 'metadata',
+            category: 'automatic',
+            change: 'Description changed',
+            change_detail: 'Description changed',
+            evidence: [
+              { label: 'Previous value', value: '<p>Old <b>words</b></p>' },
+              // Activity cuts a long value at 512 characters, mid-tag here.
+              { label: 'New value', value: '<p>New <i>words</i></p><p>More <b cla…' },
+              { label: 'Provenance', value: 'Advised · <b>Authored</b> content' },
+            ],
+          },
+        ],
+      }),
+    )
+    renderRoute('/activity', http)
+    await screen.findByText('Description changed')
+    await user.click(screen.getByRole('button', { name: /^Details for /u }))
+    const values = [...document.querySelectorAll('dd .description-formatted')]
+    expect(values.map((node) => node.innerHTML)).toEqual([
+      '<p>Old <strong>words</strong></p>',
+      '<p>New <em>words</em></p><p>More …</p>',
+    ])
+  })
+
+  it('leaves other evidence labels as text', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(
+      activity({
+        events: [
+          {
+            event_id: 'description-provenance-markup',
+            destination: 'description',
+            field_label: 'Description',
+            state: 'succeeded',
+            origin: 'adviser',
+            event_type: 'metadata',
+            category: 'automatic',
+            change: 'Description advice prepared for review',
+            change_detail: 'Description advice prepared for review',
+            evidence: [{ label: 'Provenance', value: 'Advised · <b>Authored</b> content' }],
+          },
+        ],
+      }),
+    )
+    renderRoute('/activity', http)
+    await screen.findByText('Description advice prepared for review')
+    await user.click(screen.getByRole('button', { name: /^Details for /u }))
+    expect(screen.getByText('Advised · <b>Authored</b> content')).toBeVisible()
+    expect(document.querySelector('dd .description-formatted, dd strong')).toBeNull()
+  })
+
   it('polls idle Activity while mounted and tears the poll down after navigation', async () => {
     vi.useFakeTimers()
     try {

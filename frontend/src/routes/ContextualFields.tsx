@@ -5,6 +5,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 
 import { StatusPill } from '../components/StatusPill'
+import { visibleText } from '../descriptionFormatting'
 import { decisionValue } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
 import { valuePin } from '../fieldPin'
@@ -140,7 +141,12 @@ export function ContextualFields({
                   />
                 ) : null}
               </div>
-              <small id={valueId}>{decisionValue(field)}</small>
+              <small id={valueId}>
+                {/* One line: a description's visible text, not its markup. */}
+                {destination === 'description'
+                  ? visibleText(decisionValue(field))
+                  : decisionValue(field)}
+              </small>
               <small>
                 {pinned
                   ? field.pin?.value.state === 'value'

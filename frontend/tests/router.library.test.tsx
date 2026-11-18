@@ -3535,6 +3535,53 @@ describe('Library route', () => {
     expect(screen.queryByRole('heading', { level: 2, name: 'Unfiled observation' })).toBeNull()
   })
 
+  it('shows a formatted description in the work summary', async () => {
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const work = { ...firstWork }
+    delete work.reviewCaseId
+    const formatted = {
+      ...work,
+      id: 'formatted',
+      workId: 'work-formatted',
+      title: 'Formatted work',
+      attentionCount: 0,
+      summary: {
+        state: 'no_decision_recorded' as const,
+        reason: 'Nothing to decide for this work.',
+        fields: [
+          { destination: 'title' as const, state: 'value' as const, value: 'A <b>title</b>' },
+          {
+            destination: 'description' as const,
+            state: 'value' as const,
+            value: '<p>A <i>summary</i></p><p>Two</p>',
+          },
+        ],
+      },
+    }
+    const getLibrary = vi.fn(async () => ({
+      lens: 'all' as const,
+      listing: library.listing,
+      page: 1,
+      counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0, new: 0 },
+      works: [formatted],
+    }))
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+    fireEvent.click(await screen.findByRole('button', { name: /^Formatted work\./u }))
+    const values = await waitFor(() => {
+      const list = document.querySelector('.library-work-values')
+      if (!list) throw new Error('the work summary is not shown')
+      return list
+    })
+    const [title, description] = [...values.querySelectorAll('dd')]
+    expect(description?.querySelector('.description-formatted')?.innerHTML).toBe(
+      '<p>A <em>summary</em></p><p>Two</p>',
+    )
+    // Every other field stays text.
+    expect(title?.textContent).toBe('A <b>title</b>')
+    expect(title?.querySelector('*')).toBeNull()
+  })
+
   it('keeps the latest case-less selection when an older navigation settles last', async () => {
     const user = userEvent.setup()
     const firstWork = library.works[0]
@@ -12856,7 +12903,7 @@ describe('Library route', () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const unchanged = (
-      destination: 'authors' | 'title',
+      destination: 'authors' | 'title' | 'description',
       overrides: Partial<CaseDetailView['fields'][number]> = {},
     ) => ({
       ...titleField,
@@ -12908,6 +12955,21 @@ describe('Library route', () => {
         'Earlier automatic choice',
         'Ada Example',
       ])
+    })
+
+    it('shows a formatted Earlier automatic choice', async () => {
+      await open('description', [
+        unchanged('description', {
+          currentValue: 'Current description.',
+          earlierAutomaticValue: { kind: 'text', value: '<p>Earlier <b>bold</b></p><p>Then</p>' },
+        }),
+        unchanged('title'),
+      ])
+      const values = screen.getByLabelText('Description current value')
+      const earlierValue = [...values.querySelectorAll('dd')][1]
+      expect(earlierValue?.querySelector('.description-formatted')?.innerHTML).toBe(
+        '<p>Earlier <strong>bold</strong></p><p>Then</p>',
+      )
     })
 
     it('shows the note on a field the owner can enter a value for', async () => {
@@ -14557,6 +14619,117 @@ it('offers advised text in the ordinary Description chooser with its immutable a
     screen.getByRole('radio', { name: 'Choose proposed value: A qualified description.' }),
   ).toHaveAttribute('aria-checked', 'false')
   expect(screen.queryByText('Recorded. Opening the next field…')).toBeNull()
+})
+
+// Adviser text with formatting, read into elements from a closed set (ADR-0106).
+const formattedAdvice = '<p>An <b>authored</b> line.</p><ul><li>One</li><li><i>Two</i></li></ul>'
+const formattedAuthored = () => {
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const advice = field.descriptionAdvice
+  if (!advice?.candidate) throw new Error('description fixture requires its candidate')
+  const candidate = {
+    ...advice.candidate,
+    output: { ...advice.candidate.output, description: formattedAdvice },
+  }
+  field.descriptionAdvice = { ...advice, candidate }
+  return { authored, field, advice: field.descriptionAdvice, candidate }
+}
+
+it('shows a formatted advised description on its card and names the card as a description', async () => {
+  const { authored, field } = formattedAuthored()
+  renderRoute('/library?lens=all&preview=case-1&field=description', {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+      ...authored,
+      id: 'case-1',
+      fields: [field],
+    })),
+  })
+  const option = await screen.findByRole('radio', { name: 'Choose advised description' })
+  const card = option.closest('article')
+  const content = card?.querySelector('.description-choice-content .description-formatted')
+  if (!content) throw new Error('the advised card shows no formatted description')
+  expect(content.innerHTML).toBe(
+    '<p>An <strong>authored</strong> line.</p><ul><li>One</li><li><em>Two</em></li></ul>',
+  )
+  for (const element of content.querySelectorAll('*')) expect(element.attributes).toHaveLength(0)
+  expect(card).not.toHaveTextContent('<b>')
+  // The short cards keep their values as names.
+  expect(
+    screen.getByRole('radio', { name: 'Choose current value: Existing description.' }),
+  ).toBeVisible()
+})
+
+it('names a formatted description in Review complete by its visible text', async () => {
+  const { authored, field, advice, candidate } = formattedAuthored()
+  const proposed = field.proposedValues[0]
+  if (!proposed) throw new Error('description fixture requires proposed text')
+  // The authored selection supersedes an earlier ordinary choice, as the server records it.
+  field.humanDecision = {
+    actor: 'owner',
+    application: 'apply',
+    application_reason: null,
+    decision_id: 'prior-description',
+    destination: 'description' as const,
+    occurred_at: 1,
+    outcome: 'accept',
+    proposal_id: field.proposalId,
+    review_case_id: 'case-1',
+    selected_value: proposed,
+    target_fingerprint: field.targetFingerprint,
+  }
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
+  http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => ({
+    schema_version: 'description-selection-ack-v1',
+    decision_id: `human_decision_${'a'.repeat(64)}`,
+    advised: true,
+    invalidation_sequences: [],
+    confirmation: {
+      status: 'confirmed',
+      case: {
+        ...authored,
+        id: 'case-1',
+        fields: [
+          {
+            ...field,
+            needsAttention: false,
+            descriptionAdvice: {
+              ...advice,
+              selected_advice: { candidate, binding: advice.binding, current: true },
+              selection: {
+                decision_id: `human_decision_${'a'.repeat(64)}`,
+                candidate_id: candidate.candidate_id,
+                binding: advice.binding,
+                origin: 'human',
+                resolved_policy_id: `resolved_policy_${'b'.repeat(64)}`,
+                qualification_manifest_sha256: 'c'.repeat(64),
+                idempotency_digest: 'd'.repeat(64),
+                occurred_at: 10,
+                destination: 'description' as const,
+                outcome: 'accept',
+                application: 'guarded',
+              },
+            },
+          },
+        ],
+      },
+    },
+  }))
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent
+    .setup()
+    .click(await screen.findByRole('radio', { name: 'Choose advised description' }))
+  await screen.findByRole('heading', { name: 'Review complete' })
+  const completed = screen.getByRole('button', {
+    name: (name) =>
+      name.replace(/\s+/gu, ' ') ===
+      'Description · Adviser’s description chosenAn authored line. One Two',
+  })
+  expect(completed.querySelector('strong')?.textContent).toBe('An authored line. One Two')
+  expect(completed).not.toHaveTextContent('<')
 })
 
 it('renders hostile multiline advice as text and refuses stale selection while ordinary choices remain', async () => {
@@ -17698,6 +17871,49 @@ describe('a focused field decision (#1519)', () => {
     expect(within(region).getByText('Another title')).toBeVisible()
     expect(within(region).queryByText('Title: Another title')).toBeNull()
     expect(within(region).queryByText(/These retained facts/u)).toBeNull()
+  })
+
+  it("shows a description's formatting under Other source values", async () => {
+    open(focused({ destination: 'description', currentValue: 'Existing description.' }), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => ({
+        items: [
+          {
+            destinations: ['description'],
+            language: null,
+            observation: 'Description: First line<br>Second <b>line</b>',
+            role: 'external_observation',
+            source: 'Open Library',
+          },
+        ],
+        missingLineageCount: 0,
+        sourceLedger: [],
+      })),
+    })
+    const region = await screen.findByRole('region', { name: 'Other source values' })
+    const value = region.querySelector('.evidence-values .description-formatted')
+    expect(value?.innerHTML).toBe('First line<br>Second <strong>line</strong>')
+    expect(region).not.toHaveTextContent('<b>')
+  })
+
+  it('keeps markup in another field’s Other source values as text', async () => {
+    open(focused(), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => ({
+        items: [
+          {
+            destinations: ['title'],
+            language: null,
+            observation: 'Title: A <b>bold</b> title',
+            role: 'external_observation',
+            source: 'Open Library',
+          },
+        ],
+        missingLineageCount: 0,
+        sourceLedger: [],
+      })),
+    })
+    const region = await screen.findByRole('region', { name: 'Other source values' })
+    expect(within(region).getByText('A <b>bold</b> title')).toBeVisible()
+    expect(region.querySelector('strong, .description-formatted')).toBeNull()
   })
 
   it('shows Other source values when they could not be read', async () => {

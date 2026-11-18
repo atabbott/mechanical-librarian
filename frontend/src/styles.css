@@ -1505,6 +1505,15 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .description-choice-content { padding:20px clamp(12px,3vw,24px) 0; }
 .description-value { max-width:68ch; min-width:0; }
 .description-value p, .description-advice-text { margin:0; font:400 1rem/1.65 Inter,ui-sans-serif,system-ui,sans-serif; white-space:pre-wrap; overflow-wrap:anywhere; }
+/* A description's formatting (ADR-0106) takes its context's type; a newline in it collapses. */
+.description-formatted { white-space:normal; overflow-wrap:anywhere; }
+.description-value .description-formatted { font:400 1rem/1.65 Inter,ui-sans-serif,system-ui,sans-serif; }
+.diagnostic-entry .description-formatted { font-size:.86rem; line-height:1.58; }
+.description-formatted p, .diagnostic-entry .description-formatted p, .description-formatted ul, .description-formatted ol { margin:0 0 .75em; }
+.description-formatted ul, .description-formatted ol { padding-left:1.4em; }
+.description-formatted > :first-child { margin-top:0; }
+.description-formatted > :last-child { margin-bottom:0; }
+.description-formatted strong { font-weight:600; }
 .description-value button { margin-top:12px; min-height:44px; padding-inline:min(.85rem,3vw); overflow-wrap:normal; }
 .description-choice-content + .choice-select { padding-right:clamp(12px,3vw,24px); }
 .recorded-field-observations { margin-block:24px; padding-block:16px; border-block:1px solid var(--line); }

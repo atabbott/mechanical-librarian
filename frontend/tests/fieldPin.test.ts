@@ -255,6 +255,25 @@ describe('the sentence at the foot of the field', () => {
     ).toBe('You pinned “English (en)”.')
   })
 
+  it('names a pinned formatted description by its visible text', () => {
+    expect(
+      pinFoot(
+        field({
+          destination: 'description',
+          pin: {
+            state: 'changed',
+            value: {
+              destination: 'description',
+              state: 'value',
+              value: '<p>A <b>pinned</b> line</p>',
+            },
+          },
+        }),
+        shown,
+      ).sentence,
+    ).toBe('You pinned “A pinned line”.')
+  })
+
   it('says a recorded change comes first where no pin is offered', () => {
     const waiting = field({ pinControl: { pin: 'change_waiting', unpin: false } })
     expect(pinFoot(waiting, { pinOnScreen: false })).toEqual({
