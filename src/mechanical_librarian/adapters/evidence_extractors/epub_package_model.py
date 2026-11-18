@@ -125,9 +125,6 @@ class EpubPackageDeclarationKind(StrEnum):
     ENCRYPTION = "encryption"
 
 
-_FIELD_ORDER = {field: index for index, field in enumerate(EpubPackageField)}
-
-
 @dataclass(frozen=True, repr=False)
 class EpubPackageCancellation:
     id: str
@@ -311,16 +308,6 @@ class EpubPackageObservation:
             raise EvidenceValueError("observation language is malformed")
         if self.same_file_lineage is not None:
             _digest(self.same_file_lineage, "same-file lineage")
-
-    @property
-    def normalized_sort_key(self) -> tuple[object, ...]:
-        return (
-            _FIELD_ORDER[self.field],
-            self.declared_display_sequence is None,
-            self.declared_display_sequence or 0,
-            self.citation.source_ordinal,
-            self.citation.identity,
-        )
 
     def __repr__(self) -> str:
         return (
@@ -592,12 +579,6 @@ class EpubPackageReport:
     @property
     def succeeded(self) -> bool:
         return self.outcome.succeeded
-
-    @property
-    def normalized_observations(self) -> tuple[EpubPackageObservation, ...]:
-        return tuple(
-            sorted(self.observations, key=lambda item: item.normalized_sort_key)
-        )
 
 
 def _digest(value: object, label: str) -> str:

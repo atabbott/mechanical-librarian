@@ -4196,35 +4196,6 @@ def _corroborated_edition_claim(claim: ProviderClaim, corroborated: bool) -> boo
     return claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.SUBTITLE
 
 
-def _complete_work_creators(
-    candidate: ProviderCandidate, role: str | None
-) -> tuple[str, ...] | None:
-    """Return one closed work creator set without inferring an omitted role."""
-    creators = tuple(
-        claim
-        for claim in candidate.claims
-        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
-    )
-    if (
-        not creators
-        or any(
-            claim.role != role
-            or claim.state is not FieldState.VALID
-            or claim.value is None
-            for claim in creators
-        )
-        or any(
-            claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CONTRIBUTOR
-            for claim in candidate.claims
-        )
-    ):
-        return None
-    # The guard above returned for any creator whose value is None.
-    return tuple(
-        normalize_title(cast("str", claim.value)).casefold() for claim in creators
-    )
-
-
 def _mixed_work_creator_roles(candidate: ProviderCandidate) -> bool:
     """A typed author set cannot be projected from a mixed creator collection."""
     roles = {

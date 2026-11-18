@@ -614,9 +614,6 @@ class FakeReviewRepository:
     def require_reconciled_case(self, review_case_id: str, refused_at: int) -> None:
         """The double is always at identifier: no case waits for a check."""
 
-    def review_case_checking(self, review_case_id: str) -> bool:
-        return False
-
     def find_human_decision(self, idempotency_digest: str) -> str | None:
         return next(
             (
@@ -1516,9 +1513,6 @@ class FakeActivityApplication(ContinuousGuardedApplication):
 
     def set_paused(self, paused):
         self.paused = paused
-
-    def activate_human_override(self, review_case_id, destination):
-        return None
 
     def return_to_automatic(self, review_case_id, destination):
         return None
