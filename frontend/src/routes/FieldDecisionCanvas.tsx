@@ -273,10 +273,14 @@ export function FieldDecisionCanvas({
           const key = `${selected.destination}:${context?.alternativeId ?? String(index)}`
           const card = { ...currentCard, kind: 'proposed', value } as const
           const chosen = choiceSelected(selected, cardProgress, 'accept', value)
-          // The recorded choice on a field this case wrote is the written
-          // value: choosing it again would change nothing, so it sends nothing.
+          // The owner's recorded accept whose own write has landed ("This
+          // decision has been written…") is the written value: choosing it
+          // again would change nothing, so it sends nothing.
           const written =
-            chosen && selected.writtenByCase === true && recordedSelected(selected, 'accept', value)
+            chosen &&
+            selected.humanDecision !== null &&
+            recordedSelected(selected, 'accept', value) &&
+            selected.ownerControl?.withdraw === 'written'
           return {
             id: key,
             automatic: automaticallySelected(selected, cardProgress),

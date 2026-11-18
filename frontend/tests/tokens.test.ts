@@ -227,6 +227,20 @@ describe('Design tokens', () => {
     ).toEqual([".settings-reviewer button[aria-disabled='true']"])
   })
 
+  it("keeps a chosen card's radio dot solid under the pointer", () => {
+    // The hover preview pales the dot; a chosen card is excluded, so a press
+    // that sends nothing never makes it look unchosen (#1523).
+    const hover = rules(styles).filter(
+      ({ selector }) =>
+        selector.includes('.metadata-choice') &&
+        selector.includes(':hover') &&
+        selector.includes('strong::before'),
+    )
+    expect(hover.map(({ selector }) => selector)).toEqual([
+      '.metadata-choice:not(.is-selected):hover .choice-select:not(:disabled) > strong::before',
+    ])
+  })
+
   it('sets no type below the .75rem floor', () => {
     expect(belowFloor(sheets)).toEqual([])
     expect(

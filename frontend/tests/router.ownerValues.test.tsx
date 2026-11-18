@@ -2016,13 +2016,16 @@ describe('a pin in the No change panel', () => {
 describe('the written choice', () => {
   const NEW = { kind: 'text', value: 'New title' } as const
   const PROPOSED = 'Choose proposed value: New title'
-  const written = (writtenByCase: boolean): Field => ({
+  // `ownWrite` is whether the accept's own write has landed (the server's
+  // withdraw 'written'); `writtenByCase` whether any write of the case has.
+  const written = (writtenByCase: boolean, ownWrite = writtenByCase): Field => ({
     ...base,
     needsAttention: false,
     classification: 'human_recorded',
     classificationCause: 'human_decided',
     classificationReason: 'You decided this field. You can change it here.',
     humanDecision: decision('accept', NEW),
+    ownerControl: control({ withdraw: ownWrite ? 'written' : 'available' }),
     writtenByCase,
   })
 
@@ -2044,6 +2047,14 @@ describe('the written choice', () => {
   it('W2 still sends the chosen card of a field this case has not written', async () => {
     const user = userEvent.setup()
     const http = owner(() => [written(false)])
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(await screen.findByRole('radio', { name: PROPOSED }))
+    await waitFor(() => expect(sent(http).map((command) => command.outcome)).toEqual(['accept']))
+  })
+
+  it('W3 still sends a chosen accept not yet written after an earlier write of the case', async () => {
+    const user = userEvent.setup()
+    const http = owner(() => [written(true, false)])
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
     await user.click(await screen.findByRole('radio', { name: PROPOSED }))
     await waitFor(() => expect(sent(http).map((command) => command.outcome)).toEqual(['accept']))
