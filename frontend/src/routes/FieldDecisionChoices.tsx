@@ -283,8 +283,10 @@ export function MetadataChoice({
     retainedAdvice && advice?.selected_advice ? advice.selected_advice.candidate : advice
   const evidenceId = `choice-evidence-${current ? 'current' : (context?.alternativeId ?? 'alternative')}`
   const evidenceLabel =
-    evidenceName ??
-    (longDescription ? `Evidence for ${label} description` : `Evidence for ${label}: ${value}`)
+    beforeChange && longDescription
+      ? 'Evidence for the description before your change'
+      : (evidenceName ??
+        (longDescription ? `Evidence for ${label} description` : `Evidence for ${label}: ${value}`))
   // The card's source line says a title-and-author value as Evidence does.
   const rationale = adviceSource
     ? `${adviceSource.engine} · ${adviceSource.model}`

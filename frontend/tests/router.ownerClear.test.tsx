@@ -12,7 +12,15 @@ import type {
 } from '../src/api/http'
 import { destinationLabel } from '../src/labels'
 import { SettledFieldContext } from '../src/routes/FieldDecisionOutcome'
-import { createHttp, detail, library, recordedAcknowledgement, renderRoute } from './fixtures'
+import descriptionAdviceFixture from './descriptionAdviceFixture.json'
+import {
+  createHttp,
+  detail,
+  library,
+  readCaseDetail,
+  recordedAcknowledgement,
+  renderRoute,
+} from './fixtures'
 
 // Clearing a field and entering names in the browser (#1523, ADR-0105): an
 // emptied form clears a clearable field with one press; names are one per line.
@@ -760,6 +768,106 @@ describe('the keep card on a field this case wrote (#1523)', () => {
       expect(keepCardShown()).toBeNull()
     },
   )
+
+  // A description the adviser's text replaced, read back after the write.
+  const adviceWritten = (before: string | null): Field => {
+    const authored = readCaseDetail(descriptionAdviceFixture)
+    const field = authored.fields.find((item) => item.destination === 'description')
+    const advice = field?.descriptionAdvice
+    if (!field || !advice?.candidate) throw new Error('description fixture requires its advice')
+    const [current, ...others] = field.choiceContexts
+    if (!current) throw new Error('description fixture requires its current context')
+    return {
+      ...field,
+      writtenByCase: true,
+      currentValue: before ?? 'Not set in Audiobookshelf',
+      currentRaw: before,
+      choiceContexts: [
+        {
+          ...current,
+          evidence: [
+            ...current.evidence,
+            {
+              language: null,
+              observation: 'Description: the same text.',
+              role: 'external_corroboration',
+              source: 'Hardcover',
+            },
+          ],
+        },
+        ...others,
+      ],
+      descriptionAdvice: {
+        ...advice,
+        current: false,
+        application_outcome: 'verified',
+        selected_advice: { candidate: advice.candidate, binding: advice.binding, current: false },
+        selection: {
+          decision_id: `automatic_decision_${'a'.repeat(64)}`,
+          candidate_id: advice.candidate.candidate_id,
+          binding: advice.binding,
+          origin: 'automatic_policy',
+          resolved_policy_id: `resolved_policy_${'b'.repeat(64)}`,
+          qualification_manifest_sha256: 'c'.repeat(64),
+          idempotency_digest: 'd'.repeat(64),
+          occurred_at: 10,
+          destination: 'description' as const,
+          outcome: 'accept',
+          application: 'guarded',
+        },
+      },
+    }
+  }
+
+  it('offers the description before the adviser’s text was written', async () => {
+    const user = userEvent.setup()
+    const http = owner(adviceWritten(`An earlier description. ${'It goes on. '.repeat(30)}`))
+    renderRoute('/library?lens=all&preview=case-1&field=description', http)
+    const advised = await screen.findByRole('radio', { name: /^Choose advised value:/u })
+    expect(advised).toHaveTextContent('Applied and verified')
+    const card = screen.getByText('Before your change').closest('.current-choice-list')
+    if (!(card instanceof HTMLElement)) throw new Error('the before-your-change card is required')
+    expect(
+      within(card).getByRole('radio', { name: 'Choose the description before your change' }),
+    ).toHaveAttribute('aria-checked', 'false')
+    await user.click(
+      within(card).getByRole('button', {
+        name: 'Evidence for the description before your change',
+      }),
+    )
+    expect(card).toHaveTextContent('Description: the same text.')
+    expect(screen.queryByText('Keep current value')).toBeNull()
+  })
+
+  it('says a description read empty has no way back once the advice is written', async () => {
+    renderRoute('/library?lens=all&preview=case-1&field=description', owner(adviceWritten(null)))
+    await screen.findByRole('radio', { name: /^Choose advised value:/u })
+    const heading = screen.getByRole('heading', { name: 'Description' })
+    expect(heading.parentElement?.querySelector('p')).toHaveTextContent(
+      'The description was empty before your change, and it can’t be emptied.',
+    )
+    expect(keepCardShown()).toBeNull()
+  })
+
+  it('marks a recorded keep on a field back at the value the case read', async () => {
+    const kept = decided({ ...isbnOver('9780306406157'), writtenByCase: false }, null)
+    if (!kept.humanDecision) throw new Error('a recorded decision is required')
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=isbn',
+      owner({
+        ...kept,
+        editable: true,
+        needsAttention: false,
+        humanDecision: { ...kept.humanDecision, outcome: 'keep_current' },
+      }),
+    )
+    const card = await screen.findByRole('radio', {
+      name: /^Choose current value: 9780306406157/u,
+    })
+    expect(screen.getByText('Keep current value')).toBeVisible()
+    expect(card).toHaveAttribute('aria-checked', 'true')
+    expect(card).toHaveTextContent('Your choice')
+  })
 
   it('says it in the plural on authors written over nothing', async () => {
     const written = decided(
