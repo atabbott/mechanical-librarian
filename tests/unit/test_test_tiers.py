@@ -2452,6 +2452,7 @@ def test_the_recorded_browser_timings_name_current_browser_files() -> None:
     assert table["seconds"]
     for key, elapsed in table["seconds"].items():
         path, separator, function = key.partition("::")
-        assert separator and function.startswith("test_"), key
+        # A function, or `Class::test_x` for a test written as a class.
+        assert separator and function.rpartition("::")[2].startswith("test_"), key
         assert path.startswith("tests/browser/test_") and (root / path).is_file(), key
         assert type(elapsed) is float and elapsed >= 0, key
