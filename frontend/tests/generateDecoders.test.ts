@@ -104,6 +104,16 @@ describe('the real review API document', () => {
   it('decodes every non-empty JSON 2xx response and nothing else', () => {
     const methods = ['get', 'put', 'post', 'delete', 'patch'] as const
     const expected = new Set<string>()
+    // Every component a response schema reaches, through $ref or a discriminator mapping.
+    const prefix = '#/components/schemas/'
+    const schemas: Record<string, unknown> = document.components.schemas
+    const reached = new Set<string>()
+    const visit = (node: unknown): void => {
+      if (typeof node === 'string' && node.startsWith(prefix) && !reached.has(node)) {
+        reached.add(node)
+        visit(schemas[node.slice(prefix.length)])
+      } else if (node && typeof node === 'object') Object.values(node).forEach(visit)
+    }
     for (const [template, item] of Object.entries(document.paths)) {
       for (const method of methods) {
         const operation = (item as Record<string, { responses: Record<string, Schema> }>)[method]
@@ -111,20 +121,27 @@ describe('the real review API document', () => {
           const content = response.content as Record<string, { schema?: Schema }> | undefined
           const schema = content?.['application/json']?.schema
           if (!status.startsWith('2') || !schema) continue
-          if (Object.keys(schema).some((key) => key !== 'title' && key !== 'description'))
+          if (Object.keys(schema).some((key) => key !== 'title' && key !== 'description')) {
             expected.add(`${method.toUpperCase()} ${template} ${status}`)
+            visit(schema)
+          }
         }
       }
     }
     const emitted = Object.entries(responseDecoders).flatMap(([key, statuses]) =>
       Object.keys(statuses).map((status) => `${key} ${status}`),
     )
-    expect(emitted).toHaveLength(84)
+    expect(emitted).toHaveLength(expected.size)
     expect(new Set(emitted)).toEqual(expected)
     expect(emitted.some((key) => key.startsWith('POST /api/v1/operations/support/export'))).toBe(
       false,
     )
-    expect(Object.keys(generated).filter((name) => name.startsWith('d_'))).toHaveLength(235)
+    // One decoder per reached component, named as the generator's ident() names it.
+    const ident = (name: string) =>
+      name.replace(/[^A-Za-z0-9_]/gu, (c) => `$${String(c.codePointAt(0))}`)
+    expect(new Set(Object.keys(generated).filter((name) => name.startsWith('d_')))).toEqual(
+      new Set([...reached].map((ref) => `d_${ident(ref.slice(prefix.length))}`)),
+    )
   })
 
   it('fills a fresh default per decode and leaves an absent display name absent (NC12)', () => {

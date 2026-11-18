@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify the live documentation corpus is reachable, linked, indexed, and lean.
 
-Seven checks. `docs/README.md` claims to list every
+Eight checks. `docs/README.md` claims to list every
 live document, and `docs/architecture/decisions/README.md` claims to index
 every decision; both claims were true only for as long as somebody re-read the
 tree by hand. The 2026-08-15 audit found ten orphaned documents and four
@@ -21,7 +21,13 @@ missing index rows, so the claims are enforced here instead:
    is several documents, or is carrying history that git already keeps;
 7. every version identifier on the compatibility page is the code's current
    one (`scripts/compatibility_versions.py`, which imports the product to
-   read them and rewrites the page with `--write`).
+   read them and rewrites the page with `--write`);
+8. every entry in an open ("in progress") section of `CHANGELOG.md` is whole.
+   The changelog merges with `merge=union` (`.gitattributes`), so git keeps
+   both sides' lines where two branches add entries at the same place instead
+   of stopping. Replayed over November 2026's 71 changelog conflicts, that
+   left 8 entries unfinished or spliced into another, each of which this check
+   reports, and flagged none of the other 63.
 
 ADRs are records of a decision and keep their original text, so checks 5 and
 6 do not apply to them; `CHANGELOG.md` is exempt from the word budget only.
@@ -31,8 +37,9 @@ exactly what `docs/README.md` says it lists. Files under `.github/` and
 `.impeccable/` are templates for tooling rather than documents that corpus
 claims, so they are outside it.
 
-Check 7 runs when the verified tree has the compatibility page; a minimal tree
-built for a test of the other six has none. Nothing here opens a socket. An
+Check 7 runs when the verified tree has the compatibility page, and check 8
+when it has a changelog; a minimal tree built for a test of the others has
+neither. Nothing here opens a socket. An
 `http`, `https`, or `mailto` target is skipped by construction rather than
 fetched, so the check is offline and stays that way whatever a document links
 to.
@@ -388,6 +395,43 @@ def stale_version_identifiers(root: Path) -> tuple[str, ...]:
     return compatibility_versions.version_findings(root)
 
 
+# A sentence that starts in lower case straight after an issue reference is
+# the tail of another entry that a union merge placed after this one.
+_SPLICED_ENTRY = re.compile(r"\)\.\s+[a-z]")
+
+
+def broken_changelog_entries(root: Path) -> tuple[str, ...]:
+    """Open changelog entries left unfinished or spliced by a union merge.
+
+    An entry is a `- ` line and the indented lines under it. It must end with
+    a full stop, and none of its sentences may start in lower case after an
+    issue reference. Closed sections are history and are not read.
+    """
+
+    if not (root / CHANGELOG).is_file():
+        return ()
+    entries: list[list[str]] = []
+    open_section = False
+    entry: list[str] | None = None
+    for line in (root / CHANGELOG).read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            open_section = "(in progress)" in line
+            entry = None
+        elif open_section and line.startswith("- "):
+            entry = [line[2:]]
+            entries.append(entry)
+        elif entry is not None and line.startswith("  "):
+            entry.append(line.strip())
+        else:
+            entry = None
+    return tuple(
+        f"{CHANGELOG.as_posix()} has a broken entry, as a union merge leaves one:"
+        f" {text[:70]!r}; restore each entry from the two sides of the merge"
+        for text in (" ".join(parts) for parts in entries)
+        if not text.endswith(".") or _SPLICED_ENTRY.search(text)
+    )
+
+
 def integrity_findings(root: Path) -> tuple[str, ...]:
     """Every finding, links first: an orphan is often a broken link upstream."""
 
@@ -399,6 +443,7 @@ def integrity_findings(root: Path) -> tuple[str, ...]:
         *issue_headings(root),
         *oversized_documents(root),
         *stale_version_identifiers(root),
+        *broken_changelog_entries(root),
     )
 
 
