@@ -64,8 +64,9 @@ alphabetical order. A document that is no longer needed is deleted.
 
 `CHANGELOG.md` and `docs/README.md` merge by keeping both sides' lines
 (`merge=union` in `.gitattributes`), so taking in `main` never stops on two
-entries added at the same place. Read their diff after the merge: an entry
-edited on both sides comes out twice.
+entries added at the same place. Read their diff after the merge, above all
+when one side closed a milestone's section: an entry edited on both sides
+comes out twice, and the check below reads only open sections.
 
 ## Writing
 
@@ -88,7 +89,9 @@ that every relative link resolves, that the ADR index and the ADR files match
 one to one with no shared numbers, that no heading outside an ADR names an
 issue (such as `(#1070)`), that no living document other than the
 changelog exceeds 6,000 words, and that every entry in an open changelog
-section ends with a full stop and has no other entry spliced into it. Run it locally with:
+section is one block without blank lines that ends with a full stop, with no
+sentence starting in lower case straight after a closing bracket, the marks a
+union merge leaves when it splices two entries. Run it locally with:
 
 ```text
 uv run python scripts/verify_documentation_integrity.py

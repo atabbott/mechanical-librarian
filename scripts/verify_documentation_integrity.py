@@ -22,12 +22,13 @@ missing index rows, so the claims are enforced here instead:
 7. every version identifier on the compatibility page is the code's current
    one (`scripts/compatibility_versions.py`, which imports the product to
    read them and rewrites the page with `--write`);
-8. every entry in an open ("in progress") section of `CHANGELOG.md` is whole.
-   The changelog merges with `merge=union` (`.gitattributes`), so git keeps
-   both sides' lines where two branches add entries at the same place instead
-   of stopping. Replayed over November 2026's 71 changelog conflicts, that
-   left 8 entries unfinished or spliced into another, each of which this check
-   reports, and flagged none of the other 63.
+8. every entry in an open ("in progress") section of `CHANGELOG.md` is one
+   block that ends with a full stop, with no sentence starting in lower case
+   straight after a closing bracket. The changelog merges with `merge=union`
+   (`.gitattributes`), so git keeps both sides' lines where two branches add
+   entries at the same place instead of stopping, and those are the marks it
+   leaves when it splices one entry into another or keeps an edited first line
+   twice.
 
 ADRs are records of a decision and keep their original text, so checks 5 and
 6 do not apply to them; `CHANGELOG.md` is exempt from the word budget only.
@@ -395,17 +396,19 @@ def stale_version_identifiers(root: Path) -> tuple[str, ...]:
     return compatibility_versions.version_findings(root)
 
 
-# A sentence that starts in lower case straight after an issue reference is
-# the tail of another entry that a union merge placed after this one.
+# A sentence that starts in lower case straight after a closing bracket, such
+# as an issue reference, is the tail of another entry that a union merge
+# placed after this one.
 _SPLICED_ENTRY = re.compile(r"\)\.\s+[a-z]")
 
 
 def broken_changelog_entries(root: Path) -> tuple[str, ...]:
     """Open changelog entries left unfinished or spliced by a union merge.
 
-    An entry is a `- ` line and the indented lines under it. It must end with
-    a full stop, and none of its sentences may start in lower case after an
-    issue reference. Closed sections are history and are not read.
+    An entry is a `- ` line and the indented lines under it, with no blank
+    line inside. It must end with a full stop, and none of its sentences may
+    start in lower case after a closing bracket. Closed sections are history
+    and are not read.
     """
 
     if not (root / CHANGELOG).is_file():
