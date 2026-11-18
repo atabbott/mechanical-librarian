@@ -157,18 +157,17 @@ def _pipeline(
     now: int,
     *,
     identified: bool = True,
-    listed_at: int = 1,
 ) -> ReviewPreparationPipeline:
     """One ebook prepared from `report`, admitted at the scan's time `now`.
 
     `identified=False` completes the extraction as evidence only, as a report
-    that admits no work identity does; a later `listed_at` lists the work as
-    changed, so preparation extracts it again.
+    that admits no work identity does. The work is listed under the report's
+    title, so a report with another title lists it as changed and preparation
+    extracts it again.
     """
     listed = replace(
         entry("item-1", report.file.identity),
         library="ebooks",
-        updated_at=listed_at,
         title=str(report.target.fields[0].value),
         source_fingerprint=None,
     )
@@ -322,7 +321,6 @@ def test_a_re_preparation_that_identifies_nothing_retires_the_kept_case(
             _read_back("Identified as nothing"),
             written_at + 2,
             identified=False,
-            listed_at=2,
         )
     )
 
@@ -348,7 +346,7 @@ def test_a_re_preparation_that_identifies_nothing_retires_the_kept_case(
 
     # Identified again inside the 30 days, the same write keeps the case
     # again, admitted afresh rather than replayed.
-    _drain(_pipeline(store.repository, _read_back(), written_at + 3, listed_at=3))
+    _drain(_pipeline(store.repository, _read_back(), written_at + 3))
     again = _work(store)
     assert again[:3] == ("complete", "complete", "case")
     assert _current(store, str(again[3]))
@@ -389,7 +387,6 @@ def test_an_unsent_answer_on_a_retired_kept_case_is_refused(
             _read_back("Identified as nothing"),
             written_at + 2,
             identified=False,
-            listed_at=2,
         )
     )
     refused = store.service.apply(going_back.plan.plan_id)

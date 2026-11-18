@@ -198,7 +198,8 @@ offered, the kept case at 29 and 30 days with replay, an actionable successor,
 a changed pin, the skipped advice, the unchanged-work expiry, and a kept case
 retired by a re-preparation that identifies nothing, with its verified write
 unchanged, an unsent answer on it refused, and the case kept again once the
-work is identified again. Adapter tests pin each payload and read form. The Audiobookshelf field-effect qualification
-enters, goes back on and clears each field on every pinned image, checks each
-clear raw, and on the installed path clears a written subtitle, pins the clear
-and checks that the next scan keeps it quiet.
+work is identified again. Adapter tests pin each payload and read form. The
+Audiobookshelf field-effect qualification enters, goes back on and clears
+each field on every pinned image, checks each clear raw, and on the installed
+path clears a written subtitle, pins the clear and checks that the next scan
+keeps it quiet.
