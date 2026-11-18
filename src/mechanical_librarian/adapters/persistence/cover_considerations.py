@@ -314,44 +314,49 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             (review_case_id, value["consideration_id"], occurred_at),
         )
 
-    def _resume_automatic_cover(self, review_case_id: str, changed_at: int) -> None:
+    def _resume_automatic_cover(
+        self, review_case_id: str, decision_id: str, changed_at: int
+    ) -> None:
         """Hand a held cover back to Automatic as its hold clears (K9).
 
-        Inside the hold-clearing transaction: when the case's current
-        comparison is one the stage would switch but for the owner, the
-        owner's selection pointer for the work is released and admission
-        runs again for that comparison. Without the mark, a cover chosen in
-        To decide, nothing changes.
+        Inside the hold-clearing transaction: the owner's selection pointer
+        the cleared hold names is released, and admission runs again for the
+        work's current comparison. When the stage has nothing to switch, the
+        cover stays as it is with no owner pointer, and a later comparison
+        may switch it. A pointer from any other answer stays: every cover
+        answer over a standing hold takes the hold over.
         """
-        row = self._connection.execute(
-            "SELECT consideration.document,report.document,report.document_digest,"
-            "consideration.document_digest,consideration.report_id,"
-            "lineage.connection_name,lineage.library_name,lineage.item_id "
-            "FROM cover_automatic_held held "
-            "JOIN current_cover_considerations current "
-            "ON current.review_case_id=held.review_case_id "
-            "AND current.consideration_id=held.consideration_id "
-            "JOIN cover_considerations consideration "
-            "ON consideration.consideration_id=held.consideration_id "
-            "JOIN metadata_reports report ON report.report_id=consideration.report_id "
-            "JOIN current_review_case_lineages lineage "
-            "ON lineage.review_case_id=held.review_case_id "
-            "WHERE held.review_case_id=?",
-            (review_case_id,),
-        ).fetchone()
         self._connection.execute(
             "DELETE FROM cover_automatic_held WHERE review_case_id=?",
             (review_case_id,),
         )
-        if row is None:
+        owner = self._connection.execute(
+            "SELECT selection_id,connection_name,library_name,item_id "
+            "FROM cover_selection_authorities WHERE kind='owner' AND decision_id=?",
+            (decision_id,),
+        ).fetchone()
+        if owner is None:
             return
         self._connection.execute(
             "DELETE FROM current_cover_selection_authorities WHERE connection_name=? "
-            "AND library_name=? AND item_id=? AND selection_id IN (SELECT selection_id "
-            "FROM cover_selection_authorities WHERE kind='owner')",
-            row[5:],
+            "AND library_name=? AND item_id=? AND selection_id=?",
+            (*owner[1:], owner[0]),
         )
-        self._admit_automatic_cover(expand_cover_consideration(*row[:5]), changed_at)
+        row = self._connection.execute(
+            "SELECT consideration.document,report.document,report.document_digest,"
+            "consideration.document_digest,consideration.report_id "
+            "FROM current_review_case_lineages lineage "
+            "JOIN current_cover_considerations current "
+            "ON current.review_case_id=lineage.review_case_id "
+            "JOIN cover_considerations consideration "
+            "ON consideration.consideration_id=current.consideration_id "
+            "JOIN metadata_reports report ON report.report_id=consideration.report_id "
+            "WHERE lineage.connection_name=? AND lineage.library_name=? "
+            "AND lineage.item_id=?",
+            owner[1:],
+        ).fetchone()
+        if row is not None:
+            self._admit_automatic_cover(expand_cover_consideration(*row), changed_at)
 
     def _admit_taste_automatic_cover(
         self, consideration_id: str, verdict_id: str, occurred_at: int

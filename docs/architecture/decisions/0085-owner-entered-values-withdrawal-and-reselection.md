@@ -360,18 +360,24 @@ have helped either: the owner's selection still refused every mint.
   owner answered.
 - **What Resume does.** It asks for fresh checks, as for any field. When the
   checks complete and the hold clears, the same transaction releases the
-  owner's selection pointer for the work and runs admission again for the
-  marked comparison. Automatic may then switch the cover: the stage, and later
-  the taste profile while Switching is Automatic. That transaction reads and
-  writes only the application database.
+  owner's selection pointer that the cleared hold names, and runs admission
+  again for the work's current comparison, marked or not. Every cover answer
+  made while a cover hold stands takes that hold over, so the hold always
+  names the owner's latest answer, and a Resume asked before a newer answer
+  clears nothing. Automatic may then switch the cover: the stage, and later
+  the taste profile while Switching is Automatic. When the fresh checks find
+  nothing to switch, or safety is paused, the cover stays as it is with no
+  owner choice over it, and a later check may switch it. That transaction
+  reads and writes only the application database.
 - **Who never gets it.** A cover chosen in To decide has no hold, so it never
   shows Resume and is never switched. Taste alone never marks a comparison,
   because the judge never looks at an owner-chosen cover.
 - **The mark.** A new comparison removes it, and so does each admission of the
   case's current comparison, before the mark is worked out again. An admission
   that stops short, for example while automatic safety is paused, leaves no
-  mark. Clearing the hold also removes it. A table is used rather than an event kind, because
-  events show as Activity rows.
+  mark. Clearing the hold also removes it. The mark decides only whether
+  Resume shows; the release does not need it. A table is used rather than an
+  event kind, because events show as Activity rows.
 - **Consequence.** After Resume, the owner's earlier pick leaves the taste
   builder's input and "Confirmed {n} of {m}", because both read the current
   pointer.

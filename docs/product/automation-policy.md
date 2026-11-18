@@ -520,7 +520,8 @@ automatic change not yet written. When you take a cover over from Automatic
 (Keep, Put back or Others on a switched cover), the work offers Resume
 automatic handling for its cover on a later check where the measured rules
 would fix a fault in it. Resume lets Automatic switch it again, including by
-your taste profile. What you may choose is in the
+your taste profile. If the fresh checks then find nothing to switch, the cover
+stays as it is, and Automatic may switch it on a later check. What you may choose is in the
 [review experience](review-experience.md#covers).
 
 Switching on Taste profile lets your taste profile switch covers

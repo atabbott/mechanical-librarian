@@ -1248,7 +1248,9 @@ def test_a_later_comparison_with_no_switch_clears_the_mark(
         _reprepare(service, prepared)
         assert _marks(prepared) == []
         assert _cover_field(prepared, service)["manual_hold"] is False
-        # Clearing the hold now releases nothing: the owner's cover stays.
+        # Review B2: Resume completes with nothing to switch. The owner's
+        # pointer is still released, so the cover stays as it is with no
+        # owner choice standing over it ...
         token = prepared.repository.field_effect_manual_hold_token(
             prepared.review_case_id, "cover"
         )
@@ -1258,7 +1260,69 @@ def test_a_later_comparison_with_no_switch_clears_the_mark(
             )
             is not None
         )
-        assert [row["kind"] for row in _selections(prepared.repository)] == ["owner"]
+        assert _selections(prepared.repository) == []
+        # ... and a later check that finds a fault switches it.
+        service = _service(prepared)
+        service.update_policy(CoverPolicy(prefer_edition=True))
+        later = json.loads(_reprepare(service, prepared))
+        (selection,) = _selections(prepared.repository)
+        assert selection["kind"] == "automatic"
+        assert selection["consideration_id"] == later["consideration_id"]
+
+
+def test_a_resume_while_safety_is_paused_switches_on_a_later_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review B2: safety pauses while Resume's checks run, and the marked
+    comparison is admitted again, so its mark goes. The completed Resume
+    still releases the owner's cover; once safety resumes, a later
+    comparison switches it."""
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with _prepared(tmp_path) as prepared:
+        repository = prepared.repository
+        connection = repository._connection
+        service = _service(prepared)
+        (switch,) = _selections(repository)
+        _keep_cover(prepared, switch["selection_id"])
+        service.update_policy(CoverPolicy(prefer_edition=True))
+        _reprepare(service, prepared)
+        assert len(_marks(prepared)) == 1
+        token = repository.field_effect_manual_hold_token(
+            prepared.review_case_id, "cover"
+        )
+        assert token is not None
+        connection.execute(
+            "UPDATE automatic_safety_state SET paused=1 WHERE singleton=1"
+        )
+        document = repository.current_cover_consideration_document(
+            prepared.review_case_id
+        )
+        assert document is not None
+        repository._cover_considerations._admit_automatic_cover(document, 15)
+        connection.commit()
+        assert _marks(prepared) == []
+        assert (
+            repository.clear_field_effect_manual_hold(
+                prepared.review_case_id, "cover", 20, token
+            )
+            is not None
+        )
+        # Paused, Automatic switches nothing yet, but the owner's choice no
+        # longer stands over the cover.
+        assert _selections(repository) == []
+        connection.execute(
+            "UPDATE automatic_safety_state SET paused=0 WHERE singleton=1"
+        )
+        connection.commit()
+        service.update_policy(CoverPolicy(prefer_edition=False))
+        later = json.loads(_reprepare(service, prepared))
+        (selection,) = _selections(repository)
+        assert selection["kind"] == "automatic"
+        assert selection["consideration_id"] == later["consideration_id"]
 
 
 def test_switching_content_never_reaches_operational_output(
