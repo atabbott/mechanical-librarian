@@ -513,7 +513,10 @@ def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
             "put_back": None,
             "put_back_offered": False,
             "reason": None,
+            # A measured switch or fill names no taste profile (#1372 PR 5).
+            "taste": None,
         }
+        assert first["switched"]["taste"] is None
         assert (
             replaced_cover_preview(library.repository, older, before["preview_sha256"])
             == before["preview_sha256"]

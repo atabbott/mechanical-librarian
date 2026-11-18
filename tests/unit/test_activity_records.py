@@ -480,6 +480,34 @@ def test_an_automatic_decision_names_the_policy_that_chose_it() -> None:
     }
 
 
+def test_a_taste_switch_names_its_profile_version_and_no_rule() -> None:
+    """A switch the taste profile chose says which version chose it, and
+    nothing a rule says (#1372 PR 5, K10; ADR-0095)."""
+    report = _titled("Tehanu")
+    event = _project(
+        _event(
+            destination="cover",
+            event_type="metadata",
+            origin="automatic_policy",
+            state="candidate",
+            record={
+                "source_kind": "automatic_decision",
+                "target_fingerprint": report.target.fingerprint,
+                "outcome": "candidate",
+                "selected_value": {"kind": "cover", "value": "cover_" + "1" * 64},
+                "policy_category": "cover_order",
+                "policy_option": "fixed_source_order",
+                "policy_generation": 4,
+                "taste_version": 3,
+            },
+        ),
+        report,
+    )
+    facts = _facts(event)
+    assert facts["Taste profile"] == "Version 3"
+    assert list(facts)[-1] == "Taste profile"
+
+
 def test_an_automatic_keep_shows_the_unchanged_value_on_both_sides() -> None:
     report = _titled("The Farthest Shore")
     event = _project(

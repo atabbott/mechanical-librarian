@@ -1147,6 +1147,12 @@ class ReviewApplication:
             raise ReviewApplicationError("unavailable")
         return self._cover_taste.read()
 
+    def taste_preview(self, protection: str) -> dict[str, object]:
+        """Covers → Taste profile's preview of switching by taste (#1372 PR 5)."""
+        if self._cover_taste is None:
+            raise ReviewApplicationError("unavailable")
+        return self._cover_taste.preview(protection)
+
     def retry_taste_build(self, build_id: str) -> None:
         if self._cover_taste is None:
             raise ReviewApplicationError("unavailable")

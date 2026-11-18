@@ -43,11 +43,13 @@ from mechanical_librarian.domain.review_browse import LibraryReportFacts
 
 # v2: a suggestion carries the taste judge's strength beside the measured
 # rule's reason, either of which may be absent (#1372 PR 4b).
-ReviewCoversSchemaVersion = Literal["review-covers-v2"]
-REVIEW_COVERS_SCHEMA: Final[ReviewCoversSchemaVersion] = "review-covers-v2"
-ReviewCoverCalibrationSchemaVersion = Literal["review-cover-calibration-v2"]
+# v3: a switch names the taste profile version and rules that made it, or
+# null for a measured switch or fill (#1372 PR 5, K10).
+ReviewCoversSchemaVersion = Literal["review-covers-v3"]
+REVIEW_COVERS_SCHEMA: Final[ReviewCoversSchemaVersion] = "review-covers-v3"
+ReviewCoverCalibrationSchemaVersion = Literal["review-cover-calibration-v3"]
 REVIEW_COVER_CALIBRATION_SCHEMA: Final[ReviewCoverCalibrationSchemaVersion] = (
-    "review-cover-calibration-v2"
+    "review-cover-calibration-v3"
 )
 CoverView = Literal["decide", "kept", "switched", "all"]
 TasteStrength = Literal["strong", "likely"]
@@ -99,6 +101,15 @@ class SwitchCover:
 
 
 @dataclass(frozen=True, slots=True)
+class SwitchTaste:
+    """The taste profile version a switch was made under, and the rules its
+    verdict cited, each as (number, section, text) in that version."""
+
+    version: int
+    rules: tuple[tuple[int, str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PutBack:
     """The owner's Put back of a listed switch: its write's state and failure.
 
@@ -140,6 +151,8 @@ class CoverRow:
     hold_reason: str | None = None
     # The taste judge's suggestion, for a suggestion it made (J8).
     taste_strength: TasteStrength | None = None
+    # The taste profile behind an automatic switch, for a taste switch only.
+    switch_taste: SwitchTaste | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +252,15 @@ def _cover_item(
             "put_back_offered": row.put_back_offered,
             "reason": row.switch_reason,
             "language": row.switch_language,
+            "taste": None
+            if row.switch_taste is None
+            else {
+                "version": row.switch_taste.version,
+                "rules": [
+                    {"number": number, "section": section, "text": text}
+                    for number, section, text in row.switch_taste.rules
+                ],
+            },
         }
     return {
         "authors": _report_authors(target),

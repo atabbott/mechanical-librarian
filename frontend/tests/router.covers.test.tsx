@@ -166,7 +166,7 @@ const page = (
   counts: pageCounts,
   items,
   next_cursor,
-  schema_version: 'review-covers-v2',
+  schema_version: 'review-covers-v3',
   view,
 })
 
@@ -551,6 +551,7 @@ describe('Covers view (#1633)', () => {
           put_back_offered: false,
           language: null,
           reason: null,
+          taste: null,
         },
         ...extra,
       })
@@ -582,6 +583,7 @@ describe('Covers view (#1633)', () => {
           put_back_offered: false,
           language: null,
           reason: null,
+          taste: null,
         },
       }),
     ])
@@ -615,6 +617,7 @@ describe('Covers view (#1633)', () => {
           put_back_offered: true,
           language: null,
           reason: null,
+          taste: null,
         },
       }),
       work('case-2', 'auto', {
@@ -626,6 +629,7 @@ describe('Covers view (#1633)', () => {
           put_back_offered: false,
           language: null,
           reason: null,
+          taste: null,
         },
       }),
     ])
@@ -682,6 +686,7 @@ describe('Covers view (#1633)', () => {
           put_back_offered: false,
           language: null,
           reason: null,
+          taste: null,
         },
       }),
     ])
@@ -753,6 +758,7 @@ describe('Covers view (#1633)', () => {
           put_back_offered: true,
           language: null,
           reason: null,
+          taste: null,
         },
       }),
     ])
@@ -1080,6 +1086,7 @@ describe('Put back (#1363)', () => {
           put_back_offered,
           language: null,
           reason: null,
+          taste: null,
         },
       }),
     ])
@@ -1122,6 +1129,7 @@ describe('Put back (#1363)', () => {
             put_back_offered: true,
             language: null,
             reason: null,
+            taste: null,
           },
         }),
       ]),
@@ -1297,6 +1305,7 @@ describe('Measured cover rules (#1363)', () => {
         put_back_offered: false,
         language: null,
         reason,
+        taste: null,
       },
       ...extra,
     })
@@ -1412,6 +1421,7 @@ describe('Measured cover rules (#1363)', () => {
           put_back_offered: false,
           language: null,
           reason: 'unreadable',
+          taste: null,
         },
       }),
     ])
@@ -1426,7 +1436,7 @@ describe('Measured cover rules (#1363)', () => {
 // Covers → Taste profile (#1372): its states from one read, and the owner's
 // edits (PR 2).
 const tasteView = (value: Partial<TasteProfileView> = {}): TasteProfileView => ({
-  schema_version: 'review-taste-profile-v3',
+  schema_version: 'review-taste-profile-v4',
   configured: true,
   chosen: 0,
   required: 25,
@@ -1436,6 +1446,7 @@ const tasteView = (value: Partial<TasteProfileView> = {}): TasteProfileView => (
   versions: [],
   judge: { configured: false, daily_limit: 5000, stopped: null, retry_after: null, failed: 0 },
   confirmed: { confirmed: 0, suggested: 0 },
+  automatic_available: false,
   ...value,
 })
 const tasteRoute = '/library?lens=all&view=covers&tab=taste'
@@ -2406,7 +2417,7 @@ describe('Covers → Taste profile edits (#1372 PR 2)', () => {
 describe("Covers' picks (#1372 PR 3)", () => {
   const calibration = (ids: string[]) => ({
     items: ids.map((id) => work(id, 'kept')),
-    schema_version: 'review-cover-calibration-v2' as const,
+    schema_version: 'review-cover-calibration-v3' as const,
   })
   // Five cards: the current cover and four others, with the second others'
   // card recommended, as the measured rules would.
@@ -2447,7 +2458,7 @@ describe("Covers' picks (#1372 PR 3)", () => {
       ...http,
       getCoverCalibration: vi.fn<ReviewHttp['getCoverCalibration']>(async () => calibration(ids)),
       getTasteProfile: vi.fn<ReviewHttp['getTasteProfile']>(async () => ({
-        schema_version: 'review-taste-profile-v3',
+        schema_version: 'review-taste-profile-v4',
         configured: true,
         chosen: typeof chosen === 'function' ? chosen() : chosen,
         required: 25,
@@ -2463,6 +2474,7 @@ describe("Covers' picks (#1372 PR 3)", () => {
           failed: 0,
         },
         confirmed: { confirmed: 0, suggested: 0 },
+        automatic_available: false,
         ...taste,
       })),
     }

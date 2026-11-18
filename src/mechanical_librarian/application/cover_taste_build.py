@@ -32,6 +32,9 @@ from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
 )
+from mechanical_librarian.domain.cover_qualification_policy import (
+    taste_replacement_record,
+)
 from mechanical_librarian.domain.cover_taste import (
     CoverTasteError,
     TasteBuildFailure,
@@ -189,6 +192,7 @@ class CoverTasteBuildService:
             "configured": self._access.current_taste_build_model() is not None,
             "daily_limit": self._daily_limit,
             "confirmed": judge.pop("confirmed"),
+            "automatic_available": taste_replacement_record() is not None,
             "judge": {
                 **judge,
                 "configured": self._access.current_taste_judge_model() is not None,

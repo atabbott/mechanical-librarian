@@ -74,6 +74,11 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousFieldActivitySchemaVersion,
 )
+from mechanical_librarian.application.cover_taste_switching import (
+    PREVIEW_CHECKED,
+    PREVIEW_SWITCHES,
+    ReviewTastePreviewSchemaVersion,
+)
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.live_updates import (
     LiveUpdateCapacityError,
@@ -129,6 +134,7 @@ from mechanical_librarian.domain.cover_taste import (
     MAX_TASTE_RULE_NUMBER,
     MAX_TASTE_RULES,
     TASTE_FIRST_BUILD_DECISIONS,
+    TASTE_JUDGE_MAX_RULES,
     TasteBuildFailure,
     TasteEditRefusal,
     TasteProvenance,
@@ -384,9 +390,10 @@ class _PasswordChangeRequest(BaseModel):
 
 REVIEW_SESSION_SCHEMA: Final = "review-session-v1"
 # v3: the suggestion model's state and the suggestions confirmed (#1372 PR 4b).
-ReviewTasteProfileSchemaVersion = Literal["review-taste-profile-v3"]
+# v4: whether switching by taste has its qualification record (#1372 PR 5).
+ReviewTasteProfileSchemaVersion = Literal["review-taste-profile-v4"]
 REVIEW_TASTE_PROFILE_SCHEMA: Final[ReviewTasteProfileSchemaVersion] = (
-    "review-taste-profile-v3"
+    "review-taste-profile-v4"
 )
 MetadataPolicyNotebookSchemaVersion = Literal["metadata-policy-notebook-v2"]
 METADATA_POLICY_NOTEBOOK_SCHEMA: Final[MetadataPolicyNotebookSchemaVersion] = (
@@ -1719,6 +1726,21 @@ class _CoverPutBack(_ClosedModel):
     ]
 
 
+class _CoverSwitchRule(_ClosedModel):
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
+    section: TasteSection
+    text: StrictStr = Field(min_length=1, max_length=MAX_TASTE_RULE_CODE_POINTS)
+
+
+class _CoverSwitchTaste(_ClosedModel):
+    # The taste profile version a switch was made under, and the rules its
+    # verdict cited as that version holds them (#1372 PR 5, K10).
+    version: StrictInt = Field(ge=1)
+    rules: list[_CoverSwitchRule] = Field(
+        min_length=1, max_length=TASTE_JUDGE_MAX_RULES
+    )
+
+
 class _CoverSwitch(_ClosedModel):
     at: _Count
     before: _CoverPreview | None
@@ -1730,6 +1752,8 @@ class _CoverSwitch(_ClosedModel):
     # names; a fill has neither (#1363).
     language: str | None = Field(max_length=280)
     reason: _CoverStageReason | None
+    # A taste switch's profile version and rules; null for any other.
+    taste: _CoverSwitchTaste | None
 
 
 class _CoverRuleReason(_ClosedModel):
@@ -1841,6 +1865,50 @@ class _TasteProfileResponse(_ClosedModel):
     versions: list[_TasteVersion] = Field(max_length=50)
     judge: _TasteJudge
     confirmed: _TasteConfirmed
+    # Automatic switching by taste has the record a release qualifies it
+    # with; until then every switch stays a suggestion (#1372 PR 5).
+    automatic_available: StrictBool
+
+
+class _TastePreviewCover(_ClosedModel):
+    # The current cover by the library cover route, or the switch's cover
+    # by the work's comparison image route (#1372 PR 5, K7).
+    height: int = Field(ge=1, le=8192)
+    preview_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    url: str = Field(
+        pattern=r"^/api/v1/(library/cover\?|review-cases/review_case_[0-9a-f]{64}"
+        r"/cover-considerations/cover_consideration_[0-9a-f]{64}/images/"
+        r"cover_ref_[0-9a-f]{64}$)"
+    )
+    width: int = Field(ge=1, le=8192)
+
+
+class _TastePreviewItem(_ClosedModel):
+    review_case_id: str = Field(pattern=r"^review_case_[0-9a-f]{64}$")
+    title: str
+    authors: list[str]
+    media_kind: _MediaKind
+    current: _TastePreviewCover | None
+    new: _TastePreviewCover | None
+    # The fault the switch cures, or null for a preferred cover.
+    reason: _CoverStageReason | None
+    rules: list[_CoverSwitchRule] = Field(
+        min_length=1, max_length=TASTE_JUDGE_MAX_RULES
+    )
+    # The owner's answer since the suggestion, when it is one shown here.
+    answer: Literal["looks_right", "kept_current"] | None
+
+
+class _TastePreviewResponse(_ClosedModel):
+    """What Automatic would switch by taste, from what has been checked so
+    far under the version in use (#1372 PR 5, K7). A read only."""
+
+    schema_version: ReviewTastePreviewSchemaVersion
+    version: StrictInt = Field(ge=1)
+    checked: StrictInt = Field(ge=0, le=PREVIEW_CHECKED)
+    found: list[_TastePreviewItem] = Field(max_length=PREVIEW_SWITCHES)
+    state: Literal["checking", "done"]
+    rerun: StrictBool
 
 
 class _TasteRetryRequest(_ClosedModel):
@@ -1913,6 +1981,7 @@ def _taste_response(data: dict[str, object]) -> _TasteProfileResponse:
         ],
         judge=_TasteJudge.model_validate(data["judge"]),
         confirmed=_TasteConfirmed.model_validate(data["confirmed"]),
+        automatic_available=cast(bool, data["automatic_available"]),
     )
 
 
@@ -5434,6 +5503,25 @@ def _register_taste_routes(
         try:
             return _taste_response(application.taste_profile())
         except (ReviewApplicationError, ReviewerAccessApplicationError):
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+
+    @app.get(
+        "/api/v1/covers/taste/preview",
+        response_model=_TastePreviewResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 422, 503)},
+    )
+    def taste_preview(
+        protection: Literal["protected", "unprotected"] = Query(),
+        ml_session: str | None = Security(session_cookie),
+    ) -> _TastePreviewResponse:
+        """Read-only: what Automatic would switch by taste under
+        `protection`, from what the judge has checked so far (#1372 PR 5)."""
+        _require_session(application, ml_session)
+        try:
+            return _TastePreviewResponse.model_validate(
+                application.taste_preview(protection)
+            )
+        except (ReviewApplicationError, ReviewWebError):
             raise HTTPException(503, detail={"code": "unavailable"}) from None
 
     @app.post(

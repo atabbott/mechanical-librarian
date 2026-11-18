@@ -42,10 +42,12 @@ from mechanical_librarian.application.review_covers import (
     CoverView,
     PutBack,
     SwitchCover,
+    SwitchTaste,
 )
 from mechanical_librarian.domain.cover_taste import (
     TASTE_MIN_ARTS,
     TASTE_STRONG_CONFIDENCE,
+    TasteProfile,
 )
 
 _PREVIEW_VARIANT = "preview-320x480-rgba-png-v1"
@@ -183,7 +185,10 @@ _TASTE_SQL = (
 _SWITCH_REASON_SQL = (
     "SELECT json_extract(json_extract(selection.document,'$.decision_document'),"
     "'$.reason'),json_extract(json_extract(consideration.document,"
-    "'$.policy_report_document'),'$.stage.language') "
+    "'$.policy_report_document'),'$.stage.language'),"
+    "json_extract(json_extract(selection.document,'$.decision_document'),"
+    "'$.verdict_id'),json_extract(json_extract(selection.document,"
+    "'$.decision_document'),'$.taste_version') "
     "FROM field_effects effect JOIN cover_selection_authorities selection "
     "ON selection.decision_id=effect.decision_id AND selection.kind='automatic' "
     "JOIN cover_considerations consideration "
@@ -403,17 +408,47 @@ def _put_back(
 
 def _switch_reason(
     connection: sqlite3.Connection, plan_id: str
-) -> tuple[str | None, str | None]:
-    """The reason a switch recorded and the language it names; a fill has none."""
+) -> tuple[str | None, str | None, SwitchTaste | None]:
+    """The reason a switch recorded and the language it names; a fill has
+    none. A taste switch also names its profile version and the rules its
+    verdict cited, as that version holds them (#1372 PR 5, K10)."""
     row = connection.execute(_SWITCH_REASON_SQL, (plan_id,)).fetchone()
     if row is None:
-        return None, None
-    reason, language = row
-    if (reason is not None and type(reason) is not str) or (
-        language is not None and type(language) is not str
+        return None, None, None
+    reason, language, verdict_id, version = row
+    if (
+        (reason is not None and type(reason) is not str)
+        or (language is not None and type(language) is not str)
+        or (verdict_id is None) is not (version is None)
     ):
         raise MetadataReportError("review covers are unavailable")
-    return reason, language
+    if verdict_id is None:
+        return reason, language, None
+    taste = connection.execute(
+        "SELECT verdict.document,profile.document FROM cover_taste_verdicts verdict "
+        "JOIN cover_taste_profile_versions profile ON profile.version=verdict.version "
+        "WHERE verdict.verdict_id=? AND verdict.version=?",
+        (verdict_id, version),
+    ).fetchone()
+    if taste is None:
+        raise MetadataReportError("review covers are unavailable")
+    rules = {
+        rule.number: rule
+        for rule in TasteProfile.from_rules(json.loads(taste[1])["rules"]).rules
+    }
+    cited = json.loads(taste[0])["rules"]
+    if any(number not in rules for number in cited):
+        raise MetadataReportError("review covers are unavailable")
+    return (
+        reason,
+        language,
+        SwitchTaste(
+            cast(int, version),
+            tuple(
+                (number, rules[number].section, rules[number].text) for number in cited
+            ),
+        ),
+    )
 
 
 def read_cover_page(
@@ -489,8 +524,10 @@ def read_cover_page(
             raise MetadataReportError("review covers are unavailable")
         auto = group == "auto"
         replaced = auto and digest is not None
-        reason, language = (
-            _switch_reason(connection, cast(str, plan_id)) if auto else (None, None)
+        reason, language, switch_taste = (
+            _switch_reason(connection, cast(str, plan_id))
+            if auto
+            else (None, None, None)
         )
         page.append(
             CoverRow(
@@ -522,6 +559,7 @@ def read_cover_page(
                 else "strong"
                 if taste >= TASTE_STRONG_CONFIDENCE
                 else "likely",
+                switch_taste,
             )
         )
     return CoverPageSnapshot(

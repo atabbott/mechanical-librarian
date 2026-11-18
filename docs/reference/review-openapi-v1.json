@@ -353,6 +353,15 @@
             "default": false,
             "title": "Prefer Minimal Composition",
             "type": "boolean"
+          },
+          "taste_switching": {
+            "default": "suggest_only",
+            "enum": [
+              "suggest_only",
+              "automatic"
+            ],
+            "title": "Taste Switching",
+            "type": "string"
           }
         },
         "title": "CoverPreferenceSettings",
@@ -1073,7 +1082,8 @@
               "avoid_tie_in_branding": false,
               "current_protection": "protected",
               "prefer_edition": false,
-              "prefer_minimal_composition": false
+              "prefer_minimal_composition": false,
+              "taste_switching": "suggest_only"
             }
           },
           "description_advice": {
@@ -4304,7 +4314,7 @@
             "type": "array"
           },
           "schema_version": {
-            "const": "review-cover-calibration-v2",
+            "const": "review-cover-calibration-v3",
             "title": "Schema Version",
             "type": "string"
           }
@@ -5664,6 +5674,16 @@
               }
             ],
             "title": "Reason"
+          },
+          "taste": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverSwitchTaste"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -5673,9 +5693,69 @@
           "put_back",
           "put_back_offered",
           "language",
-          "reason"
+          "reason",
+          "taste"
         ],
         "title": "_CoverSwitch",
+        "type": "object"
+      },
+      "_CoverSwitchRule": {
+        "additionalProperties": false,
+        "properties": {
+          "number": {
+            "maximum": 9999.0,
+            "minimum": 1.0,
+            "title": "Number",
+            "type": "integer"
+          },
+          "section": {
+            "enum": [
+              "drawn_to",
+              "avoid",
+              "trade_offs",
+              "keep_or_switch"
+            ],
+            "title": "Section",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "section",
+          "text"
+        ],
+        "title": "_CoverSwitchRule",
+        "type": "object"
+      },
+      "_CoverSwitchTaste": {
+        "additionalProperties": false,
+        "properties": {
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/_CoverSwitchRule"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Rules",
+            "type": "array"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "rules"
+        ],
+        "title": "_CoverSwitchTaste",
         "type": "object"
       },
       "_CoverTasteReason": {
@@ -5917,7 +5997,7 @@
             "title": "Next Cursor"
           },
           "schema_version": {
-            "const": "review-covers-v2",
+            "const": "review-covers-v3",
             "title": "Schema Version",
             "type": "string"
           },
@@ -14433,10 +14513,212 @@
         "title": "_TasteJudgeRetryRequest",
         "type": "object"
       },
+      "_TastePreviewCover": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "maximum": 8192.0,
+            "minimum": 1.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "preview_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Preview Sha256",
+            "type": "string"
+          },
+          "url": {
+            "pattern": "^/api/v1/(library/cover\\?|review-cases/review_case_[0-9a-f]{64}/cover-considerations/cover_consideration_[0-9a-f]{64}/images/cover_ref_[0-9a-f]{64}$)",
+            "title": "Url",
+            "type": "string"
+          },
+          "width": {
+            "maximum": 8192.0,
+            "minimum": 1.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "height",
+          "preview_sha256",
+          "url",
+          "width"
+        ],
+        "title": "_TastePreviewCover",
+        "type": "object"
+      },
+      "_TastePreviewItem": {
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "enum": [
+                  "looks_right",
+                  "kept_current"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_TastePreviewCover"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "media_kind": {
+            "enum": [
+              "epub",
+              "m4b",
+              "m4a",
+              "mp3",
+              "audio",
+              "unknown"
+            ],
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "new": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_TastePreviewCover"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "title_names_other_work",
+                  "current_contradicted",
+                  "unreadable",
+                  "wrong_shape",
+                  "below_floor",
+                  "edition_language",
+                  "sharper_copy",
+                  "edition_preference"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "review_case_id": {
+            "pattern": "^review_case_[0-9a-f]{64}$",
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/_CoverSwitchRule"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Rules",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "review_case_id",
+          "title",
+          "authors",
+          "media_kind",
+          "current",
+          "new",
+          "reason",
+          "rules",
+          "answer"
+        ],
+        "title": "_TastePreviewItem",
+        "type": "object"
+      },
+      "_TastePreviewResponse": {
+        "additionalProperties": false,
+        "description": "What Automatic would switch by taste, from what has been checked so\nfar under the version in use (#1372 PR 5, K7). A read only.",
+        "properties": {
+          "checked": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Checked",
+            "type": "integer"
+          },
+          "found": {
+            "items": {
+              "$ref": "#/components/schemas/_TastePreviewItem"
+            },
+            "maxItems": 5,
+            "title": "Found",
+            "type": "array"
+          },
+          "rerun": {
+            "title": "Rerun",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "const": "review-taste-preview-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "checking",
+              "done"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "version",
+          "checked",
+          "found",
+          "state",
+          "rerun"
+        ],
+        "title": "_TastePreviewResponse",
+        "type": "object"
+      },
       "_TasteProfileResponse": {
         "additionalProperties": false,
         "description": "Covers → Taste profile (#1372). It never carries a path, title,\nreference or anything the model saw.",
         "properties": {
+          "automatic_available": {
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
           "build": {
             "anyOf": [
               {
@@ -14484,7 +14766,7 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "review-taste-profile-v3",
+            "const": "review-taste-profile-v4",
             "title": "Schema Version",
             "type": "string"
           },
@@ -14507,7 +14789,8 @@
           "profile",
           "versions",
           "judge",
-          "confirmed"
+          "confirmed",
+          "automatic_available"
         ],
         "title": "_TasteProfileResponse",
         "type": "object"
@@ -16063,6 +16346,75 @@
           }
         ],
         "summary": "Taste Profile"
+      }
+    },
+    "/api/v1/covers/taste/preview": {
+      "get": {
+        "description": "Read-only: what Automatic would switch by taste under\n`protection`, from what the judge has checked so far (#1372 PR 5).",
+        "operationId": "taste_preview_api_v1_covers_taste_preview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "protection",
+            "required": true,
+            "schema": {
+              "enum": [
+                "protected",
+                "unprotected"
+              ],
+              "title": "Protection",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_TastePreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Taste Preview"
       }
     },
     "/api/v1/covers/taste/retry": {

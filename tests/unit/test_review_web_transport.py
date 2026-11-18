@@ -56,6 +56,7 @@ from mechanical_librarian.application.owner_settings import (
 )
 from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
+    ReviewApplication,
 )
 from mechanical_librarian.application.review_web import (
     REVIEW_CASE_EVIDENCE_SCHEMA,
@@ -3121,6 +3122,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("get", "/api/v1/covers/calibration"),
         ("get", "/api/v1/covers/replaced"),
         ("get", "/api/v1/covers/taste"),
+        ("get", "/api/v1/covers/taste/preview"),
         ("post", "/api/v1/covers/taste/retry"),
         ("post", "/api/v1/covers/taste/suggestions/retry"),
         ("post", "/api/v1/covers/taste/rules"),
@@ -4150,6 +4152,7 @@ class _TasteEdits:
                 "failed": 0,
             },
             "confirmed": {"confirmed": 0, "suggested": 0},
+            "automatic_available": False,
         }
 
     def edit(self, version, action, number, section, text) -> None:
@@ -4180,6 +4183,68 @@ def _taste_client(
         ),
         base_url="https://review.test",
     )
+
+
+def test_the_taste_preview_is_an_owner_only_no_store_read(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """The preview reads what Automatic would switch by taste; it takes one
+    of the two protections and nothing else (#1372 PR 5, K7)."""
+    route = "/api/v1/covers/taste/preview?protection=protected"
+    signed_out = web.client.get(route)
+    assert signed_out.status_code == 401
+    assert signed_out.headers["cache-control"] == "no-store, private"
+    web.login()
+    for query in ("", "?protection=everything", "?protection=Protected"):
+        refused = web.client.get("/api/v1/covers/taste/preview" + query)
+        assert refused.status_code == 422, query
+    unwired = web.client.get(route)
+    assert unwired.status_code == 503
+    assert unwired.json()["error"]["code"] == "unavailable"
+    document = {
+        "schema_version": "review-taste-preview-v1",
+        "version": 2,
+        "checked": 7,
+        "found": [
+            {
+                "review_case_id": "review_case_" + "a" * 64,
+                "title": "Example Title",
+                "authors": ["Example Author"],
+                "media_kind": "epub",
+                "current": None,
+                "new": {
+                    "height": 300,
+                    "preview_sha256": "b" * 64,
+                    "url": "/api/v1/review-cases/review_case_"
+                    + "a" * 64
+                    + "/cover-considerations/cover_consideration_"
+                    + "c" * 64
+                    + "/images/cover_ref_"
+                    + "d" * 64,
+                    "width": 200,
+                },
+                "reason": "wrong_shape",
+                "rules": [
+                    {"number": 1, "section": "drawn_to", "text": "Example rule."}
+                ],
+                "answer": "looks_right",
+            }
+        ],
+        "state": "checking",
+        "rerun": False,
+    }
+    asked: list[str] = []
+
+    def preview(_self: object, protection: str) -> dict[str, object]:
+        asked.append(protection)
+        return document
+
+    with patch.object(ReviewApplication, "taste_preview", preview):
+        wired = web.client.get(route.replace("=protected", "=unprotected"))
+    assert wired.status_code == 200, wired.text
+    assert wired.headers["cache-control"] == "no-store, private"
+    assert wired.json() == document
+    assert asked == ["unprotected"]
 
 
 def test_taste_rule_edits_are_owner_only_csrf_bound_and_answer_closed_codes(

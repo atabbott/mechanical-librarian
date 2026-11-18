@@ -3979,6 +3979,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         durable["outcome"] = projected_automatic.outcome
         durable["selected_value"] = selected_value
         durable["target_fingerprint"] = projected_automatic.target_fingerprint
+        if (
+            type(projected_automatic) is CoverAutomaticDecision
+            and projected_automatic.taste_version is not None
+        ):
+            # A taste switch names its profile version, never a rule's text
+            # (#1372 PR 5, K10; ADR-0095).
+            durable["taste_version"] = projected_automatic.taste_version
         return _finished_activity_event(row, durable)
 
     def _project_isbn_refusal(

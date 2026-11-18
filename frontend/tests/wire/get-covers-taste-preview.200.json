@@ -1,0 +1,13 @@
+{
+  "body": {
+    "checked": 0,
+    "found": [],
+    "rerun": false,
+    "schema_version": "review-taste-preview-v1",
+    "state": "done",
+    "version": 2
+  },
+  "method": "GET",
+  "path": "/api/v1/covers/taste/preview?protection=protected",
+  "status": 200
+}

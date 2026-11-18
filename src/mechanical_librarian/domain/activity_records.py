@@ -525,6 +525,10 @@ def _automatic_facts(
     ]
     if type(generation) is int:
         facts.append({"label": "Policy generation", "value": str(generation)})
+    taste_version = record.get("taste_version")
+    if type(taste_version) is int:
+        # Which taste profile version chose a switched cover (#1372 PR 5).
+        facts.append({"label": "Taste profile", "value": f"Version {taste_version}"})
     if outcome == "keep_current":
         change = keep_change(destination, current)
     elif outcome == "ignore":

@@ -678,6 +678,25 @@ def test_a_taste_switch_writes_reads_back_lists_and_puts_back(
         assert [row["review_case_id"] for row in page["items"]] == [
             library.cases["keep"]
         ]
+        # Switched names the version and the rules the verdict cited (K10).
+        taste = cast("list[dict[str, Any]]", page["items"])[0]["switched"]["taste"]
+        assert taste["version"] == 1
+        assert [rule["number"] for rule in taste["rules"]] == [1, 2]
+        assert all(rule["section"] and rule["text"] for rule in taste["rules"])
+        # Activity names the version only (K10).
+        events = library.repository.field_effect_activity_page(
+            search=None,
+            event_type="all",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+        )["events"]
+        records = [
+            event["record"]
+            for event in cast("list[dict[str, Any]]", events)
+            if event["record"].get("source_kind") == "automatic_decision"
+        ]
+        assert [record.get("taste_version") for record in records] == [1]
 
 
 @pytest.mark.parametrize("change", ("version", "suggest_only", "owner"))
