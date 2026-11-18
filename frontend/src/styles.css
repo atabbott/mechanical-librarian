@@ -675,13 +675,21 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-finish-tray > ol { grid-column:1; grid-row:2; }
   .cm-finish-actions { grid-column:2; grid-row:1 / span 2; }
 }
-/* Its three columns need about 46rem, which enlarged text can take from a wide window's editor too;
-   a phone keeps its own arrangement (#1490). */
+/* From 761px the tray sits beside the rail, which is at most 270px wide. Its three columns need 300px
+   and about 37rem more, so the editor needs that and the rail; enlarged text can take it from a wide
+   window's editor too. A phone keeps its own arrangement (#1490, #1960). */
 @media (min-width:761px) {
-  @container policy-editor (max-width:46rem) {
+  @container policy-editor (max-width:calc(580px + 37rem)) {
     .cm-finish-tray { grid-template-columns:minmax(0,1fr) auto; }
     .cm-finish-tray > ol { grid-column:1; grid-row:2; }
     .cm-finish-actions { grid-column:2; grid-row:1 / span 2; }
+  }
+  @container policy-editor (max-width:calc(27rem + 270px)) {
+    .cm-finish-tray { grid-template-columns:minmax(0,1fr); }
+    .cm-finish-tray > ol { grid-column:1; grid-row:auto; flex-wrap:wrap; justify-content:space-between; gap:.35rem; }
+    .cm-finish-tray > ol > li small { white-space:normal; }
+    .cm-finish-actions { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,9rem),1fr)); grid-column:1; grid-row:auto; width:100%; }
+    .cm-finish-actions button { min-width:0; white-space:normal; overflow-wrap:normal; }
   }
 }
 @container policy-editor (max-width:27rem) {

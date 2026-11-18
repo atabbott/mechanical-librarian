@@ -69,7 +69,8 @@ export const OtherBrowsersSettings = ({
   })
 
   const press = async () => {
-    if (sending.current) return
+    // The page's state survives a remount, when this row's ref starts over.
+    if (sending.current || state.kind === 'sending') return
     sending.current = true
     setPresses((value) => value + 1)
     setState({ kind: 'sending' })
@@ -114,7 +115,7 @@ export const OtherBrowsersSettings = ({
         ) : null}
         <div className="settings-password-actions">
           {/* aria-disabled, not disabled, keeps focus on the button while it signs out;
-              the `sending` guard already refuses a second press. */}
+              press refuses a second press while one is sending. */}
           <button
             type="button"
             aria-disabled={pending}

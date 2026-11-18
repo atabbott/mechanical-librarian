@@ -6005,6 +6005,56 @@ def test_policy_preview_actions_stay_inside_the_editor_at_200_percent_text() -> 
         assert failures == [], "\n".join(failures)
 
 
+def test_policy_tray_beside_the_rail_keeps_its_actions_inside_the_editor() -> None:
+    """The tray sits under the chapters only, beside the index, so it takes
+    each arrangement by the width it gets: at 100% and 150% text, from just
+    over 1024px to 1440px, its steps and actions in preview and activation
+    stay inside the editor, each action can be pressed, and the index holds all
+    it has at the top of the page (#1960)."""
+    styles = {"100%": "", "150%": "html { font-size: 150% !important; }"}
+    text = "100%"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        failures = []
+        for text in styles:
+            for width, height in ((1025, 768), (1100, 800), (1200, 800), (1280, 800), (1440, 900)):
+                where = f"{text} text at {width}x{height}"
+                page.set_viewport_size({"width": width, "height": height})
+                page.goto("https://react-platform.invalid/policy?section=identity")
+                rail = page.locator(".cm-policy-sidebar").evaluate(
+                    "node => [node.clientHeight, node.scrollHeight,"
+                    " innerHeight - node.getBoundingClientRect().top]"
+                )
+                if rail[0] < min(rail[1], rail[2]) - 1:
+                    failures.append(f"{where}: the index shows {rail[0]} of {rail[1]}")
+                page.get_by_role("region", name="Title and subtitle").get_by_role(
+                    "button", name="Ignore"
+                ).click()
+                page.get_by_role("button", name="Validate and preview").click()
+                review = page.get_by_role("button", name="Review activation")
+                review.wait_for()
+                page.evaluate(_TWO_FRAMES)
+                failures += [
+                    f"{where}, preview: {failure}"
+                    for failure in page.evaluate(_PAST_THE_EDITOR)
+                    + page.evaluate(_ESCAPED_CONTROLS, ".cm-finish-tray button")
+                ]
+                review.click(timeout=5000)
+                page.get_by_role("button", name="Activate policy").wait_for()
+                page.evaluate(_TWO_FRAMES)
+                failures += [
+                    f"{where}, activation: {failure}"
+                    for failure in page.evaluate(_PAST_THE_EDITOR)
+                    + page.evaluate(_ESCAPED_CONTROLS, ".cm-finish-tray button")
+                ]
+        assert failures == [], "\n".join(failures)
+
+
 def test_activity_paging_keeps_the_focused_control_in_view() -> None:
     """Moving to the next Activity page or changing the page size from the
     keyboard keeps the control that has focus in view, clear of the masthead,

@@ -112,6 +112,29 @@ describe('Other browsers', () => {
     expect(http.logoutOthers).toHaveBeenCalledOnce()
   })
 
+  it('sends once when the row remounts while it signs out', async () => {
+    const { http } = deferred()
+    const Page = () => {
+      const state = useState<OtherBrowsersState>({ kind: 'idle' })
+      const [generation, setGeneration] = useState(0)
+      return (
+        <>
+          <button type="button" onClick={() => setGeneration((value) => value + 1)}>
+            Remount
+          </button>
+          <OtherBrowsersSettings key={generation} http={http} state={state} />
+        </>
+      )
+    }
+    const user = userEvent.setup()
+    render(<Page />)
+    await user.click(button())
+    await user.click(screen.getByRole('button', { name: 'Remount' }))
+    await user.click(screen.getByRole('button', { name: 'Signing out…' }))
+
+    expect(http.logoutOthers).toHaveBeenCalledOnce()
+  })
+
   it('keeps the done line when the row remounts', async () => {
     const Page = () => {
       const state = useState<OtherBrowsersState>({ kind: 'idle' })

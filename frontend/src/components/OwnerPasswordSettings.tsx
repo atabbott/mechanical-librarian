@@ -212,7 +212,8 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
 
   const submit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (sending.current) return
+    // The page's state survives a remount, when this row's ref starts over.
+    if (sending.current || pending) return
     const [fieldErrors, short] = check(values)
     if (short || Object.keys(fieldErrors).length > 0) {
       refuse(fieldErrors, short)
@@ -334,7 +335,7 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
         <ProblemLine problem={problem} reload={reload} />
         <div className="settings-password-actions">
           {/* aria-disabled, not disabled, keeps focus on the button while it changes the
-              password; the `sending` guard already refuses a second submit. */}
+              password; submit refuses a second one while one is sending. */}
           <button
             type="submit"
             className="button-primary"

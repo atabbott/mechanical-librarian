@@ -266,6 +266,32 @@ describe('Owner password', () => {
     expect(http.changePassword).toHaveBeenCalledOnce()
   })
 
+  it('sends once when the page remounts the row while it sends', async () => {
+    const http = createHttp()
+    http.changePassword = vi.fn(() => new Promise<undefined>(() => undefined))
+    const Page = () => {
+      const form = useOwnerPasswordForm()
+      const [generation, setGeneration] = useState(0)
+      return (
+        <>
+          <button type="button" onClick={() => setGeneration((value) => value + 1)}>
+            Remount
+          </button>
+          <OwnerPasswordSettings key={generation} http={http} form={form} />
+        </>
+      )
+    }
+    const user = userEvent.setup()
+    render(<Page />)
+    await open(user)
+    await fill(user, { current, next, confirmation: next })
+    await user.click(screen.getByRole('button', { name: 'Change password' }))
+    await user.click(screen.getByRole('button', { name: 'Remount' }))
+    await user.click(screen.getByRole('button', { name: 'Changing…' }))
+
+    expect(http.changePassword).toHaveBeenCalledOnce()
+  })
+
   it('keeps the open form when the page remounts the row', async () => {
     const Page = () => {
       const form = useOwnerPasswordForm()
