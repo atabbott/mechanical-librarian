@@ -49,9 +49,9 @@ evidence and library values and a consistent database, and is read back
 ([ADR-0037](../architecture/decisions/0037-origin-neutral-guarded-field-effects.md)).
 
 For each field you can keep the current value, choose an eligible proposed
-value or leave it undecided ([Deciding a field](#deciding-a-field)). Blocked is
-a state, not a decision. Source outages and retries show as preparation status,
-never as a metadata choice.
+value, [enter your own](#entering-a-value-and-choosing-again) where allowed,
+or leave it undecided. Blocked is a state, not a decision. Source outages and
+retries show as preparation status, never as a metadata choice.
 
 ## First run
 
@@ -400,7 +400,7 @@ When Mechanical Librarian found the matched recording by a title other than the
 audiobook's own, a note says how. It appears at the top of the Evidence page, in
 Recorded evidence and in Library's Recording match section. Named "How this
 recording was matched", it quotes what was searched and, like the chapter note,
-has a Recording source (#1723):
+has a Recording source:
 
 - "Mechanical Librarian found the matched recording by searching with “…”,
   read from this folder's name, which differs from this audiobook's title."
@@ -473,18 +473,18 @@ to it. One tap records your choice and opens the next work. Skip for now
 decides nothing. In All, a work opens below its row with Close, and a choice
 closes it. If a work's covers changed since the page loaded, Covers refuses
 the choice below its covers and offers Reload. An unconfirmed choice asks you
-there to check before choosing again.
+there to check first.
 
 Switched lists automatic cover writes you have not answered since, newest
-first. Each row shows Before and Now with each cover's size; a write that
-filled an empty cover reads "No cover" under Before. A replacement names its
-fault in a pill and says why in one line; an unreadable one says whether
-Audiobookshelf had no image or the old cover could not be read. A Show menu
-narrows the list to one fault; a fill has none, so it appears only under All.
+first. Each row shows Before and Now with their sizes; a fill reads "No
+cover" under Before. A replacement names its fault in a pill and says why in
+one line; an unreadable one says whether Audiobookshelf had no image or the old
+cover could not be read. A taste switch names its profile version and rules,
+and a Show menu narrows the list to one version or one fault; a fill has
+neither, so it appears only under All.
 A replacement stays listed only while Mechanical Librarian keeps a copy of the
-old cover. Keep records that you keep the current cover, releases that copy
-and marks the row Kept. Others opens the comparison. Both appear only when you
-can choose another cover.
+old cover. Keep keeps the current cover, releases that copy and marks the row
+Kept. Others opens the comparison. Both need another cover to choose from.
 
 Once a replaced cover's work is prepared again, its row also offers Put back,
 and the comparison names the old cover Replaced cover; an unreadable one shows
@@ -507,8 +507,8 @@ has decision controls or shows internal identifiers.
   result under Sources. When source answers are no longer available, it says
   how many and never calls a field empty. The ISBN lookup for an audiobook's
   EPUB reads "ISBN lookup (EPUB in this folder)" here, in the work summary
-  and in the comparison footer (#1723). An audiobook's iTunes lookup
-  is for a cover only, so a listing it finds reads "Cover found" (#1779).
+  and in the comparison footer. An audiobook's iTunes lookup
+  is for a cover only, so a listing it finds reads "Cover found".
 - History lists your choices and automatic outcomes for the case, each with
   its time. It shows a value only where the record links it exactly.
 
@@ -618,7 +618,7 @@ in this browser, in a file-managed deployment too.
 
 ## Words and values
 
-`DESIGN.md` states the voice under Voice. Mechanical Librarian
+`DESIGN.md` states the voice. Mechanical Librarian
 never turns a code into words: it refuses an unknown code instead of
 sentence-casing it. Acronyms stay capitalised, languages read by name with
 their tag ("English (en)"), and sizes use MB. Times within the past hour are

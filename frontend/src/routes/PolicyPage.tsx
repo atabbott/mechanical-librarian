@@ -589,11 +589,18 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      const descriptionLink =
-        activeChapter === 'curation' && window.location.hash === '#description-advice'
-      const target = document.getElementById(
-        descriptionLink ? 'description-advice-heading' : `policy-${activeChapter}`,
-      )
+      // Description advice and Current covers are linked to from other pages.
+      const linked =
+        activeChapter === 'curation'
+          ? (
+              {
+                '#description-advice': 'description-advice-heading',
+                '#current-covers': 'current-covers-heading',
+              } as Record<string, string>
+            )[window.location.hash]
+          : undefined
+      const descriptionLink = linked !== undefined
+      const target = document.getElementById(linked ?? `policy-${activeChapter}`)
       target?.focus({ preventScroll: true })
       if (descriptionLink) target?.scrollIntoView({ block: 'start' })
     })

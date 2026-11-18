@@ -234,6 +234,10 @@ brackets are GitHub issues.
   names the profile version behind each switch. A cover you took over from
   Automatic offers Resume when the measured rules would fix a fault in it on a
   later check (#1372).
+- Taste profile has Switching: Suggest only or Automatic. Choosing Automatic
+  first shows up to 5 switches it would make, from at most 100 covers, to mark
+  Looks right or Keep current. Switched filters by profile version. Setting
+  Current covers to Never also sets Switching to Suggest only (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when
