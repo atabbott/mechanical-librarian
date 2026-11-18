@@ -11,6 +11,12 @@ Server-generated random identifiers (attempt and candidate identities and what
 derives from them) are committed as stable placeholders and substituted from
 the live scenario before each comparison, as the identifier-evidence capture
 in `test_review_web_read_models.py` does.
+
+Nothing edits these files by hand. After a response changes, or after taking
+in `main` with a conflict in one of them, regenerate them all from the server
+(keys sorted, formatted by the frontend's Prettier) and review the diff:
+
+    ML_WRITE_WIRE_FIXTURES=1 uv run pytest tests/unit/test_browser_wire_fixtures.py
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -82,6 +89,8 @@ WIRE = FIXTURES / "wire"
 ORIGIN = "https://review.test"
 IDENTITY = ("gpt-5.6-sol", b"synthetic-contained-profile")
 NOW = 1_000
+WRITE = os.environ.get("ML_WRITE_WIRE_FIXTURES") == "1"
+PRETTIER = "frontend/node_modules/.bin/prettier"
 
 
 def _runner(
@@ -300,6 +309,23 @@ def _report_of(live: _Live, case_id: str) -> MetadataReport:
 
 
 def _expect(name: Path, actual: object, placeholders: dict[str, str]) -> None:
+    if WRITE:
+        text = json.dumps(actual, indent=2, sort_keys=True, ensure_ascii=False)
+        # Longest first, so no identity is replaced inside a longer one.
+        for placeholder, value in sorted(
+            placeholders.items(), key=lambda item: -len(item[1])
+        ):
+            text = text.replace(value, placeholder)
+        name.write_text(
+            subprocess.run(
+                [PRETTIER, "--stdin-filepath", str(name)],
+                input=text,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout,
+            encoding="utf-8",
+        )
     text = name.read_text(encoding="utf-8")
     for placeholder, value in placeholders.items():
         text = text.replace(placeholder, value)

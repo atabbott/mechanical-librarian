@@ -867,6 +867,72 @@ def test_a_search_that_identifies_nothing_over_no_case_names_no_case(
         repository.close()
 
 
+def test_a_refresh_that_identifies_nothing_retires_the_case(
+    application_path: Path,
+) -> None:
+    """Outside a scheduled search, a report that now identifies nothing
+    retires the case the package no longer names (#1953); identified again
+    from a new report, preparation admits a new case, current again."""
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    work = _state(application_path)[0]
+    case_id = work[4]
+    assert work[2] == "case" and type(case_id) is str
+    lineage_before = _case_rows(application_path)[0][0]
+
+    # A changed file at a time that is no fired mark: the ordinary path.
+    lost = _report("Identified as nothing", "c", "d")
+    _drain(
+        _pipeline(
+            application_path, lost, 40, unmatched=True, disposition="evidence_only"
+        )
+    )
+    after, *_reports, package = _state(application_path)
+    assert after[:5] == ("complete", "complete", "evidence_only", lost.report_id, None)
+    assert package == (lost.report_id, None)
+    repository = open_repository(application_path)
+    try:
+        lineage = repository._connection.execute(
+            "SELECT proposal_set_id,report_id,review_case_id,checkpoint,outcome "
+            "FROM current_review_case_lineages"
+        ).fetchall()
+        proposal_id, report_id = lineage_before[3:5]
+        assert lineage == [(proposal_id, report_id, None, 2, "retired")]
+        assert repository._connection.execute(
+            "SELECT actor,kind,reason,from_review_case_id,to_review_case_id,"
+            "proposal_set_id,report_id FROM review_case_transitions "
+            "ORDER BY checkpoint DESC LIMIT 1"
+        ).fetchone() == (
+            "review-preparation-v1",
+            "retired",
+            "unidentified",
+            case_id,
+            None,
+            proposal_id,
+            report_id,
+        )
+        assert repository._connection.execute(
+            "SELECT outcome,review_case_id FROM current_review_packages"
+        ).fetchall() == [("evidence_only", None)]
+        assert not json.loads(repository.get_review_case(case_id))["current"]
+    finally:
+        repository.close()
+
+    # Identified again: preparation admits its case afresh, current again.
+    found = _report("Prepared once", "e", "f")
+    _drain(_pipeline(application_path, found, 60, unmatched=False))
+    again = _state(application_path)[0]
+    assert again[2] == "case" and type(again[4]) is str and again[4] != case_id
+    repository = open_repository(application_path)
+    try:
+        assert repository._connection.execute(
+            "SELECT review_case_id,outcome FROM current_review_case_lineages"
+        ).fetchall() == [(again[4], "admitted")]
+        assert json.loads(repository.get_review_case(again[4]))["current"]
+    finally:
+        repository.close()
+
+
 @pytest.mark.parametrize("disposition", [None, "evidence_only"])
 @pytest.mark.parametrize("leftover", [False, True], ids=["no-lineage", "leftover"])
 def test_a_failed_search_over_complete_evidence_replaces_nothing(

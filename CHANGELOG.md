@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- **Clean rebuild required.** When a refresh or a changed file leaves a book
+  unidentified, its old case now closes too: it no longer accepts choices,
+  and a change waiting on it for Audiobookshelf is dropped rather than
+  written later. Once the book is identified again, its case opens afresh
+  (#1953).
 - Policy's finish tray no longer covers the end of the chapter index, so its
   last controls stay in reach. Keyboard focus outlines on value choices, field
   tabs and phone-width controls are no longer cut off, and Settings keeps focus
