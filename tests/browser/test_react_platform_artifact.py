@@ -5017,14 +5017,20 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                         )
                         assert top <= 176, f"{where}: content starts at {top}"
                     page.locator(".skip-link").focus()
+                    reached_content = False
                     for _ in range(18):
                         page.keyboard.press("Tab")
                         # A page with fewer stops wraps back to the skip link,
-                        # which is drawn over the masthead by design.
+                        # which is drawn over the masthead by design. It must
+                        # have reached the page's content first.
                         if page.evaluate(
                             "() => document.activeElement?.classList.contains('skip-link')"
                         ):
+                            assert reached_content, f"{where}: wrapped before content"
                             break
+                        reached_content = reached_content or page.evaluate(
+                            "() => Boolean(document.activeElement?.closest('main'))"
+                        )
                         cover = page.evaluate(_MASTHEAD_COVER)
                         if cover["focus"] is not None:
                             assert cover["focus"][2] >= cover["bottom"] - 1, (
