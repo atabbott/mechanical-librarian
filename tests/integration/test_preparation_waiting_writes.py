@@ -280,6 +280,9 @@ def test_a_rescan_that_identifies_nothing_closes_a_waiting_field_write(
         None,
     )
     assert library.root._connection.execute(
+        "SELECT reason FROM review_case_transitions ORDER BY checkpoint DESC LIMIT 1"
+    ).fetchone() == ("unidentified",)
+    assert library.root._connection.execute(
         "SELECT review_case_id,outcome FROM current_review_packages"
     ).fetchall() == [(None, "evidence_only")]
     _assert_field_closed(library, lane, decision_id, waiting_id)

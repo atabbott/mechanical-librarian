@@ -871,8 +871,8 @@ def test_a_refresh_that_identifies_nothing_retires_the_case(
     application_path: Path,
 ) -> None:
     """Outside a scheduled search, a report that now identifies nothing
-    retires the case the package no longer names (#1953); identified again,
-    the work admits its case as a new episode."""
+    retires the case the package no longer names (#1953); identified again
+    from a new report, preparation admits a new case, current again."""
     report = _report("Prepared once", "a", "b")
     _drain(_pipeline(application_path, report, 20, unmatched=False))
     work = _state(application_path)[0]
@@ -922,7 +922,7 @@ def test_a_refresh_that_identifies_nothing_retires_the_case(
     found = _report("Prepared once", "e", "f")
     _drain(_pipeline(application_path, found, 60, unmatched=False))
     again = _state(application_path)[0]
-    assert again[2] == "case" and type(again[4]) is str
+    assert again[2] == "case" and type(again[4]) is str and again[4] != case_id
     repository = open_repository(application_path)
     try:
         assert repository._connection.execute(
