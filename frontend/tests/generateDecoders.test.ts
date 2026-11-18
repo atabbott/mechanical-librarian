@@ -111,7 +111,10 @@ describe('the real review API document', () => {
     const reached = new Set<string>()
     const visit = (node: unknown): void => {
       if (!node || typeof node !== 'object') return
-      const schema = node as { $ref?: unknown; discriminator?: { mapping?: object } }
+      const schema = node as {
+        $ref?: unknown
+        discriminator?: { mapping?: Record<string, unknown> }
+      }
       for (const ref of [schema.$ref, ...Object.values(schema.discriminator?.mapping ?? {})]) {
         if (typeof ref === 'string' && ref.startsWith(prefix) && !reached.has(ref)) {
           reached.add(ref)
