@@ -1217,6 +1217,15 @@ def test_choosing_automatics_written_value_needs_no_write(
     activity = cast(
         list[dict[str, Any]], _read(library, scheduler)["activity"]["events"]
     )
+    # The owner's own row says the accept kept the written value, as History
+    # does, never a change from the value the case read.
+    (accepted,) = (event for event in activity if event["state"] == "accept")
+    assert accepted["change"] == "Kept Ada Example"
+    assert {fact["label"]: fact["value"] for fact in accepted["evidence"]} == {
+        "Previous value": "Ada Example",
+        "New value": "Ada Example",
+        "Chosen by": "You",
+    }
     (kept,) = (event for event in activity if event["state"] == "no_change_required")
     assert kept["change"] == "Kept Ada Example"
     # It is the owner's choice: Activity lists it with the owner's, not

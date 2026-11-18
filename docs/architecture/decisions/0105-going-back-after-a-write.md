@@ -92,14 +92,15 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    an accept of the value it holds is refused as `owner_value_unchanged` and
    records nothing, since planning would write nothing for it. On any other
    field than the cover, where that write's decision is no longer the
-   field's answer or Resume automatic handling released its hold, or the write
-   is Automatic's or the description adviser's, such an accept is the
-   owner's answer with nothing to write: it is recorded with an owner row in
-   `field_effect_no_changes`, holds the field, replaces any unwritten answer
-   after that write and is never pending. The case detail marks the field
-   `no_change_required`. An accept of the same value while that answer
-   stands and holds the field is refused the same way. The pending set holds a keep only
-   while it names a write. History's From for every decision, and Activity's
+   field's answer or Resume automatic handling released its hold or was
+   asked to, or the write is Automatic's or the description adviser's, such
+   an accept is the owner's answer with nothing to write: it is recorded
+   with an owner row in `field_effect_no_changes`, holds the field, replaces
+   any unwritten answer after that write and is never pending. The case
+   detail marks the field `no_change_required`. An accept of the same value
+   while that answer stands and holds the field is refused the same way. The
+   pending set holds a keep only while it names a write. History's From for
+   every decision, and Activity's
    written value for a keep, read that write's own verified effect, never
    episode floors or a clock in whole seconds, so a later return or a write
    in the same second changes none of them. Its result is Went back once that write back

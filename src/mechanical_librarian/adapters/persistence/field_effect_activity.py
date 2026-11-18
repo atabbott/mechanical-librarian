@@ -3962,6 +3962,22 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             and decision.decision_id in dependencies.replaced
         ):
             durable["pre_value"] = dependencies.replaced[decision.decision_id]
+        elif (
+            decision.outcome == "accept"
+            and self._connection.execute(
+                "SELECT 1 FROM field_effect_no_changes WHERE decision_id=? "
+                "AND origin='human'",
+                (decision.decision_id,),
+            ).fetchone()
+            is not None
+        ):
+            # An accept of the value the case's latest write holds replaced
+            # that value with itself, as History's From reads it (ADR-0105).
+            # Its no-change row commits with the decision and its event, so
+            # this row never reads without it.
+            durable["pre_value"] = project_decision_value(
+                decision.destination, decision.selected_value
+            )
         if decision.outcome == "keep_current":
             planned = dependencies.went_back.get(decision.decision_id)
             if planned is None:
