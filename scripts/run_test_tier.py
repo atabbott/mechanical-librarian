@@ -117,6 +117,9 @@ _PARALLEL_TIERS = ("fast", "browser")
 _DEADLINE_TIERS = ("fast", "browser")
 # Each fast-tier file's recorded wall time, which `--shard` balances on.
 _FAST_TIMINGS = Path(__file__).with_name("fast_tier_timings.json")
+# Each browser-tier test function's recorded time, every parameter set and its
+# share of any module fixture included, which a browser `--shard` balances on.
+_BROWSER_TIMINGS = Path(__file__).with_name("browser_tier_timings.json")
 _RUN_EXIT_CODES = frozenset((pytest.ExitCode.OK, pytest.ExitCode.TESTS_FAILED))
 # The shape `unittest.TestResult` is handed a failure in, spelled out
 # because typeshed keeps its own alias private.
@@ -626,6 +629,8 @@ class _CohortSession:
         self.skipped: set[str] = set()
         self.failed_test_ids: set[str] = set()
         self.tracebacks: list[tuple[str, str]] = []
+        # Every phase's duration per collected node, for recording timings.
+        self.seconds: dict[str, float] = {}
 
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
         if report.failed:
@@ -749,6 +754,11 @@ class _CohortSession:
         # cohort whose identities are not unique is not accountable.
         self.identity_collision = len(set(self.identifiers)) != len(self.identifiers)
 
+    def identity(self, nodeid: str) -> str:
+        """The reported identity of one collected case."""
+
+        return self._identities[nodeid]
+
     def pytest_runtest_logstart(self, nodeid: str, location: object) -> None:
         identifier = self._identities.get(nodeid, nodeid)
         with self._progress_lock:
@@ -776,6 +786,9 @@ class _CohortSession:
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         phase = report.when or "call"
+        self.seconds[report.nodeid] = (
+            self.seconds.get(report.nodeid, 0.0) + report.duration
+        )
         self._records.append(
             _PhaseRecord(
                 nodeid=report.nodeid,
@@ -867,7 +880,9 @@ def _drive_pytest(
             return pytest.main(arguments, plugins=[session])
 
 
-def collect_cohort(root: Path, name: str) -> tuple[str, ...]:
+def _collected(root: Path, name: str) -> _CohortSession:
+    """Collect a whole cohort, refusing it as a run of it would be refused."""
+
     session = _CohortSession()
     outcome = _drive_pytest(root, name, session, collect_only=True)
     if session.refused is not None:
@@ -878,7 +893,11 @@ def collect_cohort(root: Path, name: str) -> tuple[str, ...]:
         raise RuntimeError("test_cohort_identity_collision")
     if not session.identifiers:
         raise RuntimeError("empty test cohort")
-    return session.identifiers
+    return session
+
+
+def collect_cohort(root: Path, name: str) -> tuple[str, ...]:
+    return _collected(root, name).identifiers
 
 
 def _verify_slow_partition(root: Path) -> None:
@@ -919,6 +938,9 @@ class _CohortResult:
     skipped: frozenset[str]
     failed_test_ids: frozenset[str]
     tracebacks: tuple[tuple[str, str], ...]
+    # Each case's time, every phase included, by its absolute node target. Only
+    # an in-process run records it; a merged parallel run leaves it empty.
+    seconds: tuple[tuple[str, float], ...] = ()
 
 
 def _execute_cohort(
@@ -976,6 +998,11 @@ def _execute_cohort(
         skipped=frozenset(session.skipped),
         failed_test_ids=frozenset(session.failed_test_ids),
         tracebacks=tuple(session.tracebacks),
+        seconds=tuple(
+            (session.node_targets[nodeid], value)
+            for nodeid, value in session.seconds.items()
+            if nodeid in session.node_targets
+        ),
     )
 
 
@@ -1056,19 +1083,8 @@ def _parallel_units(
             targets, key=lambda target: (-Path(target).stat().st_size, target)
         )
         return tuple((target,) for target in ordered), None
-    session = _CohortSession()
-    outcome = _drive_pytest(root, name, session, collect_only=True)
-    if session.refused is not None:
-        raise RuntimeError(session.refused)
-    if session.import_failed or outcome != pytest.ExitCode.OK:
-        raise RuntimeError("test_cohort_import_failed")
-    if session.identity_collision:
-        raise RuntimeError("test_cohort_identity_collision")
-    if not session.identifiers:
-        raise RuntimeError("empty test cohort")
-    functions: dict[str, list[str]] = {}
-    for target in session.node_targets.values():
-        functions.setdefault(target.partition("[")[0], []).append(target)
+    session = _collected(root, name)
+    functions = _function_targets(session)
     files: dict[str, list[list[str]]] = {}
     for function, members in functions.items():
         files.setdefault(function.partition("::")[0], []).append(members)
@@ -1084,14 +1100,33 @@ def _parallel_units(
     return tuple(tuple(unit) for unit in units), session.identifiers
 
 
-def _recorded_seconds(root: Path) -> dict[str, float]:
-    """Read the fast tier's recorded per-file run times, keyed by path."""
+def _function_targets(session: _CohortSession) -> dict[str, list[str]]:
+    """Group a collected cohort's node targets by test function, in run order.
 
+    A function's key is its absolute file path and its name, so every
+    parameter set of one function belongs to one group.
+    """
+
+    functions: dict[str, list[str]] = {}
+    for target in session.node_targets.values():
+        functions.setdefault(target.partition("[")[0], []).append(target)
+    return functions
+
+
+def _recorded_seconds(root: Path, tier: str = "fast") -> dict[str, float]:
+    """Read a tier's recorded run times, keyed by absolute file or function.
+
+    `fast` records each file and `browser` each test function, so each key is
+    the absolute path of the file, followed for `browser` by `::` and the
+    function's name.
+    """
+
+    path = _FAST_TIMINGS if tier == "fast" else _BROWSER_TIMINGS
     try:
-        table = json.loads(_FAST_TIMINGS.read_text(encoding="utf-8"))
+        table = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    if not isinstance(table, dict) or table.get("schema") != "fast-tier-timings-v1":
+    if not isinstance(table, dict) or table.get("schema") != f"{tier}-tier-timings-v1":
         return {}
     seconds = table.get("seconds")
     if not isinstance(seconds, dict):
@@ -1125,28 +1160,75 @@ def _shard_units(
         unit: sum(recorded.get(target, sizes[target] * rate) for target in unit)
         for unit in units
     }
+    return _balanced_share(expected, index, count)
+
+
+def _balanced_share(
+    expected: dict[tuple[str, ...], float], index: int, count: int
+) -> tuple[tuple[str, ...], ...]:
+    """Deal units, longest expected first, to the least-loaded of `count` shares.
+
+    A tie goes to the lowest-numbered share and equal times are dealt in unit
+    order, so every shard computes the same split from the same expectations.
+    """
+
     loads = [0.0] * count
     owned: list[list[tuple[str, ...]]] = [[] for _ in range(count)]
-    for unit in sorted(units, key=lambda unit: (-expected[unit], unit)):
+    for unit in sorted(expected, key=lambda unit: (-expected[unit], unit)):
         shard = loads.index(min(loads))
         loads[shard] += expected[unit]
         owned[shard].append(unit)
     return tuple(owned[index - 1])
 
 
-def _write_recorded_seconds(
-    root: Path, units: tuple[tuple[str, ...], ...], seconds: list[float]
-) -> None:
-    """Record each file unit's wall time as the table shards balance on."""
+def _browser_shard(
+    root: Path, index: int, count: int
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return the node targets shard `index` of `count` runs, and their identities.
+
+    The unit is a test function with every parameter set, so a function never
+    spans two shards. Its expected time is its recorded time; a function with
+    none is estimated per parameter set at the recorded functions' rate. The
+    targets come back in the cohort's own run order, so a shard runs its cases
+    in the order the serial tier would.
+    """
+
+    session = _collected(root, "browser")
+    functions = _function_targets(session)
+    recorded = _recorded_seconds(root, "browser")
+    known = [function for function in functions if function in recorded]
+    known_cases = sum(len(functions[function]) for function in known)
+    rate = sum(recorded[function] for function in known) / known_cases if known else 1
+    expected = {
+        tuple(members): recorded.get(function, len(members) * rate)
+        for function, members in functions.items()
+    }
+    owned = {
+        target for unit in _balanced_share(expected, index, count) for target in unit
+    }
+    return (
+        tuple(target for target in session.node_targets.values() if target in owned),
+        tuple(
+            sorted(
+                session.identity(nodeid)
+                for nodeid, target in session.node_targets.items()
+                if target in owned
+            )
+        ),
+    )
+
+
+def _write_recorded_seconds(root: Path, tier: str, seconds: dict[str, float]) -> None:
+    """Record a tier's times, by file or function, as the table shards balance on."""
 
     table = {
-        "schema": "fast-tier-timings-v1",
+        "schema": f"{tier}-tier-timings-v1",
         "seconds": {
-            Path(unit[0]).relative_to(root).as_posix(): round(elapsed, 1)
-            for unit, elapsed in sorted(zip(units, seconds, strict=True))
+            Path(key).relative_to(root).as_posix(): round(elapsed, 1)
+            for key, elapsed in sorted(seconds.items())
         },
     }
-    _FAST_TIMINGS.write_text(
+    (_FAST_TIMINGS if tier == "fast" else _BROWSER_TIMINGS).write_text(
         json.dumps(table, indent=1, sort_keys=True) + "\n", encoding="utf-8"
     )
 
@@ -1338,7 +1420,51 @@ def run_cohort_in_parallel(
     # Only a complete, passing run is representative: a crashed, refused or
     # failing unit would leave a partial time that unbalances later shards.
     if record_timings and passed:
-        _write_recorded_seconds(root, units, seconds)
+        _write_recorded_seconds(
+            root,
+            name,
+            {unit[0]: elapsed for unit, elapsed in zip(units, seconds, strict=True)},
+        )
+    return passed
+
+
+def run_browser_shard(
+    root: Path, index: int, count: int, test_timeout_seconds: int | None = None
+) -> bool:
+    """Run shard `index` of `count` of the browser tier, serially, in-process.
+
+    Each shard collects the whole cohort and computes the same split, so the
+    shards together run every case exactly once, each on a runner of its own
+    with one Chromium at a time, as the serial tier runs them. The report
+    covers just this shard, and the shard is refused unless it ran exactly the
+    cases its split names.
+    """
+
+    targets, identifiers = _browser_shard(root, index, count)
+    if not targets:
+        raise RuntimeError("empty test cohort")
+    result = _execute_cohort(root, "browser", test_timeout_seconds, targets=targets)
+    if result.identifiers != identifiers:
+        raise RuntimeError("test_cohort_partition_invalid")
+    return _report_cohort("browser", result)
+
+
+def record_browser_timings(root: Path, test_timeout_seconds: int | None = None) -> bool:
+    """Run the whole browser tier serially and, if it passes, record its times.
+
+    Each function's time is the sum of its cases' setup, call and teardown, so
+    a module fixture is charged to the function that first needs it, which is
+    where a shard pays for it too.
+    """
+
+    result = _execute_cohort(root, "browser", test_timeout_seconds)
+    passed = _report_cohort("browser", result)
+    if passed:
+        functions: dict[str, float] = {}
+        for target, elapsed in result.seconds:
+            function = target.partition("[")[0]
+            functions[function] = functions.get(function, 0.0) + elapsed
+        _write_recorded_seconds(root, "browser", functions)
     return passed
 
 
@@ -1631,6 +1757,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(
             "--workers requires fast or browser execution and at least two workers"
         )
+    # `fast` divides between worker processes before it shards; `browser`
+    # shards and records serially, one Chromium at a time.
+    divisible = (arguments.tier == "fast" and arguments.workers is not None) or (
+        arguments.tier == "browser"
+        and arguments.workers is None
+        and arguments.worker_result is None
+        and not arguments.list
+    )
     shard: tuple[int, int] | None = None
     if arguments.shard is not None:
         index, _, count = arguments.shard.partition("/")
@@ -1638,13 +1772,17 @@ def main(argv: list[str] | None = None) -> int:
             1 <= int(index) <= int(count) and int(count) >= 2
         ):
             parser.error("--shard takes K/N with 1 <= K <= N and N at least two")
-        if arguments.tier != "fast" or arguments.workers is None:
-            parser.error("--shard requires fast execution with --workers")
+        if not divisible:
+            parser.error(
+                "--shard requires fast execution with --workers, or serial "
+                "browser execution"
+            )
         shard = (int(index), int(count))
-    if arguments.record_timings and (
-        arguments.tier != "fast" or arguments.workers is None or shard is not None
-    ):
-        parser.error("--record-timings requires an unsharded fast run with --workers")
+    if arguments.record_timings and (not divisible or shard is not None):
+        parser.error(
+            "--record-timings requires an unsharded fast run with --workers, or "
+            "an unsharded serial browser run"
+        )
     if (arguments.worker_result is None) != (arguments.worker_target is None) or (
         arguments.worker_result is not None
         and (
@@ -1681,7 +1819,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     try:
-        if arguments.workers is not None:
+        if arguments.tier == "browser" and shard is not None:
+            passed = run_browser_shard(
+                root, *shard, test_timeout_seconds=arguments.test_timeout_seconds
+            )
+        elif arguments.tier == "browser" and arguments.record_timings:
+            passed = record_browser_timings(root, arguments.test_timeout_seconds)
+        elif arguments.workers is not None:
             passed = run_cohort_in_parallel(
                 root,
                 arguments.tier,

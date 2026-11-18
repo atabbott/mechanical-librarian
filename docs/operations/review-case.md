@@ -207,7 +207,8 @@ body is refused before parsing.
   that wrote the field is the written value. On that case `keep_current`
   writes back the value the case read; where that was empty, a clearable
   field goes back to empty and any other field is refused as
-  `owner_value_required`.
+  `owner_value_required`. Where the case's latest write already holds that
+  value, the keep is recorded as a plain keep and writes nothing.
 - "Use previous value" and the names entry's previous names are offered only
   while the field reads its latest verified write's value, and never when the
   value that write replaced was empty: emptying the field is that choice.

@@ -1712,6 +1712,99 @@ def test_the_served_activity_follows_a_write_that_verifies_after_a_keep(
         borrower.close()
 
 
+def _automatic_after_going_back(
+    store: OwnerStore, *, planned_first: bool
+) -> tuple[HumanDecision, AutomaticDecision]:
+    """Read Drama; accept Fantasy and keep Drama, return the field to
+    automatic, and its automatic decision writes Fantasy again: a write that
+    lands after the owner's writes but was recorded before them.
+
+    ``planned_first`` plans the automatic write before the accept supersedes
+    it. Going back restores that plan's pre-value, so the return revives the
+    same deterministic plan in its old row rather than inserting a new one."""
+    store.automatic("genres", "replace", _HELD.target.library)
+    store.publish(_HELD)
+    automatic = next(
+        AutomaticDecision.from_json(raw)
+        for raw in store.repository.get_review_case_decisions(store.case.review_case_id)
+        if json.loads(raw)["schema_version"] == "automatic-decision-v1"
+        and json.loads(raw)["destination"] == "genres"
+    )
+    early = store.plan(automatic) if planned_first else None
+    accept = store.decide(
+        "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+    )
+    store.write(accept)
+    store.write(store.decide("keep_current", destination="genres"))
+    token = _hold(store)
+    assert token is not None
+    assert store.repository.clear_field_effect_manual_hold(
+        store.case.review_case_id, "genres", store.clock(), token
+    )
+    written = store.write(automatic)
+    assert written.plan.desired_value == ["Fantasy"]
+    if early is not None:
+        # Revived in place: the plan row predates the owner's writes.
+        assert written.plan.plan_id == early.plan.plan_id
+        assert store.repository._connection.execute(
+            "SELECT decision_id FROM field_effects WHERE state='verified' "
+            "ORDER BY rowid LIMIT 1"
+        ).fetchone() == (automatic.decision_id,)
+    return accept, automatic
+
+
+@pytest.mark.parametrize("planned_first", [False, True], ids=["fresh", "revived"])
+def test_an_automatic_write_after_going_back_is_the_cases_latest(
+    tmp_path: Path, planned_first: bool
+) -> None:
+    """The case's latest write is the one that landed last, not the latest
+    decision or the latest plan row: an automatic decision returned to after
+    the owner's writes writes after them (#1523)."""
+    store = OwnerStore(tmp_path, None)
+    try:
+        _, automatic = _automatic_after_going_back(store, planned_first=planned_first)
+        assert store.repository.written_field_values(store.case.review_case_id) == (
+            ("genres", ["Fantasy"]),
+        )
+        assert cast("dict[str, Any]", _field(store, "genres")["owner_control"])[
+            "current"
+        ] == ["Fantasy"]
+        later = store.decide("keep_current", destination="genres")
+        assert later.follows == automatic.decision_id
+        assert later.decision_id in _pending(store)
+        back = store.write(later)
+        assert (back.plan.pre_value, back.plan.desired_value) == (
+            ["Fantasy"],
+            ["Drama"],
+        )
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("planned_first", [False, True], ids=["fresh", "revived"])
+def test_history_reads_what_a_decision_replaced_not_a_later_automatic_write(
+    tmp_path: Path, planned_first: bool
+) -> None:
+    """History's From is the write that landed last before the decision: an
+    automatic write planned after it is not what it replaced (#1523)."""
+    store = OwnerStore(tmp_path, None)
+    try:
+        accept, _ = _automatic_after_going_back(store, planned_first=planned_first)
+        assert _keep_history(store, accept)["previous_value"] == {
+            "kind": "list",
+            "value": ["Drama"],
+        }
+        again = store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+        assert _keep_history(store, again)["previous_value"] == {
+            "kind": "list",
+            "value": ["Fantasy"],
+        }
+    finally:
+        store.close()
+
+
 def _keep_history(store: OwnerStore, keep: HumanDecision) -> dict[str, object]:
     (entry,) = (
         event
@@ -1772,6 +1865,66 @@ def test_a_keep_freezes_the_write_planning_resolves_for_it(
         "kind": "list",
         "value": ["Fantasy"],
     }
+
+
+@pytest.mark.parametrize(
+    ("report", "back"),
+    [
+        (genre_report(), "keep"),
+        (genre_report(), "clear"),
+        (_HELD, "keep"),
+    ],
+    ids=["after_keep", "after_clear", "held_value"],
+)
+def test_a_keep_where_the_field_holds_what_the_case_read_is_a_plain_keep(
+    tmp_path: Path, report: MetadataReport, back: str
+) -> None:
+    """A keep whose followed write already holds the value the case read goes
+    back on nothing: it is a plain keep, never a pending write that plans no
+    operation (#1523)."""
+    store = OwnerStore(tmp_path, report)
+    borrower = open_repository(
+        store.root / "owner.sqlite",
+        create=False,
+        authority=store.repository.authority,
+    )
+    try:
+        borrower.configure_activity_page_reader(ActivityFactStore())
+        store.write(
+            store.decide(
+                "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+            )
+        )
+        store.write(
+            store.decide("keep_current", destination="genres")
+            if back == "keep"
+            else store.decide(
+                "owner_entered", {"kind": "empty", "value": None}, destination="genres"
+            )
+        )
+        keep = store.decide("keep_current", destination="genres")
+        assert keep.follows is None
+        assert keep.decision_id not in _pending(store)
+        assert store.repository.pending_field_effect_decision_counts() == ()
+        assert (
+            store.repository._connection.execute(
+                "SELECT count(*) FROM field_effects WHERE decision_id=?",
+                (keep.decision_id,),
+            ).fetchone()[0]
+            == 0
+        )
+        rows = _served(store, borrower)
+        assert rows == _activity(store)
+        assert (
+            "keep_current",
+            "Kept Drama" if report is _HELD else "Left genres unset",
+        ) in _genres_owner(rows)
+        entry = _keep_history(store, keep)
+        assert entry["previous_value"] == entry["selected_value"]
+        assert _hold(store) == keep.decision_id
+    finally:
+        borrower.close()
+        store.close()
 
 
 def test_the_store_admits_a_named_write_only_on_a_keep(store: OwnerStore) -> None:

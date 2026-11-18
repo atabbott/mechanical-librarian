@@ -999,8 +999,9 @@ class HumanDecision:
     cause: str | None = None
     # A keep's write it goes back on, frozen when the store records it: the
     # decision whose verified write the keep follows in its own episode, as
-    # planning resolves it then, or none (#1523). Never part of the request,
-    # so a replay stays the same request.
+    # planning resolves it then, or none (#1523), as when that write already
+    # holds the value the case read. Never part of the request, so a replay
+    # stays the same request.
     follows: str | None = None
 
     @staticmethod

@@ -27,7 +27,10 @@ from scripts.run_test_tier import (
     _STALL_DIAGNOSTIC_SECONDS,
     _TEST_TRACEBACK_HEAD_BYTES,
     COHORTS,
+    _browser_shard,
+    _CohortResult,
     _CohortSession,
+    _execute_cohort,
     _merge_worker_records,
     _parallel_units,
     _retained_traceback,
@@ -38,6 +41,8 @@ from scripts.run_test_tier import (
     cohort_targets,
     collect_cohort,
     main,
+    record_browser_timings,
+    run_browser_shard,
     run_cohort,
     run_cohort_in_parallel,
 )
@@ -2044,13 +2049,19 @@ def test_merged_units_refuse_duplicates_omissions_and_emptiness() -> None:
             "tests/slow/test_audio_probe.py",
         ],
         ["fast", "--shard", "1/4"],
+        ["slow", "--shard", "1/2"],
         ["browser", "--workers", "2", "--shard", "1/4"],
+        ["browser", "--shard", "1/3", "--list"],
+        ["browser", "--shard", "1/3", "--worker-result", "record.json"],
+        *(["browser", "--shard", shard] for shard in ("0/3", "4/3", "1/1")),
         *(
             ["fast", "--workers", "2", "--shard", shard]
             for shard in ("0/4", "5/4", "1/1", "a/4", "1", "-1/4")
         ),
         ["fast", "--record-timings"],
         ["browser", "--workers", "2", "--record-timings"],
+        ["browser", "--shard", "1/3", "--record-timings"],
+        ["slow", "--record-timings"],
         ["fast", "--workers", "2", "--shard", "1/4", "--record-timings"],
     ),
 )
@@ -2088,10 +2099,15 @@ def test_shards_balance_on_recorded_time_and_estimate_unrecorded_files(
         ]
         _write_recorded_seconds(
             tmp_path,
-            tuple(
-                (str(tmp_path / name),) for name in ("slow.py", "large.py", "quick.py")
-            ),
-            [9.0, 2.0, 5.0],
+            "fast",
+            {
+                str(tmp_path / name): elapsed
+                for name, elapsed in (
+                    ("slow.py", 9.0),
+                    ("large.py", 2.0),
+                    ("quick.py", 5.0),
+                )
+            },
         )
         assert json.loads(timings.read_text(encoding="utf-8")) == {
             "schema": "fast-tier-timings-v1",
@@ -2120,10 +2136,11 @@ def test_recording_timings_times_every_unit_of_the_run(tmp_path: Path) -> None:
             lambda: run_cohort_in_parallel(Path.cwd(), "fast", 2, record_timings=True)
         )
     assert passed is True
-    root, units, seconds = write.call_args.args
+    root, tier, seconds = write.call_args.args
     assert root == Path.cwd()
-    assert sorted(units) == sorted((target,) for target in targets)
-    assert len(seconds) == 2 and all(value > 0 for value in seconds)
+    assert tier == "fast"
+    assert sorted(seconds) == sorted(targets)
+    assert all(value > 0 for value in seconds.values())
 
 
 def test_a_failing_run_leaves_the_recorded_timings_alone(tmp_path: Path) -> None:
@@ -2191,6 +2208,251 @@ def test_the_gate_divides_the_fast_tier_into_four_sharded_jobs() -> None:
         ) in workflow
     assert workflow.count("run_test_tier.py fast") == 4
     assert (
-        "run: uv run python scripts/run_test_tier.py browser"
-        " --test-timeout-seconds 180\n"
+        "run: uv run python scripts/run_test_tier.py browser --shard "
+        "${{ matrix.shard }}/3 --test-timeout-seconds 180\n"
     ) in workflow
+    assert workflow.count("run_test_tier.py browser") == 1
+
+
+# Three files, so a split crosses files; parameter sets that must stay
+# together; a failure, so the shards' verdicts are compared and not just their
+# counts; and a module fixture, which every shard that needs it pays for.
+_BROWSER_SHARD_MODULES = (
+    "import pytest\n"
+    "\n"
+    "@pytest.fixture(scope='module')\n"
+    "def served() -> int:\n"
+    "    return 3\n"
+    "\n"
+    "@pytest.mark.parametrize('value', (1, 2, 3, 4))\n"
+    "def test_values(value: int, served: int) -> None:\n"
+    "    assert value <= served\n"
+    "\n"
+    "def test_first() -> None:\n"
+    "    pass\n"
+    "\n"
+    "def test_second() -> None:\n"
+    "    pass\n",
+    "import pytest\n"
+    "\n"
+    "@pytest.mark.parametrize('word', ('a', 'b'), ids=('a', 'b'))\n"
+    "def test_words(word: str) -> None:\n"
+    "    assert word\n"
+    "\n"
+    "@pytest.mark.skip(reason='skipped on purpose')\n"
+    "def test_skipped() -> None:\n"
+    "    pass\n",
+    "def test_alone() -> None:\n    pass\n\ndef test_last() -> None:\n    pass\n",
+)
+
+
+def _browser_shard_targets(tmp_path: Path) -> tuple[str, ...]:
+    return tuple(
+        target for body in _BROWSER_SHARD_MODULES for target in _module(tmp_path, body)
+    )
+
+
+@pytest.mark.parametrize("count", (2, 3, 4))
+def test_browser_shards_together_run_every_case_exactly_once(
+    tmp_path: Path, count: int
+) -> None:
+    """Splitting the browser tier between runners changes nothing it finds.
+
+    The shards' results together hold exactly the serial run's cases,
+    failures, errors and skips, with no case run twice, and every parameter
+    set of one function runs in one shard.
+    """
+
+    targets = _browser_shard_targets(tmp_path)
+    results: list[_CohortResult] = []
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._BROWSER_TIMINGS", tmp_path / "none.json"),
+    ):
+        serial = _execute_cohort(Path.cwd(), "browser")
+        for index in range(1, count + 1):
+            with patch(
+                "scripts.run_test_tier._report_cohort", return_value=True
+            ) as report:
+                assert run_browser_shard(Path.cwd(), index, count) is True
+            results.append(report.call_args.args[1])
+    assert serial.tests_run == 11 and serial.failures == 1
+    assert all(result.identifiers for result in results)
+    identifiers = [identity for result in results for identity in result.identifiers]
+    assert sorted(identifiers) == list(serial.identifiers)
+    assert sum(result.tests_run for result in results) == serial.tests_run
+    assert sum(result.failures for result in results) == serial.failures
+    assert sum(result.errors for result in results) == serial.errors
+    assert set().union(*(result.skipped for result in results)) == serial.skipped
+    assert (
+        set().union(*(result.failed_test_ids for result in results))
+        == serial.failed_test_ids
+    )
+    owners = {
+        target.partition("[")[0]: index
+        for index, result in enumerate(results)
+        for target, _ in result.seconds
+    }
+    for index, result in enumerate(results):
+        for target, _ in result.seconds:
+            assert owners[target.partition("[")[0]] == index
+
+
+def test_a_browser_shard_runs_its_cases_in_the_cohorts_own_order(
+    tmp_path: Path,
+) -> None:
+    targets = _browser_shard_targets(tmp_path)
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._BROWSER_TIMINGS", tmp_path / "none.json"),
+        patch(
+            "scripts.run_test_tier._execute_cohort", wraps=_execute_cohort
+        ) as execute,
+    ):
+        serial = _execute_cohort(Path.cwd(), "browser")
+        order = [target for target, _ in serial.seconds]
+        _tier_streams(lambda: run_browser_shard(Path.cwd(), 1, 2))
+    shard_targets = execute.call_args.kwargs["targets"]
+    assert list(shard_targets) == [
+        target for target in order if target in shard_targets
+    ]
+
+
+def test_browser_shards_balance_on_recorded_function_times(tmp_path: Path) -> None:
+    targets = _browser_shard_targets(tmp_path)
+    first, second, third = targets
+    timings = tmp_path / "timings.json"
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._BROWSER_TIMINGS", timings),
+    ):
+        _write_recorded_seconds(
+            Path(tmp_path),
+            "browser",
+            {
+                f"{first}::test_values": 40.0,
+                f"{first}::test_first": 1.0,
+                f"{first}::test_second": 30.0,
+                f"{second}::test_words": 4.0,
+                f"{second}::test_skipped": 0.5,
+                f"{third}::test_alone": 2.0,
+            },
+        )
+        recorded = json.loads(timings.read_text(encoding="utf-8"))
+        assert recorded["schema"] == "browser-tier-timings-v1"
+        assert recorded["seconds"][f"{Path(first).name}::test_values"] == 40.0
+        shards = [_browser_shard(Path(tmp_path), index, 2)[0] for index in (1, 2)]
+    functions = [
+        sorted({Path(target.partition("[")[0]).name for target in shard})
+        for shard in shards
+    ]
+    # 40 to the first share and 30 to the second, then each next-longest to
+    # the lighter one. `test_last` has no record, so it is estimated at the
+    # recorded rate: 77.5 seconds over 10 cases, 7.75 for its one.
+    assert functions == [
+        sorted(
+            f"{Path(path).name}::{name}"
+            for path, name in (
+                (first, "test_values"),
+                (third, "test_alone"),
+                (second, "test_skipped"),
+            )
+        ),
+        sorted(
+            f"{Path(path).name}::{name}"
+            for path, name in (
+                (first, "test_second"),
+                (third, "test_last"),
+                (second, "test_words"),
+                (first, "test_first"),
+            )
+        ),
+    ]
+
+
+def test_a_browser_shard_with_no_case_is_refused(tmp_path: Path) -> None:
+    targets = _module(tmp_path, "def test_only() -> None:\n    pass\n")
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._BROWSER_TIMINGS", tmp_path / "none.json"),
+        pytest.raises(RuntimeError, match="^empty test cohort$"),
+    ):
+        run_browser_shard(Path.cwd(), 2, 2)
+
+
+def test_a_browser_shard_that_ran_other_cases_is_refused(tmp_path: Path) -> None:
+    targets = _browser_shard_targets(tmp_path)
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._BROWSER_TIMINGS", tmp_path / "none.json"),
+        patch(
+            "scripts.run_test_tier._execute_cohort",
+            return_value=_CohortResult(
+                identifiers=("synthetic.test_other",),
+                engine_ok=True,
+                tests_run=1,
+                failures=0,
+                errors=0,
+                unexpected_successes=0,
+                skipped=frozenset(),
+                failed_test_ids=frozenset(),
+                tracebacks=(),
+            ),
+        ),
+        pytest.raises(RuntimeError, match="^test_cohort_partition_invalid$"),
+    ):
+        run_browser_shard(Path.cwd(), 1, 2)
+
+
+def test_recording_browser_timings_sums_each_functions_cases(tmp_path: Path) -> None:
+    targets = _module(
+        tmp_path,
+        "import time\n"
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.parametrize('value', (1, 2))\n"
+        "def test_values(value: int) -> None:\n"
+        "    time.sleep(0.05)\n"
+        "\n"
+        "def test_one() -> None:\n"
+        "    pass\n",
+    )
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._write_recorded_seconds") as write,
+    ):
+        passed, _, _ = _tier_streams(lambda: record_browser_timings(Path.cwd()))
+    assert passed is True
+    root, tier, seconds = write.call_args.args
+    assert (root, tier) == (Path.cwd(), "browser")
+    assert sorted(seconds) == [f"{targets[0]}::test_one", f"{targets[0]}::test_values"]
+    assert seconds[f"{targets[0]}::test_values"] >= 0.1
+    assert seconds[f"{targets[0]}::test_one"] < seconds[f"{targets[0]}::test_values"]
+
+
+def test_a_failing_browser_run_leaves_the_recorded_timings_alone(
+    tmp_path: Path,
+) -> None:
+    targets = _module(tmp_path, "def test_failing() -> None:\n    assert False\n")
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._write_recorded_seconds") as write,
+    ):
+        passed, _, _ = _tier_streams(lambda: record_browser_timings(Path.cwd()))
+    assert passed is False
+    write.assert_not_called()
+
+
+def test_the_recorded_browser_timings_name_current_browser_files() -> None:
+    root = Path(__file__).parents[2]
+    table = json.loads(
+        (root / "scripts" / "browser_tier_timings.json").read_text(encoding="utf-8")
+    )
+    assert table["schema"] == "browser-tier-timings-v1"
+    assert table["seconds"]
+    for key, elapsed in table["seconds"].items():
+        path, separator, function = key.partition("::")
+        # A function, or `Class::test_x` for a test written as a class.
+        assert separator and function.rpartition("::")[2].startswith("test_"), key
+        assert path.startswith("tests/browser/test_") and (root / path).is_file(), key
+        assert type(elapsed) is float and elapsed >= 0, key

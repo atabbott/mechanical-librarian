@@ -17,7 +17,7 @@ tested, generated artifacts reproduce, and the gate passes at the exact head.
 | Tier | Runs | Proves | Where |
 | --- | --- | --- | --- |
 | `fast` | `tests/unit`, `tests/integration`, `tests/architecture` | Behaviour, focused integration and static architecture rules | Gate: `fast-source` and three shard jobs |
-| `browser` | `tests/browser` | The built React workspace in Chromium | Gate: `protected-browser` |
+| `browser` | `tests/browser` | The built React workspace in Chromium | Gate: three browser shard jobs, required as `protected-browser` |
 | `slow` | `tests/slow` | Scale, endurance, resource ceilings and exhaustive corpora, through the installed wheel | Maintainer-manual |
 | `required-installed` | A fixed fast subset plus `tests/installed` | The code runs from the installed wheel, not the checkout | Gate: `exact-installed` |
 | `probe` | `tests/slow/test_audio_probe.py` | Real audio probing with the image's own pinned `ffprobe` | Gate: `container-image` |
@@ -97,12 +97,16 @@ from one file for `browser`. The result matches a serial run's. The tier is
 refused if any unit refuses or leaves no record, or a split loses a collected
 case. A test that passes only after another file has run is a defect.
 
-`--shard K/N` (fast, with `--workers`) runs one share of the tier. Every shard
-computes the same split from the per-file times in
-`scripts/fast_tier_timings.json`, estimating unlisted files from their size. A
-stale table only unbalances shards; it never drops or repeats a file. Refresh
-it with `uv run python scripts/run_test_tier.py fast --workers 4
---record-timings`.
+`--shard K/N` runs one share of the tier: `fast` with `--workers`, `browser`
+serially without it. Every shard computes the same split, `fast` by file from
+the times in `scripts/fast_tier_timings.json` and `browser` by test function
+from `scripts/browser_tier_timings.json`, estimating unlisted files from their
+size and unlisted functions from their parameter sets. A function's parameter
+sets stay in one shard, and a browser shard runs its cases in the tier's own
+order and is refused unless it ran exactly the cases its split names. A stale
+table only unbalances shards; it never drops or repeats a case. Refresh them
+with `uv run python scripts/run_test_tier.py fast --workers 4 --record-timings`
+and `uv run python scripts/run_test_tier.py browser --record-timings`.
 
 ### Local Linux fast checks
 
@@ -167,7 +171,8 @@ paths, SQL, credentials or request values.
 
 Every pull-request head runs `fast-source`, `fast-source-2` to `fast-source-4`,
 `exact-installed`, `protected-browser`, `container-image` and
-`dependency-audit`, and all are required. The workflow also runs on every push
+`dependency-audit`, and all are required checks; `protected-browser` stands
+for the three browser shard jobs. The workflow also runs on every push
 to `main`, so two green pull requests cannot break `main` together unnoticed.
 Each job checks out `github.event.pull_request.head.sha || github.sha`; a newer
 head cancels only pull-request runs.
@@ -175,11 +180,15 @@ head cancels only pull-request runs.
 - **Fast tier.** `fast-source` runs the source checks then shard 1; the shard
   jobs run 2 to 4, each with `--workers 2 --shard K/4`. `fast-source` has 25
   minutes including setup.
-- **Browser tier.** `protected-browser` runs serially, giving each test a
-  180-second deadline; timing-bound browser tests assume one Chromium per
-  runner. It caches the Chromium payload per Playwright version, saving it
-  only after `scripts/verify_playwright_browser.py` accepts its layout and
-  tree digest. It does not detect corruption of a payload within one Playwright version.
+- **Browser tier.** Three shard jobs each run a third of the tier with
+  `--shard K/3`, serially, giving each test a 180-second deadline;
+  timing-bound browser tests assume one Chromium per runner. The required
+  `protected-browser` check is a job that waits for all three and passes only
+  if every one passed, so the ruleset names one check. Each shard has 15
+  minutes including setup. The payload cache is kept per Playwright version
+  and saved, by shard 1 only, after `scripts/verify_playwright_browser.py`
+  accepts its layout and tree digest. It does not detect corruption of a
+  payload within one Playwright version.
 - **Container image.** `container-image` builds the shipped image at the same
   revision, so a Dockerfile regression fails the gate. It extracts the pinned
   `ffprobe` and SQLite for the `probe` and `shipped-sqlite` tiers and never
