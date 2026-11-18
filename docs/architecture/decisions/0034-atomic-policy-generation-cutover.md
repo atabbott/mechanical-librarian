@@ -62,7 +62,7 @@ This adds no second queue, staging batch, migration path, automatic authority,
 apply plan, target/media write, provider credential access, or destructive
 operation.
 
-## Amendment 1: a work written since its report is read again (proposed, #TBD)
+## Amendment 1: a work written since its report is read again (proposed, #1986)
 
 The rewind to proposal "from the same immutable report" assumed that report
 still says what the library holds. After a write the product verified it does

@@ -1294,6 +1294,172 @@ def test_extraction_publication_rebinds_an_item_read_again_after_a_write(
     repository.close()
 
 
+def _two_completed_works(
+    path: Path,
+) -> tuple[SQLiteMetadataReportRepository, tuple[MetadataReport, ...]]:
+    """Two works of one library, each prepared to its current case.
+
+    `item-0` sorts first in the activation cohort; `item-1` carries one raw
+    verified write planned against its case, so its report predates a write.
+    """
+    repository = open_repository(path)
+    written = _report()
+    unwritten = MetadataReport.create(
+        target=replace(written.target, item="item-0"),
+        file=replace(written.file, identity="c" * 64, content_digest="d" * 64),
+        local_claims=written.local_claims,
+        local_reasons=written.local_reasons,
+        providers=written.providers,
+    )
+    reports = (unwritten, written)
+    cases: dict[str, str] = {}
+    proposals: dict[str, str] = {}
+    for report in reports:
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        proposals[report.report_id] = proposal.proposal_set_id
+        cases[proposal.proposal_set_id] = json.loads(
+            repository.admit_review_case(proposal)
+        )["review_case_id"]
+    repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, tuple(_report_entry(value) for value in reports), 12
+    )
+    by_item = {value.target.item: value for value in reports}
+    at = 13
+    while (action := repository.claim_review_pipeline_action(at)) is not None:
+        output: str | None = None
+        if action.stage == "extraction":
+            output = by_item[cast(str, action.item_id)].report_id
+        elif action.stage == "proposal":
+            output = proposals[cast(str, action.report_id)]
+        elif action.stage == "admission":
+            output = cases[cast(str, action.proposal_set_id)]
+        repository.advance_review_pipeline_action(action, output, at + 1)
+        at += 2
+    assert repository._connection.execute(
+        "SELECT state FROM review_preparation_scans"
+    ).fetchall() == [("completed",)]
+    repository._connection.execute(
+        "INSERT INTO field_effects(plan_id,decision_id,connection_name,"
+        "library_name,work_id,destination,state,attempt,updated_at,document) "
+        "SELECT ?,'human_decision_raw',?,?,?,'title','verified',1,?,"
+        "json_object('plan',json_object('target_fingerprint',"
+        "json_extract(document,'$.target_fingerprint'))) "
+        "FROM review_cases WHERE report_id=?",
+        (
+            "effect_plan_" + "e" * 64,
+            written.target.connection,
+            written.target.library,
+            written.target.item,
+            at,
+            written.report_id,
+        ),
+    )
+    repository._connection.commit()
+    return repository, reports
+
+
+def _activate_changed_policy(
+    repository: SQLiteMetadataReportRepository, report: MetadataReport, at: int
+) -> None:
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    resolved = resolve_policy(draft, report.target.library)
+    assert repository.activate_metadata_policy(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        at,
+        expected_active_generation=1,
+    )
+
+
+def test_an_earlier_unwritten_work_does_not_keep_the_read_again_from_discovery(
+    state_directory: Path,
+) -> None:
+    """The scan the unwritten work reopened is still queued for one discovery."""
+    repository, (unwritten, written) = _two_completed_works(
+        state_directory / "two-works.sqlite"
+    )
+
+    _activate_changed_policy(repository, written, 100)
+
+    assert repository._connection.execute(
+        "SELECT state FROM review_preparation_scans"
+    ).fetchall() == [("queued",)]
+    assert repository._connection.execute(
+        "SELECT item_id,stage,state FROM review_preparation_work ORDER BY item_id"
+    ).fetchall() == [
+        ("item-0", "proposal", "queued"),
+        ("item-1", "extraction", "queued"),
+    ]
+    discovery = repository.claim_review_pipeline_action(101)
+    assert discovery is not None and discovery.stage == "discovery"
+    repository.complete_review_discovery(
+        discovery,
+        2,
+        "b" * 64,
+        (_report_entry(unwritten), _report_entry(written)),
+        102,
+    )
+    # One discovery: the scan processes its works and is not queued again.
+    work = repository.claim_review_pipeline_action(103)
+    assert work is not None and work.stage != "discovery"
+    assert repository._connection.execute(
+        "SELECT state FROM review_preparation_scans"
+    ).fetchall() == [("processing",)]
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "busy",
+    ("running", "delayed", "outside_cohort"),
+    ids=("running", "delayed", "outside_cohort"),
+)
+def test_a_busy_processing_scan_is_not_queued_for_discovery(
+    state_directory: Path, busy: str
+) -> None:
+    """A processing scan with other work in flight or waiting keeps processing."""
+    repository, (_, written) = _two_completed_works(
+        state_directory / f"busy-{busy}.sqlite"
+    )
+    if busy == "outside_cohort":
+        # The work has no current case, so the activation does not hold it.
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='proposal',state='queued',"
+            "outcome=NULL,review_case_id=NULL WHERE item_id='item-0'"
+        )
+        repository._connection.execute(
+            "DELETE FROM current_review_packages WHERE item_id='item-0'"
+        )
+    else:
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='extraction',state=?,"
+            "report_id=NULL,proposal_set_id=NULL,review_case_id=NULL,outcome=NULL "
+            "WHERE item_id='item-0'",
+            (busy,),
+        )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='processing'"
+    )
+    repository._connection.commit()
+
+    _activate_changed_policy(repository, written, 100)
+
+    assert repository._connection.execute(
+        "SELECT state FROM review_preparation_scans"
+    ).fetchall() == [("processing",)]
+    # The written work is still read again, without a discovery first.
+    assert repository._connection.execute(
+        "SELECT stage,state FROM review_preparation_work WHERE item_id='item-1'"
+    ).fetchone() == ("extraction", "queued")
+    repository.close()
+
+
 def _partly_failed_activation(path: Path, route: str):
     """Activate while the only item's work moves to a newer report (#1369).
 

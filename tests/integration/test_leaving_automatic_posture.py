@@ -1283,6 +1283,40 @@ def test_an_earlier_generation_write_in_flight_still_refuses_an_owner_answer(
     assert root.get_field_effect(plan.plan_id).state == state
 
 
+def test_an_earlier_generation_write_settled_unwritten_lets_the_owner_answer(
+    library: _Library, tmp_path: Path
+) -> None:
+    """A settled earlier-generation write no longer stands in the owner's way (#1573).
+
+    The write went stale without changing the library, so the report still
+    holds and leaving Automatic returns the same case, where the earlier
+    generation's decision is replaced by the owner's answer.
+    """
+    root = library.root
+    automatic = library.automatic()
+    root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+    scheduler, _, _ = _applier(library, tmp_path)
+    library.now[0] = 13
+    scheduler.schedule()
+    plan = _planned(library)[automatic.decision_id].plan
+    root.claim_field_effect(plan.plan_id, "planned", "c" * 64, 14)
+    root.transition_field_effect(plan.plan_id, "claimed", "applying", 15)
+    root.transition_field_effect(
+        plan.plan_id, "applying", "stale", 16, "target_changed"
+    )
+
+    library.leave_automatic()
+
+    assert library.external == []
+    assert library.case_id() == automatic.review_case_id
+    owner = _accept(library.case(), "authors", "owner-after-writing", 40)
+    root.record_human_decision(owner)
+    assert root._connection.execute(
+        "SELECT decision_id FROM human_decisions WHERE review_case_id=?",
+        (automatic.review_case_id,),
+    ).fetchall() == [(owner.decision_id,)]
+
+
 def test_an_earlier_generation_write_once_settled_lets_the_owner_answer(
     tmp_path: Path,
 ) -> None:
