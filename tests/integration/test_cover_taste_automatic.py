@@ -62,6 +62,7 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from tests.integration.test_cover_rules_activation import _planned, _selections
 from tests.support.audiobook_covers import SYNTHETIC_TASTE_RECORD
 from tests.unit.test_cover_taste_judge import WORKS, _Library, _report, _version
+from tests.unit.test_cover_taste_suggestions import _detail_suggestion
 
 NOW = 1_000_000
 TASTE = "cover_order:fixed_source_order:taste_replacement"
@@ -511,6 +512,20 @@ def test_taste_automatic_never_replaces_an_owner_cover_choice(
             # The work is compared again under another cover policy.
             library.service = replace_policy(library, "keep")
         _stored_choose(library, "keep", NOW + 20)
+        # The premise: but for the owner, every gate before the mint passes.
+        assert (
+            _stage(library, "keep")["outcome"],
+            _stage(library, "keep")["reason"],
+        ) == (
+            "keep",
+            None,
+        )
+        verdict_id, _chosen = _verdict(library, "keep")
+        store = repository.cover_taste_judge_store()
+        # The mint is the seam: asked directly, it refuses.
+        assert not store.admit_switch(
+            library.considerations["keep"]["consideration_id"], verdict_id, NOW + 21
+        )
         assert _wakes(library, NOW + 21) == 0
         (selection,) = _selections(repository)
         assert selection["kind"] == "owner"
@@ -583,16 +598,38 @@ def test_a_newer_verdict_supersedes_an_unwritten_switch(
         assert second.taste_version == 2
 
 
+def test_a_written_switch_stays_and_is_not_judged_again(
+    tmp_path: Path, record: None
+) -> None:
+    """A taste switch whose write started stays after a new version, and
+    still answers its comparison, so it is not due (K6)."""
+    with _switching(tmp_path, ("keep",)) as library:
+        _automatic(library)
+        assert _wake(library)
+        application, operation, target = _plan(library, tmp_path)
+        target.seed(operation.plan)
+        assert application.apply(operation.plan.plan_id).state == "verified"
+        _version(library.repository, NOW + 2)
+        library.repository._connection.commit()
+        assert not _wake(library, NOW + 3)
+        assert len(_taste_selections(library)) == 1
+        assert library.repository.cover_taste_judge_store().due(2, 64) == ()
+
+
 def test_suggest_only_retires_unwritten_switches(tmp_path: Path, record: None) -> None:
     """Back to Suggest only, each unwritten switch is revoked (K6, L3)."""
     with _switching(tmp_path) as library:
         _automatic(library)
         assert _wakes(library) == 2
         assert len(_taste_selections(library)) == 2
+        # While switched, To decide shows no suggestion for the work.
+        assert _detail_suggestion(library, "keep") is None
         library.repository.bind_cover_taste_switching("suggest_only")
         assert _wake(library, NOW + 5)
         assert _selections(library.repository) == []
         assert not _wake(library, NOW + 6)
+        # The suggestion shows again.
+        assert _detail_suggestion(library, "keep") is not None
 
 
 def _plan(library: _Library, root: Path) -> Any:
@@ -697,14 +734,29 @@ def test_the_write_binding_reads_the_verdict_row(
             ]
         }
         if tamper == "candidate":
+            # Another selectable candidate, bound in every member but the
+            # verdict, which names this decision's own.
             other = next(
                 candidate
                 for candidate in library.considerations["wrong_shape"]["candidates"]
                 if candidate["reference"] != decision.candidate_reference
                 and not candidate["incumbent"]
+                and candidate["selectable"]
+                and candidate["deterministic_citations"]
             )
-            assert other is not None
-            values.update(candidate_reference=other["reference"])
+            values.update(
+                candidate_reference=other["reference"],
+                artifact_id=other["artifact_id"],
+                candidate_id=next(
+                    alternative.alternative_id
+                    for result in proposal.results
+                    if result.destination.value == "cover"
+                    for alternative in result.alternatives
+                    if alternative.value.value == other["artifact_id"]
+                ),
+                rank_key=tuple(other["deterministic_rank_key"]),
+                citation_ids=tuple(sorted(set(other["deterministic_citations"]))),
+            )
         elif tamper == "verdict":
             values.update(verdict_id="taste_verdict_" + "e" * 32)
         elif tamper == "reason":
@@ -729,7 +781,7 @@ def test_the_write_binding_reads_the_verdict_row(
                 ).fetchone()[0]
             )
             assert verdict["candidate_reference"] == decision.candidate_reference
-            tampered = replace_reference(decision, values)
+            tampered = CoverAutomaticDecision.create(**values)
         with pytest.raises(FieldEffectError, match="authority_binding"):
             _cover_automatic_decision_value(
                 connection,
@@ -746,15 +798,6 @@ def test_the_write_binding_reads_the_verdict_row(
                 if tamper == "target_state"
                 else document,
             )
-
-
-def replace_reference(
-    decision: CoverAutomaticDecision, values: dict[str, Any]
-) -> CoverAutomaticDecision:
-    """The decision naming another candidate, with its own rank key."""
-    rank = list(decision.rank_key)
-    rank[6] = values["candidate_reference"]
-    return CoverAutomaticDecision.create(**(values | {"rank_key": tuple(rank)}))
 
 
 def test_an_owner_chosen_cover_is_never_judged_sentinel(tmp_path: Path) -> None:
