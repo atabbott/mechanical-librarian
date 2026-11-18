@@ -1867,6 +1867,57 @@ def test_a_keep_freezes_the_write_planning_resolves_for_it(
     }
 
 
+_GONE_BACK: dict[str, tuple[tuple[str, ...] | None, str, dict[str, Any] | None]] = {
+    "keep_back": (("Drama",), "keep_current", None),
+    "clear_back": (None, "owner_entered", {"kind": "empty", "value": None}),
+    "entry_back": (
+        ("Drama",),
+        "owner_entered",
+        {"kind": "list", "value": ["Drama"]},
+    ),
+}
+
+
+@pytest.mark.parametrize("back", sorted(_GONE_BACK))
+def test_a_field_back_at_the_value_the_case_read_is_not_written(
+    tmp_path: Path, back: str
+) -> None:
+    """A field whose latest write holds the value the case read again, after a
+    keep, a clear or an entry, does not count as written, so its card is Keep
+    current value (#1523)."""
+    current, outcome, value = _GONE_BACK[back]
+    store = OwnerStore(tmp_path, genre_report(current=current))
+    try:
+        store.write(
+            store.decide(
+                "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+            )
+        )
+        assert _field(store, "genres")["written_by_case"] is True
+        store.write(store.decide(outcome, value, destination="genres"))
+        assert _field(store, "genres")["written_by_case"] is False
+        assert store.repository.written_field_values(store.case.review_case_id) == ()
+        assert cast("dict[str, Any]", _field(store, "genres")["owner_control"])[
+            "current"
+        ] == (list(current) if current is not None else None)
+        if back == "keep_back":
+            _refused(
+                store,
+                "owner_value_unchanged",
+                "owner_entered",
+                {"kind": "list", "value": ["Drama"]},
+                destination="genres",
+            )
+            entered = store.decide(
+                "owner_entered",
+                {"kind": "list", "value": ["Fantasy"]},
+                destination="genres",
+            )
+            assert entered.outcome == "owner_entered"
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize(
     ("report", "back"),
     [

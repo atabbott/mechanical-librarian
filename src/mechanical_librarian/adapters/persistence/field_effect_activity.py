@@ -1862,8 +1862,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self, review_case_id: str
     ) -> tuple[tuple[str, object], ...]:
         """What the case's own latest verified write in its episode put in
-        each field but the cover; ``None`` is a write that emptied it (#1523,
-        S5).
+        each field but the cover, where that is not the value the case read;
+        a field back at that value after a keep, a clear or an entry reads as
+        unwritten. ``None`` is a write that emptied it (#1523, S5).
 
         Owner entry on the case that wrote a field compares with this value
         rather than the target its report read before the write, so the
@@ -1872,18 +1873,21 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         fields the case wrote, so it offers no keep of what it replaced.
         """
         try:
+            case: ReviewCase | None = None
             values: list[tuple[str, object]] = []
             for destination in _WRITTEN_DESTINATIONS:
-                row = self._episode_write(review_case_id, destination, None)
-                if row is not None:
-                    values.append(
-                        (
-                            destination,
-                            _written_plan(
-                                row[0], review_case_id, destination
-                            ).desired_value,
-                        )
-                    )
+                row = self._case_write(review_case_id, destination, None)
+                if row is None:
+                    continue
+                written = _written_plan(
+                    row[0], review_case_id, destination
+                ).desired_value
+                case = case or self._recorded_case(review_case_id)
+                if field_value_version(destination, written) == field_value_version(
+                    destination, self._case_target_pre_value(case, destination)
+                ):
+                    continue
+                values.append((destination, written))
             return tuple(values)
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
@@ -1892,10 +1896,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self, decision: HumanDecision
     ) -> sqlite3.Row | tuple[str, ...] | None:
         """Find the verified effect an owner decision follows."""
-        predecessor = self._episode_write(
+        return self._case_write(
             decision.review_case_id, decision.destination, decision.decision_id
         )
-        if decision.destination == "description":
+
+    def _case_write(
+        self, review_case_id: str, destination: str, before: str | None
+    ) -> sqlite3.Row | tuple[str, ...] | None:
+        """The case's latest verified write to a field in its episode, before
+        the decision ``before`` when one is named: a description written with
+        the adviser's text counts (#1523)."""
+        predecessor = self._episode_write(review_case_id, destination, before)
+        if destination == "description":
             authored_predecessor = self._connection.execute(
                 "SELECT effect.document FROM field_effects effect "
                 "JOIN description_decisions authored ON authored.decision_id=effect.decision_id "
@@ -1903,7 +1915,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
                 "review_case_episodes WHERE review_case_id=?),0) "
                 "ORDER BY effect.updated_at DESC,effect.rowid DESC LIMIT 1",
-                (decision.review_case_id, decision.review_case_id),
+                (review_case_id, review_case_id),
             ).fetchone()
             if authored_predecessor is not None and (
                 predecessor is None
