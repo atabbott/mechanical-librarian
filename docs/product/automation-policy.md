@@ -525,13 +525,15 @@ your taste profile. What you may choose is in the
 
 Switching on Taste profile lets your taste profile switch covers
 automatically too. It is Suggest only by default. Under Automatic, "Only
-covers with a fault" switches a cover only to cure a fault the measured rules
-found, and the checkbox under it also lets the profile switch a cover with no
-fault. Switching by taste needs its own qualification, and no release has it
-yet, so until then every taste switch stays a suggestion. A switch is tied to
-the profile version that chose it: if the profile changes, or you go back to
-Suggest only, before the switch is written, it waits for the work to be
-checked again. Switched names the profile version behind each switch.
+covers with a fault", when ticked, lets the profile switch a cover only to cure
+a fault the measured rules found; cleared, it also lets the profile switch a
+cover with no fault. Switching by taste needs its own qualification, and no
+release has it yet, so until then every taste switch stays a suggestion. A
+switch is tied to the profile version that chose it. If you go back to Suggest
+only before the switch is written, it is withdrawn and shows as a suggestion
+again; if the profile changes first, it is withdrawn and the work is checked
+again under the new version. Switched names the profile version behind each
+switch.
 
 Book matching in Policy, set wider than "Confirmed matches only", lets a cover
 from a source record with the book's title and author be labelled "Same title

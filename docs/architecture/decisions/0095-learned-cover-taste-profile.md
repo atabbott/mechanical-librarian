@@ -444,8 +444,8 @@ qualification, every verdict stays a suggestion.
   (`suggest_only` by default, or `automatic`), mirrored as
   `review.cover_taste_switching`. Switching is not part of the cover policy,
   so changing it prepares nothing again. Each runtime generation binds it when
-  it is composed. "Only covers with a fault" maps to `protected`, the
-  checkbox under Automatic to `unprotected`.
+  it is composed. Under Automatic one control, "Only covers with a fault",
+  sets the protection: ticked is `protected`, cleared is `unprotected`.
 - **Admission order (K4).** The first gate that fails stores nothing, and the
   gates run in this order:
   1. Switching is Automatic.
