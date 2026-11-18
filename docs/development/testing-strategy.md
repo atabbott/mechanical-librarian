@@ -303,6 +303,11 @@ These rules apply to every new test, beside the code economy rules in
   `scripts/compatibility_versions.py --write`. A stored document's version
   never reaches the browser, so browser fixtures don't spell one. Older or
   next versions in refusal tests and frozen fixtures stay literal.
+- **Regenerate the browser's wire fixtures; never edit or hand-merge them.**
+  The JSON files `tests/unit/test_browser_wire_fixtures.py` checks are written
+  by `ML_WRITE_WIRE_FIXTURES=1 uv run pytest tests/unit/test_browser_wire_fixtures.py`
+  with sorted keys. After a response changes, or a merge from `main` conflicts
+  in one of them, take either side, run that command and review the diff.
 
 ## Fixtures, hostile input and privacy
 
