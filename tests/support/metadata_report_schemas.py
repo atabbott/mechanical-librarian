@@ -438,8 +438,15 @@ PRIOR_HUMAN_DECISIONS_SQL = WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL.replace(
     "'reject','owner_entered','withdraw','pin','unpin')", "'reject')"
 )
 assert PRIOR_HUMAN_DECISIONS_SQL != WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL
-# Every producer before #1523 recorded no recent_write transition.
-PRIOR_REVIEW_TRANSITIONS_SQL = persistence_schema._REVIEW_TRANSITIONS_SQL.replace(
+# Every producer before #1953 recorded no unidentified retirement.
+WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL = (
+    persistence_schema._REVIEW_TRANSITIONS_SQL.replace(
+        "'ineligible','unidentified',", "'ineligible',"
+    ).replace("reason IN ('ineligible','unidentified')", "reason='ineligible'")
+)
+assert WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL.count("unidentified") == 0
+# Nor did any before #1523 record a recent_write transition.
+PRIOR_REVIEW_TRANSITIONS_SQL = WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL.replace(
     "'actionable','recent_write','nonactionable'", "'actionable','nonactionable'"
 ).replace("reason IN ('actionable','recent_write')", "reason='actionable'")
 assert PRIOR_REVIEW_TRANSITIONS_SQL.count("recent_write") == 0

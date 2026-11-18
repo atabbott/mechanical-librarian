@@ -157,3 +157,16 @@ a pending description or a cover compared under another policy, since a kept
 case takes no part in either. A kept case therefore lasts until the first scan
 of the work once its 30 days have passed
 ([ADR-0105](0105-going-back-after-a-write.md)).
+
+## Amendment: a re-preparation that identifies nothing retires the case (#1953)
+
+When a requested refresh, a changed file or a recovery reset completes a work
+as evidence only, preparation retires the work's case in the same transaction,
+as an absence retirement does: a `retired` transition by
+`review-preparation-v1` with reason `unidentified`, from the case, keeping the
+lineage's proposal set and report. Every write still waiting on a case closes
+with it ([ADR-0039](0039-continuous-guarded-application.md), #1658). A
+scheduled search that identifies nothing still keeps the case
+([ADR-0102](0102-search-every-finished-book-again.md)). Because preparation
+retired it, a later preparation that identifies the book again admits its case
+as a new episode rather than replaying the retirement.
