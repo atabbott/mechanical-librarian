@@ -212,14 +212,18 @@ body is refused before parsing.
   that wrote the field is the written value. On that case `keep_current`
   writes back the value the case read; where that was empty, a clearable
   field goes back to empty and any other field is refused as
-  `owner_value_required`. Where the case's latest write already holds that
-  value, the keep is recorded as a plain keep and writes nothing.
+  `owner_value_required`. Where it read a description stored with formatting
+  a restore would lose, the keep is refused with `409 restore_unavailable`,
+  and the field's `restore_unavailable` is true. Where the case's latest
+  write already holds that value, the keep is recorded as a plain keep and
+  writes nothing.
 - "Use previous value" and the names entry's previous names are offered only
   while the field reads its latest verified write's value, and never when the
   value that write replaced was empty: emptying the field is that choice.
 - A pin is refused with `409 pin_change_waiting` while a change to the field
-  that is not the owner's standing answer waits to be written, or while the
-  owner's choice of the advised description stands, and
+  that is not the owner's standing answer waits to be written or was written
+  and not yet read back by a scan, or while the owner's choice of the advised
+  description stands, and
   `409 already_pinned` when the field is already pinned at this value; an
   unpin is refused with `409 not_pinned`, and a withdrawal with `409 pinned`
   while the field is pinned.

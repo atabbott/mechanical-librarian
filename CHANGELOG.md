@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- After a write over a description stored with formatting, the field no
+  longer offers Before your change, which was recorded and then never
+  written. It says to restore the earlier description in Audiobookshelf. The
+  pin line now says you can pin after the next scan, and the recorded line
+  names the genres or names you chose (#NNNN).
 - **Clean rebuild required.** A write that lands after a work returns to an
   earlier case counts as that case's own, and one still waiting holds off a
   pin. History shows what each decision replaced, even within a second (#1973).

@@ -72,15 +72,17 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    input is that choice, and the server sends no empty suggestion. On that
    case Keep current writes back the value the case read: a clearable field
    it read empty goes back to empty as a clear does, and any other field
-   refuses the keep as `owner_value_required`. The case detail's
-   `written_by_case` marks each field the case wrote in its current
-   episode. There the browser shows that keep as a card headed "Before your
-   change", holding the value the case read, and never calls it current. It
+   refuses the keep as `owner_value_required`. A description it read stored
+   with formatting a restore would lose refuses the keep as
+   `restore_unavailable` (#1424). The case detail's `written_by_case` marks
+   each field the case wrote in its current episode, and
+   `restore_unavailable` marks such a description. There the browser shows
+   that keep as a card headed "Before your change", holding the value the case read, and never calls it current. It
    leaves the card out where owner entry already offers the same way back
    (Clear for an empty value, or that value as the previous value, names or
    genres), and where there is none, a field read empty that cannot be
-   emptied, saying so in one sentence. History reads that keep as "You went
-   back to the value before your change.", its To an empty value as Not set,
+   emptied or such a description, saying so in one sentence. History reads
+   that keep as "You went back to the value before your change.", its To an empty value as Not set,
    and Activity reads it as a change from the written value to that value,
    from the keep's own first plan, or before one exists from the write it
    follows. Every owner decision freezes, when it is recorded, the write it

@@ -612,8 +612,9 @@ change to the same field in that gap can be lost.
 - Descriptions are compared as the text Audiobookshelf shows, so another
   actor's markup-only edit is overwritten. Read-back verifies only when the
   stored form shows the desired text; a partially dropped value is never
-  resent. A restore that would lose formatting is refused with
-  `restore_unavailable`.
+  resent. A keep that would restore a description and lose its formatting
+  is refused when it is recorded, and one recorded earlier is refused before
+  any request; both say `restore_unavailable`.
 - Cover upload reads only the digest-verified original. The private cover
   recovery directory must belong to the runtime user with `0700` and `0600`
   modes; a failure there stops only that cover effect.
