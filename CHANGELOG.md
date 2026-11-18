@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- **Clean rebuild required.** When a refresh or a changed file leaves a book
+  unidentified, its old case now closes too: it no longer accepts choices,
+  and a change waiting on it for Audiobookshelf is dropped rather than
+  written later. Once the book is identified again, its case opens afresh
+  (#1953).
 - When a choice is refused or can't be confirmed, the reason now shows right
   under the choices, with Try the same decision again or Reload current case,
   and the page scrolls just far enough to show it. Before, it appeared below

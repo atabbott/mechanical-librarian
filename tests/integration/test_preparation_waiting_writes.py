@@ -236,6 +236,56 @@ def test_a_rescan_that_replaces_the_case_closes_a_waiting_field_write(
     _reopen_fields(library, tmp_path)
 
 
+def test_a_rescan_that_identifies_nothing_closes_a_waiting_field_write(
+    library: _Library, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rescan whose report admits no work identity retires the case, and
+    the write waiting on it closes with it (#1953)."""
+    decision_id, waiting_id, lane = _waiting_field(library, tmp_path)
+    case_before = library.case_id()
+    lost = rewritten(library.report, title="Identified as nothing")
+
+    def extract(
+        repository: ReviewPipelineRepository, action: PipelineAction, claim_next: bool
+    ) -> tuple[str, bool]:
+        concrete = cast(SQLiteMetadataReportRepository, repository)
+        current = concrete._connection.execute(
+            "SELECT report_id FROM current_metadata_reports"
+        ).fetchone()[0]
+        concrete.publish(
+            lost,
+            lambda: True,
+            current,
+            after_publication=lambda bound, published: (
+                bound.complete_review_extraction_publication(
+                    action,
+                    published.report_id,
+                    library.now[0],
+                    0,
+                    "evidence_only",
+                    claim_next,
+                )
+            ),
+        )
+        return lost.report_id, True
+
+    monkeypatch.setattr(library.pipeline, "_extract", extract)
+
+    _rescan(library, 20)
+
+    assert _transitions(library.root)[-1] == (
+        "review-preparation-v1",
+        "retired",
+        case_before,
+        None,
+    )
+    assert library.root._connection.execute(
+        "SELECT review_case_id,outcome FROM current_review_packages"
+    ).fetchall() == [(None, "evidence_only")]
+    _assert_field_closed(library, lane, decision_id, waiting_id)
+    _reopen_fields(library, tmp_path)
+
+
 @pytest.mark.parametrize("reason", ["tombstoned", "ineligible"])
 def test_preparation_retiring_a_work_closes_its_waiting_field_write(
     library: _Library, tmp_path: Path, reason: str

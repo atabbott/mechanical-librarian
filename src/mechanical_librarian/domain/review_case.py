@@ -322,6 +322,7 @@ class ReviewTransition:
                 "nonactionable",
                 "absent",
                 "ineligible",
+                "unidentified",
                 "policy_changed",
             }
             or type(self.proposal_set_id) is not str
@@ -356,7 +357,10 @@ class ReviewTransition:
             or (self.actor == "review-admission-v1" and self.reason != "nonactionable")
             or (
                 self.actor == "review-preparation-v1"
-                and (self.reason != "ineligible" or self.from_review_case_id is None)
+                and (
+                    self.reason not in {"ineligible", "unidentified"}
+                    or self.from_review_case_id is None
+                )
             )
             or (
                 self.actor == "policy-activation-v1"
