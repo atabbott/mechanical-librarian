@@ -473,8 +473,9 @@ qualification, every verdict stays a suggestion.
   asked about. The walk stops at the fifth switch. Posture, record, room and
   holds are not asked. An owner answer since the verdict shows as Looks right
   (the same candidate) or Keep current; any other answer takes the switch out.
-  It reads `checking` while a field is still due under the version, or a
-  judgement under it is waiting or in flight, and `done` otherwise.
+  It reads `checking` while a field is still due under the version, a
+  waiting Try again included, or a judgement under it is in flight, and
+  `done` otherwise.
 - **Looks right (K8)** is the work's ordinary `accept` of that candidate,
   and Keep current its `keep_current`.
 - **Cover Resume (K9).** See ADR-0085, Amendment 3. Taste alone never offers

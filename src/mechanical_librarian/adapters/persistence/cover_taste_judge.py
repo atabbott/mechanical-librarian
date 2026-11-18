@@ -192,15 +192,17 @@ _PREVIEW_ANSWER_SQL = (
     "ON selection.selection_id=current.selection_id "
     "WHERE lineage.review_case_id=? AND selection.kind='owner'"
 )
-# A judgement under one version still waiting or in flight on a work's
-# current comparison: the preview is still checking until it ends (K7).
+# A judgement under one version in flight on a work's current comparison:
+# the preview is still checking until it ends (K7). A waiting Try again is
+# counted only while its field is due (`_DUE_SQL`): one whose field an owner
+# answer has since closed never runs.
 _PREVIEW_IN_FLIGHT_SQL = (
     "SELECT 1 FROM cover_taste_judgements judgement "
     "JOIN current_cover_considerations pointer "
     "ON pointer.consideration_id=judgement.consideration_id "
     "JOIN current_review_case_lineages lineage "
     "ON lineage.review_case_id=pointer.review_case_id "
-    "WHERE judgement.version=? AND judgement.state IN ('requested','running') "
+    "WHERE judgement.version=? AND judgement.state='running' "
     "LIMIT 1"
 )
 _PREVIEW_RERUN_SQL = (

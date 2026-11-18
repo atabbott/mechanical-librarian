@@ -1053,3 +1053,30 @@ def test_the_preview_keeps_checking_while_a_judgement_is_in_flight(
     for judgement_id in claimed:
         store.fail(cast(str, judgement_id), NOW + 1, "invalid_output")
     assert taste.preview("unprotected")["state"] == "done"
+
+
+def test_a_waiting_retry_on_a_field_no_longer_due_lets_the_preview_finish(
+    tmp_path: Path,
+) -> None:
+    """Review S3: the owner's Try again waits as `requested` until its field
+    is claimed as due. Once the owner answers that cover, the field is no
+    longer due, so the waiting retry never runs, and the preview is `done`
+    rather than checking for ever."""
+    library = _library(tmp_path, _works("keep"))
+    _version(library.repository)
+    try:
+        taste = _taste(library)
+        _judge(library, {})
+        assert _rows(library)[0][2] == "failed"
+        assert taste.preview("unprotected")["state"] == "done"
+        assert library.repository.cover_taste_store().request_judge_retry(1, NOW + 1)
+        assert taste.preview("unprotected")["state"] == "checking"
+        _choose(library, "keep", None, NOW + 2)
+        store = library.repository.cover_taste_judge_store()
+        assert store.due(1, 64) == ()
+        assert library.repository._connection.execute(
+            "SELECT count(*) FROM cover_taste_judgements WHERE state='requested'"
+        ).fetchone() == (1,)
+        assert taste.preview("unprotected")["state"] == "done"
+    finally:
+        library.repository.close()
