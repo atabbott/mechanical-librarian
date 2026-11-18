@@ -115,7 +115,15 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    once the write is 30 days old, so the same ProposalSet retires it. The
    unchanged-work branch of preparation sends such a work back to admission
    when the scan's time is 30 days past the write. A kept case therefore lasts
-   until the first scan once its 30 days have passed.
+   until the first scan once its 30 days have passed, unless a requested
+   refresh, a changed file or a recovery reset first prepares the work and
+   identifies nothing. That retires the kept case as it retires any case
+   (ADR-0031, #1953): the write it was kept for is already verified, so
+   nothing about the write is lost, only the way back while the work stays
+   unidentified. Once preparation identifies the work again within the 30
+   days, admission keeps the work's case again for the same write, as a new
+   admission, and offers the way back again. A scheduled search that
+   identifies nothing still keeps it (ADR-0102).
 7. **Payload forms.** The adapter sends `null` for subtitle and publisher and
    `[]` for genres and narrators, and reads `null`, `""`, an absent key and
    `[]` as empty on every field but the explicit flag. Read-back alone shows
@@ -148,6 +156,10 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
   kept case can outlive them until the next scan.
 - When a kept case expires, a pinned field whose value changed leaves
   Attention with it, unasked, as a retired case's does today.
+- While a re-preparation identifies nothing, a written work has no case to
+  go back from; the way back returns when the work is identified again
+  within the 30 days. An owner answer recorded on the kept case but not yet
+  sent when it retires is refused, as on any retired case.
 - A wrong empty payload succeeds silently at the service; only read-back
   catches it.
 
@@ -186,8 +198,11 @@ session without that cost.
 Persistence tests cover the empty kind, names and their refusals, both new
 `CHECK`s, pinning a clear, the written value as current, when previous is
 offered, the kept case at 29 and 30 days with replay, an actionable successor,
-a changed pin, the skipped advice and the unchanged-work expiry. Adapter tests
-pin each payload and read form. The Audiobookshelf field-effect qualification
-enters, goes back on and clears each field on every pinned image, checks each
-clear raw, and on the installed path clears a written subtitle, pins the clear
-and checks that the next scan keeps it quiet.
+a changed pin, the skipped advice, the unchanged-work expiry, and a kept case
+retired by a re-preparation that identifies nothing, with its verified write
+unchanged, an unsent answer on it refused, and the case kept again once the
+work is identified again. Adapter tests pin each payload and read form. The
+Audiobookshelf field-effect qualification enters, goes back on and clears
+each field on every pinned image, checks each clear raw, and on the installed
+path clears a written subtitle, pins the clear and checks that the next scan
+keeps it quiet.
