@@ -123,9 +123,6 @@ class ContinuousFieldEffectRepository(Protocol):
     def revoke_library_field_effect_consents(
         self, connection: str, library: str, changed_at: int
     ) -> int: ...
-    def field_effect_manual_override(
-        self, review_case_id: str, destination: str, changed_at: int
-    ) -> int: ...
     def field_effect_manual_hold_context(
         self, review_case_id: str, destination: str
     ) -> tuple[str, str] | None: ...
@@ -784,17 +781,6 @@ class ContinuousGuardedApplication:
         self._announce("activity", None)
         if not paused:
             self.wake()
-
-    def activate_human_override(
-        self,
-        review_case_id: str,
-        destination: str,
-    ) -> None:
-        self._repository.field_effect_manual_override(
-            review_case_id, destination, self._clock()
-        )
-        self._announce("activity", None)
-        self.wake()
 
     def return_to_automatic(
         self,

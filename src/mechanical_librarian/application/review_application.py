@@ -1095,10 +1095,6 @@ class ReviewApplication:
         return self._updates
 
     @property
-    def preparation_available(self) -> bool:
-        return self._preparation is not None
-
-    @property
     def operations_available(self) -> bool:
         return self._operations is not None
 
@@ -1954,17 +1950,6 @@ class ReviewApplication:
     @property
     def automatic_safety(self) -> AutomaticSafetyOperations:
         return self._automatic_safety
-
-    def policy_call(self, call: Callable[[], _Result]) -> _Result:
-        return self.serialized(call)
-
-    def automatic_state(self) -> dict[str, object]:
-        state = self._automatic_safety.state()
-        return {
-            "paused": state.paused,
-            "global_suspension": state.global_suspension,
-            "category_suspensions": dict(state.category_suspensions),
-        }
 
     def activity(
         self,

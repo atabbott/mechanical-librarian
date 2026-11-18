@@ -480,9 +480,13 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
                 "_project_activity_facts",
                 wraps=reader._field_effect_activity._project_activity_facts,
             ) as project:
-                repository.record_cover_consideration_outcome(
-                    automatic.consideration_id, "owner_retry_prepared", 15
-                )
+                with repository._connection:
+                    repository._cover_considerations._record_cover_consideration_event(
+                        automatic.consideration_id,
+                        automatic.review_case_id,
+                        "owner_retry_prepared",
+                        15,
+                    )
                 added = repository._connection.execute(
                     "SELECT event_id FROM cover_consideration_events "
                     "WHERE consideration_id=? AND kind='owner_retry_prepared'",
@@ -492,9 +496,13 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
                 assert refreshed == canonical.activity(range_days=90)
                 project.assert_called_once()
                 assert project.call_args.args[0] == {("cover_safeguard", added)}
-                repository.record_cover_consideration_outcome(
-                    automatic.consideration_id, "owner_retry_prepared", 15
-                )
+                with repository._connection:
+                    repository._cover_considerations._record_cover_consideration_event(
+                        automatic.consideration_id,
+                        automatic.review_case_id,
+                        "owner_retry_prepared",
+                        15,
+                    )
                 assert actual.activity(range_days=90) == refreshed
                 project.assert_called_once()
         finally:

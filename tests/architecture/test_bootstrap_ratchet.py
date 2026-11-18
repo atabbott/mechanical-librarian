@@ -58,7 +58,7 @@ ENTRY_POINTS = {
     # shrank because its own network filter moved there.
     "audio_child.py": 269,
     "cover_child.py": 116,
-    "epub_child.py": 669,
+    "epub_child.py": 653,
     "probe_shim.py": 70,
     "container.py": 77,
     "container_health.py": 110,

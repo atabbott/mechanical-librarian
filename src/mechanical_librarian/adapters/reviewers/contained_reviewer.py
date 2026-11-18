@@ -1932,15 +1932,6 @@ def _kill_and_prove_dead(pid: int, pgid: int, start_token: str) -> None:
         raise ContainedReviewerProcessError("runtime") from error
 
 
-def _require_signal_identity(pid: int, pgid: int, start_token: str) -> bool:
-    try:
-        return process_groups.require_signal_identity(
-            process_groups.ReviewerProcessGroup(pid, pgid, start_token)
-        )
-    except process_groups.ReviewerProcessGroupError as error:
-        raise ContainedReviewerProcessError("runtime") from error
-
-
 def _reap_process_group(pgid: int, timeout_seconds: float) -> None:
     try:
         process_groups.reap_process_group(pgid, timeout_seconds)

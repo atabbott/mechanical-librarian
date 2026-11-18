@@ -3,22 +3,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from typing import TypeVar
 
 MAX_CODE_LENGTH = 64
 MAX_SHORT_TEXT_LENGTH = 256
 MAX_FIELD_VALUE_LENGTH = 4_096
-MAX_FACT_VALUE_LENGTH = 1_024
-MAX_EXCERPT_LENGTH = 280
-MAX_FIELD_VALUES = 32
 MAX_FACTS = 64
 MAX_WARNINGS = 32
-MAX_EVIDENCE_REFERENCES = 64
-MAX_RISKS = 32
-MAX_NOTICES = 32
-MAX_PACKET_RECORDS = 32
-MAX_SERIALIZED_BYTES = 524_288
 # What a projection puts where a refused codepoint was, so the shape of the
 # value it was read from survives without the codepoint doing.
 REPLACEMENT_CHARACTER = "\ufffd"
@@ -87,17 +77,10 @@ _QUOTED_TAG_SPAN_PATTERN = re.compile(r"""<(?:[^<>"']|"[^"]*"|'[^']*')*>""")
 _C1_CONTROLS = re.compile("[\x80-\x9f]")
 _WINDOWS_DRIVE_ROOT_PATTERN = re.compile(r"(?i)(?<![a-z0-9_])[a-z]:[/\\]")
 _UNC_PATH_PATTERN = re.compile(r"(?<![\w\\])\\\\[^\\\s]+\\[^\\\s]+")
-_COOKIE_HEADER_PATTERN = re.compile(r"(?i)\b(?:cookie|set-cookie)\s*:")
-_SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
-    r"(?i)\b(?:api[ _-]?key|client[ _-]?secret|access[ _-]?token|"
-    r"refresh[ _-]?token|session[ _-]?token|password|passwd)\b\s*(?:[:=]|\s)\s*\S+"
-)
 _SOURCE_TEXT_SENTINEL = re.compile(
     r"(?:unsafe|oversized)-source-text-sha256:[0-9a-f]{64}"
 )
 _SOURCE_TEXT_SENTINEL_PREFIX = re.compile(r"(?:unsafe|oversized)-source-text-sha256:")
-
-T = TypeVar("T")
 
 
 class EvidenceValueError(ValueError):
@@ -127,10 +110,6 @@ def validate_code(value: object, label: str) -> str:
     ):
         raise EvidenceValueError(f"{label} must use the bounded code vocabulary")
     return text
-
-
-def validate_excerpt(value: object, label: str = "evidence excerpt") -> str:
-    return validate_projection_text(value, label, MAX_EXCERPT_LENGTH)
 
 
 def validate_projection_text(value: object, label: str, maximum: int) -> str:
@@ -239,94 +218,6 @@ def validate_role_projection(value: object, label: str = "contributor role") -> 
     if _SOURCE_TEXT_SENTINEL_PREFIX.match(value):
         raise EvidenceValueError(f"{label} has a malformed source-text sentinel")
     return validate_projection_text(value, label, 64)
-
-
-def validate_safe_diagnostic_text(value: object, label: str, maximum: int) -> str:
-    """Reject secrets, cookies, credential-bearing URLs, and private paths.
-
-    Diagnostics are a stricter projection boundary shared by application ports;
-    callers receive only the validated public-safe text, never a redacted copy
-    that could conceal a changed operational meaning.
-    """
-
-    text = validate_projection_text(value, label, maximum)
-    if _COOKIE_HEADER_PATTERN.search(text) or _SENSITIVE_DIAGNOSTIC_PATTERN.search(
-        text
-    ):
-        raise EvidenceValueError(
-            f"{label} must not contain credential or cookie material"
-        )
-    return text
-
-
-def validate_persisted_fact_text(value: object, label: str, maximum: int) -> str:
-    """Reject credential-shaped facts while retaining private path evidence."""
-
-    text = validate_text(value, label, maximum)
-    if _credential_shaped(text):
-        raise EvidenceValueError(f"{label} must not contain credential-shaped text")
-    return text
-
-
-def validate_persisted_fact_code(value: object, label: str) -> str:
-    """Reject high-confidence credential labels before fact persistence."""
-
-    code = validate_code(value, label)
-    if _credential_label_shaped(code, reject_exact_secret=True):
-        raise EvidenceValueError(f"{label} must not use a credential label")
-    return code
-
-
-def validate_tuple(
-    values: object,
-    *,
-    label: str,
-    item_type: type[T],
-    maximum: int,
-    required: bool = False,
-    unique: bool = True,
-) -> tuple[T, ...]:
-    if type(values) is not tuple or any(type(item) is not item_type for item in values):
-        raise EvidenceValueError(f"{label} must be an immutable typed tuple")
-    if required and not values:
-        raise EvidenceValueError(f"{label} must not be empty")
-    if len(values) > maximum:
-        raise EvidenceValueError(f"{label} exceeds its count limit")
-    if unique and len(values) != len(set(values)):
-        raise EvidenceValueError(f"{label} must not contain duplicates")
-    return values
-
-
-def validate_string_tuple(
-    values: object,
-    *,
-    label: str,
-    maximum: int,
-    item_maximum: int,
-    codes: bool = False,
-    required: bool = False,
-) -> tuple[str, ...]:
-    if type(values) is not tuple:
-        raise EvidenceValueError(f"{label} must be an immutable tuple")
-    if required and not values:
-        raise EvidenceValueError(f"{label} must not be empty")
-    if len(values) > maximum:
-        raise EvidenceValueError(f"{label} exceeds its count limit")
-    validated = tuple(
-        validate_code(value, label)
-        if codes
-        else validate_text(value, label, item_maximum)
-        for value in values
-    )
-    if len(validated) != len(set(validated)):
-        raise EvidenceValueError(f"{label} must not contain duplicates")
-    return validated
-
-
-def ensure_unique(values: Iterable[object], label: str) -> None:
-    materialized = tuple(values)
-    if len(materialized) != len(set(materialized)):
-        raise EvidenceValueError(f"{label} must not contain duplicates")
 
 
 def _credential_shaped(value: str) -> bool:

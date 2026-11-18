@@ -57,15 +57,6 @@ TERMINAL_PREPARATION_STATES = frozenset(
     }
 )
 
-PREPARATION_PASSAGE_FIELDS = (
-    "read",
-    "searches_finished",
-    "compared",
-    "checked",
-    "ready",
-    "failed",
-)
-
 
 @dataclass(frozen=True, slots=True)
 class PreparationPassage:
