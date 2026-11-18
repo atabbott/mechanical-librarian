@@ -119,11 +119,11 @@ _DEADLINE_TIERS = ("fast", "browser")
 _FAST_TIMINGS = Path(__file__).with_name("fast_tier_timings.json")
 # The recorded seconds fast shard 1 starts with before any file is dealt. In
 # the gate, the job running shard 1 runs the source and frontend checks first,
-# about five and a half minutes the other shard jobs do not spend; a hosted
-# runner spends about 0.43 of a recorded second per recorded second, so shard
-# 1 is dealt that much less recorded work and every fast job ends near the
-# same time. Calibrate it again when the table is recorded on another machine.
-_FAST_SHARD_ONE_HEAD_START = 760.0
+# four to five minutes the other shard jobs do not spend, and a hosted runner
+# spends about 0.45 of a second per recorded second, so shard 1 is dealt that
+# much less recorded work and every fast job ends near the same time.
+# Calibrate it again when the table is recorded on another machine.
+_FAST_SHARD_ONE_HEAD_START = 600.0
 # Each browser-tier test function's recorded time, every parameter set and its
 # share of any module fixture included, which a browser `--shard` balances on.
 _BROWSER_TIMINGS = Path(__file__).with_name("browser_tier_timings.json")
