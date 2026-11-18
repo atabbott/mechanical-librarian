@@ -87,7 +87,10 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    follows; a keep goes back on it. The stored decision names the decision
    of the write planning resolves for it then, or null when it follows none,
    or, for a keep, when that write already holds the value the case read,
-   which makes the keep a plain keep. The pending set holds a keep only
+   which makes the keep a plain keep. While the owner decision that made
+   that write is still the field's answer, an accept of the value it holds
+   is refused as `owner_value_unchanged` and records nothing, since
+   planning would write nothing for it. The pending set holds a keep only
    while it names a write. History's From for every decision, and Activity's
    written value for a keep, read that write's own verified effect, never
    episode floors or a clock in whole seconds, so a later return or a write
