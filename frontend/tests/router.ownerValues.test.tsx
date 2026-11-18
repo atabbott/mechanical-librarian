@@ -2059,4 +2059,32 @@ describe('the written choice', () => {
     await user.click(await screen.findByRole('radio', { name: PROPOSED }))
     await waitFor(() => expect(sent(http).map((command) => command.outcome)).toEqual(['accept']))
   })
+
+  // An accept of the value the case's latest write already holds needed no
+  // write of its own (ADR-0105).
+  it.each([true, false])(
+    'W4 says an accept needs no change, and its card sends nothing, only when it needs no write (%s)',
+    async (noChangeRequired) => {
+      const user = userEvent.setup()
+      const http = owner(() => [{ ...written(true, false), noChangeRequired }])
+      renderRoute('/library?lens=all&preview=case-1&field=title', http)
+      const chosen = await screen.findByRole('radio', { name: PROPOSED })
+      const box = screen.getByRole('complementary', { name: 'Writing to the library' })
+      if (noChangeRequired) {
+        expect(box).toHaveTextContent(
+          /^Writing to the libraryNo change neededActivity lists it\.$/u,
+        )
+        await user.click(chosen)
+        chosen.focus()
+        await user.keyboard('{Enter}')
+        expect(http.recordDecision).not.toHaveBeenCalled()
+      } else {
+        expect(box).toHaveTextContent('Change recorded')
+        await user.click(chosen)
+        await waitFor(() =>
+          expect(sent(http).map((command) => command.outcome)).toEqual(['accept']),
+        )
+      }
+    },
+  )
 })

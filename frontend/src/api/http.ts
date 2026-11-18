@@ -814,6 +814,9 @@ export interface ReviewFieldView {
   // This case's own write set the field, so what the case read before it is
   // no longer the library's value (#1523).
   writtenByCase?: boolean
+  // The owner's accept holds the value the case's latest write already put
+  // there, so it has nothing to write (ADR-0105).
+  noChangeRequired?: boolean
   // An owner pin on the field with the value it keeps: in force, waiting for
   // the chosen value to be read back, or changed. And whether a pin or an
   // unpin is accepted now (ADR-0085, Amendment 2): a pin is available, or
@@ -3524,6 +3527,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
     field.description_advice === null ? null : mapDescriptionAdvice(field.description_advice),
   ownerControl: field.owner_control === null ? null : mapOwnerControl(field.owner_control),
   writtenByCase: field.written_by_case,
+  noChangeRequired: field.no_change_required,
   pin: field.pin,
   pinControl: field.pin_control,
   coverConsideration:
