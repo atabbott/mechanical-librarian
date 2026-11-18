@@ -301,7 +301,20 @@ describe('the sentence at the foot of the field', () => {
     expect(pinFoot(advised, shown).sentence).toBe(
       'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
     )
+    // An earlier write by the case, as Automatic's, leaves the choice unwritten.
     expect(pinFoot({ ...advised, writtenByCase: true }, shown).sentence).toBe(
+      'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
+    )
+    // The choice's own write verified: the next scan is all it waits for.
+    const verified = {
+      ...advised,
+      writtenByCase: true,
+      descriptionAdvice: {
+        selection: { origin: 'human' },
+        application_outcome: 'verified',
+      } as NonNullable<Field['descriptionAdvice']>,
+    }
+    expect(pinFoot(verified, shown).sentence).toBe(
       'You can pin this field after the next scan reads its new value.',
     )
     // Automatic's own advised text is no choice of the owner's.
