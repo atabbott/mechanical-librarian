@@ -43,20 +43,6 @@ FILE_REFUSALS: Final = (
     "file_too_many_rows",
     "file_no_rows",
 )
-# Row reasons, in the order they are decided (S3).
-ROW_REASONS: Final = (
-    "row_too_long",
-    "row_shape",
-    "no_item",
-    "ambiguous",
-    "invalid_isbn",
-    "invalid_asin",
-    "asin_for_ebook",
-    "isbn_for_audiobook",
-    "conflicting",
-    "repeated",
-    "already_linked",
-)
 # The counts a preview answers; they add up to its rows.
 COUNT_KEYS: Final = (
     "will_link",

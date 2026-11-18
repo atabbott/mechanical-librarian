@@ -1096,25 +1096,6 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         return document
 
     @local_operation
-    def record_cover_consideration_outcome(
-        self,
-        consideration_id: str,
-        kind: str,
-        occurred_at: int,
-        decision_id: str | None = None,
-    ) -> None:
-        row = self._connection.execute(
-            "SELECT review_case_id FROM cover_considerations WHERE consideration_id=?",
-            (consideration_id,),
-        ).fetchone()
-        if row is None:
-            raise MetadataReportError("cover consideration is unavailable")
-        with self._connection:
-            self._record_cover_consideration_event(
-                consideration_id, str(row[0]), kind, occurred_at, decision_id
-            )
-
-    @local_operation
     def cover_consideration_history(
         self, review_case_id: str, limit: int = 50
     ) -> tuple[dict[str, object], ...]:

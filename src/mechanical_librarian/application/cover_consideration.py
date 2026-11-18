@@ -1123,14 +1123,6 @@ class CoverConsiderationStore(Protocol):
         self, review_case_id: str, limit: int = 50
     ) -> tuple[dict[str, object], ...]: ...
 
-    def record_cover_consideration_outcome(
-        self,
-        consideration_id: str,
-        kind: str,
-        occurred_at: int,
-        decision_id: str | None = None,
-    ) -> None: ...
-
 
 ReviewRunner = Callable[
     [bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]], str
@@ -2408,18 +2400,6 @@ class CoverConsiderationService:
                 raise CoverConsiderationError("invalid_choice")
         elif outcome not in {"keep_current", "reject"} or selected_value is not None:
             raise CoverConsiderationError("invalid_choice")
-
-    def record_outcome(
-        self, consideration_id: str, outcome: str, decision_id: str
-    ) -> None:
-        kind = {
-            "accept": "selected",
-            "keep_current": "kept_incumbent",
-            "reject": "no_action",
-        }[outcome]
-        self._store.record_cover_consideration_outcome(
-            consideration_id, kind, self._clock(), decision_id
-        )
 
     def history(self, review_case_id: str) -> tuple[dict[str, object], ...]:
         items = []
