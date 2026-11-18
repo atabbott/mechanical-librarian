@@ -166,7 +166,7 @@ const emptyRaw = (value: unknown) =>
   value === undefined ||
   value === '' ||
   (Array.isArray(value) && value.length === 0)
-const sameNames = (left: readonly string[], right: unknown) =>
+const sameInOrder = (left: readonly string[], right: unknown) =>
   Array.isArray(right) &&
   left.length === right.length &&
   left.every((name, index) => name === right[index])
@@ -184,7 +184,7 @@ const wayBackInEntry = (field: ReviewField) => {
   if (emptyRaw(before)) return control.clear
   if (control.entry?.suggestions.some(({ rule, value }) => rule === 'previous' && value === before))
     return true
-  if (control.names?.previous && sameNames(control.names.previous, before)) return true
+  if (control.names?.previous && sameInOrder(control.names.previous, before)) return true
   const previousGenres =
     control.subset?.options.filter((option) => option.previous).map((option) => option.value) ?? []
   return previousGenres.length > 0 && sameGenres(previousGenres, before)
@@ -197,18 +197,18 @@ export const noWayBack = (field: ReviewField) =>
   emptyRaw(field.currentRaw) &&
   !CLEARABLE.includes(field.destination)
 // Whether the field's recorded owner entry or clear holds the value the case
-// read: the field is back at it, and the recorded outcome already says so
-// (#1523).
+// read: the field is back at it, and the recorded outcome already says so.
+// Lists compare in order, as the store does, so genres back in another order
+// still count as written (#1523).
 const enteredBack = (field: ReviewField) => {
   const decision = field.humanDecision
   const selected = decision?.outcome === 'owner_entered' ? decision.selected_value : null
   if (!selected) return false
   const before = field.currentRaw
   if (selected.kind === 'empty') return emptyRaw(before)
-  if (!Array.isArray(selected.value)) return selected.value === before
-  return field.destination === 'genres'
-    ? sameGenres(selected.value, before)
-    : sameNames(selected.value, before)
+  return Array.isArray(selected.value)
+    ? sameInOrder(selected.value, before)
+    : selected.value === before
 }
 // The card that keeps the value the case read. Elsewhere it is Keep current
 // value. On the case that wrote the field that value is no longer the

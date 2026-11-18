@@ -128,17 +128,6 @@ describe('what a press of a card’s pin sends', () => {
     })
   })
 
-  it('pins the entry that took the field back to the value the case read', () => {
-    // With no keep card, the recorded entry carries the pin, as after a clear (#1523).
-    const back = field({
-      decisionActions: ['keep_current', 'accept'],
-      currentRaw: 'Old title',
-      humanDecision: decided('owner_entered', { kind: 'text', value: 'Old title' }),
-    })
-    expect(valuePin(back, 'entered')).toEqual({ on: false, press: { kind: 'pin' } })
-    expect(cardPin(back, current)).toEqual({ on: false, press: { kind: 'pin' } })
-  })
-
   it('pins the current value alone where Keep current is not offered', () => {
     expect(cardPin(field({ decisionActions: ['accept'] }), current)).toEqual({
       on: false,

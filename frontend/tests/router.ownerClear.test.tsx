@@ -914,6 +914,45 @@ describe('the keep card on a field this case wrote (#1523)', () => {
     expect(keepCardShown()).toBeNull()
     expect(screen.queryByRole('radio', { name: /^Choose current value/u })).toBeNull()
     expect(screen.getByText(said)).toBeVisible()
+    // The value read has one pin, the recorded entry's, beside the proposed value's.
+    const pins = screen.getAllByRole('button', { name: 'Pin this value' })
+    expect(pins).toHaveLength(2)
+    expect(pins.filter((pin) => pin.closest('.owner-recorded-pin'))).toHaveLength(1)
+  })
+
+  it('leaves it out after authors entered back as they were read', async () => {
+    const back = decided(
+      offered('authors', {
+        writtenByCase: false,
+        currentValue: 'Ada Example · Bo Example',
+        currentRaw: ['Ada Example', 'Bo Example'],
+        proposedValues: [{ kind: 'list', value: ['Mick Herron'] }],
+        ownerControl: namesControl(['Ada Example', 'Bo Example'], false),
+      }),
+      { kind: 'list', value: ['Ada Example', 'Bo Example'] },
+    )
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=authors',
+      owner({ ...back, editable: true, needsAttention: false }),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(keepCardShown()).toBeNull()
+  })
+
+  it('still offers the way back after genres entered back in another order', async () => {
+    // The store compares in order: Drama · Mystery is not the Mystery · Drama it read.
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=genres',
+      owner({
+        ...genresBack(['Mystery', 'Drama'], { kind: 'list', value: ['Drama', 'Mystery'] }),
+        writtenByCase: true,
+      }),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(screen.getByText('Before your change')).toBeVisible()
+    expect(
+      screen.getByRole('radio', { name: 'Choose the value before your change: Mystery · Drama' }),
+    ).toHaveAttribute('aria-checked', 'false')
   })
 
   it('leaves it out after a subtitle entered back as it was read', async () => {
