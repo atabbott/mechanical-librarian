@@ -1461,6 +1461,11 @@ export interface ReviewHttp {
   ): Promise<CoverCalibrationView>
   /** Covers → Taste profile: the profile in use, its versions and build. */
   getTasteProfile(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<TasteProfileView>
+  getTastePreview(
+    protection: TasteProtection,
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<TastePreviewView>
   /** Try again after the failed build `buildId`; it counts against the daily limit. */
   retryTasteBuild(buildId: string, signal?: AbortSignal): Promise<TasteProfileView>
   /** Try again for the works whose check against `version`, in use, failed. */

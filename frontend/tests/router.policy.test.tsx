@@ -4084,3 +4084,99 @@ describe('Description preferences on an earlier build (#1742)', () => {
     expect(document.body).not.toHaveFocus()
   })
 })
+
+// Current covers names Taste profile's Switching, which it changes, and links
+// to it; the link lands on Switching (#1372 PR 5, G1).
+it.each([
+  ['suggest_only', 'Suggest only'],
+  ['automatic', 'Automatic'],
+] as const)('names Switching by taste as %s and links to it', async (value, label) => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const initial = view()
+  http.getSettings = vi.fn(async () => ({
+    ...initial,
+    document: {
+      ...initial.document,
+      cover_preferences: { ...initial.document.cover_preferences, taste_switching: value },
+    },
+  }))
+  const { router } = renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Current covers' })
+  const link = await within(region).findByRole('link', { name: 'Switching by taste' })
+  expect(link).toHaveAttribute('href', '/library?lens=all&view=covers&tab=taste#taste-switching')
+  const row = link.closest('.settings-field-row')
+  expect(row).toHaveTextContent(`Switching by taste${label}`)
+  // The row follows the three choices, before the edition's cover.
+  const protection = within(region).getByRole('group', { name: 'Replace a current cover' })
+  expect(protection.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  await user.click(link)
+  await waitFor(() => expect(router.state.location.hash).toBe('taste-switching'))
+  expect(router.state.location.search).toEqual({ lens: 'all', view: 'covers', tab: 'taste' })
+})
+
+// Never puts Switching by taste back to Suggest only in the same save, and
+// while Never is stored Policy names Suggest only, the setting in force
+// (#1372 PR 5, Q10).
+it('saves Never with Switching by taste back to Suggest only', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const initial = view()
+  const automatic = {
+    ...initial,
+    document: {
+      ...initial.document,
+      cover_preferences: {
+        ...initial.document.cover_preferences,
+        taste_switching: 'automatic' as const,
+      },
+    },
+  }
+  http.getSettings = vi.fn(async () => automatic)
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Current covers' })
+  const protection = await within(region).findByRole('group', { name: 'Replace a current cover' })
+  await user.click(within(protection).getByRole('button', { name: 'Never' }))
+  await user.click(within(region).getByRole('button', { name: 'Save cover settings' }))
+  await waitFor(() => expect(http.writeSettings).toHaveBeenCalledTimes(1))
+  expect(vi.mocked(http.writeSettings).mock.calls[0]?.[0].document.cover_preferences).toEqual({
+    ...automatic.document.cover_preferences,
+    current_protection: 'proposals_only',
+    taste_switching: 'suggest_only',
+  })
+})
+
+it('names Suggest only for Switching by taste while Never is stored with Automatic', async () => {
+  const http = createHttp()
+  const initial = view()
+  http.getSettings = vi.fn(async () => ({
+    ...initial,
+    authority: 'file' as const,
+    document: {
+      ...initial.document,
+      cover_preferences: {
+        ...initial.document.cover_preferences,
+        current_protection: 'proposals_only' as const,
+        taste_switching: 'automatic' as const,
+      },
+    },
+  }))
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Current covers' })
+  const link = await within(region).findByRole('link', { name: 'Switching by taste' })
+  expect(link.closest('.settings-field-row')).toHaveTextContent('Switching by tasteSuggest only')
+})
+
+// Taste profile's Never line links to #current-covers: focus lands on the
+// section's heading (#1372 PR 5).
+it('focuses Current covers when the address names it', async () => {
+  window.history.replaceState({}, '', '/policy?section=curation#current-covers')
+  try {
+    renderRoute('/policy?section=curation#current-covers', createHttp())
+    const heading = await screen.findByRole('heading', { name: 'Current covers' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    expect(heading.scrollIntoView).toHaveBeenCalledWith({ block: 'start' })
+  } finally {
+    window.history.replaceState({}, '', '/')
+  }
+})
