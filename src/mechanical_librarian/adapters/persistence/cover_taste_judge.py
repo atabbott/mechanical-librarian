@@ -130,11 +130,14 @@ _FAILED_SQL = (
     + ")"
 )
 # The verdict in force at a selection: the newest stored for its comparison
-# no later than the selection (J9).
+# in an earlier second than the selection (J9). Both times are whole seconds,
+# so a verdict stored in the selection's own second cannot be told apart from
+# one that arrived after the owner answered; and the owner cannot have read a
+# suggestion in the second it was stored.
 VERDICT_IN_FORCE_SQL = (
     "(SELECT verdict.document FROM cover_taste_verdicts verdict "
     "WHERE verdict.consideration_id=selection.consideration_id "
-    "AND verdict.created_at<=selection.occurred_at "
+    "AND verdict.created_at<selection.occurred_at "
     "ORDER BY verdict.created_at DESC,verdict.rowid DESC LIMIT 1)"
 )
 # Each current owner selection whose verdict in force chose a cover, and

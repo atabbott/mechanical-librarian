@@ -417,7 +417,9 @@ PR 4b a `choose` verdict is a suggestion the owner sees.
   that could still be judged, as a requested attempt the next wake takes up;
   a repeat with nothing failed succeeds, so a lost answer is never stale.
 - **Confirmations.** The verdict in force for an owner selection is the
-  newest at or before it. A selection under a `choose` counts toward
+  newest stored in an earlier second (times are whole seconds, so one stored
+  in the selection's own second may have come after it). A selection under a
+  `choose` counts toward
   "Confirmed {n} of {m}", and toward n when it took that candidate; one total
   is shown, not one per medium. A selection that differs from a `choose` or
   `keep_current` verdict in force is a correction: the builder sends up to 25,

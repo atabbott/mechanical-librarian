@@ -529,6 +529,19 @@ def test_confirmations_and_corrections(library, tmp_path: Path) -> None:
     assert inputs.record["corrections"] == 2
 
 
+def test_a_verdict_stored_in_the_selections_second_is_not_in_force(library) -> None:
+    """Times are whole seconds, so a verdict stored in the second the owner
+    answered may have arrived after the answer: it neither counts toward the
+    confirmed total nor makes the answer a correction (J9)."""
+    _judge(library, {"keep": ("choose", 95, [1]), "keep_many": ("choose", 95, [1])})
+    _choose(library, "keep", _suggested(library, "keep"), NOW)
+    _choose(library, "keep_many", None, NOW)
+    assert _taste(library).read()["confirmed"] == {"confirmed": 0, "suggested": 0}
+    decisions = library.repository.cover_taste_store().decisions()
+    assert decisions
+    assert not any(decision.correction for decision in decisions)
+
+
 def test_the_covers_read_finds_each_verdict_by_its_index(library) -> None:
     """R3: the taste suggestion is read per work through the verdict index."""
     from mechanical_librarian.adapters.persistence.review_covers import _WORKS_SQL
