@@ -12,8 +12,9 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
-- Choosing again a value its case already wrote is refused as already
-  current, where before it waited and was never written (#1980).
+- Pressing your written choice again no longer leaves the field waiting for
+  a write that never comes: it does nothing, and from another open tab it is
+  refused as already current (#1980).
 - **Clean rebuild required.** A write that lands after a work returns to an
   earlier case counts as that case's own, and one still waiting holds off a
   pin. History shows what each decision replaced, even within a second (#1973).
