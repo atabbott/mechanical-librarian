@@ -13,6 +13,7 @@ import logging
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -63,10 +64,15 @@ from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
     MetadataPolicyProfile,
+    ResolvedMetadataPolicy,
     human_review_destinations,
     resolve_policy,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetField,
+    TargetFieldState,
+)
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.integration.test_cover_rules_activation import (
@@ -511,7 +517,9 @@ def _owner_choice(
     )
 
 
-@pytest.mark.parametrize("when", ("to_decide", "earlier_comparison", "kept_switch"))
+@pytest.mark.parametrize(
+    "when", ("to_decide", "earlier_comparison", "earlier_case", "kept_switch")
+)
 def test_taste_automatic_never_replaces_an_owner_cover_choice(
     tmp_path: Path, record: None, when: str
 ) -> None:
@@ -530,6 +538,11 @@ def test_taste_automatic_never_replaces_an_owner_cover_choice(
         if when == "earlier_comparison":
             # The work is compared again under another cover policy.
             library.service = replace_policy(library, "keep")
+        if when == "earlier_case":
+            # The work changes in the library and is reviewed as a new case.
+            before = library.cases["keep"]
+            _successor_case(library, "keep")
+            assert library.cases["keep"] != before
         _stored_choose(library, "keep", NOW + 20)
         # The premise: but for the owner, every gate before the mint passes.
         assert (
@@ -557,6 +570,44 @@ def test_taste_automatic_never_replaces_an_owner_cover_choice(
             json.loads(document)["actor"] == "owner"
             for document in repository.pending_field_effect_decision_documents(9)
         )
+
+
+def _successor_case(library: _Library, item: str) -> None:
+    """Publish the work again with another publisher, so it is reviewed as
+    a new case, and compare its cover under the same policy."""
+    repository = library.repository
+    report = _current_report(library, item)
+    target = report.target
+    fields = tuple(
+        TargetField(field.destination, TargetFieldState.VALUE, "Another Publisher")
+        if field.destination.value == "publisher"
+        else field
+        for field in target.fields
+    )
+    successor = MetadataReport.create(
+        target=replace(target, fields=fields),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        cover_sources=report.cover_sources,
+    )
+    row = repository._connection.execute(
+        "SELECT resolution.document FROM metadata_policy_state state "
+        "JOIN metadata_policy_resolutions resolution "
+        "ON resolution.generation=state.generation AND resolution.library_name=? "
+        "WHERE state.singleton=1",
+        (target.library,),
+    ).fetchone()
+    resolved = ResolvedMetadataPolicy.from_data(json.loads(row[0]))
+    repository.publish(successor, lambda: True, expected_current=report.report_id)
+    proposal_set = evaluate_report(
+        successor, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    repository.publish_proposal(proposal_set)
+    case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+    _ensure(library, item, case_id, successor)
+    library.service.refresh_authority()
 
 
 def replace_policy(library: _Library, item: str) -> CoverConsiderationService:
