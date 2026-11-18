@@ -1663,6 +1663,9 @@ _COVER_TASTE_TABLES = {
     "cover_taste_verdicts": "CREATE TABLE cover_taste_verdicts (verdict_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(verdict_id)='text' AND verdict_id GLOB 'taste_verdict_[0-9a-f]*' AND length(verdict_id)=46), judgement_id TEXT NOT NULL UNIQUE REFERENCES cover_taste_judgements(judgement_id), consideration_id TEXT NOT NULL REFERENCES cover_considerations(consideration_id), version INTEGER NOT NULL REFERENCES cover_taste_profile_versions(version), "
     f"document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096 AND json_valid(document) AND json_extract(document,'$.schema_version')='{COVER_TASTE_VERDICT_SCHEMA}'), "
     "created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer' AND created_at>=0))",
+    # #1372 PR 5 K9: a case whose current comparison Automatic would switch
+    # but for the owner's choice; derived, so Resume can show for it.
+    "cover_automatic_held": "CREATE TABLE cover_automatic_held (review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), consideration_id TEXT NOT NULL REFERENCES cover_considerations(consideration_id), occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer' AND occurred_at>=0))",
 }
 # One cadence attempt per (consideration, version) and one per explicit retry;
 # a NULL `retry_of` is folded so the cadence pair is unique too (J5).
@@ -1670,6 +1673,8 @@ _COVER_TASTE_INDEXES = {
     "cover_taste_judgements_pair": "CREATE UNIQUE INDEX cover_taste_judgements_pair ON cover_taste_judgements(consideration_id,version,coalesce(retry_of,''))",
     "cover_taste_judgements_consideration": "CREATE INDEX cover_taste_judgements_consideration ON cover_taste_judgements(consideration_id)",
     "cover_taste_verdicts_consideration": "CREATE INDEX cover_taste_verdicts_consideration ON cover_taste_verdicts(consideration_id,created_at)",
+    # The preview walks one version's verdicts in order (#1372 PR 5, K7).
+    "cover_taste_verdicts_version": "CREATE INDEX cover_taste_verdicts_version ON cover_taste_verdicts(version,created_at)",
 }
 _COVER_TASTE_TRIGGERS = {
     f"{table}_no_{operation}": f"CREATE TRIGGER {table}_no_{operation} BEFORE {operation.upper()} ON {table} BEGIN SELECT RAISE(ABORT, '{label} are append-only'); END"
@@ -2176,6 +2181,7 @@ def _cover_taste_objects() -> tuple[tuple[str, str, str | None], ...]:
         ("index", "sqlite_autoindex_cover_taste_judgements_2", None),
         ("index", "sqlite_autoindex_cover_taste_verdicts_1", None),
         ("index", "sqlite_autoindex_cover_taste_verdicts_2", None),
+        ("index", "sqlite_autoindex_cover_automatic_held_1", None),
         *_named_objects("index", _COVER_TASTE_INDEXES),
         *_named_objects("trigger", _COVER_TASTE_TRIGGERS),
     )
