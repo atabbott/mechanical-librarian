@@ -5129,6 +5129,8 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                         ...document.querySelectorAll('.description-value button'),
                         ...document.querySelectorAll('#choice-evidence-current li strong, #choice-evidence-current li > span, #choice-evidence-current li p'),
                         ...document.querySelectorAll('.description-choice-content + .choice-select strong'),
+                        // Card labels such as Recommended and Your choice, beside the key badge (#1523).
+                        ...document.querySelectorAll('.metadata-choice .choice-select > small'),
                       ].filter(node => node.getClientRects().length);
                       return targets.flatMap(node => {
                         const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
@@ -5145,11 +5147,8 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                         return result;
                       });
                     }""")
-                    assert words and all(word["lines"] == 1 for word in words), (
-                        width,
-                        size,
-                        words,
-                    )
+                    broken = [word for word in words if word["lines"] != 1]
+                    assert words and not broken, (width, size, broken)
                     assert (
                         page.evaluate("document.documentElement.scrollWidth") <= width
                     )
