@@ -207,6 +207,39 @@ def test_an_automatic_hold_outranks_a_written_decision(tmp_path: Path) -> None:
         store.close()
 
 
+# The refusal names Resume automatic handling, so the field states it only
+# while the hold stands with no Resume out; the store still refuses after.
+def test_the_hold_refusal_shows_only_until_resume_is_chosen(tmp_path: Path) -> None:
+    store = OwnerStore(tmp_path, None)
+    try:
+        report = genre_report()
+        case_id, _ = publish_genre_case(store.repository, report)
+        store.load(case_id)
+        decision = store.decide(
+            "owner_entered", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+        assert _field(store, "genres")["owner_control"]["withdraw"] == "automatic_hold"
+        scan = store.repository.request_review_scan(
+            report.target.connection,
+            report.target.library,
+            "library-ebooks",
+            "a" * 64,
+            store.clock(),
+        )
+        at = store.clock()
+        assert store.repository.request_field_effect_manual_return(
+            case_id, "genres", decision.decision_id, scan.scan_id, at, at
+        )
+        assert _field(store, "genres")["owner_control"]["withdraw"] is None
+        assert store.repository.clear_field_effect_manual_hold(
+            case_id, "genres", store.clock(), decision.decision_id
+        )
+        assert _field(store, "genres")["owner_control"]["withdraw"] is None
+        _refused(store, "automatic_hold", "withdraw", destination="genres")
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize("destination", ["cover", "description"])
 def test_withdraw_is_unsupported_for_cover_and_description(
     store: OwnerStore, destination: str

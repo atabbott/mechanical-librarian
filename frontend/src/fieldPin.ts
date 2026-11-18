@@ -99,7 +99,7 @@ const notOffered = (field: ReviewField) =>
     ? 'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.'
     : field.humanDecision.outcome === 'reject'
       ? null
-      : 'You chose Resume automatic handling for this field. Choose a value again to pin it.'
+      : 'You chose Resume automatic handling for this field. Choose a value again, then pin it.'
 
 // What a failed unpin says where the foot's own Unpin is the control to press.
 export const STILL_PINNED = 'This field is still pinned. Press the pin again.'

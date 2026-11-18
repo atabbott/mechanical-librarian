@@ -12,6 +12,9 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- After you choose Resume automatic handling, a field no longer tells you
+  to use Resume to release your decision, and its pin line says to choose a
+  value and then pin it, since choosing alone doesn't pin (#1988).
 - Pressing your written choice again no longer leaves the field waiting for
   a write that never comes: it does nothing, and from another open tab it is
   refused as already current (#1980).
