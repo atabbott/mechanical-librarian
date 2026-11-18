@@ -88,16 +88,17 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    of the write planning resolves for it then, or null when it follows none,
    or, for a keep, when that write already holds the value the case read,
    which makes the keep a plain keep. While the owner decision that made
-   that write is still the field's answer, an accept of the value it holds
-   is refused as `owner_value_unchanged` and records nothing, since
-   planning would write nothing for it. On any other field than the cover,
-   where that write's decision is no longer the field's answer, or the write
+   that write is still the field's answer and its own hold holds the field,
+   an accept of the value it holds is refused as `owner_value_unchanged` and
+   records nothing, since planning would write nothing for it. On any other
+   field than the cover, where that write's decision is no longer the
+   field's answer or Resume automatic handling released its hold, or the write
    is Automatic's or the description adviser's, such an accept is the
    owner's answer with nothing to write: it is recorded with an owner row in
    `field_effect_no_changes`, holds the field, replaces any unwritten answer
    after that write and is never pending. The case detail marks the field
    `no_change_required`. An accept of the same value while that answer
-   stands is refused the same way. The pending set holds a keep only
+   stands and holds the field is refused the same way. The pending set holds a keep only
    while it names a write. History's From for every decision, and Activity's
    written value for a keep, read that write's own verified effect, never
    episode floors or a clock in whole seconds, so a later return or a write

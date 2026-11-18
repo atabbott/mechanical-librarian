@@ -1839,6 +1839,26 @@ def test_accepting_the_value_the_case_wrote_is_unchanged(store: OwnerStore) -> N
     assert _pending(store) == [keep.decision_id]
 
 
+def test_accepting_the_written_value_after_resume_holds_the_field_again(
+    store: OwnerStore,
+) -> None:
+    """Resume automatic handling released the owner's written answer, so it
+    no longer holds the field: choosing its value again holds the field anew
+    with nothing to write, rather than being refused as unchanged."""
+    first = store.decide("accept", _FANTASY, destination="genres")
+    store.write(first)
+    assert store.repository.clear_field_effect_manual_hold(
+        store.case.review_case_id, "genres", store.clock(), first.decision_id
+    )
+    again = store.decide("accept", _FANTASY, destination="genres")
+    assert _pending(store) == []
+    assert _hold(store) == again.decision_id
+    assert store.repository._connection.execute(
+        "SELECT decision_id,origin FROM field_effect_no_changes"
+    ).fetchall() == [(again.decision_id, "human")]
+    _refused(store, "owner_value_unchanged", "accept", _FANTASY, destination="genres")
+
+
 @pytest.mark.parametrize("later", ["keep_current", "owner_entered"])
 def test_accepting_the_written_value_replaces_a_later_unwritten_answer(
     tmp_path: Path, later: str

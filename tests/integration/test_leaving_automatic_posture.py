@@ -1272,6 +1272,29 @@ def test_choosing_automatics_written_value_needs_no_write(
         assert set(_planned(library)) == {automatic.decision_id}
 
 
+def test_choosing_the_written_value_after_resume_holds_the_field_again(
+    library: _Library, tmp_path: Path
+) -> None:
+    """Resume automatic handling releases the owner's no-change answer; the
+    owner can then choose the same value again, which holds the field anew
+    with nothing to write, and pin it."""
+    root = library.root
+    _, scheduler = _automatic_written(library, tmp_path)
+    first = _accept(library.case(), "authors", "owner-presses-before-resume", 40)
+    root.record_human_decision(first)
+    assert root.clear_field_effect_manual_hold(
+        library.case_id(), "authors", 41, first.decision_id
+    )
+    resumed = _read(library, scheduler)["fields"]["authors"]
+    assert resumed["pin_control"] == {"pin": "change_waiting", "unpin": False}
+
+    again = _accept(library.case(), "authors", "owner-presses-after-resume", 42)
+    root.record_human_decision(again)
+    _settled_without_a_write(library, scheduler, again)
+    field = _read(library, scheduler)["fields"]["authors"]
+    assert field["pin_control"] == {"pin": "available", "unpin": False}
+
+
 def test_the_card_pin_on_automatics_written_value_settles(
     library: _Library, tmp_path: Path
 ) -> None:

@@ -277,12 +277,14 @@ export function FieldDecisionCanvas({
           // decision has been written…"), or that needed no write because
           // the case's latest write already holds its value, is the written
           // value: choosing it again would change nothing, so it sends
-          // nothing.
+          // nothing. Once Resume automatic handling has released its hold
+          // (the pin then waits), choosing it again holds the field anew.
           const written =
             chosen &&
             selected.humanDecision !== null &&
             recordedSelected(selected, 'accept', value) &&
-            (selected.ownerControl?.withdraw === 'written' || selected.noChangeRequired === true)
+            (selected.ownerControl?.withdraw === 'written' || selected.noChangeRequired === true) &&
+            selected.pinControl?.pin !== 'change_waiting'
           return {
             id: key,
             automatic: automaticallySelected(selected, cardProgress),

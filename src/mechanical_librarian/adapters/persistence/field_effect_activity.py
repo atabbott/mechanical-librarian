@@ -1986,25 +1986,40 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         """Whether the owner's answer that holds the written value still
         stands: the field's latest owner decision in the case's episode, pins
         and unpins aside (ADR-0085, Amendment 2), is the write's own decision
-        or an accept of that value recorded with nothing to write.
+        or an accept of that value recorded with nothing to write, and its
+        own hold still holds the field.
 
         A later owner decision still unwritten (a keep, an entry, a clear) is
         the field's answer instead, and an accept recorded now replaces it;
-        an automatic write is no owner answer (#1980)."""
+        an automatic write is no owner answer (#1980). An answer whose hold
+        Resume automatic handling released, or asked to release, no longer
+        holds the field, so choosing its value again holds it anew, as
+        `field_change_waiting_sql` reads the same hold for a pin."""
         standing = self._connection.execute(
             "SELECT decision_id,EXISTS(SELECT 1 FROM field_effect_no_changes "
             "no_change WHERE no_change.decision_id=human_decisions.decision_id "
-            "AND no_change.origin='human' AND no_change.target_version=?) "
+            "AND no_change.origin='human' AND no_change.target_version=?),"
+            "EXISTS(SELECT 1 FROM field_effect_manual_holds hold "
+            "WHERE hold.review_case_id=human_decisions.review_case_id "
+            "AND hold.destination=human_decisions.destination AND hold.active=1 "
+            "AND json_extract(hold.document,'$.pending_return') IS NULL "
+            "AND json_extract(hold.document,'$.decision_id')=human_decisions.decision_id) "
             "FROM human_decisions WHERE review_case_id=? "
             "AND destination=? AND outcome NOT IN ('pin','unpin') AND "
             + _episode_decision_sql("human_decisions")
             + " ORDER BY ordinal DESC LIMIT 1",
             (written, decision.review_case_id, decision.destination),
         ).fetchone()
-        return standing is not None and (
-            standing[1] == 1
-            or standing[0]
-            == FieldEffectOperation.from_json(write).plan.authority.decision_id
+        return (
+            standing is not None
+            # A cover answer often holds nothing (it holds only over an
+            # automatic cover decision), so a cover reads as on #1981.
+            and (standing[2] == 1 or decision.destination == "cover")
+            and (
+                standing[1] == 1
+                or standing[0]
+                == FieldEffectOperation.from_json(write).plan.authority.decision_id
+            )
         )
 
     def _followed_write(

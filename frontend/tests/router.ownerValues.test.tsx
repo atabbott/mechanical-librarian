@@ -2060,6 +2060,27 @@ describe('the written choice', () => {
     await waitFor(() => expect(sent(http).map((command) => command.outcome)).toEqual(['accept']))
   })
 
+  it.each([
+    ['its own write', false],
+    ['no write', true],
+  ] as const)(
+    'W5 sends the chosen card again once Resume released an accept that needed %s',
+    async (_, noChangeRequired) => {
+      const user = userEvent.setup()
+      const http = owner(() => [
+        {
+          ...written(true, !noChangeRequired),
+          noChangeRequired,
+          ownerControl: control({ withdraw: noChangeRequired ? 'automatic_hold' : 'written' }),
+          pinControl: { pin: 'change_waiting', unpin: false },
+        },
+      ])
+      renderRoute('/library?lens=all&preview=case-1&field=title', http)
+      await user.click(await screen.findByRole('radio', { name: PROPOSED }))
+      await waitFor(() => expect(sent(http).map((command) => command.outcome)).toEqual(['accept']))
+    },
+  )
+
   // An accept of the value the case's latest write already holds needed no
   // write of its own (ADR-0105).
   it.each([true, false])(
