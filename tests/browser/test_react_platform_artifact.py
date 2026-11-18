@@ -7,6 +7,7 @@ import sys
 import time
 from collections.abc import Callable
 from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -6591,7 +6592,7 @@ def test_focus_rings_on_the_work_screen_are_never_cut_off() -> None:
                 locale="en-US",
                 reduced_motion="reduce",
             )
-            _serve_cohort(page, stylesheet=lambda text=text: text)
+            _serve_cohort(page, stylesheet=partial(str, text))
             page.goto(
                 "https://react-platform.invalid/library?lens=all&preview=case-1&field=title"
             )
