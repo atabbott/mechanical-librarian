@@ -353,10 +353,10 @@ Library has no Undo or bulk decisions. To go back, choose the earlier
 value. While a field reads its written value, Change offers what it
 replaced ("Use previous value", "Use previous names", genres marked Previous);
 if it was empty, clearing goes back. Elsewhere the card Before your change
-writes it back. Once a keep restores it, the card reads Keep current value.
-A written work keeps its case for 30 days with nothing to decide,
-outside Attention unless a pin changed. A work whose content returns
-to an earlier state reads as new, and its earlier decisions are history.
+writes it back, then reads Keep current value. A written work keeps its case
+for 30 days with nothing to decide, outside Attention unless a pin changed. A
+work returning to earlier content reads as new, and its earlier decisions are
+history.
 
 ### Pinning a value
 
