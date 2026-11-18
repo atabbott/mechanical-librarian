@@ -6022,7 +6022,13 @@ def test_policy_tray_beside_the_rail_keeps_its_actions_inside_the_editor() -> No
         _serve_cohort(page, stylesheet=lambda: styles[text])
         failures = []
         for text in styles:
-            for width, height in ((1025, 768), (1100, 800), (1200, 800), (1280, 800), (1440, 900)):
+            for width, height in (
+                (1025, 768),
+                (1100, 800),
+                (1200, 800),
+                (1280, 800),
+                (1440, 900),
+            ):
                 where = f"{text} text at {width}x{height}"
                 page.set_viewport_size({"width": width, "height": height})
                 page.goto("https://react-platform.invalid/policy?section=identity")
@@ -6573,7 +6579,11 @@ def test_focus_rings_on_the_work_screen_are_never_cut_off() -> None:
         playwright = stack.enter_context(sync_playwright())
         browser = playwright.chromium.launch(headless=True)
         stack.callback(browser.close)
-        for width, height in ((1440, 900), (390, 844)):
+        for width, height, text in (
+            (1440, 900, ""),
+            (390, 844, ""),
+            (320, 844, "html { font-size: 200% !important; }"),
+        ):
             # Reduced motion, so the strip scrolls a focused tab in at once
             # rather than smoothly, and each ring is measured where it settles.
             page = browser.new_page(
@@ -6581,19 +6591,21 @@ def test_focus_rings_on_the_work_screen_are_never_cut_off() -> None:
                 locale="en-US",
                 reduced_motion="reduce",
             )
-            _serve_cohort(page)
+            _serve_cohort(page, stylesheet=lambda text=text: text)
             page.goto(
                 "https://react-platform.invalid/library?lens=all&preview=case-1&field=title"
             )
             tabs = page.locator(".field-filmstrip button")
             expect(tabs.first).to_be_visible()
-            # A key press first, so a scripted focus shows the keyboard ring.
+            # Tab along the strip from its first tab: each one the keyboard
+            # reaches is scrolled fully into the strip, ring and all.
             page.keyboard.press("Shift")
+            tabs.first.focus()
             for index in range(tabs.count()):
+                if index:
+                    page.keyboard.press("Tab")
                 tab = tabs.nth(index)
-                tab.focus()
-                # A tab partly outside the strip is cut with it; measure it in view.
-                tab.evaluate("node => node.scrollIntoView({block: 'nearest', inline: 'nearest'})")
+                expect(tab).to_be_focused()
                 assert tab.evaluate(_RING_CUT) == [], (width, tab.inner_text())
             choice = page.locator(".metadata-choice > .choice-select").first
             choice.focus()
@@ -6601,7 +6613,9 @@ def test_focus_rings_on_the_work_screen_are_never_cut_off() -> None:
             # crosses the radio or the source line under the value.
             card = page.locator(".metadata-choice:has(> .choice-select:focus-visible)")
             expect(card).to_have_count(1)
-            assert choice.evaluate("node => getComputedStyle(node).outlineStyle") == "none"
+            assert (
+                choice.evaluate("node => getComputedStyle(node).outlineStyle") == "none"
+            )
             assert card.evaluate(_RING_CUT) == [], width
             for name in ("Show more source values",) + (
                 ("Back to works",) if width < 761 else ()

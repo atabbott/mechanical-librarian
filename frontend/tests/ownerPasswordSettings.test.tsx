@@ -337,6 +337,7 @@ describe('Owner password', () => {
     // Not `disabled`, which would drop focus to the page while it waits.
     const sending = screen.getByRole('button', { name: 'Changing…' })
     expect(sending).toHaveAttribute('aria-disabled', 'true')
+    expect(sending).toHaveAccessibleDescription('Changing it signs out every other browser.')
     expect(sending).toHaveFocus()
     await user.click(sending)
     await user.keyboard('{Enter}')

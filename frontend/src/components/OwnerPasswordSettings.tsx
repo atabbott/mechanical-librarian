@@ -340,6 +340,7 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
             type="submit"
             className="button-primary"
             aria-disabled={pending}
+            aria-describedby={descriptionId('owner-password')}
             ref={submitButton}
           >
             {pending ? 'Changing…' : 'Change password'}
