@@ -2091,12 +2091,13 @@ def test_workers_option_refuses_tiers_it_cannot_divide(args: list[str]) -> None:
     assert error.value.code == 2
 
 
-@pytest.mark.parametrize("count", (2, 3, 4))
+@pytest.mark.parametrize("count", (2, 3, 4, 6, 16, 40))
 def test_shards_together_run_every_fast_file_exactly_once(count: int) -> None:
+    # Every shard gets work, shard 1 too, however many share the tier.
     root = Path(__file__).parents[2]
     units, expected = _parallel_units(root, "fast")
     assert expected is None
-    shards = [_shard_units(root, units, index, count) for index in range(1, 5)[:count]]
+    shards = [_shard_units(root, units, index, count) for index in range(1, count + 1)]
     assert all(shards)
     assert sorted(unit for shard in shards for unit in shard) == sorted(units)
 

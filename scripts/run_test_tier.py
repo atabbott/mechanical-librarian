@@ -1156,7 +1156,8 @@ def _shard_units(
     once. A file's expected time is its recorded run time; a file with none
     is estimated from its size at the recorded files' rate. The record only
     balances the shards: a stale one makes them uneven, never incomplete.
-    Shard 1 starts `_FAST_SHARD_ONE_HEAD_START` ahead, so it is dealt less.
+    Shard 1 starts `_FAST_SHARD_ONE_HEAD_START` ahead, so it is dealt less,
+    unless that would leave it no file.
     """
 
     recorded = _recorded_seconds(root)
@@ -1168,7 +1169,12 @@ def _shard_units(
         unit: sum(recorded.get(target, sizes[target] * rate) for target in unit)
         for unit in units
     }
-    return _balanced_share(expected, index, count, _FAST_SHARD_ONE_HEAD_START)
+    # The allowance is sized for the gate's four shards. Where it would leave
+    # shard 1 nothing, as with many more shards, every shard drops it alike.
+    allowance = _FAST_SHARD_ONE_HEAD_START
+    if not _balanced_share(expected, 1, count, allowance):
+        allowance = 0.0
+    return _balanced_share(expected, index, count, allowance)
 
 
 def _balanced_share(

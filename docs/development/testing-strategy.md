@@ -103,8 +103,9 @@ the times in `scripts/fast_tier_timings.json` and `browser` by test function
 from `scripts/browser_tier_timings.json`, estimating unlisted files from their
 size and unlisted functions from their parameter sets. `fast` shard 1 is dealt
 less, because the gate job that runs it runs the source checks first; the
-allowance is `_FAST_SHARD_ONE_HEAD_START` in the runner, recalibrated whenever
-the table is recorded on a different machine. A function's parameter
+allowance is `_FAST_SHARD_ONE_HEAD_START` in the runner, dropped where it would
+leave shard 1 no file and recalibrated whenever the table is recorded on a
+different machine. A function's parameter
 sets stay in one shard, and a browser shard runs its cases in the tier's own
 order and is refused unless it ran exactly the cases its split names. A stale
 table only unbalances shards; it never drops or repeats a case. Refresh them
