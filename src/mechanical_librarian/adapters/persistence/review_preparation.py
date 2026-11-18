@@ -124,6 +124,19 @@ _COMPLETE_CURRENT_CASE_WORK_SQL = (
     "AND p.report_id=c.report_id AND p.proposal_set_id=c.proposal_set_id "
     "AND p.review_case_id=c.review_case_id AND p.checkpoint=c.checkpoint "
 )
+# Whether a report predates a write the product verified: a verified field
+# effect on the item was planned against a case built on that report's target.
+# Such a report no longer says what the library holds, so proposal refuses it
+# as stale, and a restart from it reads the work again instead (ADR-0034).
+# `field_effects.work_id` is the item id. In-flight writes do not count: one
+# landing after the restart is refused at proposal, as before.
+_PREDATES_VERIFIED_WRITE_SQL = (
+    "SELECT EXISTS(SELECT 1 FROM review_cases bound JOIN field_effects written "
+    "ON written.connection_name=? AND written.library_name=? AND written.work_id=? "
+    "AND written.state='verified' "
+    "AND json_extract(written.document,'$.plan.target_fingerprint')="
+    "json_extract(bound.document,'$.target_fingerprint') WHERE bound.report_id=?)"
+)
 _COMPLETE_CASE_WORK_WHERE_SQL = (
     "WHERE w.state='complete' AND w.stage='complete' AND w.outcome='case' "
 )
@@ -1590,20 +1603,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     completed_at,
                 )
             if action.stage == "extraction" and output_id is not None:
-                transition_row = self._connection.execute(
-                    "SELECT transition_id,report_id FROM metadata_policy_transition_items "
-                    "WHERE work_id=? AND state='pending'",
-                    (action.action_id,),
-                ).fetchone()
-                if transition_row is not None and output_id != transition_row[1]:
-                    self._connection.execute(
-                        "UPDATE metadata_policy_transition_items SET state='failed',failure_code='stale',updated_at=? "
-                        "WHERE transition_id=? AND work_id=? AND state='pending'",
-                        (completed_at, transition_row[0], action.action_id),
-                    )
-                    self._refresh_metadata_policy_transition(
-                        transition_row[0], completed_at
-                    )
+                self._settle_extracted_transition_item(action, output_id, completed_at)
             if (
                 target[0] == "complete"
                 and action.stage in {"admission", "projection"}
@@ -1927,40 +1927,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 None,
                 completed_at,
             )
-        transition_row = self._connection.execute(
-            "SELECT transition_id,report_id FROM metadata_policy_transition_items "
-            "WHERE work_id=? AND state='pending'",
-            (action.action_id,),
-        ).fetchone()
-        if transition_row is not None:
-            work_state = self._connection.execute(
-                "SELECT state FROM review_preparation_work WHERE work_id=?",
-                (action.action_id,),
-            ).fetchone()
-            failure_code = (
-                "stale"
-                if report_id != transition_row[1]
-                else (
-                    "failed"
-                    if work_state is not None and work_state[0] in {"failed", "stale"}
-                    else None
-                )
-            )
-            if failure_code is not None:
-                self._connection.execute(
-                    "UPDATE metadata_policy_transition_items SET state='failed',"
-                    "failure_code=?,updated_at=? WHERE transition_id=? AND work_id=? "
-                    "AND state='pending'",
-                    (
-                        failure_code,
-                        completed_at,
-                        transition_row[0],
-                        action.action_id,
-                    ),
-                )
-                self._refresh_metadata_policy_transition(
-                    transition_row[0], completed_at
-                )
+        self._settle_extracted_transition_item(action, report_id, completed_at)
         refresh_preparation_work(self._connection, action.action_id, completed_at)
         self._review_pipeline_claim = (
             self.claim_review_pipeline_action(completed_at)
@@ -1968,6 +1935,68 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             else None
         )
         self._pending_claim = (self._review_pipeline_claim,)
+
+    def _settle_extracted_transition_item(
+        self, action: PipelineAction, report_id: str, completed_at: int
+    ) -> None:
+        """Settle the pending policy-transition item of a work extraction just published.
+
+        An item bound to another report fails stale (#1369), unless that report
+        predates a write the product verified: the work was read again for the
+        activation on purpose, so the item follows it to the published report
+        and counts as checked with the work (ADR-0034). An item whose work
+        failed fails with it. Both extraction completions, the publication
+        receipt and the pipeline's advance, settle the item here.
+        """
+        row = self._connection.execute(
+            "SELECT item.transition_id,item.report_id,work.state "
+            "FROM metadata_policy_transition_items item "
+            "JOIN review_preparation_work work ON work.work_id=item.work_id "
+            "WHERE item.work_id=? AND item.state='pending'",
+            (action.action_id,),
+        ).fetchone()
+        if row is None:
+            return
+        transition_id, item_report_id, work_state = row
+        rebound = report_id != item_report_id and self._predates_verified_write(
+            action.connection,
+            action.library,
+            cast(str, action.item_id),
+            item_report_id,
+        )
+        if report_id != item_report_id and not rebound:
+            state, failure_code = "failed", "stale"
+        elif work_state in {"failed", "stale"}:
+            state, failure_code = "failed", "failed"
+        elif rebound and work_state == "complete":
+            state, failure_code = "complete", None
+        elif rebound:
+            state, failure_code = "pending", None
+        else:
+            return
+        self._connection.execute(
+            "UPDATE metadata_policy_transition_items SET state=?,failure_code=?,"
+            "report_id=?,updated_at=? WHERE transition_id=? AND work_id=? "
+            "AND state='pending'",
+            (
+                state,
+                failure_code,
+                report_id if rebound else item_report_id,
+                completed_at,
+                transition_id,
+                action.action_id,
+            ),
+        )
+        if state != "pending":
+            self._refresh_metadata_policy_transition(transition_id, completed_at)
+
+    def _predates_verified_write(
+        self, connection: str, library: str, item_id: str, report_id: str
+    ) -> bool:
+        (predates,) = self._connection.execute(
+            _PREDATES_VERIFIED_WRITE_SQL, (connection, library, item_id, report_id)
+        ).fetchone()
+        return bool(predates)
 
     def _keep_after_research(
         self,
@@ -2431,19 +2460,41 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         work_stage: str,
         report_id: str,
         updated_at: int,
-    ) -> None:
-        restart_stage = "extraction" if work_stage == "extraction" else "proposal"
+    ) -> str:
+        """Restart a work from its stored report, and return the stage chosen.
+
+        A work restarts at proposal from `report_id`, or at extraction when it
+        was extracting. A report that predates a write the product verified
+        is never proposed from again: the work is read again from the library,
+        as a fresh start rather than a scheduled search (ADR-0034, ADR-0102).
+        """
+        reread = False
+        if work_stage != "extraction":
+            item = self._connection.execute(
+                "SELECT connection_name,library_name,item_id "
+                "FROM review_preparation_work WHERE work_id=?",
+                (work_id,),
+            ).fetchone()
+            reread = item is not None and self._predates_verified_write(
+                item[0], item[1], item[2], report_id
+            )
+        restart_stage = (
+            "extraction" if work_stage == "extraction" or reread else "proposal"
+        )
         self._connection.execute(
             "UPDATE review_preparation_work SET stage=?,state='queued',attempt=0,"
             "recovery_attempt=0,report_id=?,proposal_set_id=NULL,review_case_id=NULL,"
             "recovery_source_report_id=CASE WHEN ?='extraction' THEN NULL "
             "ELSE recovery_source_report_id END,"
+            "research_not_before=CASE WHEN ? THEN NULL ELSE research_not_before END,"
             "failure_code=NULL,failure_root=NULL,outcome=NULL,updated_at=? WHERE work_id=?",
             (
                 restart_stage,
                 None if restart_stage == "extraction" else report_id,
                 restart_stage,
+                reread,
                 updated_at,
                 work_id,
             ),
         )
+        return restart_stage

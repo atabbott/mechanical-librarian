@@ -61,7 +61,7 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
-from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report
+from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report, _report_entry
 
 
 class _CaseWithTargetFields:
@@ -1189,6 +1189,108 @@ def test_atomic_extraction_callback_updates_fixed_transition_failure(
         proposal = repository.claim_review_pipeline_action(28)
         assert proposal is not None
         assert proposal.stage == "proposal"
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    ("evidence_only", "proposal", "no_write"),
+    ids=("evidence_only", "proposal", "no_write"),
+)
+def test_extraction_publication_rebinds_an_item_read_again_after_a_write(
+    state_directory: Path, outcome: str
+) -> None:
+    """The item of a work read again after a verified write follows its new report.
+
+    The verified write is one raw `field_effects` row rather than one the
+    guarded application produced: the predicate reads only its connection,
+    library, item, state and planned target fingerprint, so that shape is
+    the whole of what it needs. Without the row the work is not read again,
+    and its item fails stale as before (#1369).
+    """
+    path = state_directory / f"rebinding-{outcome}.sqlite"
+    repository, report, _, case_id = _current_case_with_completed_work(path)
+    if outcome == "no_write":
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='extraction',state='queued',"
+            "attempt=0,recovery_attempt=0,report_id=NULL,proposal_set_id=NULL,"
+            "review_case_id=NULL,failure_code=NULL,outcome=NULL,updated_at=24"
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_scans SET state='processing',updated_at=24"
+        )
+    else:
+        repository._connection.execute(
+            "INSERT INTO field_effects(plan_id,decision_id,connection_name,"
+            "library_name,work_id,destination,state,attempt,updated_at,document) "
+            "SELECT ?,'human_decision_raw',?,?,?,'title','verified',1,24,"
+            "json_object('plan',json_object('target_fingerprint',"
+            "json_extract(document,'$.target_fingerprint'))) "
+            "FROM review_cases WHERE review_case_id=?",
+            (
+                "effect_plan_" + "e" * 64,
+                report.target.connection,
+                report.target.library,
+                report.target.item,
+                case_id,
+            ),
+        )
+    repository._connection.commit()
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    resolved = resolve_policy(draft, report.target.library)
+    assert repository.activate_metadata_policy(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        25,
+        expected_active_generation=1,
+    )
+    if outcome != "no_write":
+        # Read again: the work restarts at extraction once its library is
+        # discovered afresh.
+        assert repository._connection.execute(
+            "SELECT stage,state,report_id FROM review_preparation_work"
+        ).fetchone() == ("extraction", "queued", None)
+        discovery = repository.claim_review_pipeline_action(26)
+        assert discovery is not None and discovery.stage == "discovery"
+        repository.complete_review_discovery(
+            discovery, 2, "b" * 64, (_report_entry(report),), 26
+        )
+    extraction = repository.claim_review_pipeline_action(27)
+    assert extraction is not None and extraction.stage == "extraction"
+    published = _report("Changed title", "c", "d")
+    repository.publish(
+        published,
+        lambda: True,
+        None,
+        lambda value, exact: value.complete_review_extraction_publication(
+            extraction,
+            exact.report_id,
+            28,
+            provider_failure_code=(
+                "evidence_only" if outcome == "evidence_only" else None
+            ),
+        ),
+    )
+    item = repository._connection.execute(
+        "SELECT state,failure_code,report_id FROM metadata_policy_transition_items"
+    ).fetchone()
+    current = repository.metadata_policy_transition()
+    assert current is not None
+    if outcome == "evidence_only":
+        assert item == ("complete", None, published.report_id)
+        assert (current.state, current.completed, current.failed) == (
+            "completed",
+            1,
+            0,
+        )
+    elif outcome == "proposal":
+        assert item == ("pending", None, published.report_id)
+        assert (current.state, current.failed) == ("processing", 0)
+    else:
+        assert item == ("failed", "stale", report.report_id)
+        assert (current.state, current.failed) == ("completed_with_failures", 1)
     repository.close()
 
 

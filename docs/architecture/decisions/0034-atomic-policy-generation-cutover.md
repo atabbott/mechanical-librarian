@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted for F09p #477.
+Accepted for F09p #477. Amendment 1 (a work written since its report is read
+again) is proposed.
 
 ## Context
 
@@ -60,3 +61,40 @@ the currently active profile.
 This adds no second queue, staging batch, migration path, automatic authority,
 apply plan, target/media write, provider credential access, or destructive
 operation.
+
+## Amendment 1: a work written since its report is read again (proposed, #TBD)
+
+The rewind to proposal "from the same immutable report" assumed that report
+still says what the library holds. After a write the product verified it does
+not: proposal and admission refuse it as stale, so the item failed and the
+work waited, caseless, for the next library scan. Leaving Automatic after an
+automatic write reached this every time.
+
+- **The predicate.** A report predates a verified write when a `verified`
+  field effect on its item was planned against a case built on that report's
+  target. A write still in flight does not count: one that lands after the
+  restart is refused at proposal, as before, and a retry then reads the work
+  again.
+- **Read again, not re-proposed.** Activation, leaving Automatic (which
+  reactivates the unchanged policy), transition retry and the projection
+  recovery that restarts a work from its current report restart such a work at
+  extraction, as a fresh start rather than a scheduled search. Every other work
+  restarts exactly as before; leaving Automatic still returns an unwritten
+  work's same case.
+- **Discovery first.** When the work's scan is idle, activation and retry queue
+  that scan for discovery with the standard reset, so the work's written title
+  or authors are listed before it is extracted and the next scan does not
+  extract it again. The other works of that library are carried forward at
+  their restarted stage. Activation no longer turns a scan that was queued and
+  not yet started into a processing one: its discovery still runs.
+- **The item follows the work.** When extraction publishes a report other than
+  the item's, the item fails stale as before unless its report predates a
+  verified write. Then it is rebound to the published report, stays pending
+  and completes with the work, or completes at once when that publication
+  completes the work.
+
+This reverses "no provider is reacquired solely for cutover" for these works
+only: a re-read with changed authors or title can ask providers again. A
+re-read report is a new report, so the work gets a new proposal set and a new
+case, starting a new episode; holds carry by work (ADR-0085). Nothing in the
+schema, persisted documents or versions changes.

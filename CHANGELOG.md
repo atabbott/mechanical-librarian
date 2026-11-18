@@ -12,6 +12,9 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- Activating a policy, or leaving Automatic, no longer reports a work the
+  app has just written as failed. The work is read again from
+  Audiobookshelf, so its new case starts from the written value (#TBD).
 - Pressing your written choice again no longer leaves the field waiting for
   a write that never comes: it does nothing, and from another open tab it is
   refused as already current (#1980).

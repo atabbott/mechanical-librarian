@@ -107,6 +107,26 @@ _UNRETURNED_CASES_SQL = (
 )
 
 
+# A work read again for a transition (ADR-0034) waits for a fresh listing of
+# its library, so the next scan finds its written title and authors already
+# listed and extracts it once. Its idle scan is queued for discovery with the
+# standard reset. A processing scan counts as idle when nothing in it is in
+# flight and every queued work belongs to this transition: an earlier work of
+# the same cohort reopened it. A discovering or busy scan is left as it is.
+_REQUEUE_SCAN_FOR_DISCOVERY_SQL = (
+    "UPDATE review_preparation_scans SET state='queued',requested_at=?,updated_at=?,"
+    "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
+    "qualification_epoch=NULL,refresh_count=0,rescan_requested=0 "
+    "WHERE scan_id=(SELECT scan_id FROM review_preparation_work WHERE work_id=?) "
+    "AND (state IN ('completed','completed_with_failures') OR (state='processing' "
+    "AND NOT EXISTS(SELECT 1 FROM review_preparation_work w "
+    "WHERE w.scan_id=review_preparation_scans.scan_id AND w.work_id<>? "
+    "AND (w.state IN ('delayed','running') OR (w.state='queued' AND NOT EXISTS("
+    "SELECT 1 FROM metadata_policy_transition_items i WHERE i.transition_id=? "
+    "AND i.work_id=w.work_id AND i.state='pending'))))))"
+)
+
+
 class SQLiteMetadataPolicyRepository(ConnectionScoped):
     """Draft, resolve, activate and settle the exact metadata policy."""
 
@@ -115,7 +135,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         connection: sqlite3.Connection,
         binding: _LinuxDatabaseBinding | None = None,
         *,
-        restart_metadata_policy_work: Callable[[str, str, str, int], None],
+        restart_metadata_policy_work: Callable[[str, str, str, int], str],
         activate_metadata_policy: Callable[..., PolicyTransition | None],
         carry_field_effect_consents: Callable[
             [tuple[tuple[str, str], ...], str, int], None
@@ -1026,6 +1046,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         failure = "pipeline_unavailable" if work is None else None
         work_id = None if work is None else work[0]
         if work is not None:
+            restarted = None
             if work[2] == "provider" and work[4] != report_id:
                 item_state = "failed"
                 failure = "stale"
@@ -1037,11 +1058,19 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     work[2] == "extraction" and work[4] is None
                 ):
                     raise MetadataReportError("metadata policy cohort evidence changed")
-                self._restart_metadata_policy_work(
+                restarted = self._restart_metadata_policy_work(
                     work[0], work[2], report_id, activated_at
                 )
+            if restarted == "extraction" != work[2]:
+                self._connection.execute(
+                    _REQUEUE_SCAN_FOR_DISCOVERY_SQL,
+                    (activated_at, activated_at, work[0], work[0], transition_id),
+                )
+            # A queued scan has yet to discover its library: it keeps waiting
+            # for that discovery rather than skipping it.
             self._connection.execute(
-                "UPDATE review_preparation_scans SET state='processing',updated_at=? WHERE scan_id=?",
+                "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+                "WHERE scan_id=? AND state<>'queued'",
                 (activated_at, work[1]),
             )
         self._connection.execute(
@@ -1152,17 +1181,23 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                         (work_id, retried_at, transition_id, connection, library, item),
                     )
                     continue
+                restarted = None
                 if work_state in {"failed", "stale"} or work_stage not in {
                     "extraction",
                     "provider",
                 }:
-                    self._restart_metadata_policy_work(
+                    restarted = self._restart_metadata_policy_work(
                         work_id, work_stage, report_id, retried_at
                     )
                 self._connection.execute(
                     "UPDATE metadata_policy_transition_items SET work_id=?,state='pending',failure_code=NULL,updated_at=? WHERE transition_id=? AND connection_name=? AND library_name=? AND item_id=?",
                     (work_id, retried_at, transition_id, connection, library, item),
                 )
+                if restarted == "extraction" != work_stage:
+                    self._connection.execute(
+                        _REQUEUE_SCAN_FOR_DISCOVERY_SQL,
+                        (retried_at, retried_at, work_id, work_id, transition_id),
+                    )
                 # Pending work is claimed only from a processing scan, and an
                 # idle claim may already have closed this one (#1369).
                 self._connection.execute(
