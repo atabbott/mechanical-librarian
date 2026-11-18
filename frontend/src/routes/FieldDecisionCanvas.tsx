@@ -16,7 +16,7 @@ import {
   effectSummary,
   isLongDescription,
   keepCard,
-  noWayBack,
+  noWayBackSentence,
   valueText,
 } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
@@ -29,7 +29,7 @@ import {
   questionReason,
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
-import { destinationIsPlural, destinationLabel, destinationPhrase } from '../labels'
+import { destinationLabel } from '../labels'
 import type { useReviewDecisionController } from '../reviewDecisionController'
 import { AutomaticHandlingPanel } from './AutomaticHandling'
 import { MetadataChoice, RecordedFieldObservations } from './FieldDecisionChoices'
@@ -445,9 +445,8 @@ export function FieldDecisionCanvas({
                 : selected.humanDecision === null && selected.manualHold
                   ? 'Your earlier decision still holds this field. '
                   : 'The recorded outcome is marked below. '}
-              {noWayBack(selected)
-                ? `The ${destinationPhrase(selected.destination)} ${destinationIsPlural(selected.destination) ? 'were' : 'was'} empty before your change, and ${destinationIsPlural(selected.destination) ? 'they' : 'it'} can’t be emptied.${anotherOffered ? ' ' : ''}`
-                : ''}
+              {noWayBackSentence(selected) ?? ''}
+              {noWayBackSentence(selected) && anotherOffered ? ' ' : ''}
               {anotherOffered ? 'You can choose another value.' : ''}
             </p>
           ) : selectedOptional ? (

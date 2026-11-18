@@ -2120,6 +2120,10 @@ class InspectCurrentReviewCase:
             # This case's own write set the field in its episode, so what it
             # read before is no longer the library's value (#1523).
             "written_by_case": destination in dict(snapshot.written_values),
+            # That value is a description stored with formatting a restore
+            # from here would lose, so it can't be gone back to (#1424).
+            "restore_unavailable": destination in dict(snapshot.written_values)
+            and _description_unrestorable(case, destination),
             "pin": pin,
             "pin_control": pin_control,
             # The offer a choice binds: its value, proposal and rule (#1355).
@@ -3461,6 +3465,16 @@ def _automatic_withheld(
     if paused:
         message = "Changes made for you are paused for this field. " + message
     return message, condition
+
+
+def _description_unrestorable(case: ReviewCase, destination: str) -> bool:
+    """Whether the description the case read has formatting a restore from
+    here would lose, as `field_effect_restore_refused` decides (#1424)."""
+    if destination != "description":
+        return False
+    fields = cast("list[dict[str, object]]", case.target["fields"])
+    field = next(item for item in fields if item["destination"] == destination)
+    return field["state"] == "value" and field.get("restorable") is not True
 
 
 def _presented_field(field: TargetField) -> dict[str, object]:

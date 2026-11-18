@@ -13482,6 +13482,10 @@
             "title": "Provenance",
             "type": "array"
           },
+          "restore_unavailable": {
+            "title": "Restore Unavailable",
+            "type": "boolean"
+          },
           "target_fingerprint": {
             "title": "Target Fingerprint",
             "type": "string"
@@ -13522,6 +13526,7 @@
           "notices",
           "owner_control",
           "written_by_case",
+          "restore_unavailable",
           "pin",
           "pin_control",
           "proposed_values",

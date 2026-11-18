@@ -5,7 +5,13 @@ import type {
   TargetDestination,
 } from './api/http'
 import { CLEARED_TEXT, displayValue, isClear } from './api/http'
-import { coverSourceLabels, destinationPhrase, languageName, writeHoldReasons } from './labels'
+import {
+  coverSourceLabels,
+  destinationIsPlural,
+  destinationPhrase,
+  languageName,
+  writeHoldReasons,
+} from './labels'
 import { automaticChoiceSelected, humanChoiceSelected } from './reviewAutomaticSelection'
 
 export type ReviewField = CaseDetailView['fields'][number]
@@ -200,16 +206,25 @@ export const noWayBack = (field: ReviewField) =>
 // value. On the case that wrote the field that value is no longer the
 // library's, so it reads Before your change, and pressing it writes that value
 // back. It is left out where owner entry already offers the same way back, and
-// where there is none: nothing to restore and a field that can't be emptied
-// (#1523, ADR-0105).
+// where there is none: nothing to restore and a field that can't be emptied,
+// or a description whose formatting a restore would lose (#1523, ADR-0105,
+// #1424).
 export const keepCard = (field: ReviewField): 'keep' | 'before' | null =>
   !field.decisionActions.includes('keep_current')
     ? null
     : field.writtenByCase !== true
       ? 'keep'
-      : wayBackInEntry(field) || noWayBack(field)
+      : wayBackInEntry(field) || noWayBack(field) || field.restoreUnavailable === true
         ? null
         : 'before'
+// Why a field this case wrote offers no way back to the value it read, said
+// under the question (#1523, #1424).
+export const noWayBackSentence = (field: ReviewField) =>
+  noWayBack(field)
+    ? `The ${destinationPhrase(field.destination)} ${destinationIsPlural(field.destination) ? 'were' : 'was'} empty before your change, and ${destinationIsPlural(field.destination) ? 'they' : 'it'} can’t be emptied.`
+    : field.writtenByCase === true && field.restoreUnavailable === true
+      ? 'The earlier description has formatting, so restore it in Audiobookshelf.'
+      : null
 export const keepOffered = (field: ReviewField) => keepCard(field) !== null
 export const isLongDescription = (destination: string, value: string) =>
   destination === 'description' && value.length > 280

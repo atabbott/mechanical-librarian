@@ -10,7 +10,7 @@ import {
   clearedSentence,
   destinationLabel,
   destinationPhrase,
-  namesEnteredSentence,
+  listPhrase,
 } from '../labels'
 import { writtenRefusal } from '../reviewDecisionController'
 import { StatusPill } from '../components/StatusPill'
@@ -283,17 +283,19 @@ export function OwnerControls({
     else if (sameList(value, standing)) setProblem('You already chose these genres.')
     else send('owner_entered', { kind: 'list', value })
   }
-  const recordedCount = Array.isArray(recordedValue?.value) ? recordedValue.value.length : null
+  // The recorded line names what was recorded, as nothing else on the field
+  // shows it once the form is closed.
+  const recordedList = Array.isArray(recordedValue?.value)
+    ? (recordedValue.value as unknown[]).map(displayValue)
+    : null
   const recordedCopy =
     decision?.outcome !== 'owner_entered'
       ? null
       : isClear(recordedValue)
         ? clearedSentence(field.destination)
-        : recordedCount === null
+        : recordedList === null
           ? `You entered ${quotedValue(recordedValue)}.`
-          : field.destination === 'genres'
-            ? `You chose ${String(recordedCount)} ${recordedCount === 1 ? 'genre' : 'genres'}.`
-            : namesEnteredSentence(recordedCount)
+          : `${field.destination === 'genres' ? 'You chose' : 'You entered'} ${listPhrase(recordedList)}.`
   // The record button of a form, which clears the field once it is emptied.
   const submitLabel = (empty: boolean, record: string) =>
     clearing(empty) ? (busy ? 'Clearing…' : `Clear ${noun}`) : busy ? 'Recording…' : record

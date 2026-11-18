@@ -1118,6 +1118,8 @@ class _ReviewField(_ClosedModel):
     owner_control: _OwnerControl | None
     # The case wrote this field itself (#1523).
     written_by_case: bool
+    # The value the case read is a description a restore can't write (#1424).
+    restore_unavailable: bool
     pin: _FieldPin | None
     pin_control: _PinControl | None
     proposed_values: list[_ProposedValue]

@@ -96,7 +96,7 @@ const pinnedValueSentence = (field: ReviewField) => {
 const notOffered = (field: ReviewField) =>
   field.humanDecision === null ||
   (field.destination === 'description' && field.descriptionAdvice?.selection?.origin === 'human')
-    ? 'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.'
+    ? 'You can pin this field after the next scan reads its new value.'
     : field.humanDecision.outcome === 'reject'
       ? null
       : 'You chose Resume automatic handling for this field. Choose a value again to pin it.'
