@@ -211,7 +211,10 @@ body is refused before parsing.
   `owner_value_unchanged` for the field's current value, which on the case
   that wrote the field is the written value. An accept of the value the
   case's latest write holds is refused the same way while the owner
-  decision that made that write is still the field's answer. On that case
+  decision that made that write is still the field's answer. Otherwise,
+  except for a cover, it is recorded with nothing to write: it holds the
+  field, is never pending, and Activity lists it as kept. A second such
+  accept is refused the same way. On that case
   `keep_current` writes back the value the case read; where that was empty,
   a clearable field goes back to empty and any other field is refused as
   `owner_value_required`. Where the case's latest write already holds that

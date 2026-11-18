@@ -166,8 +166,9 @@ What the main aggregates mean, where the table names alone do not say:
 - **Guarded field effects.** `field_effects` holds each write plan and its
   retry state; `field_effect_actions` is its restartable action queue and
   `field_effect_cleanups` its cleanup boundary. `field_effect_no_changes`
-  records an automatic candidate equal to the current value as a terminal
-  fact, so it is never re-planned. Authorities, consents, suspensions, manual
+  records, as a terminal fact, an automatic candidate equal to the current
+  value or an owner's accept of the value the case's latest write holds, so
+  it is never re-planned. Authorities, consents, suspensions, manual
   holds and the pause control each gate claims independently; a manual hold
   follows the work across cases (see [Transactions](#transactions)). See
   [Backups and recovery](../operations/backups-and-recovery.md#guarded-field-effect-recovery)
