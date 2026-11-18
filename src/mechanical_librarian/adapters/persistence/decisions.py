@@ -132,7 +132,7 @@ def _field_effect_waiting_sql(case: str, destination: str) -> str:
     subtitle companion of one. The case's value is then not what the library
     will hold. A reused plan appends no event, so no bound places a live write
     in an episode: one planned before the case was admitted again still waits
-    (#ISSUE).
+    (#1973).
     """
     authorities = (
         "SELECT waiting_human.decision_id FROM human_decisions waiting_human "
@@ -717,7 +717,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             )
             # The write every decision follows is frozen with it, by the rule
             # planning reads now, so neither a later return nor a later write
-            # changes what it replaced or a keep goes back on (#1523, #ISSUE).
+            # changes what it replaced or a keep goes back on (#1523, #1973).
             decision = replace(decision, follows=self._recorded_follows(decision))
             if (
                 decision.outcome == "keep_current"
@@ -1870,7 +1870,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         # Every decision follows the write frozen with it when it was
         # recorded, the one that landed last in its episode before it: never
         # one read again from episode floors that later returns move, nor
-        # placed before it by a clock in whole seconds (#1523, #ISSUE).
+        # placed before it by a clock in whole seconds (#1523, #1973).
         prior = self._followed_write(decision)
         if prior is not None:
             plan = FieldEffectOperation.from_json(prior[0]).plan

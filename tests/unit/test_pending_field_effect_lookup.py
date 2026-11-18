@@ -610,7 +610,7 @@ _ORIGINAL_LOOKUPS = {
 _RECORDED_ORDER = "ORDER BY recorded.ordinal DESC LIMIT 1"
 # #1523 later read the write that landed last rather than the latest
 # decision's, by the event that took it to verified. History no longer asks:
-# it reads the write frozen with each decision (#ISSUE).
+# it reads the write frozen with each decision (#1973).
 _LANDED_LAST_ORDER = (
     "ORDER BY (SELECT MAX(landed.rowid) FROM field_effect_events landed "
     "WHERE landed.plan_id=effect.plan_id AND landed.kind='verified') DESC LIMIT 1"

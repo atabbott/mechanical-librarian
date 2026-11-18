@@ -1817,7 +1817,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         """The case's verified write to a field that landed last in its
         episode, or the last of its decisions before ``before``. A write is in
         the episode when it landed after the case was last admitted, whichever
-        episode planned it (#ISSUE).
+        episode planned it (#1973).
 
         One read for both of its uses: the write an owner decision follows,
         whose desired value is its plan's pre-value, and the value a case that
@@ -1843,7 +1843,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # A write that landed before the case was admitted again is not
             # what the library holds now: the work has left that content
             # and returned to the case's own (#1358). One that lands after
-            # is, whichever episode planned it (#ISSUE).
+            # is, whichever episode planned it (#1973).
             + _LANDED_IN_EPISODE_SQL
             + _LANDED_LAST_SQL,
             (
@@ -1868,7 +1868,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     ) -> tuple[tuple[str, object], ...]:
         """What the case's own write that landed last in its episode put in
         each field but the cover, whichever episode planned it; ``None`` is a
-        write that emptied it (#1523, S5, #ISSUE).
+        write that emptied it (#1523, S5, #1973).
 
         Owner entry on the case that wrote a field compares with this value
         rather than the target its report read before the write, so the
@@ -1899,7 +1899,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         """Find the verified effect an owner decision follows: the case's
         write to the field that landed last in its episode. A description
         follows the case's advice write instead when that landed later, by
-        landing order, never by a clock in whole seconds (#ISSUE)."""
+        landing order, never by a clock in whole seconds (#1973)."""
         predecessor = self._episode_write(
             decision.review_case_id, decision.destination, decision.decision_id
         )
@@ -1927,7 +1927,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
 
     def _recorded_follows(self, decision: HumanDecision) -> str | None:
         """The decision whose write an owner decision follows, frozen with it
-        when the store records it (#1523, #ISSUE): its predecessor's, on
+        when the store records it (#1523, #1973): its predecessor's, on
         every outcome. The record holds the write lock, so this is exactly
         the write that landed last in its episode before it, which History's
         From reads and a keep goes back on.
@@ -1957,7 +1957,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self, decision: HumanDecision
     ) -> sqlite3.Row | tuple[str, ...] | None:
         """The verified write a decision follows, by the reference frozen
-        when it was recorded (#1523, #ISSUE): never read again from episodes."""
+        when it was recorded (#1523, #1973): never read again from episodes."""
         if decision.follows is None:
             return None
         row: sqlite3.Row | tuple[str, ...] | None = self._connection.execute(

@@ -1834,7 +1834,7 @@ def test_a_write_landing_in_a_later_episode_is_the_cases_own(
 ) -> None:
     """An automatic plan made in the first episode that lands after the case
     was admitted again is the case's write: an episode holds the writes that
-    landed in it, whichever episode planned them (#ISSUE)."""
+    landed in it, whichever episode planned them (#1973)."""
     store = OwnerStore(tmp_path, None)
     try:
         store.automatic("genres", "replace", _HELD.target.library)
@@ -1864,7 +1864,7 @@ def test_a_plan_from_an_earlier_episode_still_waits(
 ) -> None:
     """A write planned before the case was admitted again and not yet landed
     still waits, so a pin is refused as it is in the first episode
-    (ADR-0085, Amendment 2); one that landed before is history (#ISSUE)."""
+    (ADR-0085, Amendment 2); one that landed before is history (#1973)."""
     store = OwnerStore(tmp_path, None)
     try:
         store.automatic("genres", "replace", _HELD.target.library)
@@ -1902,7 +1902,7 @@ def test_history_reads_the_write_before_a_decision_in_its_second(
     """History's From is the write a decision followed when it was recorded,
     never one placed before it by a clock in whole seconds: an automatic
     write planned in the decision's second after a return to automatic is
-    not what it replaced (#ISSUE)."""
+    not what it replaced (#1973)."""
     store = _SameSecond(tmp_path, None)
     try:
         store.automatic("genres", "replace", _HELD.target.library)
@@ -1926,7 +1926,7 @@ def test_history_of_an_earlier_episode_decision_reads_its_own_episode(
 ) -> None:
     """A decision's From stays the write of its own episode after the case
     returns again: it is frozen when the decision is recorded, never read
-    again from floors a later return moves (#ISSUE, #1358)."""
+    again from floors a later return moves (#1973, #1358)."""
     store = OwnerStore(tmp_path, _HELD)
     try:
         store.write(store.decide("accept", _FANTASY, destination="genres"))
@@ -2063,7 +2063,7 @@ def test_a_keep_where_the_field_holds_what_the_case_read_is_a_plain_keep(
 
 def test_the_store_admits_a_named_write_on_any_decision(store: OwnerStore) -> None:
     """The `human_decisions` table holds `follows` as null or as text, on any
-    outcome (#1523, #ISSUE)."""
+    outcome (#1523, #1973)."""
     accept = store.decide(
         "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
     )

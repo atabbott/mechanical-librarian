@@ -863,7 +863,7 @@ def test_the_dd568e2_episode_and_follows_schema_is_rejected_without_change(
 ) -> None:
     """A store from dd568e2 floored an episode by field effect row and
     admitted `follows` on a keep only: it needs a clean rebuild and is
-    refused before anything is written (ADR-0013, #ISSUE)."""
+    refused before anything is written (ADR-0013, #1973)."""
     from tests.unit.test_policy_impact_persistence import _case_report
 
     path = tmp_path / "prior-episodes.sqlite"

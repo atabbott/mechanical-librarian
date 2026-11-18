@@ -735,7 +735,7 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
     fixture = json.loads(_PREDECESSORS.read_text(encoding="utf-8"))
     path = tmp_path / "state.sqlite"
     # Its episodes floored by field effect row and its `follows` CHECK admitted
-    # a keep only (#ISSUE).
+    # a keep only (#1973).
     monkeypatch.setattr(
         schema, "_REVIEW_CASE_EPISODES_SQL", PRIOR_REVIEW_CASE_EPISODES_SQL
     )

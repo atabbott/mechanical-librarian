@@ -438,7 +438,7 @@ PRIOR_HUMAN_DECISIONS_SQL = WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL.replace(
     "'reject','owner_entered','withdraw','pin','unpin')", "'reject')"
 )
 assert PRIOR_HUMAN_DECISIONS_SQL != WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL
-# Every producer before #ISSUE floored an episode by field effect row and
+# Every producer before #1973 floored an episode by field effect row and
 # admitted `follows` on a keep only.
 PRIOR_REVIEW_CASE_EPISODES_SQL = persistence_schema._REVIEW_CASE_EPISODES_SQL.replace(
     "event_floor", "effect_floor"

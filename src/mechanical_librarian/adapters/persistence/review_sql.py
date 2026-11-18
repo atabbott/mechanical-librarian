@@ -31,7 +31,7 @@ _LANDED_SQL = (
 # The case's write that landed last.
 _LANDED_LAST_SQL = "ORDER BY " + _LANDED_SQL + " DESC LIMIT 1"
 # A write landed in the case's episode when it landed after the case was last
-# admitted, whichever episode planned it (#ISSUE). Binds the case.
+# admitted, whichever episode planned it (#1973). Binds the case.
 _LANDED_IN_EPISODE_SQL = (
     _LANDED_SQL + ">COALESCE((SELECT event_floor FROM review_case_episodes "
     "WHERE review_case_id=?),0) "

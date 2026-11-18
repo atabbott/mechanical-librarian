@@ -1383,7 +1383,7 @@ def test_a_keep_row_depends_on_the_write_frozen_with_it() -> None:
     """A keep's row reads its own writes and the write its decision names as
     the one it goes back on (#1523); a write's own move reaches only its own
     row and the rows of the keeps that name it. Every decision names the
-    write it follows, but only a keep's row reads it (#ISSUE)."""
+    write it follows, but only a keep's row reads it (#1973)."""
     key = activity_facts._key
     connection = sqlite3.connect(":memory:")
     connection.execute(

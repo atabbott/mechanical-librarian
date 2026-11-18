@@ -717,7 +717,7 @@ def test_an_earlier_decision_document_is_refused(
     case: ReviewCase, version: str
 ) -> None:
     """A v6 decision named `follows` on a keep only, so its null on another
-    outcome would read as following no write (#ISSUE)."""
+    outcome would read as following no write (#1973)."""
     raw = json.loads(_owner(case, "title", None, outcome="keep_current").to_json())
     with pytest.raises(HumanDecisionError):
         HumanDecision.from_json(
@@ -1174,7 +1174,7 @@ def test_every_decision_names_the_write_it_follows(case: ReviewCase) -> None:
     """`follows` is frozen by the store when a decision is recorded and is no
     part of the request: it round-trips on any outcome, leaves the decision's
     identity and request digest alone, and is refused malformed (#1523,
-    #ISSUE)."""
+    #1973)."""
     keep = _owner(case, "title", None, outcome="keep_current")
     written = "human_decision_" + "a" * 64
     frozen = dataclasses.replace(keep, follows=written)
