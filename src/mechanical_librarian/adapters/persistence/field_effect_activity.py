@@ -1976,7 +1976,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
 
         A later owner decision still unwritten (a keep, an entry, a clear) is
         the field's answer instead, and an accept recorded now replaces it;
-        an automatic write is no owner answer (#1523)."""
+        an automatic write is no owner answer (#1980)."""
         standing = self._connection.execute(
             "SELECT decision_id FROM human_decisions WHERE review_case_id=? "
             "AND destination=? AND outcome NOT IN ('pin','unpin') AND "

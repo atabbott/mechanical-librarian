@@ -2012,7 +2012,7 @@ describe('a pin in the No change panel', () => {
 })
 
 // The recorded choice on a field this case wrote is the written value, so
-// choosing it again would change nothing and sends nothing (#1523).
+// choosing it again would change nothing and sends nothing (#1980).
 describe('the written choice', () => {
   const NEW = { kind: 'text', value: 'New title' } as const
   const PROPOSED = 'Choose proposed value: New title'

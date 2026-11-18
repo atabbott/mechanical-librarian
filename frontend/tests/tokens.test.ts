@@ -229,7 +229,7 @@ describe('Design tokens', () => {
 
   it("keeps a chosen card's radio dot solid under the pointer", () => {
     // The hover preview pales the dot; a chosen card is excluded, so a press
-    // that sends nothing never makes it look unchosen (#1523).
+    // that sends nothing never makes it look unchosen (#1980).
     const hover = rules(styles).filter(
       ({ selector }) =>
         selector.includes('.metadata-choice') &&

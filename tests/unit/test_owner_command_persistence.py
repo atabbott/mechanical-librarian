@@ -1840,7 +1840,7 @@ def test_accepting_the_written_value_replaces_a_later_unwritten_answer(
     """Read Drama, accept Fantasy, written, then go back to Drama, still
     unwritten. That later decision is the field's answer, so accepting
     Fantasy again records and replaces it before it writes Drama, rather
-    than being refused as unchanged (#1523)."""
+    than being refused as unchanged (#1980)."""
     store = OwnerStore(tmp_path, _HELD)
     try:
         store.write(store.decide("accept", _FANTASY, destination="genres"))
