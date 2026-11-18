@@ -253,15 +253,20 @@ authority.
 Activation is one transaction: it stores the resolved per-library policy,
 retires every current unapplied old-policy case, fixes the transition total and
 switches the active generation. Successors return through ordinary preparation
-from retained evidence, with no new provider lookup, decision transfer or
-write. Once an automatic decision has been recorded, leaving Automatic
-reactivates the unchanged policy. A current automatic cover selection or a
-current automatic description decision counts as one; a description counts
+from retained evidence, with no decision transfer or write. The exception is a
+work whose report predates a write the product verified: that report no longer
+says what Audiobookshelf holds, so the work is read again, after a discovery
+of its library when its scan is idle, and its new case starts from the written
+value. Its transition item counts as checked on the new report. Once an
+automatic decision has been recorded, leaving Automatic reactivates the
+unchanged policy. A current automatic cover selection or a current automatic
+description decision counts as one; a description counts
 even under a policy with no automatic destination, since its admission
 depends on the description advice setting, not on the policy. Each work
 then returns as its same case, which continues its episode: the owner's
 answers, holds and queued writes on it stay current, since no decision moves
-to a successor case. A work still
+to a successor case. A work written since its report is read again instead,
+and gets a new case. A work still
 retired by an earlier change of policy when that happens starts a new episode
 on return, as any case does after a policy change. An automatic
 decision writes only in the Automatic posture, and one from an earlier policy
@@ -279,9 +284,10 @@ preparation could not bring back closes at the next activation.
 
 The transition status survives restart. `completed_with_failures` keeps typed
 diagnostics and a retry. Retry restarts failed items whose evidence is still
-current, shows items that moved to a newer report as reconciled, and leaves an
-item with no preparation work failed. Work prepared after activation uses the
-new policy at once; the transition total stays fixed. Acknowledging a finished
+current, reads a work written since its report again as activation does, shows
+items that moved to a newer report as reconciled, and leaves an item with no
+preparation work failed. Work prepared after activation uses the new policy at
+once; the transition total stays fixed. Acknowledging a finished
 transition only dismisses its notice, and a new activation acknowledges any
 undismissed one. Activations cannot overlap. A retry after a lost response
 returns the original transition.
