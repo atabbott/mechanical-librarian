@@ -121,7 +121,8 @@ from mechanical_librarian.domain.cover_automatic_decision import (
 )
 from mechanical_librarian.domain.cover_evidence import LOCAL_COVER_SOURCE_KINDS
 from mechanical_librarian.domain.cover_qualification_policy import (
-    REPLACEMENT_TARGET_STATES,
+    RECORDED_IDENTITIES,
+    TASTE_REPLACEMENT_IDENTITY,
 )
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
@@ -1235,6 +1236,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         current_cover_policy_reference: Callable[[], str | None],
         current_cover_replay_reference: Callable[[], str | None],
         require_owner_cover: Callable[[str, str | None], None],
+        taste_switching: Callable[[], bool] = lambda: False,
         description_authority_value: Callable[[AuthoredDescriptionDecision], object],
     ) -> None:
         super().__init__(connection, binding)
@@ -1251,6 +1253,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._cover_policy_reference = current_cover_policy_reference
         self._cover_replay_reference = current_cover_replay_reference
         self._require_owner_cover = require_owner_cover
+        self._taste_switching = taste_switching
         self._description_authority_value = description_authority_value
         # Activity's page is immutable at one SQLite data revision.  The
         # bounded reader-local cache prevents repeated foreground refreshes
@@ -2156,6 +2159,60 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # resolution, which is a decision, not an outage.
             raise FieldEffectError("persistence") from error
 
+    def _cover_authority_is_current(self, authority: EffectAuthority) -> bool | None:
+        """Whether an automatic cover authority is still current; None when
+        the authority is not an automatic cover selection.
+
+        Split from ``_authority_is_current`` to keep it under 200 lines
+        (AGENTS.md) when #1372 PR 5 added the taste checks.
+        """
+        cover_selection = self._connection.execute(
+            "SELECT selection.decision_id FROM current_cover_selection_authorities current "
+            "JOIN cover_selection_authorities selection "
+            "ON selection.selection_id=current.selection_id "
+            "WHERE selection.decision_id=? AND selection.kind='automatic'",
+            (authority.decision_id,),
+        ).fetchone()
+        cover_history = self._connection.execute(
+            "SELECT json_extract(document,'$.decision_document') FROM cover_selection_authorities WHERE decision_id=? "
+            "AND kind='automatic'",
+            (authority.decision_id,),
+        ).fetchone()
+        if cover_history is None:
+            return None
+        if cover_selection != (authority.decision_id,):
+            return False
+        try:
+            cover = CoverAutomaticDecision.from_json(cover_history[0])
+        except AutomaticDecisionError:
+            return False
+        # Current covers is in the cover policy, so a changed setting
+        # moves the live reference and stales the switch before it writes;
+        # its next preparation decides again under the new setting (#1363).
+        if cover.policy_reference != self._current_cover_policy_reference:
+            return False
+        # Each recorded identity parses only under its own record, so its
+        # authority need only carry that record (#1363, #1362, #1372).
+        if cover.qualification_identity is not None and not (
+            authority.qualification_identity == cover.qualification_manifest_sha256
+            if cover.qualification_identity in RECORDED_IDENTITIES
+            else qualification_manifest_is_current(
+                cover.policy_category,
+                cover.policy_option,
+                authority.qualification_identity,
+            )
+        ):
+            return False
+        # A taste switch writes only while Switching is Automatic and its
+        # verdict's version is the profile's newest (#1372 PR 5, K6).
+        return cover.qualification_identity != TASTE_REPLACEMENT_IDENTITY or (
+            self._taste_switching()
+            and self._connection.execute(
+                "SELECT max(version) FROM cover_taste_profile_versions"
+            ).fetchone()
+            == (cover.taste_version,)
+        )
+
     def _authority_is_current(self, authority: EffectAuthority) -> bool:
         current = (
             self._connection.execute(
@@ -2232,43 +2289,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 return False
         if not current or authority.origin != "automatic_policy":
             return current
-        cover_selection = self._connection.execute(
-            "SELECT selection.decision_id FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities selection "
-            "ON selection.selection_id=current.selection_id "
-            "WHERE selection.decision_id=? AND selection.kind='automatic'",
-            (authority.decision_id,),
-        ).fetchone()
-        cover_history = self._connection.execute(
-            "SELECT json_extract(document,'$.decision_document') FROM cover_selection_authorities WHERE decision_id=? "
-            "AND kind='automatic'",
-            (authority.decision_id,),
-        ).fetchone()
-        if cover_history is not None and cover_selection != (authority.decision_id,):
+        cover_current = self._cover_authority_is_current(authority)
+        if cover_current is False:
             return False
-        if cover_history is not None:
-            try:
-                cover = CoverAutomaticDecision.from_json(cover_history[0])
-            except AutomaticDecisionError:
-                return False
-            # Current covers is in the cover policy, so a changed setting
-            # moves the live reference and stales the switch before it writes;
-            # its next preparation decides again under the new setting (#1363).
-            if cover.policy_reference != self._current_cover_policy_reference:
-                return False
-            # Each replacement parses only under its own identity's record,
-            # so its authority need only carry that record (#1363, #1362).
-            if cover.qualification_identity is not None and not (
-                authority.qualification_identity == cover.qualification_manifest_sha256
-                if cover.qualification_identity in REPLACEMENT_TARGET_STATES
-                else qualification_manifest_is_current(
-                    cover.policy_category,
-                    cover.policy_option,
-                    authority.qualification_identity,
-                )
-            ):
-                return False
-        if cover_history is None:
+        if cover_current is None:
             automatic_row = self._connection.execute(
                 "SELECT document FROM automatic_decisions WHERE decision_id=?",
                 (authority.decision_id,),

@@ -13048,19 +13048,20 @@ def test_lane_one_runs_the_build_then_one_judgement_and_still_prepares() -> None
         def __init__(self, name: str, ran: bool) -> None:
             self.name, self.ran = name, ran
 
-        def wake(self, now: int, _changed: Callable[[], object]) -> bool:
+        def wake(self, now: int, _changed: object = None) -> bool:
             calls.append(f"{self.name}@{now}")
             return self.ran
 
     background = CoverTasteBackground(
         _Lane("build", False),
         _Lane("judge", True),
+        _Lane("switch", False),
     )
     supervisor = ReviewPreparationSupervisor(
         _ScheduledPipeline(), clock=lambda: 41, background_wake=background.wake
     )
     assert _lane_run(supervisor, 1, 3) == 3
-    assert calls == ["build@41", "judge@41"] * 3
+    assert calls == ["build@41", "switch@41", "judge@41"] * 3
 
 
 def test_lane_one_contains_a_background_failure_and_continues() -> None:

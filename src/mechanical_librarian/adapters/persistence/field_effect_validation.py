@@ -40,7 +40,10 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 from mechanical_librarian.domain.cover_qualification_policy import (
     REPLACEMENT_TARGET_STATES,
+    TASTE_REPLACEMENT_IDENTITY,
+    TASTE_REPLACEMENT_TARGET_STATES,
 )
+from mechanical_librarian.domain.cover_taste import TASTE_JUDGE_FAULTS
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceCandidate,
@@ -712,6 +715,62 @@ def cover_pre_value(report: MetadataReport) -> str | None:
     raise FieldEffectError("authority_binding")
 
 
+def _taste_decision_binding(
+    connection: sqlite3.Connection,
+    decision: CoverAutomaticDecision,
+    consideration: dict[str, object],
+    policy_report: dict[str, object],
+    stage: object,
+) -> None:
+    """Bind a taste switch to its stored verdict and the stage it saw (K6).
+
+    The verdict row, never the decision's copy of it, must choose this
+    candidate on this comparison under the decision's version; the stage
+    must still keep a fault-free cover under "When another is preferred" or
+    replace the fault the decision records; and the current cover's state
+    must be one the taste identity may change. Whether that version is still
+    the newest and Switching still Automatic is currentness, checked at
+    write time.
+    """
+    verdict = connection.execute(
+        "SELECT consideration_id,version,document FROM cover_taste_verdicts "
+        "WHERE verdict_id=?",
+        (decision.verdict_id,),
+    ).fetchone()
+    try:
+        chosen = None if verdict is None else json.loads(verdict[2])
+        protection = json.loads(cast(str, consideration["policy_document"])).get(
+            "current_protection"
+        )
+    except (KeyError, TypeError, json.JSONDecodeError) as error:
+        raise FieldEffectError("authority_binding") from error
+    if (
+        verdict is None
+        or type(chosen) is not dict
+        or verdict[0] != decision.consideration_id
+        or verdict[1] != decision.taste_version
+        or chosen.get("decision") != "choose"
+        or chosen.get("candidate_reference") != decision.candidate_reference
+        or type(stage) is not dict
+        or not (
+            (
+                stage.get("outcome") == "keep"
+                and stage.get("reason") is None
+                and decision.reason is None
+                and protection == "unprotected"
+            )
+            or (
+                stage.get("outcome") == "replace"
+                and stage.get("reason") == decision.reason
+                and decision.reason in TASTE_JUDGE_FAULTS
+            )
+        )
+        or policy_report.get("actual_target_state")
+        not in TASTE_REPLACEMENT_TARGET_STATES
+    ):
+        raise FieldEffectError("authority_binding")
+
+
 def _cover_automatic_decision_value(
     connection: sqlite3.Connection,
     decision: CoverAutomaticDecision,
@@ -747,13 +806,14 @@ def _cover_automatic_decision_value(
     # unconfirmed for any other (ADR-0094). Any other automatic cover
     # authority is a fill of a known-empty one.
     measured = decision.qualification_identity in REPLACEMENT_TARGET_STATES
+    taste = decision.qualification_identity == TASTE_REPLACEMENT_IDENTITY
     target = canonical_target_fields(report.target.fields)[TargetDestination.COVER]
     empty = target.state in {
         TargetFieldState.MISSING,
         TargetFieldState.NULL,
         TargetFieldState.EMPTY,
     }
-    if measured:
+    if measured or taste:
         if empty:
             raise FieldEffectError("authority_binding")
     elif report.audio is not None:
@@ -789,7 +849,11 @@ def _cover_automatic_decision_value(
         raise FieldEffectError("authority_binding") from error
     policy_report = json.loads(consideration["policy_report_document"])
     stage = policy_report.get("stage")
-    if (
+    if taste:
+        _taste_decision_binding(
+            connection, decision, consideration, policy_report, stage
+        )
+    elif (
         type(stage) is not dict
         or stage.get("outcome") != ("replace" if measured else "fill")
         or stage.get("reason") != decision.reason
@@ -816,7 +880,9 @@ def _cover_automatic_decision_value(
         or consideration.get("replay_digest") != decision.replay_digest
         or consideration.get("policy_reference") != decision.policy_reference
         or consideration.get("provider_fetching") is not False
-        or policy_report.get("status") != "recommended"
+        # A taste switch may follow a fault-free keep, which recommends
+        # nothing; its own binding checks the stage.
+        or (not taste and policy_report.get("status") != "recommended")
         or candidate.get("artifact_id") != decision.artifact_id
         or candidate.get("selectable") is not True
         or candidate.get("incumbent") is not False

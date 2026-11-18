@@ -309,6 +309,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._cover_considerations = SQLiteCoverConsiderationRepository(
             connection,
             current_cover_authority=lambda: self._current_cover_authority,
+            taste_switching=lambda: self.cover_taste_switching(),
             revoke_automatic=lambda decision_id, changed_at: (
                 self._revoke_field_effect_authority_in_transaction(
                     decision_id, changed_at, required=False
@@ -400,7 +401,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             connection, self._judge_cover_read
         )
         self._cover_taste_judge = SQLiteCoverTasteJudgeRepository(
-            connection, self._judge_cover_read
+            connection,
+            self._judge_cover_read,
+            self._cover_considerations,
+            self.cover_taste_switching,
         )
         self._retained_covers = SQLiteRetainedCoverRepository(connection, binding)
         self._current_cover_authority: tuple[str | None, str | None] = (None, None)
@@ -546,6 +550,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
             current_cover_policy_reference=(lambda: self._current_cover_authority[0]),
             current_cover_replay_reference=(lambda: self._current_cover_authority[1]),
+            taste_switching=lambda: self.cover_taste_switching(),
             require_owner_cover=lambda document, artifact: (
                 self._cover_considerations.require_owner_cover(document, artifact)
             ),
@@ -1835,6 +1840,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._cover_taste
 
     def cover_taste_judge_store(self) -> SQLiteCoverTasteJudgeRepository:
+        return self._cover_taste_judge
+
+    def cover_taste_switching_store(self) -> SQLiteCoverTasteJudgeRepository:
         return self._cover_taste_judge
 
     def read_staged_description_preparation(

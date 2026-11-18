@@ -416,20 +416,31 @@ def test_changed_is_called_at_most_every_ten_seconds_and_when_a_pass_ends(
 
 
 def test_the_background_lane_runs_a_due_build_before_any_judgement() -> None:
+    """One step per wake: a due build, else a taste switch retired or
+    admitted (#1372 PR 5), else at most one judgement."""
     calls: list[str] = []
 
     class _Lane:
         def __init__(self, name: str, ran: bool) -> None:
             self.name, self.ran = name, ran
 
-        def wake(self, _now: int, _changed: object) -> bool:
+        def wake(self, _now: int, _changed: object = None) -> bool:
             calls.append(self.name)
             return self.ran
 
-    assert CoverTasteBackground(_Lane("build", True), _Lane("judge", True)).wake(1)  # type: ignore[arg-type]  # reason: two wake-only lanes
+    def lanes(build: bool, switch: bool) -> CoverTasteBackground:
+        return CoverTasteBackground(
+            _Lane("build", build),  # type: ignore[arg-type]  # reason: wake-only lanes
+            _Lane("judge", True),  # type: ignore[arg-type]  # reason: as above
+            _Lane("switch", switch),  # type: ignore[arg-type]  # reason: as above
+        )
+
+    assert lanes(True, True).wake(1)
     assert calls == ["build"]
-    assert CoverTasteBackground(_Lane("build", False), _Lane("judge", True)).wake(1)  # type: ignore[arg-type]  # reason: as above
-    assert calls == ["build", "build", "judge"]
+    assert lanes(False, True).wake(1)
+    assert calls == ["build", "build", "switch"]
+    assert lanes(False, False).wake(1)
+    assert calls == ["build", "build", "switch", "build", "switch", "judge"]
 
 
 def test_binding_admission_reaches_every_aggregate_store(tmp_path: Path) -> None:

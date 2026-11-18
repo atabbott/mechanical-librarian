@@ -21,6 +21,9 @@ from mechanical_librarian.application.cover_taste_inputs import (
     TasteDecisionSource,
     assemble_taste_inputs,
 )
+from mechanical_librarian.application.cover_taste_switching import (
+    CoverTasteSwitchingRepository,
+)
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
@@ -109,6 +112,8 @@ class CoverTasteRepositoryOwner(Protocol):
 
     def cover_taste_judge_store(self) -> CoverTasteJudgeRepository: ...
 
+    def cover_taste_switching_store(self) -> CoverTasteSwitchingRepository: ...
+
     def close(self) -> None: ...
 
 
@@ -135,6 +140,9 @@ class CoverTasteRepositoryLease:
 
     def judge_store(self) -> CoverTasteJudgeRepository:
         return self._opened().cover_taste_judge_store()
+
+    def switching_store(self) -> CoverTasteSwitchingRepository:
+        return self._opened().cover_taste_switching_store()
 
     def close(self) -> None:
         with self._lock:
