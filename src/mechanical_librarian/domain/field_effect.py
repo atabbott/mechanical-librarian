@@ -38,10 +38,10 @@ SCALAR_DESTINATIONS = frozenset(
 )
 LIST_DESTINATIONS = frozenset({"authors", "genres", "narrators", "tags"})
 SERIES_DESTINATION = "series"
-# The guarded envelope is the same fifteen book-media destinations on both
+# The guarded envelope is the same sixteen book-media destinations on both
 # media. A narrator cast joined it with F47, which earned audiobook write
 # authority and extended ADR-0039's ebook envelope to book media (ADR-0071,
-# #968).
+# #968); `explicit` joined it with F46a.
 SUPPORTED_DESTINATIONS = (
     SCALAR_DESTINATIONS | LIST_DESTINATIONS | {SERIES_DESTINATION, "explicit"}
 )
