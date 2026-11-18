@@ -592,6 +592,28 @@ def _current_report(library: _Library, item: str) -> MetadataReport:
     return MetadataReport.from_json(row[0])
 
 
+@pytest.mark.parametrize("newer_version", [False, True])
+def test_admission_refuses_a_verdict_under_an_earlier_version(
+    tmp_path: Path, record: None, newer_version: bool
+) -> None:
+    """Review N2: admission's own version gate. The verdict is still the
+    comparison's newest, but once a later profile version is in use it was
+    chosen under one that no longer stands, so admitting it directly mints
+    nothing. Without the later version the same call switches."""
+    with _switching(tmp_path, ("keep",)) as library:
+        _automatic(library)
+        if newer_version:
+            _version(library.repository, NOW + 2)
+            library.repository._connection.commit()
+        verdict_id, _chosen = _verdict(library, "keep")
+        store = library.repository.cover_taste_judge_store()
+        admitted = store.admit_switch(
+            library.considerations["keep"]["consideration_id"], verdict_id, NOW + 3
+        )
+        assert admitted is not newer_version
+        assert len(_taste_selections(library)) == (0 if newer_version else 1)
+
+
 def test_a_newer_verdict_supersedes_an_unwritten_switch(
     tmp_path: Path, record: None
 ) -> None:
