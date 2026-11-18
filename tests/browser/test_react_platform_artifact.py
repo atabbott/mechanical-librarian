@@ -4925,7 +4925,8 @@ _MASTHEAD_COVER = """() => {
   const sticky = [...document.querySelectorAll('main *')]
     .filter((node) => getComputedStyle(node).position === 'sticky'
       && getComputedStyle(node).top !== 'auto' && node.getClientRects().length > 0)
-    .map((node) => [String(node.className).slice(0, 40), Math.round(node.getBoundingClientRect().top)]);
+    .map((node) => [String(node.className).slice(0, 40), Math.round(node.getBoundingClientRect().top),
+      Math.round(parseFloat(getComputedStyle(node).top))]);
   return {
     static: document.documentElement.dataset.masthead === 'static',
     position: getComputedStyle(masthead).position,
@@ -5003,10 +5004,15 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                     page.evaluate(_TWO_FRAMES)
                     cover = page.evaluate(_MASTHEAD_COVER)
                     if not cover["static"]:
+                        # Each region's sticky offset clears the masthead, and
+                        # so does every region held at it. A region its own
+                        # container is carrying away, at that container's end,
+                        # scrolls on under the masthead like any content.
                         under = [
                             region
                             for region in cover["sticky"]
-                            if region[1] < cover["bottom"] - 1
+                            if region[2] < cover["bottom"] - 1
+                            or region[2] - 1 <= region[1] < cover["bottom"] - 1
                         ]
                         assert under == [], f"{where}: under the masthead {cover}"
         # The popover opens inside the viewport, however the status wraps or
@@ -6483,3 +6489,74 @@ def test_library_progress_largest_counts_wrap_inside_the_run_box() -> None:
             " <= document.documentElement.clientWidth"
         )
         page.close()
+
+
+# The focus ring a focused control draws (its outline width plus offset past its
+# border box), and the sides of it that an ancestor which clips its overflow
+# cuts off. Read while the control has keyboard focus.
+_RING_CUT = """node => {
+  const own = getComputedStyle(node)
+  const ring = parseFloat(own.outlineWidth) + parseFloat(own.outlineOffset)
+  const box = node.getBoundingClientRect()
+  const cut = new Set()
+  for (let up = node.parentElement; up; up = up.parentElement) {
+    const style = getComputedStyle(up)
+    if (style.overflowX === 'visible' && style.overflowY === 'visible') continue
+    const edge = up.getBoundingClientRect()
+    const left = edge.left + up.clientLeft
+    const top = edge.top + up.clientTop
+    if (box.left - ring < left - 0.5) cut.add('left')
+    if (box.right + ring > left + up.clientWidth + 0.5) cut.add('right')
+    if (box.top - ring < top - 0.5) cut.add('top')
+    if (box.bottom + ring > top + up.clientHeight + 0.5) cut.add('bottom')
+  }
+  return own.outlineStyle === 'none' ? ['no ring'] : [...cut]
+}"""
+
+
+def test_focus_rings_on_the_work_screen_are_never_cut_off() -> None:
+    """A field tab, a value card and the controls at a phone's page edge show
+    their whole focus ring. The tabs' strip scrolls sideways and clips above
+    and below, the value panel clips its rounded corners, and on a phone the
+    frameless workspace no longer clips at the page's edge."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        for width, height in ((1440, 900), (390, 844)):
+            # Reduced motion, so the strip scrolls a focused tab in at once
+            # rather than smoothly, and each ring is measured where it settles.
+            page = browser.new_page(
+                viewport={"width": width, "height": height},
+                locale="en-US",
+                reduced_motion="reduce",
+            )
+            _serve_cohort(page)
+            page.goto(
+                "https://react-platform.invalid/library?lens=all&preview=case-1&field=title"
+            )
+            tabs = page.locator(".field-filmstrip button")
+            expect(tabs.first).to_be_visible()
+            # A key press first, so a scripted focus shows the keyboard ring.
+            page.keyboard.press("Shift")
+            for index in range(tabs.count()):
+                tab = tabs.nth(index)
+                tab.focus()
+                # A tab partly outside the strip is cut with it; measure it in view.
+                tab.evaluate("node => node.scrollIntoView({block: 'nearest', inline: 'nearest'})")
+                assert tab.evaluate(_RING_CUT) == [], (width, tab.inner_text())
+            choice = page.locator(".metadata-choice > .choice-select").first
+            choice.focus()
+            # The ring goes round the whole card, inside its edge, so it never
+            # crosses the radio or the source line under the value.
+            card = page.locator(".metadata-choice:has(> .choice-select:focus-visible)")
+            expect(card).to_have_count(1)
+            assert choice.evaluate("node => getComputedStyle(node).outlineStyle") == "none"
+            assert card.evaluate(_RING_CUT) == [], width
+            for name in ("Show more source values",) + (
+                ("Back to works",) if width < 761 else ()
+            ):
+                control = page.get_by_role("button", name=name, exact=True)
+                control.focus()
+                assert control.evaluate(_RING_CUT) == [], (width, name)
+            page.close()

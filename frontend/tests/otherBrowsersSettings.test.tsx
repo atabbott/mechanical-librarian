@@ -58,17 +58,23 @@ describe('Other browsers', () => {
     expect(screen.getByText('This browser stays signed in.')).toBeVisible()
     expect(screen.getAllByRole('button')).toHaveLength(1)
     expect(button()).toBeEnabled()
+    // The row's line is read with the button, not only seen beside it.
+    expect(button()).toHaveAccessibleDescription('This browser stays signed in.')
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('says Signing out… and disables the button while sending', async () => {
+  it('says Signing out… and keeps focus on the unavailable button while sending', async () => {
     const { http, finish } = deferred()
     const { user } = setup(http)
     await user.click(button())
 
     const sending = screen.getByRole('button', { name: 'Signing out…' })
-    expect(sending).toBeDisabled()
+    expect(sending).toHaveAttribute('aria-disabled', 'true')
+    // Not `disabled`, which would drop focus to the page while it waits.
+    expect(sending).toHaveFocus()
+    await user.click(sending)
+    await user.keyboard('{Enter}')
     expect(http.logoutOthers).toHaveBeenCalledOnce()
     await act(async () => {
       finish()
@@ -234,7 +240,10 @@ describe('Other browsers', () => {
 
     await user.click(button())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Signing out…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Signing out…' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
     await act(async () => {
       finish(new ApiError(422, 'invalid'))
       await Promise.resolve()

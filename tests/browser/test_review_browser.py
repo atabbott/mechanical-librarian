@@ -3198,22 +3198,12 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 assert page.get_by_role(
                     "navigation", name="Policy chapters"
                 ).is_visible()
-                # The sticky finish tray spans both columns and never covers a
-                # sidebar safety control, with the safety group expanded.
+                # The sticky finish tray sits under the chapter column only and
+                # never covers a sidebar safety control, with the safety group
+                # expanded.
                 if not page.locator(".cm-policy-mode").evaluate("node => node.open"):
                     page.locator(".cm-policy-mode summary").click()
                 page.get_by_role("button", name="Enter Preview mode").wait_for()
-                # Measured at the page's end, with the sidebar held below the
-                # masthead. The phone masthead now scrolls away (#1894), so the
-                # theme click above scrolled to the top rather than leaving the
-                # page at its end as it used to.
-                page.evaluate("scrollTo(0, document.documentElement.scrollHeight)")
-                sidebar_box = page.locator(".cm-policy-sidebar").bounding_box()
-                tray_box = page.locator(".cm-finish-tray").bounding_box()
-                assert sidebar_box is not None and tray_box is not None
-                sidebar_right = sidebar_box["x"] + sidebar_box["width"]
-                assert tray_box["x"] < sidebar_right
-                assert (tray_box["x"] + tray_box["width"]) > sidebar_right
                 covered = """() => {
                     const rail = document.querySelector('.cm-policy-sidebar')
                     const side = rail.getBoundingClientRect()
@@ -3230,6 +3220,26 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                         })
                         .map(([node]) => node.textContent.slice(0, 48))
                     }"""
+                # At the top of the page the rail starts below the heading. It
+                # still takes the window's height rather than stopping where the
+                # tray would be once stuck, which hid its last safety controls.
+                page.evaluate("scrollTo(0, 0)")
+                rail_room = page.locator(".cm-policy-sidebar").evaluate(
+                    """node => [node.clientHeight, node.scrollHeight,
+                        innerHeight - node.getBoundingClientRect().top]"""
+                )
+                assert rail_room[0] >= min(rail_room[1], rail_room[2]) - 1, rail_room
+                assert page.evaluate(covered) == []
+                # Measured at the page's end, with the sidebar held below the
+                # masthead. The phone masthead now scrolls away (#1894), so the
+                # theme click above scrolled to the top rather than leaving the
+                # page at its end as it used to.
+                page.evaluate("scrollTo(0, document.documentElement.scrollHeight)")
+                sidebar_box = page.locator(".cm-policy-sidebar").bounding_box()
+                tray_box = page.locator(".cm-finish-tray").bounding_box()
+                assert sidebar_box is not None and tray_box is not None
+                sidebar_right = sidebar_box["x"] + sidebar_box["width"]
+                assert tray_box["x"] >= sidebar_right - 1
                 assert page.evaluate(covered) == []
                 # Anything the bounded rail clips stays reachable by scrolling
                 # the rail itself, and is still never under the tray.

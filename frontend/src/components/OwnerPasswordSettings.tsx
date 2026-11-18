@@ -19,6 +19,7 @@ import type {
   OwnerPasswordFormState as FormState,
   OwnerPasswordProblem as Problem,
 } from '../ownerPasswordForm'
+import { descriptionId } from '../fieldControls'
 import { FieldRow } from './FieldRow'
 import { StaleBuildRead } from './StaleBuildRead'
 
@@ -281,7 +282,12 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
   )
   if (!open)
     return (
-      <FieldRow title="Owner password" description="Changing it signs out every other browser.">
+      <FieldRow
+        fieldId="owner-password"
+        group
+        title="Owner password"
+        description="Changing it signs out every other browser."
+      >
         <div className="settings-password">
           {changed ? (
             <p className="settings-password-status" role="status" tabIndex={-1} ref={status}>
@@ -292,6 +298,7 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
             <button
               type="button"
               ref={closedButton}
+              aria-describedby={descriptionId('owner-password')}
               onClick={() => {
                 update({ changed: false, open: true })
                 focusNext.current = ids.current
@@ -304,7 +311,12 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
       </FieldRow>
     )
   return (
-    <FieldRow title="Owner password" description="Changing it signs out every other browser.">
+    <FieldRow
+      fieldId="owner-password"
+      group
+      title="Owner password"
+      description="Changing it signs out every other browser."
+    >
       <form className="settings-password" noValidate onSubmit={(event) => void submit(event)}>
         {field('current', 'Current password', 'current-password')}
         {field('next', 'New password', 'new-password')}
@@ -321,7 +333,14 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
         </button>
         <ProblemLine problem={problem} reload={reload} />
         <div className="settings-password-actions">
-          <button type="submit" className="button-primary" disabled={pending} ref={submitButton}>
+          {/* aria-disabled, not disabled, keeps focus on the button while it changes the
+              password; the `sending` guard already refuses a second submit. */}
+          <button
+            type="submit"
+            className="button-primary"
+            aria-disabled={pending}
+            ref={submitButton}
+          >
             {pending ? 'Changing…' : 'Change password'}
           </button>
           <button

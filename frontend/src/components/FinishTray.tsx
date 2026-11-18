@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react'
-import type { ReactNode, RefObject } from 'react'
+import type { ReactNode } from 'react'
 
 // The inset tray that finishes a page-owned draft: summary first, an optional
 // progress strip, then aligned actions; `children` spans the full width below.
@@ -9,7 +9,6 @@ import type { ReactNode, RefObject } from 'react'
 export const FinishTray = ({
   label,
   className = '',
-  ref,
   summary,
   progress,
   actions,
@@ -17,14 +16,12 @@ export const FinishTray = ({
 }: {
   label: string
   className?: string
-  ref?: RefObject<HTMLElement | null>
   summary: ReactNode
   progress?: ReactNode
   actions: ReactNode
   children?: ReactNode
 }) => {
-  const own = useRef<HTMLElement>(null)
-  const tray = ref ?? own
+  const tray = useRef<HTMLElement>(null)
   // Re-measured whenever the tray or the window resizes, since a breakpoint or
   // zoom can switch it between sticky and static without a render.
   useLayoutEffect(() => {
