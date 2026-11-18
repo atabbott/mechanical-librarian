@@ -168,8 +168,9 @@ from it for a manual one, so the table can be checked against the workflow.
 | Workflow permissions and the advisory acceptance register | gate | the fast tier |
 | Wheel identity, archive and installed record integrity, payload equality, installed console | gate | `scripts/qualify_exact_artifact.py` in `exact-installed` |
 | Required installed test tier, run by the isolated wheel's interpreter | gate | `--test-tier required` in `exact-installed` |
-| The Chromium payload is well formed, its digest is recorded, and it starts on the runner's own libraries | gate | `scripts/verify_playwright_browser.py` in `protected-browser` |
-| Browser tier against that recorded payload | gate | `scripts/run_test_tier.py browser` in `protected-browser` |
+| The Chromium payload is well formed, its digest is recorded, and it starts on the runner's own libraries | gate | `scripts/verify_playwright_browser.py` in each browser shard |
+| Browser tier against that recorded payload, split across three shard jobs | gate | `scripts/run_test_tier.py browser --shard` in each browser shard |
+| The required `protected-browser` check passes only when every browser shard passed | gate | `test "$SHARDS" = success` |
 | The shipped container image builds from the exact revision, restoring unchanged layers from the Actions cache, which only a push to `main` writes | gate | `docker/build-push-action` with `tags: mechanical-librarian:gate`, `cache-from: type=gha`, and `cache-to` set to `type=gha,mode=max` only when `github.event_name == 'push'`, in `container-image` |
 | The probe tier runs the image's own pinned binary, never the runner's | gate | `docker create mechanical-librarian:gate`, `docker cp`, `docker rm`, `sudo install -m 0755 "$RUNNER_TEMP/ffprobe" /usr/local/bin/ffprobe`, the `FFMPEG_VERSION` readback with `ffprobe -version`, and the removal of `/usr/bin/ffprobe`, in `container-image` |
 | Real-probe execution over generated media | gate | `scripts/run_test_tier.py probe` in `container-image` |

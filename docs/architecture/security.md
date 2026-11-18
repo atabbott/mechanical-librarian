@@ -631,7 +631,8 @@ private path, rejected provider value, response body or arbitrary EPUB text
 ([data privacy](data-privacy.md)). When Audiobookshelf names no author, an
 ebook's own EPUB creators may leave the host as query text: one to four
 distinct package creators with no role or an author role. Every enabled ebook
-provider receives them through the shared plan: Google Books, Hardcover, Inventaire, iTunes and Open Library.
+provider in the [dispatch](../reference/configuration.md#dispatch) set receives
+them through the shared plan.
 
 ### Publication
 

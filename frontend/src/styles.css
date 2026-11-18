@@ -1737,6 +1737,55 @@ dialog.first-review-guide.covers-intro { width:min(34rem,calc(100vw - 2rem)); }
 .taste-section li:first-child { border-top:0; }
 /* The rule's own number (its `value`), shown as the prototype's chip. */
 .taste-section li::before { content:attr(value); display:inline-grid; place-items:center; min-width:1.6rem; height:1.6rem; box-sizing:border-box; padding:0 .3rem; border:1px solid var(--accent); border-radius:.35rem; color:var(--accent-strong); font-size:.75rem; font-weight:800; font-variant-numeric:tabular-nums; }
+/* Switching (#1372 PR 5, A2): on wide screens the side column's first panel,
+   above Versions, with the rules spanning both rows; on phones it is the
+   first block of the body, above the rules, and Versions follows them. */
+@media (min-width:1025px) {
+  .taste-body { grid-template-rows:auto 1fr; }
+  .taste-body > .taste-rules { grid-column:1; grid-row:1 / span 2; }
+  .taste-body > .taste-switching { grid-column:2; grid-row:1; }
+  .taste-body > .taste-versions { grid-column:2; grid-row:2; }
+}
+.taste-switching { display:grid; gap:.6rem; min-width:0; max-width:calc(70ch + 4rem); margin:0; padding:.8rem 1rem 1rem; border:1px solid var(--line); border-radius:12px; background:var(--surface-strong); }
+.taste-switching:focus { outline-offset:4px; }
+.taste-switching legend { padding:0 .3rem; font-family:Georgia,serif; font-size:1.05rem; font-weight:700; }
+.taste-switching p { margin:0; }
+.taste-mode, .taste-check { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.6rem; align-items:start; min-height:44px; box-sizing:border-box; padding:.55rem .6rem; border:1px solid var(--line); border-radius:.6rem; cursor:pointer; overflow-wrap:anywhere; }
+.taste-mode span, .taste-check span { font-weight:700; }
+.taste-mode:has(input:checked) { border-color:var(--accent); background:var(--accent-soft); }
+.taste-mode:has(input:disabled), .taste-check:has(input:disabled) { cursor:not-allowed; color:var(--soft); }
+.taste-mode input, .taste-check input { width:1.15rem; height:1.15rem; margin:.15rem 0 0; accent-color:var(--accent-strong); }
+.taste-mode-extra { display:grid; gap:.4rem; padding-left:1.4rem; }
+.taste-check { border-style:dashed; }
+.taste-switching-note { color:var(--soft); font-size:.8rem; line-height:1.4; overflow-wrap:anywhere; }
+.taste-switching .taste-confirmed { margin:0; }
+.taste-switching-status:empty { display:none; }
+/* The preview (C1): full width under the meta, above the rules. */
+.taste-preview { display:grid; gap:.9rem; min-width:0; padding:1.1rem 1.2rem 1.2rem; border:1px solid var(--accent); border-radius:14px; background:color-mix(in srgb,var(--accent-soft) 40%,var(--surface)); scroll-margin-top:84px; }
+.taste-preview header p { margin:0; max-width:75ch; font-size:.92rem; font-weight:700; }
+.taste-preview > .taste-mode-extra { padding-left:0; }
+.taste-preview header p:focus { outline-offset:4px; }
+.taste-preview-list { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap:.75rem; margin:0; padding:0; list-style:none; }
+.taste-preview-item { display:grid; gap:.8rem; align-content:start; min-width:0; padding:.85rem; border:1px solid var(--line); border-radius:12px; background:var(--surface-strong); }
+.taste-preview-covers { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); justify-items:center; align-items:center; gap:.5rem; }
+.taste-preview-covers figure { display:grid; gap:.25rem; justify-items:center; min-width:0; margin:0; }
+.taste-preview-covers img, .taste-preview-covers .covers-image-missing { width:6rem; max-width:100%; aspect-ratio:2 / 3; object-fit:contain; }
+.taste-preview-covers figcaption { display:grid; justify-items:center; font-size:.75rem; }
+.taste-preview-covers figcaption small { color:var(--soft); }
+.taste-preview-text { display:grid; gap:.3rem; min-width:0; overflow-wrap:anywhere; }
+.taste-preview-text strong { font-family:Georgia,serif; font-size:1rem; }
+.taste-preview-text small { color:var(--soft); font-size:.78rem; }
+.taste-preview-text p { margin:0; }
+.taste-preview-state { color:var(--soft); font-size:.8rem; }
+.taste-preview-state.is-ok { color:var(--accent-strong); font-weight:700; }
+.taste-preview-actions, .taste-preview-foot { display:flex; flex-wrap:wrap; gap:.4rem .5rem; }
+.taste-preview-actions button, .taste-preview-foot button { min-height:44px; }
+@media (max-width:40rem) { .taste-preview-foot > * { flex:1 1 9rem; } }
+/* A taste switch's cited rules, grouped as Suggested because groups them. */
+.cover-taste-rules { display:grid; gap:.4rem; min-width:0; }
+.cover-taste-rules ol { display:grid; gap:.3rem; margin:0; padding:0; list-style:none; }
+.cover-taste-rules li { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.5rem; align-items:baseline; color:var(--ink); font-size:.82rem; line-height:1.35; overflow-wrap:anywhere; }
+.covers-switched-text .cover-taste-rules { margin-top:.4rem; }
 .taste-versions { max-width:calc(70ch + 4rem); padding:.8rem 1rem; border:1px solid var(--line); border-radius:12px; background:var(--surface-strong); }
 .taste-versions h2 { margin-bottom:.5rem; font-family:Georgia,serif; font-size:1.05rem; }
 .taste-versions ul { display:grid; gap:.55rem; margin:0; padding:0; list-style:none; }

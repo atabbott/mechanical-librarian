@@ -2,11 +2,12 @@
 
 Covers → Taste profile shows the taste profile a vision model wrote from the
 covers you chose and passed over, and lets you edit it. A second vision model
-compares each work's covers with it and [suggests switches](#suggestions); it
-changes no cover itself (#1372). The tab has no count, and the other tabs keep theirs
-while it is open. It belongs to the [review experience](review-experience.md);
-what the model receives is in the
-[AI trust boundary](../architecture/ai-boundary.md#taste-profile-builder).
+compares each work's covers with it and [suggests switches](#suggestions), or
+[switches covers itself](#automatic-switching) once you turn that on and its
+check passes; until then it only suggests (#1372). The tab has no count, and
+the other tabs keep theirs while it is open. It belongs to the [review
+experience](review-experience.md); what the model receives is in the [AI trust
+boundary](../architecture/ai-boundary.md#taste-profile-builder).
 
 Before the first profile, it reads "No taste profile yet" and says what is
 missing: "Set up the taste profile model in Settings.", linking to Settings →
@@ -35,9 +36,9 @@ A profile shows its version, the day it was built, how many decisions it read
 and its rules as "{n} of 40". Its numbered rules sit under four headings: What
 you’re drawn to, What you avoid, How you trade them off, and When to keep or
 switch. Every heading is shown with Add rule, even one with no rules yet.
-Versions, beside the rules above 1024 pixels, lists every version, newest
-first, the one in use marked "(in use)": a build reads "Built {date} from {n}
-decisions" and an edit "Edited {date}".
+Versions, beside the rules above 1024 pixels under Switching, lists every
+version, newest first, the one in use marked "(in use)": a build reads "Built
+{date} from {n} decisions" and an edit "Edited {date}".
 
 ## Picks
 
@@ -89,15 +90,50 @@ until the work is compared again. A work you have open stays open when a
 suggestion moves it between tabs.
 
 Under the build's state, the tab says when suggestions wait: "Set up the
-suggestion model in Settings." with no model, the daily limit or an
-unconfirmed charge with the local time they resume, and "The suggestion model
-could not check {n} works against your taste profile." with Try again, which
-compares them again and says "The suggestion model will check {n} works
-again.". During a stop, the line says when Try again returns instead. A work
-counts only while it could still be compared. At most 5,000 suggestions are asked for a day by default
-([configuration](../reference/configuration.md#taste-profile)). Under the
-version, "Confirmed {n} of {m} suggestions" counts the suggested works you
-answered and how many took the suggestion.
+suggestion model in Settings." with no model, the daily limit or an unconfirmed
+charge with the local time they resume, and "The suggestion model could not
+check {n} works against your taste profile." with Try again, which compares
+them again and says "The suggestion model will check {n} works again.". During
+a stop, the line says when Try again returns instead. A work counts only while
+it could still be compared. At most 5,000 suggestions are asked for a day by
+default ([configuration](../reference/configuration.md#taste-profile)). Inside
+[Switching](#automatic-switching), "Confirmed {n} of {m} suggestions" counts
+the suggested works you answered and how many took the suggestion.
+
+## Automatic switching
+
+Switching sits beside the rules above 1024 pixels and above them on narrower
+screens. It is Suggest only until you choose Automatic, which lets the profile
+switch a cover itself. Under Automatic, Only covers with a fault is Current
+covers' setting in Policy: ticked, a cover is switched only to cure a fault the
+measured rules found; cleared, any cover the profile prefers another for may be
+switched. Changing it prepares every cover again, so each is compared with the
+profile again, up to the daily limit, and Switching says so beside the box.
+While Current covers is Never, Suggest only is in force, Automatic is off and
+Switching links to it. Setting Never in Policy also sets Switching back to
+Suggest only; lifting Never leaves it there.
+Until your check passes, which a later release records, Automatic only
+suggests switches, and Switching says so.
+
+Choosing Automatic first opens a preview above the rules and saves nothing. It
+shows up to 5 switches the profile would make among at most 100 covers already
+compared under the version in use, each with the Now and New covers, the fault
+if any and the rules behind it. Only covers with a fault and its cost sit under
+the preview's line, before the switches. Looks right chooses that cover now as
+your own choice ("New cover chosen"); Keep current keeps the current one, a
+correction ("Current cover kept"). The preview's line
+says how many switches it found in how many covers, "so far" while covers are
+still being compared, "the limit" at 100, and "starting with last time’s" when
+a switch was suggested under an earlier version too. The preview reads again
+every 5 seconds while covers are being compared. Turn on saves Automatic at
+once, without waiting for the preview; Not now closes it.
+
+A switch binds the version it was made under. After an edit or a rebuild, a
+switch not yet written is withdrawn, shows as a suggestion again and is
+compared again. Switched names each taste switch's version, "Taste profile
+version {n}", with its rules, and its Show menu narrows the list to one
+version. Put back, Keep and Others work as for any switch; while Others is open
+a taste row hides its rules and reason line. Activity names only the version.
 
 ## Editing rules
 
