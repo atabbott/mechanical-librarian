@@ -706,3 +706,34 @@ def test_open_refuses_a_verdict_without_its_succeeded_judgement(
     with pytest.raises(ValueError, match="taste verdict is invalid"):
         validate_cover_taste_verdicts(library.repository._connection)
     library.repository.close()
+
+
+def test_a_due_read_captures_provider_fetching_once_instead_of_per_row(
+    library,
+) -> None:
+    """With an observation bound, the due read takes provider fetching from
+    one capture and never asks the recovery store row by row (review S1)."""
+    version = _version(library.repository)
+    repository = library.repository
+    store = repository.cover_taste_judge_store()
+    expected = store.due(version, 64)
+    assert len(expected) >= 2
+    fetches = captures = 0
+
+    def fetching(*_facts: str) -> bool:
+        nonlocal fetches
+        fetches += 1
+        return False
+
+    def capture():
+        nonlocal captures
+        captures += 1
+        return (repository._current_cover_authority, frozenset())
+
+    repository.bind_cover_consideration_currentness(fetching)
+    assert store.due(version, 64) == expected
+    assert fetches > 0  # unbound: every current row asks the store
+    fetches = 0
+    repository.bind_cover_read_observation(capture)
+    assert store.due(version, 64) == expected
+    assert (captures, fetches) == (1, 0)
