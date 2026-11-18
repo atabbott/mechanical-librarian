@@ -101,7 +101,11 @@ case. A test that passes only after another file has run is a defect.
 serially without it. Every shard computes the same split, `fast` by file from
 the times in `scripts/fast_tier_timings.json` and `browser` by test function
 from `scripts/browser_tier_timings.json`, estimating unlisted files from their
-size and unlisted functions from their parameter sets. A function's parameter
+size and unlisted functions from their parameter sets. `fast` shard 1 is dealt
+less, because the gate job that runs it runs the source checks first; the
+allowance is `_FAST_SHARD_ONE_HEAD_START` in the runner, dropped where it would
+leave shard 1 no file and recalibrated whenever the table is recorded on a
+different machine. A function's parameter
 sets stay in one shard, and a browser shard runs its cases in the tier's own
 order and is refused unless it ran exactly the cases its split names. A stale
 table only unbalances shards; it never drops or repeats a case. Refresh them
@@ -312,6 +316,13 @@ These rules apply to every new test, beside the code economy rules in
   `scripts/compatibility_versions.py --write`. A stored document's version
   never reaches the browser, so browser fixtures don't spell one. Older or
   next versions in refusal tests and frozen fixtures stay literal.
+- **Regenerate the browser's wire fixtures; never edit or hand-merge them.**
+  The JSON files `tests/unit/test_browser_wire_fixtures.py` checks are written
+  by `ML_WRITE_WIRE_FIXTURES=1 uv run pytest tests/unit/test_browser_wire_fixtures.py`
+  with sorted keys, formatted by the frontend's Prettier (run `npm ci` in
+  `frontend/` first). After a response changes, or a merge from `main`
+  conflicts in one of them, take either side, run that command and review the
+  diff.
 
 ## Fixtures, hostile input and privacy
 

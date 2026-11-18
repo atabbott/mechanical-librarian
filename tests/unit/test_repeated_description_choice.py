@@ -20,6 +20,7 @@ from mechanical_librarian.application.review_web import (
     RecordHumanDecision,
     ReviewWebError,
 )
+from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import TargetFieldState
 from tests.support.automatic_no_change import _automatic_no_change_inputs
@@ -61,7 +62,12 @@ def _description(repository, case_id: str) -> dict:
 
 
 def _decide(
-    repository, case_id: str, key: str, at: int, outcome: str = "keep_current"
+    repository,
+    case_id: str,
+    key: str,
+    at: int,
+    outcome: str = "keep_current",
+    selected_value: dict[str, object] | None = None,
 ) -> HumanDecision:
     field = _description(repository, case_id)
     acknowledgement = RecordHumanDecision(repository, clock=lambda: at).run(
@@ -71,7 +77,7 @@ def _decide(
         destination="description",
         actor="owner",
         outcome=outcome,
-        selected_value=None,
+        selected_value=selected_value,
         idempotency_key=key,
     )
     return HumanDecision.from_json(
@@ -406,6 +412,77 @@ def test_an_advice_write_over_an_empty_description_has_no_way_back(
             "SELECT count(*) FROM human_decisions"
         ).fetchone()
         == before
+    )
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "landed",
+    [
+        pytest.param("advice-then-owner", id="owner-write-landed-last"),
+        pytest.param("advice-only", id="owner-write-went-stale"),
+    ],
+)
+def test_a_description_decision_follows_the_write_that_landed_last(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, landed: str
+) -> None:
+    """Between the case's own owner write and its advice write, the next
+    decision follows the one that landed last, by landing order, not by
+    which was recorded first or the clock (#1973).
+
+    The owner's accept is recorded before the advice is chosen and both
+    plans are bound to the same library value, so the advice lands first.
+    The owner's plan is then either planned again and lands after it, or
+    left as it was and goes stale. An advice write can never land after
+    the owner's: a changing write retires the advice.
+    """
+    from tests.support.field_effects import CAPABILITY
+
+    qualify_description_advice(monkeypatch)
+    repository, store, binding, candidate, _ = _prepared(tmp_path, automatic=False)
+    case_id = binding.review_case_id
+    source = _description(repository, case_id)["proposed_values"][0]
+    owner = _decide(
+        repository, case_id, "accept-a-source-description", 11, "accept", source
+    )
+    advice = store.admit(candidate.candidate_id, binding, "human", "a" * 64, 12)
+    authority = PersistedFieldEffectAuthority(repository)
+    application, target = _guarded_application(repository, tmp_path, authority)
+
+    def plan(chosen: HumanDecision | AuthoredDescriptionDecision) -> str:
+        resolved = authority.resolve(chosen)
+        operation = application.plan(
+            chosen,
+            connection=resolved.connection,
+            library=resolved.library,
+            work_id=resolved.work_id,
+            destination=resolved.destination,
+            pre_value=resolved.pre_value,
+            desired_value=resolved.decision_value,
+            target_fingerprint=resolved.target_fingerprint,
+            target_version=resolved.target_version,
+            dependency_digests=resolved.dependency_digests,
+            capability_digest=CAPABILITY,
+        )
+        assert operation is not None
+        target.seed(operation.plan)
+        return operation.plan.plan_id
+
+    owner_plan = plan(owner)
+    assert application.apply(plan(advice)).state == "verified"
+    if landed == "advice-then-owner":
+        owner_plan = plan(owner)
+    assert application.apply(owner_plan).state == (
+        "verified" if landed == "advice-then-owner" else "stale"
+    )
+    expected = {"advice-then-owner": owner, "advice-only": advice}[landed]
+    keep = _decide(repository, case_id, "keep-after-the-landed-write", 50)
+    assert keep.follows == expected.decision_id
+    restored = authority.resolve(keep)
+    assert restored.pre_value == (
+        source["value"]
+        if landed == "advice-then-owner"
+        else "Authored synthetic description."
     )
     repository.close()
 

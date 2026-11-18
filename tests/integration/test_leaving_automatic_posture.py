@@ -1085,7 +1085,6 @@ def test_an_owner_decision_after_confirming_holds_the_current_generation(
         (fresh.review_case_id,),
     ).fetchone()
     assert held == owner.decision_id
-    assert root.field_effect_manual_override(fresh.review_case_id, "authors", 44) == 0
 
     # Releasing the hold makes this generation's decision current again.
     assert (

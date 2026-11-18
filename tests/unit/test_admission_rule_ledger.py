@@ -361,7 +361,7 @@ def _database(
     if floors is not None:
         connection.execute(
             "CREATE TABLE review_case_episodes (review_case_id TEXT PRIMARY KEY,"
-            "decision_floor INTEGER,effect_floor INTEGER)"
+            "decision_floor INTEGER,event_floor INTEGER)"
         )
     if automatic:
         connection.execute(

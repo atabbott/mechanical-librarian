@@ -10,6 +10,7 @@ import tempfile
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from functools import cache
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ from scripts.run_test_tier import (
     _execute_cohort,
     _merge_worker_records,
     _parallel_units,
+    _recorded_seconds,
     _retained_traceback,
     _shard_units,
     _verify_slow_partition,
@@ -209,10 +211,24 @@ def test_stall_diagnostic_exposes_only_a_safe_test_identifier() -> None:
     assert session.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS) is None
 
 
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+@cache
+def _repository_cohort(name: str) -> frozenset[str]:
+    """The identifiers of the repository's own cohort `name`, collected once.
+
+    Collecting the real fast tier takes over ten seconds; the tests that only
+    read its membership share one collection instead of each paying for it.
+    """
+
+    return frozenset(collect_cohort(_ROOT, name))
+
+
 def test_source_tiers_are_disjoint_and_all_tiers_own_every_public_test_file() -> None:
-    root = Path(__file__).resolve().parents[2]
+    root = _ROOT
     identifiers = {
-        name: set(collect_cohort(root, name)) for name in ("fast", "browser", "slow")
+        name: _repository_cohort(name) for name in ("fast", "browser", "slow")
     }
     assert identifiers["fast"]
     assert identifiers["browser"]
@@ -249,7 +265,7 @@ def test_the_probe_cohort_is_exactly_the_audio_probe_slice_of_slow() -> None:
 
     root = Path(__file__).resolve().parents[2]
     probe = set(collect_cohort(root, "probe"))
-    slow = set(collect_cohort(root, "slow"))
+    slow = _repository_cohort("slow")
     assert probe
     assert probe < slow
     assert all(
@@ -283,20 +299,26 @@ def _plan_or_budget_files(root: Path) -> list[Path]:
     }
     helpers: dict[str, set[str]] = {}
     for name, tree in trees.items():
-        functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+        # Each function's own markers and the names it uses, read once: the
+        # search below grows over them until no further function joins.
+        functions = [
+            (
+                function.name,
+                any(
+                    marker in ast.unparse(function)
+                    for marker in _PLAN_OR_BUDGET_MARKERS
+                ),
+                {node.id for node in ast.walk(function) if isinstance(node, ast.Name)},
+            )
+            for function in tree.body
+            if isinstance(function, ast.FunctionDef)
+        ]
         found: set[str] = set()
         while True:
             grown = {
-                function.name
-                for function in functions
-                if any(
-                    marker in ast.unparse(function)
-                    for marker in _PLAN_OR_BUDGET_MARKERS
-                )
-                or any(
-                    isinstance(node, ast.Name) and node.id in found
-                    for node in ast.walk(function)
-                )
+                function
+                for function, marked, names in functions
+                if marked or not names.isdisjoint(found)
             }
             if grown == found:
                 break
@@ -350,9 +372,7 @@ def test_the_shipped_sqlite_cohort_is_every_plan_asserting_file() -> None:
     assert sorted(Path(target) for target in targets) == asserting
     members = set(collect_cohort(root, "shipped-sqlite"))
     assert members
-    assert members < set(collect_cohort(root, "fast")) | set(
-        collect_cohort(root, "slow")
-    )
+    assert members < _repository_cohort("fast") | _repository_cohort("slow")
 
 
 def test_plan_or_budget_detection_follows_markers_and_helpers(
@@ -405,8 +425,8 @@ def test_plan_or_budget_detection_follows_markers_and_helpers(
 
 
 def test_required_installed_adds_explicit_preparation_nodes_to_fast() -> None:
-    root = Path(__file__).resolve().parents[2]
-    fast = set(collect_cohort(root, "fast"))
+    root = _ROOT
+    fast = _repository_cohort("fast")
     installed_nodes = list(collect_cohort(root, "required-installed"))
     installed = set(installed_nodes)
     installed_only = {
@@ -2071,12 +2091,13 @@ def test_workers_option_refuses_tiers_it_cannot_divide(args: list[str]) -> None:
     assert error.value.code == 2
 
 
-@pytest.mark.parametrize("count", (2, 3, 4))
+@pytest.mark.parametrize("count", (2, 3, 4, 6, 16, 40))
 def test_shards_together_run_every_fast_file_exactly_once(count: int) -> None:
+    # Every shard gets work, shard 1 too, however many share the tier.
     root = Path(__file__).parents[2]
     units, expected = _parallel_units(root, "fast")
     assert expected is None
-    shards = [_shard_units(root, units, index, count) for index in range(1, 5)[:count]]
+    shards = [_shard_units(root, units, index, count) for index in range(1, count + 1)]
     assert all(shards)
     assert sorted(unit for shard in shards for unit in shard) == sorted(units)
 
@@ -2089,7 +2110,10 @@ def test_shards_balance_on_recorded_time_and_estimate_unrecorded_files(
         (tmp_path / name).write_bytes(b"#" * size)
     units = tuple((str(tmp_path / name),) for name in sizes)
     timings = tmp_path / "timings.json"
-    with patch("scripts.run_test_tier._FAST_TIMINGS", timings):
+    with (
+        patch("scripts.run_test_tier._FAST_TIMINGS", timings),
+        patch("scripts.run_test_tier._FAST_SHARD_ONE_HEAD_START", 0.0),
+    ):
         # With no record, size stands in for time.
         assert [_shard_units(tmp_path, units, index, 2) for index in (1, 2)] == [
             ((str(tmp_path / "large.py"),),),
@@ -2119,6 +2143,39 @@ def test_shards_balance_on_recorded_time_and_estimate_unrecorded_files(
             tuple((str(tmp_path / name),) for name in ("slow.py", "large.py")),
             tuple((str(tmp_path / name),) for name in ("new.py", "quick.py")),
         ]
+
+
+def test_fast_shard_one_is_dealt_less_for_the_checks_its_job_runs_first(
+    tmp_path: Path,
+) -> None:
+    # Shard 1 starts 15 recorded seconds in, so the first two 10-second files
+    # go to shard 2, the third to shard 1 at 25, and the last to shard 2.
+    names = ("a.py", "b.py", "c.py", "d.py")
+    units = tuple((str(tmp_path / name),) for name in names)
+    for name in names:
+        (tmp_path / name).write_text("", encoding="utf-8")
+    with (
+        patch("scripts.run_test_tier._FAST_TIMINGS", tmp_path / "timings.json"),
+        patch("scripts.run_test_tier._FAST_SHARD_ONE_HEAD_START", 15.0),
+    ):
+        _write_recorded_seconds(
+            tmp_path, "fast", {str(tmp_path / name): 10.0 for name in names}
+        )
+        assert [_shard_units(tmp_path, units, index, 2) for index in (1, 2)] == [
+            ((str(tmp_path / "c.py"),),),
+            tuple((str(tmp_path / name),) for name in ("a.py", "b.py", "d.py")),
+        ]
+
+
+def test_the_real_fast_split_deals_shard_one_the_least_recorded_work() -> None:
+    root = _ROOT
+    units, _ = _parallel_units(root, "fast")
+    recorded = _recorded_seconds(root)
+    loads = [
+        sum(recorded.get(target, 0.0) for unit in shard for target in unit)
+        for shard in (_shard_units(root, units, index, 4) for index in range(1, 5))
+    ]
+    assert loads[0] < min(loads[1:])
 
 
 def test_recording_timings_times_every_unit_of_the_run(tmp_path: Path) -> None:

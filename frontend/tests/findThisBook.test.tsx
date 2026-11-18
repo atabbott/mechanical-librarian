@@ -3,7 +3,7 @@
 // Close send (nothing).
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type { LibraryWorkView, OwnerLinkView, OwnerSearchView, ReviewHttp } from '../src/api/http'
 import {
@@ -21,10 +21,12 @@ import {
   refusalFor,
   withheldLines,
 } from '../src/findThisBook'
-import { createHttp, detail, library, renderRoute } from './fixtures'
+import { createHttp, detail, library, renderRoute, loadRouteModules } from './fixtures'
 import { Preview } from '../src/routes/FindThisBookCard'
 import { card, linked, withLinkView } from './findThisBookFixtures'
 import { reportDetail } from './wireFixtures'
+
+beforeAll(loadRouteModules)
 
 const offered: OwnerLinkView = {
   offered: true,

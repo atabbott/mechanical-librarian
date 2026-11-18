@@ -1,9 +1,18 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { beforeAll, expect, it, vi } from 'vitest'
 import type { CaseDetailView, LibraryView, ReviewHttp } from '../src/api/http'
 import { hasBackgroundDebt } from '../src/queryWork'
-import { createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
+import {
+  createHttp,
+  createLiveStream,
+  detail,
+  library,
+  renderRoute,
+  loadRouteModules,
+} from './fixtures'
+
+beforeAll(loadRouteModules)
 it('confirms an off-page decision despite a pre-ack read and repeated case/resync frames', async () => {
   const field = detail.fields[0]
   if (!field) throw new Error('field required')

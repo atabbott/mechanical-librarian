@@ -450,3 +450,49 @@ def test_the_changelog_has_no_word_budget(corpus: Path) -> None:
     )
 
     assert checker.integrity_findings(corpus) == ()
+
+
+_OPEN = "## 0.2.0 \u2014 Next (in progress)\n\n"
+_WHOLE = "- One entry, whole (#1).\n- Another\n  entry, also whole (#2).\n"
+
+
+def _changelog(corpus: Path, text: str) -> None:
+    (corpus / "CHANGELOG.md").write_text(f"# Changelog\n\n{text}", encoding="utf-8")
+    (corpus / "docs" / "README.md").write_text(
+        (corpus / "docs" / "README.md").read_text(encoding="utf-8")
+        + "- [Changelog](../CHANGELOG.md)\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        # The first line of an entry edited on both sides, kept twice.
+        "- Library has a lens, after All,\n- Library has a lens, second\n  after All (#3).\n",
+        # Half an entry left behind the entry added beside it.
+        "- One side's entry (#4).\n- Added beside it (#5).\n  the other side's ending (#4).\n",
+        # Text a blank line cut from its entry.
+        "- A whole first paragraph (#8).\n\n  A second paragraph (#9).\n",
+    ],
+    ids=["unfinished", "spliced", "blank line inside"],
+)
+def test_a_changelog_entry_a_union_merge_broke_is_reported(
+    corpus: Path, entries: str
+) -> None:
+    _changelog(corpus, _OPEN + _WHOLE + entries)
+
+    findings = checker.integrity_findings(corpus)
+
+    assert len(findings) == 1
+    assert "CHANGELOG.md has a broken entry" in findings[0]
+
+
+def test_whole_changelog_entries_and_closed_sections_report_nothing(
+    corpus: Path,
+) -> None:
+    closed = "## 0.1.0 \u2014 First\n\n- A closed entry, as it was written,\n"
+    two = "- Two sentences (#6). Another starts in upper case (#7).\n"
+    _changelog(corpus, _OPEN + _WHOLE + two + "\n" + closed)
+
+    assert checker.integrity_findings(corpus) == ()

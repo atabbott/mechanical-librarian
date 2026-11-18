@@ -122,7 +122,7 @@ def test_snapshot_digest_mismatch_rejects_before_any_parser_dispatch() -> None:
         patch.object(child, "_read_context", return_value=_opening_context(expected)),
         patch.object(child, "_snapshot_source", return_value=b"changed then restored"),
         patch.object(child, "_write_report", side_effect=written.append),
-        patch.object(child, "_inspect_opening") as inspect,
+        patch.object(child, "_inspect_bundle") as inspect,
         patch.object(child.signal, "signal"),
         patch.object(child.os, "close"),
     ):
@@ -284,7 +284,7 @@ def _constructed_outcome(error: Exception) -> EpubInspectionOutcome:
         patch.object(child, "_SourceIO", return_value=object()),
         patch.object(child.zipfile, "ZipFile", side_effect=error),
     ):
-        return child._inspect_opening(object(), object(), EpubOpeningLimits()).outcome
+        return child._inspect_bundle(object(), object(), EpubOpeningLimits())[1].outcome
 
 
 def _crc_mismatch(value: bytes, names: tuple[str, ...]) -> bytes:
@@ -368,7 +368,7 @@ def _rear_facts(request, package_report, opening_report, archive):
         archive,
     )
     assert selection is not None
-    return child._rear_facts(
+    return child._adapter_rear_facts(
         request, package_report, opening_report, archive, selection
     )
 
@@ -2512,7 +2512,7 @@ def test_rear_pool_preserves_cancellation_terminal() -> None:
                 initial, opening.limits, package, archive
             )
             assert selection is not None
-            child._rear_facts(request, package, opening, archive, selection)
+            child._adapter_rear_facts(request, package, opening, archive, selection)
     assert raised.value.outcome == EpubInspectionOutcome.CANCELLATION
 
 

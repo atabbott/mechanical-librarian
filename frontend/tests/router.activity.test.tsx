@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { focusManager } from '@tanstack/react-query'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   AmbiguousMutationError,
@@ -34,7 +34,10 @@ import {
   permissionReadiness,
   readActivity,
   renderRoute,
+  loadRouteModules,
 } from './fixtures'
+
+beforeAll(loadRouteModules)
 
 // A row's disclosure ends with the row's own time, as the row shows it.
 const rowAt = (seconds: number) => formatWhen(seconds, new Date(), { dayShown: true })

@@ -154,7 +154,7 @@ from it for a manual one, so the table can be checked against the workflow.
 | Python formatting | gate | `uv run ruff format --check src tests scripts` in `fast-source` |
 | Python lint | gate | `uv run ruff check src tests scripts` in `fast-source` |
 | Python typing | gate | `uv run mypy src tests scripts` in `fast-source` |
-| Documentation reachability, relative links, the ADR index, issue-free headings and the word budget | gate | `scripts/verify_documentation_integrity.py` in `fast-source` |
+| Documentation reachability, relative links, the ADR index, issue-free headings, the word budget and whole changelog entries | gate | `scripts/verify_documentation_integrity.py` in `fast-source` |
 | Every direct dependency carries an authority grant, and no grant outlives its dependency | gate | `scripts/verify_dependency_authority.py` in `fast-source` |
 | Frontend typing, lint, formatting and Vitest suite | gate | `npm run typecheck`, `npm run lint`, `npm test`; `npm run lint` is what fails on unformatted source |
 | Frontend licence inventory and dependency advisories | gate | `npm run licenses`, `scripts/verify_npm_advisories.py` (npm audit through the advisory acceptance register) |

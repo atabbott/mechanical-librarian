@@ -33,7 +33,6 @@ _AUDIO_STDOUT_LIMIT = MAX_PUBLIC_REPORT_BYTES + 1
 _STDERR_LIMIT = 65_536
 _CONTEXT_LIMIT = 65_536
 _WALL_SECONDS = 60.0
-_CHILD_MAX_SECONDS = 55.0
 _CHILD_MARGIN_SECONDS = 0.25
 _TERMINATION_GRACE_SECONDS = 2.0
 # The probe document is the whole audio child's input, so its ceiling plus the
@@ -115,15 +114,6 @@ def _minimal_environment() -> dict[str, str]:
         "PYTHONUTF8": "1",
         "TMPDIR": "/nonexistent",
     }
-
-
-def _bounded_timing(wall_seconds: float) -> tuple[float, float]:
-    effective_wall_seconds = min(float(wall_seconds), _WALL_SECONDS)
-    child_seconds = min(
-        _CHILD_MAX_SECONDS,
-        max(0.001, effective_wall_seconds - _CHILD_MARGIN_SECONDS),
-    )
-    return effective_wall_seconds, child_seconds
 
 
 def run_epub_inspector_child(

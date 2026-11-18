@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.adapters.persistence import schema as persistence_schema
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
@@ -194,6 +196,57 @@ def test_transition_rejects_impossible_predecessor_pointers(
             successor,
             reason,
         )
+
+
+@pytest.mark.parametrize(
+    ("kind", "predecessor", "actor", "accepted"),
+    (
+        ("retired", _CASE_ID, "review-preparation-v1", True),
+        ("retired", None, "review-preparation-v1", False),
+        ("retired", _CASE_ID, "review-admission-v1", False),
+        ("retired", _CASE_ID, "policy-activation-v1", False),
+        ("tombstoned", _CASE_ID, "review-preparation-v1", False),
+        ("no_case", None, "review-admission-v1", False),
+    ),
+)
+def test_unidentified_is_only_a_preparation_retirement_of_a_case(
+    kind: str, predecessor: str | None, actor: str, accepted: bool
+) -> None:
+    transition = (
+        "primary",
+        "ebooks",
+        "item-1",
+        2,
+        "proposal_set_" + "a" * 64,
+        "report_" + "b" * 64,
+        kind,
+        predecessor,
+        None,
+        "unidentified",
+        actor,
+    )
+    if accepted:
+        assert ReviewTransition(*transition).reason == "unidentified"
+    else:
+        with pytest.raises(ReviewCaseValueError):
+            ReviewTransition(*transition)
+    # The table's own CHECK agrees (foreign keys are off on a bare connection).
+    database = sqlite3.connect(":memory:")
+    database.execute(persistence_schema._REVIEW_TRANSITIONS_SQL)
+    row = ("review_transition_" + "c" * 64, *transition[:4], actor, predecessor)
+    insert = (
+        "INSERT INTO review_case_transitions(transition_id,connection_name,"
+        "library_name,item_id,checkpoint,actor,from_review_case_id,"
+        "to_review_case_id,proposal_set_id,report_id,kind,reason) "
+        "VALUES(?,?,?,?,?,?,?,NULL,?,?,?,'unidentified')"
+    )
+    values = (*row, transition[4], transition[5], kind)
+    if accepted:
+        database.execute(insert, values)
+    else:
+        with pytest.raises(sqlite3.IntegrityError):
+            database.execute(insert, values)
+    database.close()
 
 
 def test_case_projections_are_detached_from_content_identity() -> None:

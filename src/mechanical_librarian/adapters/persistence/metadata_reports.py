@@ -120,7 +120,6 @@ from mechanical_librarian.adapters.persistence.review_scans import (
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _LATEST_PREPARATION_FAILED_SQL,
-    _active_generation_automatic_sql,
 )
 from mechanical_librarian.adapters.persistence.reviewer_access import (
     ReviewerAccessStore,
@@ -608,7 +607,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
             previous_field_values=self._field_effect_activity._previous_field_values,
             written_field_values=self._field_effect_activity._written_field_values,
-            kept_write=self._field_effect_activity._kept_write,
+            recorded_follows=self._field_effect_activity._recorded_follows,
             followed_write=self._field_effect_activity._followed_write,
         )
         self._review_projections = SQLiteReviewProjectionRepository(
@@ -1072,55 +1071,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
         return self._field_effect_activity.pending_field_effect_decision_counts()
 
-    @local_operation
-    def field_effect_manual_override(
-        self,
-        review_case_id: str,
-        destination: str,
-        changed_at: int,
-    ) -> int:
-        """Supersede only unclaimed automatic authority for a human override."""
-        if (
-            type(review_case_id) is not str
-            or type(destination) is not str
-            or type(changed_at) is not int
-            or changed_at < 0
-        ):
-            raise FieldEffectError("authority_binding")
-        transaction = self._transaction("field_effect_manual_override")
-        try:
-            transaction.begin()
-            rows = self._connection.execute(
-                "SELECT automatic.decision_id,human.decision_id FROM automatic_decisions automatic "
-                "JOIN human_decisions human ON human.review_case_id=automatic.review_case_id "
-                "AND human.destination=automatic.destination "
-                "AND human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
-                "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination "
-                "AND current.outcome NOT IN ('pin','unpin')) "
-                "WHERE automatic.review_case_id=? AND automatic.destination=? AND "
-                # Only the active generation's decision is superseded (#1573).
-                + _active_generation_automatic_sql("automatic"),
-                (review_case_id, destination),
-            ).fetchall()
-            if rows:
-                self._set_field_effect_manual_hold(
-                    review_case_id, destination, changed_at, rows[0][1]
-                )
-            superseded = sum(
-                self._revoke_field_effect_authority_in_transaction(
-                    decision_id, changed_at, required=False
-                )
-                for decision_id, _ in rows
-            )
-            transaction.commit()
-            return superseded
-        except (sqlite3.Error, FieldEffectError) as error:
-            transaction.rollback()
-            if isinstance(error, FieldEffectError):
-                raise
-            raise FieldEffectError("persistence") from error
-
     def _set_field_effect_manual_hold(
         self,
         review_case_id: str,
@@ -1372,9 +1322,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             changed_at,
             failure,
         )
-
-    def supersede_field_effect(self, decision_id: str, superseded_at: int) -> int:
-        return self.revoke_field_effect_authority(decision_id, superseded_at)
 
     def revoke_field_effect_authority(self, decision_id: str, changed_at: int) -> int:
         transaction = self._transaction("revoke_field_effect_authority")
@@ -2210,13 +2157,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise MetadataReportError("matching check is unavailable") from error
         return MatchingCheck(current_works=current, checking=checking, failed=failed)
 
-    def review_case_checking(self, review_case_id: str) -> bool:
-        """Whether the case waits for its Book matching check (the API's ``checking``)."""
-        try:
-            return case_level_unreconciled(self._connection, review_case_id)
-        except sqlite3.Error as error:
-            raise MetadataReportError("review case is unavailable") from error
-
     def _persisted_shadow_packet_source(
         self,
         review_case_id: str,
@@ -2650,17 +2590,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             occurred_at=occurred_at,
             preparation_kind=preparation_kind,
             reviewer_access_revision=reviewer_access_revision,
-        )
-
-    def record_cover_consideration_outcome(
-        self,
-        consideration_id: str,
-        kind: str,
-        occurred_at: int,
-        decision_id: str | None = None,
-    ) -> None:
-        self._cover_considerations.record_cover_consideration_outcome(
-            consideration_id, kind, occurred_at, decision_id
         )
 
     def cover_consideration_history(

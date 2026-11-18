@@ -134,7 +134,8 @@ What the main aggregates mean, where the table names alone do not say:
   `current_review_packages` is the owner-visible projection for Library and
   Attention, including report-only outcomes that have no case. A case admitted
   again after its work left it gets a `review_case_episodes` row: the owner
-  decisions and writes before it are history to that case.
+  decisions recorded and the writes that landed before it are history to that
+  case.
 - **Book matching levels.** At a wider level than `identifier`, a
   `level_proposal_sets` row is the level set derived beside its live
   `proposal_sets` row, and `level_decision_notes` holds the would-admit notes

@@ -143,9 +143,10 @@ changed.
 
 ### Let a search that identifies nothing take the case away
 
-It would make routine a state that ordinary re-preparation leaves today: the
-old case's lineage stays named as admitted and a write waiting on it stays
-waiting.
+Such a search most often means a source stopped listing the book (#1316).
+Taking the case away would retire it and close the writes waiting on it, as
+an ordinary re-preparation that identifies nothing does (#1953), for a book
+nothing has changed. Letting a match go is #1353's subject.
 
 ## Validation
 

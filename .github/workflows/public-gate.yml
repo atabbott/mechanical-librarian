@@ -110,7 +110,9 @@ jobs:
       # took about sixteen minutes here, and four worker processes on one
       # hosted runner cut that by little more than one.
       # This job runs shard 1; `fast-source-2` to `fast-source-4` run the
-      # rest. Every shard computes the same split from recorded file times.
+      # rest. Every shard computes the same split from recorded file times,
+      # dealing shard 1 less so this job, which ran the checks above first,
+      # ends near the others.
       - name: Run the fast source tier, shard 1 of 4
         run: uv run python scripts/run_test_tier.py fast --workers 2 --shard 1/4
 

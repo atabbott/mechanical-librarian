@@ -455,14 +455,6 @@ def _selected_cover(
         return {"state": "invalid_declaration"}, None
 
 
-def _inspect_opening(
-    request: EpubPackageRequest,
-    package_request: EpubPackageRequest,
-    limits: EpubOpeningLimits,
-) -> EpubOpeningReport:
-    return _inspect_bundle(request, package_request, limits)[1]
-
-
 def _inspect_bundle(
     request: EpubPackageRequest,
     package_request: EpubPackageRequest,
@@ -586,18 +578,6 @@ def _inspection(
         source,
         facts,
         opening.rear_resource_limit,
-    )
-
-
-def _rear_facts(
-    request: EpubPackageRequest,
-    package_report: EpubPackageReport,
-    opening_report: EpubOpeningReport,
-    archive: zipfile.ZipFile,
-    selection: opening_parser._OpeningSelection,
-) -> tuple[EpubInspectionFact, ...]:
-    return _adapter_rear_facts(
-        request, package_report, opening_report, archive, selection
     )
 
 

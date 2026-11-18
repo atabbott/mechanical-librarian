@@ -19,6 +19,7 @@ import type {
   OwnerPasswordFormState as FormState,
   OwnerPasswordProblem as Problem,
 } from '../ownerPasswordForm'
+import { descriptionId } from '../fieldControls'
 import { FieldRow } from './FieldRow'
 import { StaleBuildRead } from './StaleBuildRead'
 
@@ -211,7 +212,8 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
 
   const submit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (sending.current) return
+    // The page's state survives a remount, when this row's ref starts over.
+    if (sending.current || pending) return
     const [fieldErrors, short] = check(values)
     if (short || Object.keys(fieldErrors).length > 0) {
       refuse(fieldErrors, short)
@@ -281,7 +283,12 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
   )
   if (!open)
     return (
-      <FieldRow title="Owner password" description="Changing it signs out every other browser.">
+      <FieldRow
+        fieldId="owner-password"
+        group
+        title="Owner password"
+        description="Changing it signs out every other browser."
+      >
         <div className="settings-password">
           {changed ? (
             <p className="settings-password-status" role="status" tabIndex={-1} ref={status}>
@@ -292,6 +299,7 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
             <button
               type="button"
               ref={closedButton}
+              aria-describedby={descriptionId('owner-password')}
               onClick={() => {
                 update({ changed: false, open: true })
                 focusNext.current = ids.current
@@ -304,7 +312,12 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
       </FieldRow>
     )
   return (
-    <FieldRow title="Owner password" description="Changing it signs out every other browser.">
+    <FieldRow
+      fieldId="owner-password"
+      group
+      title="Owner password"
+      description="Changing it signs out every other browser."
+    >
       <form className="settings-password" noValidate onSubmit={(event) => void submit(event)}>
         {field('current', 'Current password', 'current-password')}
         {field('next', 'New password', 'new-password')}
@@ -321,7 +334,15 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
         </button>
         <ProblemLine problem={problem} reload={reload} />
         <div className="settings-password-actions">
-          <button type="submit" className="button-primary" disabled={pending} ref={submitButton}>
+          {/* aria-disabled, not disabled, keeps focus on the button while it changes the
+              password; submit refuses a second one while one is sending. */}
+          <button
+            type="submit"
+            className="button-primary"
+            aria-disabled={pending}
+            aria-describedby={descriptionId('owner-password')}
+            ref={submitButton}
+          >
             {pending ? 'Changing…' : 'Change password'}
           </button>
           <button

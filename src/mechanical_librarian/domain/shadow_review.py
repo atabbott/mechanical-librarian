@@ -1189,15 +1189,6 @@ def _contains_provider_date(value: dict[str, object]) -> bool:
     )
 
 
-def _is_provider_citation(citation_id: str, fact: dict[str, object]) -> bool:
-    return (
-        citation_id.startswith(("provider_", "evidence_"))
-        or "provider" in fact
-        or "linkage" in fact
-        or _contains_provider_date(fact)
-    )
-
-
 def _validate_provider_linkage(
     value: object,
     provider: str,

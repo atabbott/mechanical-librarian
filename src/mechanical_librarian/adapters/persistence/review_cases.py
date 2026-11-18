@@ -268,8 +268,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             checkpoint = 1 if prior is None else prior[3] + 1
             # The same proposal set replays its recorded admission answer,
             # unless the pointer's last actor retired the case without
-            # answering: preparation tombstoning it or finding it ineligible,
-            # or a policy activation retiring it for its successor. Leaving
+            # answering: preparation tombstoning it, finding it ineligible or
+            # identifying nothing, or a policy activation retiring it for its successor. Leaving
             # Automatic reactivates the unchanged policy, so that successor is
             # this same proposal set, admitted again as its same case (#1568).
             # Nor is a case kept for a recent write replayed once that write
@@ -552,11 +552,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             # history and word, settle and hold nothing now (#1358).
             self._connection.execute(
                 "INSERT INTO review_case_episodes(review_case_id,decision_floor,"
-                "effect_floor) VALUES(?,COALESCE((SELECT MAX(ordinal) FROM "
+                "event_floor) VALUES(?,COALESCE((SELECT MAX(ordinal) FROM "
                 "human_decisions WHERE review_case_id=?),0),COALESCE((SELECT "
-                "MAX(rowid) FROM field_effects),0)) ON CONFLICT(review_case_id) "
+                "MAX(rowid) FROM field_effect_events),0)) ON CONFLICT(review_case_id) "
                 "DO UPDATE SET decision_floor=excluded.decision_floor,"
-                "effect_floor=excluded.effect_floor",
+                "event_floor=excluded.event_floor",
                 (case.review_case_id, case.review_case_id),
             )
         return case, existing is not None
@@ -1409,25 +1409,6 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         if row is None:
             raise MetadataReportError("shadow review source is unavailable")
         return _validated_report_row(row)
-
-    def _source_pair_for_review_case(
-        self, review_case_id: str
-    ) -> tuple[MetadataReport, ProposalSet]:
-        row = self._connection.execute(
-            "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,"
-            "r.file_identity,r.content_digest,r.schema_version,r.document_digest,"
-            "r.document,p.proposal_set_id,p.report_id,p.policy_version,p.document "
-            "FROM review_cases c JOIN metadata_reports r ON r.report_id=c.report_id "
-            "JOIN proposal_sets p ON p.proposal_set_id=c.proposal_set_id "
-            "WHERE c.review_case_id=?",
-            (review_case_id,),
-        ).fetchone()
-        if row is None:
-            raise MetadataReportError("shadow review source is unavailable")
-        return (
-            MetadataReport.from_json(_validate_report_row(row[:9])),
-            ProposalSet.from_json(_validate_proposal_row(row[9:])),
-        )
 
     def _validated_review_pointer(
         self, lineage: tuple[str, str, str]

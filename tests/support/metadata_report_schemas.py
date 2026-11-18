@@ -438,8 +438,27 @@ PRIOR_HUMAN_DECISIONS_SQL = WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL.replace(
     "'reject','owner_entered','withdraw','pin','unpin')", "'reject')"
 )
 assert PRIOR_HUMAN_DECISIONS_SQL != WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL
-# Every producer before #1523 recorded no recent_write transition.
-PRIOR_REVIEW_TRANSITIONS_SQL = persistence_schema._REVIEW_TRANSITIONS_SQL.replace(
+# Every producer before #1973 floored an episode by field effect row and
+# admitted `follows` on a keep only.
+PRIOR_REVIEW_CASE_EPISODES_SQL = persistence_schema._REVIEW_CASE_EPISODES_SQL.replace(
+    "event_floor", "effect_floor"
+)
+assert PRIOR_REVIEW_CASE_EPISODES_SQL != persistence_schema._REVIEW_CASE_EPISODES_SQL
+PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL = persistence_schema._HUMAN_DECISIONS_SQL.replace(
+    "CHECK(json_valid(document)=0 OR json_type(document,'$.follows') IN ('null','text')))",
+    "CHECK(json_valid(document)=0 OR json_type(document,'$.follows')='null' "
+    "OR (outcome='keep_current' AND json_type(document,'$.follows')='text')))",
+)
+assert PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL != persistence_schema._HUMAN_DECISIONS_SQL
+# Every producer before #1953 recorded no unidentified retirement.
+WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL = (
+    persistence_schema._REVIEW_TRANSITIONS_SQL.replace(
+        "'ineligible','unidentified',", "'ineligible',"
+    ).replace("reason IN ('ineligible','unidentified')", "reason='ineligible'")
+)
+assert WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL.count("unidentified") == 0
+# Nor did any before #1523 record a recent_write transition.
+PRIOR_REVIEW_TRANSITIONS_SQL = WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL.replace(
     "'actionable','recent_write','nonactionable'", "'actionable','nonactionable'"
 ).replace("reason IN ('actionable','recent_write')", "reason='actionable'")
 assert PRIOR_REVIEW_TRANSITIONS_SQL.count("recent_write") == 0

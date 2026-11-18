@@ -3,13 +3,15 @@
 // finish, and the works list's row phrase.
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type { OwnerLinkCurrent, OwnerLinkView, ReviewHttp } from '../src/api/http'
 import { ApiError } from '../src/api/http'
 import { pillText, rowLinkPhrase, stateLine, unusedLinkLine } from '../src/findThisBook'
-import { createHttp, library, renderRoute } from './fixtures'
+import { createHttp, library, renderRoute, loadRouteModules } from './fixtures'
 import { linked, withLinkView } from './findThisBookFixtures'
+
+beforeAll(loadRouteModules)
 
 const view = (link: OwnerLinkCurrent | null, offered = true): OwnerLinkView => ({
   offered,

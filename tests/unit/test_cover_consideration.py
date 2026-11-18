@@ -192,18 +192,6 @@ class _Store:
         )
         return document
 
-    def record_cover_consideration_outcome(
-        self, consideration_id, kind, occurred_at, decision_id=None
-    ):
-        self.events.append(
-            {
-                "consideration_id": consideration_id,
-                "decision_id": decision_id,
-                "kind": kind,
-                "occurred_at": occurred_at,
-            }
-        )
-
     def cover_consideration_history(self, review_case_id, limit=50):
         del review_case_id
         return tuple(reversed(self.events[-limit:]))

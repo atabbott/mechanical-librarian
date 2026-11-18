@@ -113,7 +113,7 @@ event, so the value a write replaced is durable.
   episode of it. Its earlier owner decisions are append-only and stay as
   history, but they settle, word, withdraw, plan and authorize nothing in the
   new episode (a plan made for one never applies, and the next owner decision
-  supersedes it), and a write planned before it is not its pre-image: the case reads as
+  supersedes it), and a write that landed before it is not its pre-image: the case reads as
   undecided until the owner decides again. Choosing the previous value again
   therefore leaves the earlier case reading as new, not as "You entered X"
   marked written. An earlier episode's decision still keeps a new automatic

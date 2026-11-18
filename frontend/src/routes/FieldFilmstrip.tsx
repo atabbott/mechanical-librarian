@@ -56,7 +56,28 @@ export function FieldFilmstrip({
 }) {
   return (
     <section className="field-map" aria-label={`Fields in ${title}`}>
-      <nav ref={fieldRail} className="field-filmstrip" aria-label="Review fields">
+      <nav
+        ref={fieldRail}
+        className="field-filmstrip"
+        aria-label="Review fields"
+        onFocus={(event) => {
+          // A tab that takes focus partly outside the strip is scrolled fully in,
+          // which the browser leaves undone when some of it already shows, so
+          // neither its name nor its focus ring is cut at the strip's edge.
+          const rail = event.currentTarget
+          const tab = event.target
+          if (tab === rail) return
+          const strip = rail.getBoundingClientRect()
+          const box = tab.getBoundingClientRect()
+          const by =
+            box.left < strip.left
+              ? box.left - strip.left
+              : box.right > strip.right
+                ? Math.min(box.right - strip.right, box.left - strip.left)
+                : 0
+          if (by) rail.scrollLeft += by
+        }}
+      >
         {fields.map((field) => (
           <button
             key={field.destination}

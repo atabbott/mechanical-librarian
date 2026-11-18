@@ -61,6 +61,10 @@ describe('Owner password', () => {
     expect(screen.getByText('Owner password')).toBeVisible()
     expect(screen.getByText('Changing it signs out every other browser.')).toBeVisible()
     expect(screen.queryByLabelText('Current password')).not.toBeInTheDocument()
+    // The row's line is read with the button, not only seen beside it.
+    expect(screen.getByRole('button', { name: 'Change password' })).toHaveAccessibleDescription(
+      'Changing it signs out every other browser.',
+    )
 
     await open(user)
     expect(field('Current password')).toHaveFocus()
@@ -262,6 +266,32 @@ describe('Owner password', () => {
     expect(http.changePassword).toHaveBeenCalledOnce()
   })
 
+  it('sends once when the page remounts the row while it sends', async () => {
+    const http = createHttp()
+    http.changePassword = vi.fn(() => new Promise<undefined>(() => undefined))
+    const Page = () => {
+      const form = useOwnerPasswordForm()
+      const [generation, setGeneration] = useState(0)
+      return (
+        <>
+          <button type="button" onClick={() => setGeneration((value) => value + 1)}>
+            Remount
+          </button>
+          <OwnerPasswordSettings key={generation} http={http} form={form} />
+        </>
+      )
+    }
+    const user = userEvent.setup()
+    render(<Page />)
+    await open(user)
+    await fill(user, { current, next, confirmation: next })
+    await user.click(screen.getByRole('button', { name: 'Change password' }))
+    await user.click(screen.getByRole('button', { name: 'Remount' }))
+    await user.click(screen.getByRole('button', { name: 'Changing…' }))
+
+    expect(http.changePassword).toHaveBeenCalledOnce()
+  })
+
   it('keeps the open form when the page remounts the row', async () => {
     const Page = () => {
       const form = useOwnerPasswordForm()
@@ -290,6 +320,32 @@ describe('Owner password', () => {
     )
   })
 
+  it('keeps focus on Change password while it sends, and sends once', async () => {
+    let finish: () => void = () => undefined
+    const http = createHttp()
+    http.changePassword = vi.fn(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finish = () => resolve(undefined)
+        }),
+    )
+    const { user } = setup(http)
+    await open(user)
+    await fill(user, { current, next, confirmation: next })
+    await user.click(screen.getByRole('button', { name: 'Change password' }))
+
+    // Not `disabled`, which would drop focus to the page while it waits.
+    const sending = screen.getByRole('button', { name: 'Changing…' })
+    expect(sending).toHaveAttribute('aria-disabled', 'true')
+    expect(sending).toHaveAccessibleDescription('Changing it signs out every other browser.')
+    expect(sending).toHaveFocus()
+    await user.click(sending)
+    await user.keyboard('{Enter}')
+    expect(http.changePassword).toHaveBeenCalledOnce()
+    finish()
+    await waitFor(() => expect(screen.getByRole('status')).toHaveFocus())
+  })
+
   it('disables the form while sending, then closes it and announces the change', async () => {
     let finish: () => void = () => undefined
     const http = createHttp()
@@ -305,7 +361,7 @@ describe('Owner password', () => {
     await user.keyboard('{Enter}')
 
     const sending = screen.getByRole('button', { name: 'Changing…' })
-    expect(sending).toBeDisabled()
+    expect(sending).toHaveAttribute('aria-disabled', 'true')
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Show passwords' })).toBeDisabled()
     for (const name of ['Current password', 'New password', 'Confirm new password'])

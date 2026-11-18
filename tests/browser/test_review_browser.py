@@ -3198,22 +3198,12 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 assert page.get_by_role(
                     "navigation", name="Policy chapters"
                 ).is_visible()
-                # The sticky finish tray spans both columns and never covers a
-                # sidebar safety control, with the safety group expanded.
+                # The sticky finish tray sits under the chapter column only and
+                # never covers a sidebar safety control, with the safety group
+                # expanded.
                 if not page.locator(".cm-policy-mode").evaluate("node => node.open"):
                     page.locator(".cm-policy-mode summary").click()
                 page.get_by_role("button", name="Enter Preview mode").wait_for()
-                # Measured at the page's end, with the sidebar held below the
-                # masthead. The phone masthead now scrolls away (#1894), so the
-                # theme click above scrolled to the top rather than leaving the
-                # page at its end as it used to.
-                page.evaluate("scrollTo(0, document.documentElement.scrollHeight)")
-                sidebar_box = page.locator(".cm-policy-sidebar").bounding_box()
-                tray_box = page.locator(".cm-finish-tray").bounding_box()
-                assert sidebar_box is not None and tray_box is not None
-                sidebar_right = sidebar_box["x"] + sidebar_box["width"]
-                assert tray_box["x"] < sidebar_right
-                assert (tray_box["x"] + tray_box["width"]) > sidebar_right
                 covered = """() => {
                     const rail = document.querySelector('.cm-policy-sidebar')
                     const side = rail.getBoundingClientRect()
@@ -3230,6 +3220,26 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                         })
                         .map(([node]) => node.textContent.slice(0, 48))
                     }"""
+                # At the top of the page the rail starts below the heading. It
+                # still takes the window's height rather than stopping where the
+                # tray would be once stuck, which hid its last safety controls.
+                page.evaluate("scrollTo(0, 0)")
+                rail_room = page.locator(".cm-policy-sidebar").evaluate(
+                    """node => [node.clientHeight, node.scrollHeight,
+                        innerHeight - node.getBoundingClientRect().top]"""
+                )
+                assert rail_room[0] >= min(rail_room[1], rail_room[2]) - 1, rail_room
+                assert page.evaluate(covered) == []
+                # Measured at the page's end, with the sidebar held below the
+                # masthead. The phone masthead now scrolls away (#1894), so the
+                # theme click above scrolled to the top rather than leaving the
+                # page at its end as it used to.
+                page.evaluate("scrollTo(0, document.documentElement.scrollHeight)")
+                sidebar_box = page.locator(".cm-policy-sidebar").bounding_box()
+                tray_box = page.locator(".cm-finish-tray").bounding_box()
+                assert sidebar_box is not None and tray_box is not None
+                sidebar_right = sidebar_box["x"] + sidebar_box["width"]
+                assert tray_box["x"] >= sidebar_right - 1
                 assert page.evaluate(covered) == []
                 # Anything the bounded rail clips stays reachable by scrolling
                 # the rail itself, and is still never under the tray.
@@ -5700,6 +5710,20 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     )
                 set_root_text(page, "")
                 page.set_viewport_size({"width": 390, "height": 844})
+                # Covers load lazily (#1290): a cover far below the fold has not
+                # asked for its image until it nears the viewport. A phone's
+                # strip of covers sits within the browser's lazy-load distance,
+                # so after the reload below the last cover is moved far down
+                # the page (a style set from script, which the CSP allows).
+                covers = page.locator(".library-cover-image").count()
+                page.add_init_script(
+                    "new MutationObserver((_, observer) => {"
+                    " const frames = document.querySelectorAll('.library-cover-image');"
+                    f" if (frames.length < {covers}) return;"
+                    " frames[frames.length - 1].style.marginTop = '6000px';"
+                    " observer.disconnect();"
+                    "}).observe(document, { childList: true, subtree: true });"
+                )
 
                 assert errors == []
                 # A cover whose bytes never arrive keeps a bounded, labelled
@@ -5722,10 +5746,9 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 page.reload()
                 page.get_by_text("Image unavailable").first.wait_for()
                 page.wait_for_timeout(300)
-                # Covers load lazily (#1290): a card below the fold has not
-                # asked for its image until it nears the viewport.
                 frames = page.locator(".library-cover-image")
-                assert 0 < len(requested) < frames.count(), requested
+                assert frames.count() == covers
+                assert 0 < len(requested) < covers, requested
                 for cover_frame in frames.all():
                     cover_frame.scroll_into_view_if_needed()
                 page.wait_for_function(
@@ -8308,6 +8331,15 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                                 search = page.locator(
                                     "#main-content input[type=search]"
                                 )
+                                # Start opens the run it began. Once that run
+                                # is read its detail shows, and on a phone it
+                                # replaces the list and its search.
+                                if "preparation=" in page.url:
+                                    expect(
+                                        page.locator(
+                                            ".preparation-detail [data-route-focus]"
+                                        )
+                                    ).to_be_visible()
                                 if not search.is_visible():
                                     page.locator(".compact-workspace-back").click()
                                 search.focus()
@@ -13173,9 +13205,14 @@ def test_keyboard_only_triage_journey(width):
         page.keyboard.type("j2?")
         expect(search).to_have_value("j2?")
         expect(page.get_by_role("dialog", name="Keys")).to_be_hidden()
+        # The search reaches the address after a short delay and its rows
+        # after a read; until both settle the earlier rows stay on screen. Tab
+        # then follows whichever list is there, so each search settles first.
+        expect(page.get_by_text("No works match this search.")).to_be_visible()
         assert "field=" not in page.url and ("preview=" in page.url) == opened
         page.keyboard.press("Control+A")
         page.keyboard.press("Backspace")
+        expect(page).not_to_have_url(re.compile(r"[?&]q="))
         expect(row).to_be_visible()
         page.keyboard.press("Tab")
         expect(row).to_be_focused()
@@ -13317,6 +13354,13 @@ def test_keyboard_only_triage_journey(width):
                 "keep_current",
                 "withdraw",
             ]
+            # The response can reach the test before the page has settled the
+            # withdrawal, and no key acts while a decision records.
+            expect(
+                page.get_by_text(
+                    "Withdrawn. This field needs a decision again.", exact=True
+                )
+            ).to_be_focused()
             page.set_viewport_size({"width": width, "height": height})
 
         # E opens the entry empty: the key itself is not typed into it.
@@ -15691,6 +15735,14 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
         fixture.recovery.enqueue_jobs(
             tuple(_job(f"member-{index}") for index in range(3)), enqueued_at=now
         )
+        discovered = threading.Event()
+        discover = preparation._pipeline._discover
+
+        def held_discover(connection: str, library: str):
+            discovered.wait()
+            return discover(connection, library)
+
+        monkeypatch.setattr(preparation._pipeline, "_discover", held_discover)
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             try:
@@ -15738,12 +15790,16 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                 expect(resume).to_be_focused()
                 resume.click()
                 expect(trigger).to_have_accessible_name(f"Preparation idle. {waiting}")
+                # A one-work library can finish its scan before the masthead
+                # next reads it, so discovery waits until the busy state is
+                # seen.
                 popover.get_by_role("button", name="Scan now", exact=True).first.click()
                 expect(trigger).to_have_accessible_name(
                     f"Preparing libraries. {waiting}"
                 )
                 # Idle had no progress at all; the press started a real scan.
                 progress, paused = preparation.status()
+                discovered.set()
                 assert not paused
                 assert progress[0] is not None
                 assert progress[0].scan_id
@@ -15781,6 +15837,7 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                     "SECTION.settings-route"
                 }, arrivals
             finally:
+                discovered.set()
                 browser.close()
 
 
@@ -16517,8 +16574,24 @@ def _check_cover_tabs_after_swipe_back_and_tab(page: Page, origin: str) -> None:
     assert not page.evaluate(_COVER_TAB_IN_VIEW, ".covers-tabs button:nth-child(2)"), (
         "the swipe must hide Kept for the tap to prove anything"
     )
+    # Kept's read is held past the tap, so every count still shows "…", wider
+    # than its number: the tab is brought into view once now and again when
+    # the counts arrive and the tabs narrow. A read not yet routed when the
+    # rest are released is still unanswered, so it is released on arrival.
+    held: list[Route] = []
+    released = False
+    page.route(
+        "**/api/v1/covers?view=kept",
+        lambda route: route.continue_() if released else held.append(route),
+    )
     _tap_cover_tab(page, 1)
     expect(buttons.nth(1)).to_have_attribute("aria-pressed", "true")
+    expect(buttons.nth(0)).to_have_text("To decide …")
+    page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
+    released = True
+    for route in held:
+        route.continue_()
+    expect(buttons.nth(0)).to_have_text("To decide 1")
     page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
     # Taste profile, then a swipe back to the start and To decide; Back
     # returns to Taste profile and brings it into view again.

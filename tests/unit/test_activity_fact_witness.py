@@ -1382,21 +1382,26 @@ def test_only_unconditional_refusal_of_both_routes_classifies_a_table(
 def test_a_keep_row_depends_on_the_write_frozen_with_it() -> None:
     """A keep's row reads its own writes and the write its decision names as
     the one it goes back on (#1523); a write's own move reaches only its own
-    row and the rows of the decisions that name it."""
+    row and the rows of the keeps that name it. Every decision names the
+    write it follows, but only a keep's row reads it (#1973)."""
     key = activity_facts._key
     connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE human_decisions(decision_id TEXT, document TEXT)")
     connection.execute(
-        "INSERT INTO human_decisions VALUES(?,?)",
-        ("keep-1", json.dumps({"follows": "accept-1"})),
+        "CREATE TABLE human_decisions(decision_id TEXT, outcome TEXT, document TEXT)"
     )
-    connection.execute(
-        "INSERT INTO human_decisions VALUES(?,?)",
-        ("plain-1", json.dumps({"follows": None})),
-    )
+    for decision, outcome, follows in (
+        ("keep-1", "keep_current", "accept-1"),
+        ("plain-1", "keep_current", None),
+        ("accept-2", "accept", "accept-1"),
+    ):
+        connection.execute(
+            "INSERT INTO human_decisions VALUES(?,?,?)",
+            (decision, outcome, json.dumps({"follows": follows})),
+        )
     for decision, expected in (
         ("keep-1", {"keep-1", "accept-1"}),
         ("plain-1", {"plain-1"}),
+        ("accept-2", {"accept-2"}),
     ):
         dependencies, _, candidates = activity_facts._bindings(
             "human_decision_events",
