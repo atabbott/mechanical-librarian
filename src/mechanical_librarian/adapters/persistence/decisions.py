@@ -900,6 +900,21 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "review_case_id=? AND destination='cover' AND active=0",
                 (decision.review_case_id,),
             )
+            # An answer while a cover hold stands takes that hold over, so a
+            # Resume asked before it, still waiting on its checks, names a
+            # token that no longer matches and releases nothing (K9).
+            if self._connection.execute(
+                "SELECT 1 FROM field_effect_manual_holds WHERE "
+                "review_case_id=? AND destination='cover' AND active=1",
+                (decision.review_case_id,),
+            ).fetchone():
+                self._set_field_effect_manual_hold(
+                    decision.review_case_id,
+                    decision.destination,
+                    decision.occurred_at,
+                    decision.decision_id,
+                    pin,
+                )
         else:
             # Every owner answer holds its field from Automatic, whether or
             # not an automatic decision is on this case: the owner's choice

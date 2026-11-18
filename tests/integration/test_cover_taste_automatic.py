@@ -984,6 +984,91 @@ def test_cover_resume_hands_the_cover_back_to_automatic(
         assert field["manual_hold"] is False
 
 
+@pytest.mark.parametrize("outcome", ("accept", "keep_current", "reject"))
+def test_an_answer_after_resume_was_asked_is_not_released(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    """Review B1: the owner presses Resume, then answers the cover in To
+    decide before the fresh checks complete. The answer takes the hold over,
+    so the pending return drops and the completed checks, naming the old
+    token, release nothing: the owner's new choice stays. Put back is an
+    accept naming a retained candidate, so it takes this same branch."""
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with _prepared(tmp_path) as prepared:
+        repository = prepared.repository
+        service = _service(prepared)
+        (switch,) = _selections(repository)
+        _keep_cover(prepared, switch["selection_id"])
+        service.update_policy(CoverPolicy(prefer_edition=True))
+        later = json.loads(_reprepare(service, prepared))
+        assert len(_marks(prepared)) == 1
+        token = repository.field_effect_manual_hold_token(
+            prepared.review_case_id, "cover"
+        )
+        assert token is not None
+        target = prepared.report.target
+        scan = repository.request_review_scan(
+            target.connection, target.library, "library-ebooks", "a" * 64, 12
+        )
+        assert repository.request_field_effect_manual_return(
+            prepared.review_case_id, "cover", token, scan.scan_id, 12, 12
+        )
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(prepared.review_case_id))["case"]
+        )
+        proposal = next(row for row in case.proposals if row["destination"] == "cover")
+        (kept,) = _selections(repository)
+        chosen = next(
+            candidate
+            for candidate in later["candidates"]
+            if not candidate["incumbent"] and candidate["selectable"]
+        )
+        repository.record_human_decision(
+            HumanDecision.create(
+                case,
+                proposal_id=str(proposal["proposal_id"]),
+                target_fingerprint=case.target_fingerprint,
+                destination="cover",
+                actor="owner",
+                outcome=outcome,
+                selected_value={"kind": "cover", "value": chosen["artifact_id"]}
+                if outcome == "accept"
+                else None,
+                idempotency_key="synthetic-owner-answers-after-resume",
+                occurred_at=15,
+            ),
+            cover_consideration_id=later["consideration_id"],
+            cover_confirmation={
+                "expected_selection_id": kept["selection_id"],
+                "confirm_unverified_match": outcome == "accept",
+            },
+        )
+        (answered,) = _selections(repository)
+        assert answered["kind"] == "owner"
+        assert answered["selection_id"] != kept["selection_id"]
+        hold = json.loads(
+            repository._connection.execute(
+                "SELECT document FROM field_effect_manual_holds "
+                "WHERE review_case_id=? AND destination='cover' AND active=1",
+                (prepared.review_case_id,),
+            ).fetchone()[0]
+        )
+        assert hold["decision_id"] != token
+        assert hold["pending_return"] is None
+        # The checks Resume asked for complete and clear the hold they named.
+        assert (
+            repository.clear_field_effect_manual_hold(
+                prepared.review_case_id, "cover", 20, token
+            )
+            is None
+        )
+        assert _selections(repository) == [answered]
+
+
 def test_a_later_comparison_with_no_switch_clears_the_mark(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
