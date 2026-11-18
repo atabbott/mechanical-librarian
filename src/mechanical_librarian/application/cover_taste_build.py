@@ -22,8 +22,12 @@ from mechanical_librarian.application.cover_taste_inputs import (
     assemble_taste_inputs,
 )
 from mechanical_librarian.application.cover_taste_switching import (
+    TASTE_PROTECTIONS,
     CoverTasteSwitchingRepository,
+    TastePreviewWalk,
+    taste_preview,
 )
+from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
@@ -101,6 +105,8 @@ class CoverTasteRepository(Protocol):
     def judge_read(self, now: int, daily_limit: int) -> dict[str, object]: ...
 
     def request_judge_retry(self, version: int, now: int) -> bool: ...
+
+    def preview(self, protection: str) -> TastePreviewWalk: ...
 
 
 class CoverTasteRetryError(RuntimeError):
@@ -189,6 +195,14 @@ class CoverTasteBuildService:
                 "daily_limit": self._judge_daily_limit,
             },
         }
+
+    def preview(self, protection: str) -> dict[str, object]:
+        """What Switching Automatic would switch under `protection`, from
+        what the judge has stored (K7); raises `ReviewWebError` with no
+        profile."""
+        if protection not in TASTE_PROTECTIONS:
+            raise ReviewWebError("request")
+        return taste_preview(self._repository().preview(protection))
 
     def retry_judge(self, version: int) -> None:
         """Ask again for each work whose check failed under `version`, the

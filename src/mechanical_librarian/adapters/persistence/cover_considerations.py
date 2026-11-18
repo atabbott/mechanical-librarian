@@ -102,6 +102,59 @@ _UNWRITTEN_SQL = (
 )
 
 
+def taste_switch_candidate(
+    value: Mapping[str, Any],
+    policy_report: Mapping[str, Any],
+    verdict_document: str,
+    protection: object,
+) -> dict[str, Any] | None:
+    """The candidate a taste verdict would switch to, or None (K4 gates 4-6).
+
+    The verdict chooses a selectable candidate still in the comparison,
+    other than the current cover, with a rank key and citations; the stage
+    kept a fault-free cover and `protection` lets a preferred cover replace
+    it, or the stage would replace a fault the judge cures; and the current
+    cover's state is one the taste identity may change. Admission passes the
+    comparison's own protection; the preview passes the one asked about.
+    """
+    chosen = json.loads(verdict_document)
+    candidate = next(
+        (
+            item
+            for item in value.get("candidates", ())
+            if type(item) is dict
+            and item.get("reference") == chosen.get("candidate_reference")
+        ),
+        None,
+    )
+    stage = policy_report.get("stage")
+    if (
+        chosen.get("decision") != "choose"
+        or candidate is None
+        or candidate.get("incumbent") is not False
+        or candidate.get("selectable") is not True
+        or not candidate.get("deterministic_citations")
+        or type(candidate.get("deterministic_rank_key")) is not list
+        or type(stage) is not dict
+    ):
+        return None
+    if not (
+        (
+            stage.get("outcome") == "keep"
+            and stage.get("reason") is None
+            and protection == "unprotected"
+        )
+        or (
+            stage.get("outcome") == "replace"
+            and stage.get("reason") in TASTE_JUDGE_FAULTS
+        )
+    ):
+        return None
+    if policy_report.get("actual_target_state") not in TASTE_REPLACEMENT_TARGET_STATES:
+        return None
+    return cast("dict[str, Any]", candidate)
+
+
 class SQLiteCoverConsiderationRepository(ConnectionScoped):
     """Persist, read and retire the cover considerations of one review case."""
 
@@ -278,24 +331,13 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         ).fetchone()[0]
         if verdict is None or verdict[0] != verdict_id or verdict[1] != active:
             return False
-        chosen = json.loads(verdict[2])
-        candidate = next(
-            (
-                item
-                for item in value.get("candidates", ())
-                if type(item) is dict
-                and item.get("reference") == chosen.get("candidate_reference")
-            ),
-            None,
+        candidate = taste_switch_candidate(
+            value,
+            policy_report,
+            verdict[2],
+            json.loads(value["policy_document"]).get("current_protection"),
         )
-        if (
-            chosen.get("decision") != "choose"
-            or candidate is None
-            or candidate.get("incumbent") is not False
-            or candidate.get("selectable") is not True
-            or not candidate.get("deterministic_citations")
-            or type(candidate.get("deterministic_rank_key")) is not list
-        ):
+        if candidate is None:
             return False
         current = self._connection.execute(
             "SELECT json_extract(json_extract(selection.document,'$.decision_document'),"
@@ -309,20 +351,6 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         if current is not None and current[0] == verdict_id:
             return True
         stage = cast("dict[str, object]", policy_report["stage"])
-        protection = json.loads(value["policy_document"]).get("current_protection")
-        if not (
-            (
-                stage["outcome"] == "keep"
-                and stage["reason"] is None
-                and protection == "unprotected"
-            )
-            or (stage["outcome"] == "replace" and stage["reason"] in TASTE_JUDGE_FAULTS)
-        ):
-            return False
-        if policy_report.get("actual_target_state") not in (
-            TASTE_REPLACEMENT_TARGET_STATES
-        ):
-            return False
         try:
             keeps_original = cover_pre_value(report) is not None
         except FieldEffectError:
@@ -344,7 +372,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             generation,
             candidate,
             TASTE_REPLACEMENT_IDENTITY,
-            stage["reason"],
+            cast("str | None", stage["reason"]),
             occurred_at,
             verdict_id=verdict_id,
             taste_version=cast(int, verdict[1]),

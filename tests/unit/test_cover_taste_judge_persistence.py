@@ -13,7 +13,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from PIL import Image
@@ -23,7 +23,9 @@ from mechanical_librarian.adapters.persistence import schema
 from mechanical_librarian.adapters.persistence.cover_taste_judge import (
     _DUE_ONE_SQL,
     _DUE_SQL,
+    _PREVIEW_WALK_SQL,
     SQLiteCoverTasteJudgeRepository,
+    taste_preview_walk,
     validate_cover_taste_verdicts,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
@@ -50,6 +52,13 @@ from mechanical_librarian.application.cover_taste_judge_contract import (
     AdmittedTasteJudgeRequest,
     TasteJudgeReply,
 )
+from mechanical_librarian.application.cover_taste_switching import (
+    PREVIEW_CHECKED,
+    PREVIEW_SWITCHES,
+    TastePreviewWalk,
+    taste_preview,
+)
+from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
 )
@@ -63,6 +72,13 @@ from mechanical_librarian.domain.cover_taste import (
     TASTE_MIN_ARTS,
 )
 from tests.unit.test_cover_taste_judge import WORKS, _Library, _library, _version
+from tests.unit.test_cover_taste_suggestions import (
+    _choose,
+    _judge,
+    _other,
+    _suggested,
+    _taste,
+)
 
 NOW = 1_000_000
 DAY = 86_400
@@ -750,3 +766,191 @@ def test_a_due_read_captures_provider_fetching_once_instead_of_per_row(
     repository.bind_cover_read_observation(capture)
     assert store.due(version, 64) == expected
     assert (captures, fetches) == (1, 0)
+
+
+# K7: the preview walks what the judge stored under the version in use.
+_PREVIEW_PLAN = {
+    "keep": ("choose", 70, [1]),
+    "keep_many": ("choose", 90, [1, 2]),
+    "wrong_shape": ("choose", 80, [2]),
+    "below_floor": ("choose", 75, [3]),
+}
+
+
+@pytest.fixture
+def previewed(tmp_path: Path):
+    value = _library(
+        tmp_path,
+        _works("keep", "keep_many", "wrong_shape", "below_floor", "unreadable"),
+    )
+    _version(value.repository)
+    try:
+        yield value
+    finally:
+        value.repository.close()
+
+
+def _walk(
+    library: _Library, protection: str, checked: int = 100, switches: int = 5
+) -> TastePreviewWalk:
+    return taste_preview_walk(
+        library.repository._connection,
+        library.repository._current_cover_authority,
+        protection,
+        checked,
+        switches,
+    )
+
+
+def _found(library: _Library, walk: TastePreviewWalk) -> list[tuple[str, object]]:
+    return [
+        (
+            next(
+                item
+                for item, case in library.cases.items()
+                if case == switch.review_case_id
+            ),
+            switch.answer,
+        )
+        for switch in walk.switches
+    ]
+
+
+def test_the_preview_shows_five_switches_among_100_checked_covers() -> None:
+    assert (PREVIEW_SWITCHES, PREVIEW_CHECKED) == (5, 100)
+
+
+def test_the_preview_walk_stops_at_its_switch_and_checked_bounds(previewed) -> None:
+    """Each current comparison's newest verdict is one checked cover; the
+    walk stops at the last switch it may show, or when it has checked its
+    bound, oldest verdict first."""
+    _judge(previewed, {**_PREVIEW_PLAN, "unreadable": ("choose", 60, [1])})
+    walk = _walk(previewed, "unprotected")
+    order = [item for item, _answer in _found(previewed, walk)]
+    # `unreadable` is a suggestion the stage holds, never a switch.
+    assert sorted(order) == ["below_floor", "keep", "keep_many", "wrong_shape"]
+    assert walk.checked == 5
+    two = _walk(previewed, "unprotected", switches=2)
+    assert [item for item, _answer in _found(previewed, two)] == order[:2]
+    # The walk ends at the second switch: at most one non-switch before it.
+    assert 2 <= two.checked <= 3
+    one = _walk(previewed, "unprotected", checked=1)
+    assert one.checked == 1 and len(one.switches) <= 1
+
+
+def test_protected_shows_only_switches_that_cure_a_fault(previewed) -> None:
+    _judge(previewed, _PREVIEW_PLAN)
+    protected = _walk(previewed, "protected")
+    assert sorted(item for item, _answer in _found(previewed, protected)) == [
+        "below_floor",
+        "wrong_shape",
+    ]
+    assert {switch.reason for switch in protected.switches} == {
+        "below_floor",
+        "wrong_shape",
+    }
+    unprotected = _walk(previewed, "unprotected")
+    reasons = {
+        item: switch.reason
+        for (item, _answer), switch in zip(
+            _found(previewed, unprotected), unprotected.switches, strict=True
+        )
+    }
+    assert reasons["keep"] is None and reasons["keep_many"] is None
+    # The cited rules come from the version in use, in the verdict's order.
+    keep_many = next(
+        switch
+        for (item, _answer), switch in zip(
+            _found(previewed, unprotected), unprotected.switches, strict=True
+        )
+        if item == "keep_many"
+    )
+    assert [number for number, _section, _text in keep_many.rules] == [1, 2]
+    assert keep_many.reference == _suggested(previewed, "keep_many")
+
+
+def test_an_answered_switch_keeps_its_answer_and_any_other_leaves(previewed) -> None:
+    _judge(previewed, _PREVIEW_PLAN)
+    _choose(previewed, "wrong_shape", _suggested(previewed, "wrong_shape"), NOW + 5)
+    _choose(previewed, "below_floor", None, NOW + 5)
+    _choose(
+        previewed,
+        "keep_many",
+        _other(previewed, "keep_many", _suggested(previewed, "keep_many")),
+        NOW + 5,
+    )
+    walk = _walk(previewed, "unprotected")
+    assert dict(_found(previewed, walk)) == {
+        "wrong_shape": "looks_right",
+        "below_floor": "kept_current",
+        "keep": None,
+    }
+    # An answered cover was still checked.
+    assert walk.checked == 4
+
+
+def test_a_switch_chosen_under_an_earlier_version_is_a_rerun(previewed) -> None:
+    taste = _taste(previewed)
+    assert taste.preview("unprotected")["state"] == "checking"
+    _judge(previewed, _PREVIEW_PLAN)
+    first = taste.preview("unprotected")
+    assert first["rerun"] is False
+    assert first["state"] == "done"
+    assert first["version"] == 1
+    _version(previewed.repository, created_at=NOW)
+    later = NOW + TASTE_JUDGE_SETTLE_SECONDS + 60
+    # Nothing is judged under the new version yet: nothing checked, checking.
+    waiting = taste.preview("unprotected")
+    assert (waiting["version"], waiting["checked"], waiting["found"]) == (2, 0, [])
+    assert waiting["state"] == "checking"
+    _judge(previewed, {"wrong_shape": ("choose", 80, [2])}, later)
+    again = taste.preview("protected")
+    assert [item["review_case_id"] for item in again["found"]] == [
+        previewed.cases["wrong_shape"]
+    ]
+    assert again["rerun"] is True
+    # Every other field was attempted under version 2 and failed: none is due.
+    assert again["state"] == "done"
+
+
+def test_the_preview_document_names_both_covers_and_closes_on_five(
+    previewed,
+) -> None:
+    _judge(previewed, _PREVIEW_PLAN)
+    taste = _taste(previewed)
+    document = taste.preview("protected")
+    assert document["schema_version"] == "review-taste-preview-v1"
+    item = next(
+        row
+        for row in cast("list[dict[str, Any]]", document["found"])
+        if row["review_case_id"] == previewed.cases["wrong_shape"]
+    )
+    consideration = previewed.considerations["wrong_shape"]
+    assert item["new"]["url"] == (
+        f"/api/v1/review-cases/{previewed.cases['wrong_shape']}/cover-considerations/"
+        f"{consideration['consideration_id']}/images/{_suggested(previewed, 'wrong_shape')}"
+    )
+    assert item["current"]["url"].startswith("/api/v1/library/cover?")
+    assert item["reason"] == "wrong_shape"
+    assert item["answer"] is None
+    assert [rule["number"] for rule in item["rules"]] == [2]
+    with pytest.raises(ReviewWebError):
+        taste.preview("everything")
+    five = taste_preview(
+        TastePreviewWalk(1, 7, (_walk(previewed, "protected").switches[0],) * 5, True)
+    )
+    assert five["state"] == "done"
+    assert taste_preview(TastePreviewWalk(1, 100, (), True))["state"] == "done"
+    assert taste_preview(TastePreviewWalk(1, 99, (), True))["state"] == "checking"
+
+
+def test_the_preview_walk_reads_through_the_version_index(previewed) -> None:
+    plan = " ".join(
+        row[-1]
+        for row in previewed.repository._connection.execute(
+            "EXPLAIN QUERY PLAN " + _PREVIEW_WALK_SQL, (1, 100)
+        )
+    )
+    assert "SEARCH verdict USING INDEX cover_taste_verdicts_version" in plan
+    assert "SCAN verdict" not in plan
+    assert "USE TEMP B-TREE" not in plan
