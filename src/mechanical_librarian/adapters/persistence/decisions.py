@@ -49,7 +49,6 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
     request_matching_check,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
-    _LANDED_LAST_SQL,
     _SHADOW_OUTCOME_HISTORY_SQL,
     _WORK_LATEST_MANUAL_HOLDS_SQL,
     _active_generation_automatic_sql,
@@ -127,10 +126,13 @@ _AUTOMATIC_MINT_CONFLICT_SQL = (
 def _field_effect_waiting_sql(case: str, destination: str) -> str:
     """Whether a write for the field waits or was not yet read back on the case.
 
-    The write is planned, in flight, retryable or verified in the case's
-    episode, under an owner decision of the episode, an automatic or a
-    description decision on the case, or as a subtitle companion of one. The
-    case's value is then not what the library will hold.
+    The write is planned, in flight or retryable, whichever episode planned
+    it, or it landed in the case's episode, under an owner decision of the
+    episode, an automatic or a description decision on the case, or as a
+    subtitle companion of one. The case's value is then not what the library
+    will hold. A reused plan appends no event, so no bound places a live write
+    in an episode: one planned before the case was admitted again still waits
+    (#1973).
     """
     authorities = (
         "SELECT waiting_human.decision_id FROM human_decisions waiting_human "
@@ -154,9 +156,11 @@ def _field_effect_waiting_sql(case: str, destination: str) -> str:
         + authorities
         + ")) AND waiting_effect.state IN "
         "('planned','claimed','applying','reconciling','retryable','verified') "
-        "AND waiting_effect.rowid>COALESCE((SELECT waiting_episode.effect_floor "
+        "AND (waiting_effect.state<>'verified' OR (SELECT MAX(landed.rowid) "
+        "FROM field_effect_events landed WHERE landed.plan_id=waiting_effect.plan_id "
+        "AND landed.kind='verified')>COALESCE((SELECT waiting_episode.event_floor "
         "FROM review_case_episodes waiting_episode "
-        f"WHERE waiting_episode.review_case_id={case}),0))"
+        f"WHERE waiting_episode.review_case_id={case}),0)))"
     )
 
 
@@ -295,7 +299,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             [str, str, str], tuple[tuple[str, object], ...]
         ],
         written_field_values: Callable[[str], tuple[tuple[str, object], ...]],
-        kept_write: Callable[[HumanDecision], sqlite3.Row | tuple[str, ...] | None],
+        recorded_follows: Callable[[HumanDecision], str | None],
         followed_write: Callable[[HumanDecision], sqlite3.Row | tuple[str, ...] | None],
     ) -> None:
         super().__init__(connection, binding)
@@ -311,7 +315,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self._validate_shadow_outcome_row = validate_shadow_outcome_row
         self._previous_field_values = previous_field_values
         self._written_field_values = written_field_values
-        self._kept_write = kept_write
+        self._recorded_follows = recorded_follows
         self._followed_write = followed_write
 
     def _record_automatic_outcomes(
@@ -711,28 +715,20 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 if decision.destination in written
                 else None,
             )
-            if decision.outcome == "keep_current":
-                # The write a keep goes back on is frozen with it, by the rule
-                # planning reads now, so neither a later return nor a later
-                # write changes what it went back on (#1523).
-                predecessor = self._kept_write(decision)
-                if (
-                    predecessor is not None
-                    and decision.destination not in CLEARABLE_DESTINATIONS
-                    and decision.destination != "cover"
-                    and target_value(case, decision.destination) is None
-                ):
-                    # Keeping the empty value the case read would go back to
-                    # empty, which this field cannot be (#1523).
-                    raise HumanDecisionError("owner_value_required")
-                decision = replace(
-                    decision,
-                    follows=None
-                    if predecessor is None
-                    else FieldEffectOperation.from_json(
-                        predecessor[0]
-                    ).plan.authority.decision_id,
-                )
+            # The write every decision follows is frozen with it, by the rule
+            # planning reads now, so neither a later return nor a later write
+            # changes what it replaced or a keep goes back on (#1523, #1973).
+            decision = replace(decision, follows=self._recorded_follows(decision))
+            if (
+                decision.outcome == "keep_current"
+                and decision.follows is not None
+                and decision.destination not in CLEARABLE_DESTINATIONS
+                and decision.destination != "cover"
+                and target_value(case, decision.destination) is None
+            ):
+                # Keeping the empty value the case read would go back to
+                # empty, which this field cannot be (#1523).
+                raise HumanDecisionError("owner_value_required")
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True
             )
@@ -1871,46 +1867,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
         if type(target) is not dict:
             raise MetadataReportError("review history is invalid")
         previous = target.get("value") if target.get("state") == "value" else None
-        # A keep goes back on the write frozen with it when it was recorded,
-        # never one read again from episode floors that later returns move
-        # (#1523); every other decision follows the write that landed last
-        # before it. An automatic write counts only when it was planned by
-        # then: one planned later follows a return to automatic.
-        prior = (
-            self._followed_write(decision)
-            if decision.outcome == "keep_current"
-            else self._connection.execute(
-                "SELECT effect.document FROM field_effects effect JOIN ("
-                "SELECT earlier.decision_id,earlier.ordinal FROM human_decisions earlier "
-                "WHERE earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<? "
-                "UNION ALL SELECT earlier.decision_id,-1 FROM automatic_decisions earlier "
-                "WHERE earlier.review_case_id=? AND earlier.destination=?"
-                ") recorded ON (recorded.decision_id=effect.decision_id "
-                "OR recorded.decision_id="
-                + _FIELD_EFFECT_COMPANION_DECISION_SQL
-                + ") WHERE effect.state='verified' "
-                # A decision of the case's current episode follows only that
-                # episode's writes: one planned before the work left the case and
-                # returned is not what the library held (#1523, #1358).
-                "AND (?<=COALESCE((SELECT decision_floor FROM review_case_episodes "
-                "WHERE review_case_id=?),0) OR +effect.rowid>COALESCE((SELECT "
-                "effect_floor FROM review_case_episodes WHERE review_case_id=?),0)) "
-                "AND (recorded.ordinal>=0 OR "
-                "json_extract(effect.document,'$.plan.created_at')<=?) "
-                + _LANDED_LAST_SQL,
-                (
-                    review_case_id,
-                    decision.destination,
-                    decision_row[0],
-                    review_case_id,
-                    decision.destination,
-                    decision_row[0],
-                    review_case_id,
-                    review_case_id,
-                    decision.occurred_at,
-                ),
-            ).fetchone()
-        )
+        # Every decision follows the write frozen with it when it was
+        # recorded, the one that landed last in its episode before it: never
+        # one read again from episode floors that later returns move, nor
+        # placed before it by a clock in whole seconds (#1523, #1973).
+        prior = self._followed_write(decision)
         if prior is not None:
             plan = FieldEffectOperation.from_json(prior[0]).plan
             previous = (

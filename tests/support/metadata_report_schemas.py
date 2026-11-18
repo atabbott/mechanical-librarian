@@ -438,6 +438,18 @@ PRIOR_HUMAN_DECISIONS_SQL = WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL.replace(
     "'reject','owner_entered','withdraw','pin','unpin')", "'reject')"
 )
 assert PRIOR_HUMAN_DECISIONS_SQL != WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL
+# Every producer before #1973 floored an episode by field effect row and
+# admitted `follows` on a keep only.
+PRIOR_REVIEW_CASE_EPISODES_SQL = persistence_schema._REVIEW_CASE_EPISODES_SQL.replace(
+    "event_floor", "effect_floor"
+)
+assert PRIOR_REVIEW_CASE_EPISODES_SQL != persistence_schema._REVIEW_CASE_EPISODES_SQL
+PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL = persistence_schema._HUMAN_DECISIONS_SQL.replace(
+    "CHECK(json_valid(document)=0 OR json_type(document,'$.follows') IN ('null','text')))",
+    "CHECK(json_valid(document)=0 OR json_type(document,'$.follows')='null' "
+    "OR (outcome='keep_current' AND json_type(document,'$.follows')='text')))",
+)
+assert PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL != persistence_schema._HUMAN_DECISIONS_SQL
 # Every producer before #1953 recorded no unidentified retirement.
 WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL = (
     persistence_schema._REVIEW_TRANSITIONS_SQL.replace(

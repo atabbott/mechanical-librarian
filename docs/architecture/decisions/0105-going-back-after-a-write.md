@@ -61,7 +61,8 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    clear.
 4. **The written value is current.** On the case whose own latest verified
    write in its episode set a field, owner entry treats the desired value of
-   that write as the field's current value: it is refused as unchanged, and
+   that write as the field's current value (a write is in the episode when it
+   landed after the case was last admitted, whichever episode planned it): it is refused as unchanged, and
    `owner_control.current` carries it. A latest write is always the one that
    landed last, whichever decision was recorded first. On any case, "Use
    previous value", the previous names and genres marked Previous are offered
@@ -82,13 +83,15 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    back to the value before your change.", its To an empty value as Not set,
    and Activity reads it as a change from the written value to that value,
    from the keep's own first plan, or before one exists from the write it
-   follows. That write is frozen when the keep is recorded: the stored keep
-   names the decision of the write planning resolves for it then, or null
-   when it follows none or when that write already holds the value the case
-   read, which makes the keep a plain keep. The pending set holds a keep only
-   while it names a write, and History's From and Activity's written value
-   read that write's own verified effect, never episode floors, so a later
-   return changes none of them. Its result is Went back once that write back
+   follows. Every owner decision freezes, when it is recorded, the write it
+   follows; a keep goes back on it. The stored decision names the decision
+   of the write planning resolves for it then, or null when it follows none,
+   or, for a keep, when that write already holds the value the case read,
+   which makes the keep a plain keep. The pending set holds a keep only
+   while it names a write. History's From for every decision, and Activity's
+   written value for a keep, read that write's own verified effect, never
+   episode floors or a clock in whole seconds, so a later return or a write
+   in the same second changes none of them. Its result is Went back once that write back
    verifies; until then it is the write's own word (Planned, Closed and so
    on, with the reason), or Recorded while unplanned, and never Kept
    current. Activity's shared fact store re-reads an owner decision's row
@@ -116,10 +119,12 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    a wrong form, so the adapter's contract tests pin the form per field. No
    clear is refused as unsupported on the pinned versions; that refusal stays
    for any field outside the clearable set.
-8. **Versions.** `human-decision-v6`, `review-case-detail-v10`,
-   `review-case-history-v5` and the `audiobookshelf-field-effect-v4`
-   qualification receipt. `review_case_transitions` admits `recent_write` in
-   both of its `CHECK`s. A clean rebuild is required (ADR-0013).
+8. **Versions.** `human-decision-v7` (#1973; v6 named a write on a keep
+   only), `review-case-detail-v10`, `review-case-history-v5` and the
+   `audiobookshelf-field-effect-v4` qualification receipt.
+   `review_case_transitions` admits `recent_write` in both of its `CHECK`s,
+   and `review_case_episodes` floors an episode by field-effect event
+   (`event_floor`). A clean rebuild is required (ADR-0013).
 
 ## Consequences
 

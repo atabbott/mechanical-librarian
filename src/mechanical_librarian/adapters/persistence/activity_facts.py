@@ -349,10 +349,11 @@ def _bindings(
         # (#1286) and whether a keep's write-back has landed (#1523).
         dependency("decision_effects", row["decision_id"])
         # A keep not yet planned reads the write it goes back on, the one
-        # frozen in its decision when it was recorded (#1523).
+        # frozen in its decision when it was recorded (#1523). Only a keep's
+        # row reads it, though every decision names one (#1973).
         followed = connection.execute(
             "SELECT json_extract(document,'$.follows') FROM human_decisions "
-            "WHERE decision_id=?",
+            "WHERE decision_id=? AND outcome='keep_current'",
             (row["decision_id"],),
         ).fetchone()
         if followed is not None and type(followed[0]) is str:

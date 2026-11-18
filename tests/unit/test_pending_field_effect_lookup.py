@@ -568,12 +568,6 @@ def test_malformed_effect_json_is_refused_at_write_and_still_at_read(
 # not among them.
 _JSON = "json_extract(document," + _COMPANION_PATH + ")"
 _EFFECT_JSON = "json_extract(effect.document," + _COMPANION_PATH + ")"
-_RECORDED_HISTORY = (
-    "SELECT earlier.decision_id,earlier.ordinal FROM human_decisions earlier "
-    "WHERE earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<? "
-    "UNION ALL SELECT earlier.decision_id,-1 FROM automatic_decisions earlier "
-    "WHERE earlier.review_case_id=? AND earlier.destination=?"
-)
 _RECORDED_AUTHORITY = (
     "SELECT decision_id,ordinal FROM human_decisions earlier WHERE "
     "earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<("
@@ -599,11 +593,6 @@ _ORIGINAL_LOOKUPS = {
     + _JSON
     + "=?) AND (state IN ('claimed','applying','reconciling') OR "
     "(state='verified' AND ?)) LIMIT 1",
-    "history": "SELECT effect.document FROM field_effects effect JOIN ("
-    + _RECORDED_HISTORY
-    + ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
-    + _EFFECT_JSON
-    + ") WHERE effect.state='verified' ORDER BY recorded.ordinal DESC LIMIT 1",
     "authority": "SELECT effect.document FROM field_effects effect JOIN ("
     + _RECORDED_AUTHORITY
     + ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
@@ -620,17 +609,13 @@ _ORIGINAL_LOOKUPS = {
 }
 _RECORDED_ORDER = "ORDER BY recorded.ordinal DESC LIMIT 1"
 # #1523 later read the write that landed last rather than the latest
-# decision's, by the event that took it to verified, and History an automatic
-# write only when it was planned by the time of the decision it reads for.
+# decision's, by the event that took it to verified. History no longer asks:
+# it reads the write frozen with each decision (#1973).
 _LANDED_LAST_ORDER = (
     "ORDER BY (SELECT MAX(landed.rowid) FROM field_effect_events landed "
     "WHERE landed.plan_id=effect.plan_id AND landed.kind='verified') DESC LIMIT 1"
 )
-_LANDED_LAST = {
-    "history": "AND (recorded.ordinal>=0 OR "
-    "json_extract(effect.document,'$.plan.created_at')<=?) " + _LANDED_LAST_ORDER,
-    "authority": _LANDED_LAST_ORDER,
-}
+_LANDED_LAST = {"authority": _LANDED_LAST_ORDER}
 
 
 def _original_lookup(name: str) -> str:
@@ -677,22 +662,6 @@ def _lookups(
         idempotency_key="pending-field-effect-lookup-later",
         occurred_at=earlier.occurred_at + 1,
     )
-    # A keep reads the write frozen with it (#1523), so History asks its
-    # question of a later accept.
-    proposal = next(
-        value for value in case.proposals if value["proposal_id"] == earlier.proposal_id
-    )
-    accept = HumanDecision.create(
-        case,
-        proposal_id=earlier.proposal_id,
-        target_fingerprint=earlier.target_fingerprint,
-        destination=earlier.destination,
-        actor="owner",
-        outcome="accept",
-        selected_value=proposal["result"]["alternatives"][0]["value"],
-        idempotency_key="pending-field-effect-lookup-history",
-        occurred_at=earlier.occurred_at + 2,
-    )
     connection.execute(
         "INSERT INTO field_effect_authorities(decision_id,current,updated_at,document) "
         "VALUES(?,1,0,'{}')",
@@ -709,13 +678,6 @@ def _lookups(
         "replacement": (
             lambda: repository.record_human_decision(later),
             "SELECT 1 FROM field_effects WHERE rowid IN",
-        ),
-        "history": (
-            lambda: (
-                repository.record_human_decision(accept),
-                repository.get_review_case_history(case_id, 20),
-            ),
-            "SELECT earlier.decision_id,earlier.ordinal",
         ),
         "authority": (
             # With no write to go back from, the keep binds nothing (#1523);
@@ -735,27 +697,9 @@ def _lookups(
             for statement in _traced_selects(connection, call)
             if marker in statement and _FIELD_EFFECT_COMPANION_DECISION_SQL in statement
         }
-    (ordinal,) = connection.execute(
-        "SELECT ordinal FROM human_decisions WHERE decision_id=?",
-        (accept.decision_id,),
-    ).fetchone()
-    # History asks once per event; keep the accept's question.
-    traced["history"] = {
-        statement
-        for statement in traced["history"]
-        if f"earlier.ordinal<{ordinal} " in statement
-    }
     parameters: dict[str, tuple[object, ...]] = {
         "revoke": (earlier_id, earlier_id),
         "replacement": (earlier_id, earlier_id, False),
-        "history": (
-            case_id,
-            destination,
-            ordinal,
-            case_id,
-            destination,
-            accept.occurred_at,
-        ),
         "authority": (case_id, destination, later.decision_id, case_id, destination),
         "override": (case_id, case_id, case_id),
     }
@@ -798,7 +742,7 @@ def test_remaining_authority_lookups_equal_the_original(
     # A plan whose row predates every write below, verified only after them.
     _effect(connection, "own-revived", earlier, json.dumps({"plan": {"n": 3}}))
     compare()
-    # Own authority, verified: the predecessor and history lookups find it.
+    # Own authority, verified: the predecessor lookup finds it.
     _effect(
         connection, "own-verified", earlier, json.dumps({"plan": {"n": 1}}), "verified"
     )

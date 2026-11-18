@@ -920,11 +920,9 @@ _HUMAN_DECISIONS_SQL = (
     "CHECK(json_valid(selected_value_document)=0 OR json_type(selected_value_document)<>'object' "
     "OR json_extract(selected_value_document,'$.kind') IS NOT 'empty' "
     "OR (outcome='owner_entered' AND json_type(selected_value_document,'$.value')='null')), "
-    # Only a keep names the write it goes back on, frozen when it is
-    # recorded (ADR-0105).
-    "CHECK(json_valid(document)=0 OR json_type(document,'$.follows')='null' "
-    "OR (outcome='keep_current' "
-    "AND json_type(document,'$.follows')='text')))"
+    # A decision names the write it follows, frozen when it is recorded
+    # (ADR-0105).
+    "CHECK(json_valid(document)=0 OR json_type(document,'$.follows') IN ('null','text')))"
 )
 # Browse, counts and detail ask for a case's decisions per destination, and the
 # latest by ordinal (the rowid, so the index carries it); without this every
@@ -934,14 +932,14 @@ _HUMAN_DECISIONS_CASE_DESTINATION_INDEX_SQL = (
     "ON human_decisions(review_case_id,destination)"
 )
 # A case admitted again after the work left it starts a new episode (#1358).
-# Its owner decisions up to `decision_floor` and the writes planned up to
-# `effect_floor`, the latest ordinal and field effect rowid when it was
+# Its owner decisions up to `decision_floor` and the writes that landed up to
+# `event_floor`, the latest ordinal and field-effect event rowid when it was
 # admitted again, are history. Only re-admission writes a row.
 _REVIEW_CASE_EPISODES_SQL = (
     "CREATE TABLE review_case_episodes ("
     "review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), "
     "decision_floor INTEGER NOT NULL CHECK(typeof(decision_floor)='integer' AND decision_floor>=0), "
-    "effect_floor INTEGER NOT NULL CHECK(typeof(effect_floor)='integer' AND effect_floor>=0)) "
+    "event_floor INTEGER NOT NULL CHECK(typeof(event_floor)='integer' AND event_floor>=0)) "
     "WITHOUT ROWID"
 )
 _HUMAN_DECISION_EVENTS_SQL = (

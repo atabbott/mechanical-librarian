@@ -12,6 +12,9 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- **Clean rebuild required.** A write that lands after a work returns to an
+  earlier case counts as that case's own, and one still waiting holds off a
+  pin. History shows what each decision replaced, even within a second (#1973).
 - Attention now opens when pressed just as Library's first work is selected.
   Search keeps the cursor when a preparation run opened from setup loads after
   you click into it. In Covers, the selected tab stays in view when its counts
