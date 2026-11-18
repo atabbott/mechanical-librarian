@@ -491,7 +491,7 @@ choices are one radio group: each states its state with a 20px ring in the
 field-line colour, set in a gutter and centred on the value's first line, which hover previews with a dot. The recorded choice fills
 the ring, takes the Archive Teal Wash with a 2px inner accent edge, and says
 "Your choice" in words; a recommendation is stated in its label, not by a wash.
-Keyboard focus is a 3px focus-colour outline drawn inside the choice. Automatic,
+Keyboard focus is a 3px focus-colour outline drawn just inside the whole choice, and inside each field tab, so no edge cuts it off. Automatic,
 resolved, or stale fields must not present a false choice. A choice that is refused or not confirmed is
 said in Correction Red right under the choices, in Works and in Covers, with its Try the same decision again or Reload current
 case, and the page scrolls just far enough to show it. Field tabs name their status in words (Needs you,
@@ -533,7 +533,8 @@ written state but never carries it alone.
 
 Policy uses a chapter-indexed notebook with restrained form controls and a
 sticky impact tray so validation, preview, and activation remain one continuous
-decision. Activity uses a denser ruled ledger: state and owner authority appear
+decision. The tray sits under the chapters only, so the chapter index keeps the
+window's whole height and its last controls are never behind the tray. Activity uses a denser ruled ledger: state and owner authority appear
 before filterable event rows, and expanded evidence stays attached to its
 event. At compact widths both surfaces preserve document order rather than
 compressing their desktop columns. A Policy field says what Automatic does on

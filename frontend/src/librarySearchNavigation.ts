@@ -29,6 +29,7 @@ export const useLibrarySearchNavigation = ({
   const searchGeneration = useRef(0)
   const observedSearchIdentity = useRef(searchIdentity)
   const expectedSearchIdentity = useRef<string | null>(null)
+  const automaticSelectionIdentity = useRef<string | null>(null)
   // The URL owns the query. This holds only the exact characters typed since the
   // last URL move, so a trailing space survives the round trip; the moment the
   // URL says something this echo does not, the URL wins — which is what makes
@@ -48,13 +49,19 @@ export const useLibrarySearchNavigation = ({
   useEffect(() => {
     if (observedSearchIdentity.current === searchIdentity) return
     observedSearchIdentity.current = searchIdentity
+    const automatic = automaticSelectionIdentity.current
+    automaticSelectionIdentity.current = null
     if (expectedSearchIdentity.current === searchIdentity) {
       expectedSearchIdentity.current = null
       return
     }
+    // The wide screen's own first selection, landing just after the owner
+    // pressed Attention, leaves that press on its way. A selection the owner
+    // makes, Back and Forward still cancel it, and a typed draft still yields.
+    if (!searchPending && automatic === searchIdentity) return
     invalidateSearch()
     setSearchPending(false)
-  }, [invalidateSearch, searchIdentity])
+  }, [invalidateSearch, searchIdentity, searchPending])
   useEffect(() => {
     return () => {
       invalidateSearch()
@@ -129,5 +136,16 @@ export const useLibrarySearchNavigation = ({
     event.preventDefault()
     runSearch(queryText)
   }
-  return { queryText, searchPending, runSearch, changeAttentionSearch, submitSearch }
+  /** Marks the URL a selection the page made itself, not the owner, is moving to. */
+  const expectAutomaticSelection = useCallback((search: object) => {
+    automaticSelectionIdentity.current = librarySearchIdentity(search)
+  }, [])
+  return {
+    queryText,
+    searchPending,
+    runSearch,
+    changeAttentionSearch,
+    submitSearch,
+    expectAutomaticSelection,
+  }
 }

@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../src/api/http'
 import type {
@@ -12,7 +12,16 @@ import type {
 } from '../src/api/http'
 import { destinationLabel } from '../src/labels'
 import { SettledFieldContext } from '../src/routes/FieldDecisionOutcome'
-import { createHttp, detail, library, recordedAcknowledgement, renderRoute } from './fixtures'
+import {
+  createHttp,
+  detail,
+  library,
+  recordedAcknowledgement,
+  renderRoute,
+  loadRouteModules,
+} from './fixtures'
+
+beforeAll(loadRouteModules)
 
 // Clearing a field and entering names in the browser (#1523, ADR-0105): an
 // emptied form clears a clearable field with one press; names are one per line.

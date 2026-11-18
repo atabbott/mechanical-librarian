@@ -8,6 +8,7 @@ import {
   uncertainWriteOutcome,
 } from '../api/http'
 import type { ReviewHttp } from '../api/http'
+import { descriptionId } from '../fieldControls'
 import { FieldRow } from './FieldRow'
 import { StaleBuildRead } from './StaleBuildRead'
 
@@ -68,7 +69,8 @@ export const OtherBrowsersSettings = ({
   })
 
   const press = async () => {
-    if (sending.current) return
+    // The page's state survives a remount, when this row's ref starts over.
+    if (sending.current || state.kind === 'sending') return
     sending.current = true
     setPresses((value) => value + 1)
     setState({ kind: 'sending' })
@@ -93,7 +95,12 @@ export const OtherBrowsersSettings = ({
 
   const pending = state.kind === 'sending'
   return (
-    <FieldRow title="Other browsers" description="This browser stays signed in.">
+    <FieldRow
+      fieldId="other-browsers"
+      group
+      title="Other browsers"
+      description="This browser stays signed in."
+    >
       <div className="settings-password">
         {state.kind === 'done' ? (
           <p className="settings-password-status" role="status" tabIndex={-1} ref={status}>
@@ -107,7 +114,15 @@ export const OtherBrowsersSettings = ({
           <StaleBuildRead lead="The other browsers were not signed out." ref={reload} />
         ) : null}
         <div className="settings-password-actions">
-          <button type="button" disabled={pending} ref={button} onClick={() => void press()}>
+          {/* aria-disabled, not disabled, keeps focus on the button while it signs out;
+              press refuses a second press while one is sending. */}
+          <button
+            type="button"
+            aria-disabled={pending}
+            aria-describedby={descriptionId('other-browsers')}
+            ref={button}
+            onClick={() => void press()}
+          >
             {pending ? 'Signing out…' : 'Sign out other browsers'}
           </button>
         </div>

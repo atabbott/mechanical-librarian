@@ -1,10 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type { ReviewHttp, SettingsView } from '../src/api/http'
-import { createHttp, renderRoute } from './fixtures'
+import { createHttp, renderRoute, loadRouteModules } from './fixtures'
 import { savedDocument, view } from './settingsFixtures'
+
+beforeAll(loadRouteModules)
 
 // Book matching in Policy, under Curation (#1355, Behaviour test 12): three
 // levels, saved on its own apart from the policy draft, and a line saying how

@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, displayValue } from '../src/api/http'
 import type {
@@ -20,7 +20,10 @@ import {
   library,
   recordedAcknowledgement,
   renderRoute,
+  loadRouteModules,
 } from './fixtures'
+
+beforeAll(loadRouteModules)
 
 // F59 owner controls on the decision canvas (#1285, ADR-0085): V1-V7.
 type Field = CaseDetailView['fields'][number]
