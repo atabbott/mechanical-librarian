@@ -696,3 +696,11 @@ by hand. The application database gains the index
 report, consideration, verdict or profile version moves. Every earlier
 application database is rejected before mutation and needs a clean rebuild; no
 adoption is supplied.
+
+Issue #ISSUE takes the clean-rebuild branch. `review_case_episodes` replaces
+`effect_floor` with `event_floor`, the latest field-effect event when the case
+was admitted again, so a write belongs to the episode it landed in.
+`human-decision-v7` names on every decision the decision of the write it
+follows, and the `human_decisions` `CHECK` admits `follows` on any outcome.
+Every earlier application database is rejected before mutation and needs a
+clean rebuild; no adoption is supplied.
