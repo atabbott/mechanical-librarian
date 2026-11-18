@@ -49,6 +49,7 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
     request_matching_check,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _LANDED_LAST_SQL,
     _SHADOW_OUTCOME_HISTORY_SQL,
     _WORK_LATEST_MANUAL_HOLDS_SQL,
     _active_generation_automatic_sql,
@@ -1896,7 +1897,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "effect_floor FROM review_case_episodes WHERE review_case_id=?),0)) "
                 "AND (recorded.ordinal>=0 OR "
                 "json_extract(effect.document,'$.plan.created_at')<=?) "
-                "ORDER BY effect.rowid DESC LIMIT 1",
+                + _LANDED_LAST_SQL,
                 (
                     review_case_id,
                     decision.destination,

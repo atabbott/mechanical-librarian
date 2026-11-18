@@ -81,6 +81,7 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
     stored_level_offer_documents,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _LANDED_LAST_SQL,
     _active_generation_automatic_sql,
     _episode_decision_sql,
 )
@@ -1817,11 +1818,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         One read for both of its uses: the write an owner decision follows,
         whose desired value is its plan's pre-value, and the value a case that
         wrote a field treats as current for owner entry (#1523, S5). It orders
-        by the write, not the decision: an automatic decision returned to
-        after the owner's writes writes after them. Its automatic arm needs no
-        bound by ``before``: when a decision is recorded nothing is after it,
-        and when it is planned it is pending, which a return rules out, so no
-        automatic write follows it.
+        by when the write landed, not by the decision or its plan's row: an
+        automatic decision returned to after the owner's writes writes after
+        them, even through a plan revived in its old row. Its automatic arm
+        needs no bound by ``before``: when a decision is recorded nothing is
+        after it, and when it is planned it is pending, which a return rules
+        out, so no automatic write follows it.
         """
         row: sqlite3.Row | tuple[str, ...] | None = self._connection.execute(
             "SELECT effect.document FROM field_effects effect JOIN ("
@@ -1838,8 +1840,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # what the library holds now: the work has left that content
             # and returned to the case's own (#1358).
             "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
-            "review_case_episodes WHERE review_case_id=?),0) "
-            "ORDER BY effect.rowid DESC LIMIT 1",
+            "review_case_episodes WHERE review_case_id=?),0) " + _LANDED_LAST_SQL,
             (
                 review_case_id,
                 destination,

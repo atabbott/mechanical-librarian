@@ -1713,11 +1713,15 @@ def test_the_served_activity_follows_a_write_that_verifies_after_a_keep(
 
 
 def _automatic_after_going_back(
-    store: OwnerStore,
+    store: OwnerStore, *, planned_first: bool
 ) -> tuple[HumanDecision, AutomaticDecision]:
     """Read Drama; accept Fantasy and keep Drama, return the field to
     automatic, and its automatic decision writes Fantasy again: a write that
-    lands after the owner's writes but was recorded before them."""
+    lands after the owner's writes but was recorded before them.
+
+    ``planned_first`` plans the automatic write before the accept supersedes
+    it. Going back restores that plan's pre-value, so the return revives the
+    same deterministic plan in its old row rather than inserting a new one."""
     store.automatic("genres", "replace", _HELD.target.library)
     store.publish(_HELD)
     automatic = next(
@@ -1726,6 +1730,7 @@ def _automatic_after_going_back(
         if json.loads(raw)["schema_version"] == "automatic-decision-v1"
         and json.loads(raw)["destination"] == "genres"
     )
+    early = store.plan(automatic) if planned_first else None
     accept = store.decide(
         "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
     )
@@ -1736,19 +1741,28 @@ def _automatic_after_going_back(
     assert store.repository.clear_field_effect_manual_hold(
         store.case.review_case_id, "genres", store.clock(), token
     )
-    assert store.write(automatic).plan.desired_value == ["Fantasy"]
+    written = store.write(automatic)
+    assert written.plan.desired_value == ["Fantasy"]
+    if early is not None:
+        # Revived in place: the plan row predates the owner's writes.
+        assert written.plan.plan_id == early.plan.plan_id
+        assert store.repository._connection.execute(
+            "SELECT decision_id FROM field_effects WHERE state='verified' "
+            "ORDER BY rowid LIMIT 1"
+        ).fetchone() == (automatic.decision_id,)
     return accept, automatic
 
 
+@pytest.mark.parametrize("planned_first", [False, True], ids=["fresh", "revived"])
 def test_an_automatic_write_after_going_back_is_the_cases_latest(
-    tmp_path: Path,
+    tmp_path: Path, planned_first: bool
 ) -> None:
     """The case's latest write is the one that landed last, not the latest
-    decision: an automatic decision returned to after the owner's writes
-    writes after them (#1523)."""
+    decision or the latest plan row: an automatic decision returned to after
+    the owner's writes writes after them (#1523)."""
     store = OwnerStore(tmp_path, None)
     try:
-        _, automatic = _automatic_after_going_back(store)
+        _, automatic = _automatic_after_going_back(store, planned_first=planned_first)
         assert store.repository.written_field_values(store.case.review_case_id) == (
             ("genres", ["Fantasy"]),
         )
@@ -1767,14 +1781,15 @@ def test_an_automatic_write_after_going_back_is_the_cases_latest(
         store.close()
 
 
+@pytest.mark.parametrize("planned_first", [False, True], ids=["fresh", "revived"])
 def test_history_reads_what_a_decision_replaced_not_a_later_automatic_write(
-    tmp_path: Path,
+    tmp_path: Path, planned_first: bool
 ) -> None:
     """History's From is the write that landed last before the decision: an
     automatic write planned after it is not what it replaced (#1523)."""
     store = OwnerStore(tmp_path, None)
     try:
-        accept, _ = _automatic_after_going_back(store)
+        accept, _ = _automatic_after_going_back(store, planned_first=planned_first)
         assert _keep_history(store, accept)["previous_value"] == {
             "kind": "list",
             "value": ["Drama"],

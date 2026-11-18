@@ -209,6 +209,16 @@ def _effect(
     )
 
 
+def _landed(connection: sqlite3.Connection, label: str) -> None:
+    """Append the event that took the effect `label` to verified: the write
+    lands when it is appended (#1523)."""
+    connection.execute(
+        "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,"
+        "document) VALUES(?,?,1,'verified',1,'{}')",
+        ("effect_event_" + _digest("landed-" + label), "effect_plan_" + _digest(label)),
+    )
+
+
 def _companion(decision_id: object) -> str:
     return json.dumps(
         {"plan": {"subtitle_companion": {"authority": {"decision_id": decision_id}}}}
@@ -610,13 +620,16 @@ _ORIGINAL_LOOKUPS = {
 }
 _RECORDED_ORDER = "ORDER BY recorded.ordinal DESC LIMIT 1"
 # #1523 later read the write that landed last rather than the latest
-# decision's, and History an automatic write only when it was planned by the
-# time of the decision it reads for.
+# decision's, by the event that took it to verified, and History an automatic
+# write only when it was planned by the time of the decision it reads for.
+_LANDED_LAST_ORDER = (
+    "ORDER BY (SELECT MAX(landed.rowid) FROM field_effect_events landed "
+    "WHERE landed.plan_id=effect.plan_id AND landed.kind='verified') DESC LIMIT 1"
+)
 _LANDED_LAST = {
     "history": "AND (recorded.ordinal>=0 OR "
-    "json_extract(effect.document,'$.plan.created_at')<=?) "
-    "ORDER BY effect.rowid DESC LIMIT 1",
-    "authority": "ORDER BY effect.rowid DESC LIMIT 1",
+    "json_extract(effect.document,'$.plan.created_at')<=?) " + _LANDED_LAST_ORDER,
+    "authority": _LANDED_LAST_ORDER,
 }
 
 
@@ -782,13 +795,17 @@ def test_remaining_authority_lookups_equal_the_original(
         for name, (statement, _) in lookups.items():
             seen[name].add(repr(connection.execute(statement).fetchall()))
 
+    # A plan whose row predates every write below, verified only after them.
+    _effect(connection, "own-revived", earlier, json.dumps({"plan": {"n": 3}}))
+    compare()
     # Own authority, verified: the predecessor and history lookups find it.
     _effect(
         connection, "own-verified", earlier, json.dumps({"plan": {"n": 1}}), "verified"
     )
+    _landed(connection, "own-verified")
     compare()
     # A later companion claim on the same decision ties on its ordinal; the
-    # later write wins.
+    # write that landed later wins.
     _effect(
         connection,
         "companion-verified",
@@ -796,11 +813,9 @@ def test_remaining_authority_lookups_equal_the_original(
         _companion(earlier),
         "verified",
     )
+    _landed(connection, "companion-verified")
     compare()
-    connection.execute(
-        "DELETE FROM field_effects WHERE plan_id=?",
-        ("effect_plan_" + _digest("own-verified"),),
-    )
+    # Another own write landing after both wins over them.
     _effect(
         connection,
         "own-verified-later",
@@ -808,7 +823,19 @@ def test_remaining_authority_lookups_equal_the_original(
         json.dumps({"plan": {"n": 2}}),
         "verified",
     )
+    _landed(connection, "own-verified-later")
     compare()
+    # Revived in its old row, it lands last and wins over the later rows.
+    connection.execute(
+        "UPDATE field_effects SET state='verified' WHERE plan_id=?",
+        ("effect_plan_" + _digest("own-revived"),),
+    )
+    _landed(connection, "own-revived")
+    compare()
+    for name in _LANDED_LAST:
+        assert connection.execute(lookups[name][0]).fetchall() == [
+            (json.dumps({"plan": {"n": 3}}),)
+        ], name
     # Live states each lookup filters on, by either authority, in either order.
     for state in ("planned", "claimed", "retryable", "applying", "superseded"):
         _effect(
@@ -852,6 +879,13 @@ def test_remaining_authority_lookups_reach_effects_by_index_only(
         assert any(
             "INDEX field_effects_companion_decision " in step for step in plan
         ), name
+        if name in _LANDED_LAST:
+            # When each write landed is read by the events' (plan_id,sequence) key.
+            assert any(
+                step.startswith("SEARCH landed USING INDEX ") and "(plan_id=?)" in step
+                for step in plan
+            ), name
+            assert not any(step.startswith("SCAN landed") for step in plan), name
         assert _scans_effects(_plan(connection, _original_lookup(name), parameters))
     for index_name, definition in (
         ("field_effects_decision", _FIELD_EFFECTS_DECISION_INDEX_SQL),
