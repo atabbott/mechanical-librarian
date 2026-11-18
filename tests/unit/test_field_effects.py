@@ -6043,6 +6043,85 @@ def test_audiobook_pair_happy_pair_scheduler_reopen_and_activity(audiobook_pair)
     )
 
 
+def test_audiobook_pair_keep_on_the_companion_subtitle_writes_it_back(
+    audiobook_pair,
+):
+    """A keep on a subtitle the title's plan wrote as its companion goes back
+    on that write: it is pending, plans a single-field subtitle write from the
+    written value to the empty one the case read, and verifies (#1523)."""
+    pair = audiobook_pair
+    assert pair.service.apply(pair.plan().plan.plan_id).state == "verified"
+    case = ReviewCase.create_from_data(
+        json.loads(pair.repo.get_review_case(pair.case_id))["case"]
+    )
+    proposal = next(p for p in case.proposals if p["destination"] == "subtitle")
+    keep = HumanDecision.from_json(
+        pair.repo.record_human_decision(
+            HumanDecision.create(
+                case,
+                proposal_id=str(proposal["proposal_id"]),
+                target_fingerprint=case.target_fingerprint,
+                destination="subtitle",
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="owner-command-00000001",
+                occurred_at=pair.env.clock(),
+            )
+        )
+    )
+    assert keep.follows == pair.decisions["title"].decision_id
+    page = pair.repo.field_effect_activity_page(
+        search=None, event_type="all", occurred_after=0, page=1, page_size=50
+    )
+    (row,) = (
+        event
+        for event in page["events"]
+        if event["origin"] == "human" and event["destination"] == "subtitle"
+    )
+    assert row["record"]["went_back"]["written"] == "A Tale of Courage"
+    assert [
+        json.loads(raw)["decision_id"]
+        for raw in pair.repo.pending_field_effect_decision_documents(50)
+    ] == [keep.decision_id]
+    pair.repo.grant_field_effect_consents(
+        "primary", ("audio",), ("subtitle",), pair.env.clock()
+    )
+    lane = ContinuousGuardedApplication(
+        pair.repo,
+        {("primary", "audio"): pair.service},
+        {("primary", "audio"): pair.env.capabilities},
+        pair.authority,
+        (("primary", "audio"),),
+        pair.env.clock,
+        lambda *_: None,
+    )
+    assert lane.schedule() == 1
+    plan_id, document = pair.repo._connection.execute(
+        "SELECT plan_id,document FROM field_effects WHERE decision_id=?",
+        (keep.decision_id,),
+    ).fetchone()
+    plan = FieldEffectOperation.from_json(document).plan
+    assert (
+        plan.destination,
+        plan.pre_value,
+        plan.desired_value,
+        plan.subtitle_companion,
+    ) == ("subtitle", "A Tale of Courage", None, None)
+    assert pair.service.apply(plan_id).state == "verified"
+    assert pair.patches()[-1] == {"metadata": {"subtitle": None}}
+    (entry,) = (
+        event
+        for event in pair.repo.get_review_case_history(pair.case_id, 50)
+        if event.get("decision_id") == keep.decision_id
+    )
+    assert (entry["previous_value"], entry["selected_value"]) == (
+        {"kind": "text", "value": "A Tale of Courage"},
+        None,
+    )
+    assert pair.repo.pending_field_effect_decision_documents(50) == ()
+
+
 @pytest.mark.parametrize("field", ["title", "subtitle"])
 def test_audiobook_pair_scalar_path_refuses_pair(audiobook_pair, field):
     d = audiobook_pair.decisions[field]

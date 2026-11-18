@@ -80,7 +80,6 @@
             "notices": ["unique_typed_candidate"],
             "offer_digest": "7bd61bc1329e5c5ab4e41c9ebcac1c70791131c9fa54e17961d961ad0511b8ef",
             "owner_control": null,
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -104,7 +103,8 @@
               "provider_fe07db53652cff3a2705227b53c1ec256664f7588a807f6d14c11b2d76c2a827"
             ],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": []
+            "uncertainty": [],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -188,7 +188,6 @@
               },
               "withdraw": null
             },
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -206,7 +205,8 @@
               "provider_c5d00f6325d00d72af199f7c0702def45ae7370bea82b63ca0dc945103f7d7a8"
             ],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": []
+            "uncertainty": [],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -285,7 +285,6 @@
             "notices": ["manifestation_verification_required"],
             "offer_digest": "9653f988e3d4c431101a4e7c3bce0fad9cb3dfa48e9d3bfe2e92974d96c9920c",
             "owner_control": null,
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -305,7 +304,8 @@
               "provider_e97d5b01d8c4d1ac75dd707cf93c8fab512629f95e64aa6695aa2dfa62ef913f"
             ],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": ["manifestation_verification_required"]
+            "uncertainty": ["manifestation_verification_required"],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -395,7 +395,6 @@
               "subset": null,
               "withdraw": null
             },
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -408,7 +407,8 @@
               "provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"
             ],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": []
+            "uncertainty": [],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -458,7 +458,6 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "7bd61bc1329e5c5ab4e41c9ebcac1c70791131c9fa54e17961d961ad0511b8ef",
             "owner_control": null,
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -469,7 +468,8 @@
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": []
+            "uncertainty": [],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -560,7 +560,6 @@
               "subset": null,
               "withdraw": null
             },
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -573,7 +572,8 @@
               "provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"
             ],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": []
+            "uncertainty": [],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -623,7 +623,6 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "8593cbc3265eb4732eed4e94e14c1811af55d0bbfc285aba07ce382416c22473",
             "owner_control": null,
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -634,7 +633,8 @@
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": []
+            "uncertainty": [],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -684,7 +684,6 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "844cb954c54650b74ec6fbf2c4f23c5426715fc2e92c4656fc033931898c3c6e",
             "owner_control": null,
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -695,7 +694,8 @@
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": []
+            "uncertainty": [],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -859,7 +859,6 @@
             "notices": ["populated_subjective_field", "populated_value_meets_floor"],
             "offer_digest": "b8e75d5134fb09a358ed30b48744777c92706220a13443b8211322b8bb38283e",
             "owner_control": null,
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "change_waiting",
@@ -877,7 +876,8 @@
               "provider_8d5555b014ce6a5575d245545fd197836a76c7f8e5f496697d90521e01e2e5e4"
             ],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": ["populated_subjective_field", "populated_value_meets_floor"]
+            "uncertainty": ["populated_subjective_field", "populated_value_meets_floor"],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -927,7 +927,6 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "bb25bc13bc589f35f11eab65fb369a1ae0b6e7b2469cf85cebd7cda4f92ee4bb",
             "owner_control": null,
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -938,7 +937,8 @@
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": []
+            "uncertainty": [],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -988,7 +988,6 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "6b2142bb056877ce31ad666e871512f5284e3393393b9699aab5a9ce9e87e237",
             "owner_control": null,
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -999,7 +998,8 @@
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": []
+            "uncertainty": [],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -1066,7 +1066,6 @@
             "notices": ["unique_typed_candidate"],
             "offer_digest": "e31ba23e564810a96a95a9238b38c226204ee8775c9be742688a26fc282992f0",
             "owner_control": null,
-            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -1084,7 +1083,8 @@
               "provider_e8f3d5f76eca4ea97b720bfe78e64cf22c5796eef346431fdfe943fc76f4e457"
             ],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": []
+            "uncertainty": [],
+            "written_by_case": false
           },
           {
             "automatic_decision": null,
@@ -1134,7 +1134,6 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "c445b7f87c041323a83ca34044be649bc49dc60f4f57f1e4e01adaa86f193a9d",
             "owner_control": null,
-            "written_by_case": false,
             "pin": null,
             "pin_control": null,
             "preservation_only": false,
@@ -1142,7 +1141,8 @@
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-            "uncertainty": []
+            "uncertainty": [],
+            "written_by_case": false
           }
         ],
         "media_health": [],
