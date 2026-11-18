@@ -996,7 +996,7 @@ describe('the keep card on a field this case wrote (#1523)', () => {
       'an entry back to the genres read',
       ['Drama'],
       { kind: 'list', value: ['Drama'] },
-      'You chose 1 genre.',
+      'You chose Drama.',
     ],
   ] as const)('leaves it out after %s', async (_, before, entered, said) => {
     renderRoute('/library?lens=all&preview=case-1&field=genres', owner(genresBack(before, entered)))
