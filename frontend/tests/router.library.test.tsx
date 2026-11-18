@@ -15599,6 +15599,56 @@ it('keeps an Attention press made as the wide default selection lands', async ()
   expect(await screen.findByLabelText('Attention queue')).toBeVisible()
 })
 
+// A work the owner chooses is a later choice than an Attention press still on
+// its way, so that press does not open the queue over it.
+it('lets a chosen work cancel an Attention press still on its way', async () => {
+  const previousMatchMedia = window.matchMedia
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(min-width: 761px)',
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(() => true),
+  }))
+  onTestFinished(() => {
+    vi.stubGlobal('matchMedia', previousMatchMedia)
+  })
+  const http = createHttp()
+  const work = library.works[0]
+  if (!work) throw new Error('public work fixture required')
+  http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async () => ({
+    ...library,
+    works: [
+      work,
+      {
+        ...work,
+        id: 'case-2',
+        reviewCaseId: 'case-2',
+        workId: 'library_work_2',
+        title: 'Another Book',
+      },
+    ],
+  }))
+  http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => ({ total: 1, items: [] }))
+  const { router } = renderRoute('/library?lens=all', http)
+  await waitFor(() => expect(router.state.location.search.preview).toBe('case-1'))
+  const toggle = screen.getByRole('button', { name: /^Attention/u })
+  // The press lands while the owner's choice of another work is under way.
+  const unsubscribe = router.subscribe('onBeforeNavigate', ({ toLocation }) => {
+    if ((toLocation.search as { preview?: string }).preview !== 'case-2') return
+    unsubscribe()
+    fireEvent.click(toggle)
+  })
+  onTestFinished(unsubscribe)
+  fireEvent.click(await screen.findByRole('button', { name: /^Another Book\./u }))
+  await waitFor(() => expect(router.state.location.search.preview).toBe('case-2'))
+  await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+  expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-2' })
+})
+
 it.each([
   ['', 'Current title', 'default'],
   ['before', '', 'default'],

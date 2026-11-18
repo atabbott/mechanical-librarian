@@ -679,11 +679,13 @@ function CoverTabs({
     const selectedTab = row?.querySelector('[aria-pressed="true"]')
     if (row && selectedTab) revealTab(row, selectedTab)
   }
-  // A tab not read yet shows "…" for every count, wider than a number, so
-  // the tabs move once its counts arrive and the selected one is brought
-  // back then.
-  const counted = counts !== undefined
-  useEffect(revealSelectedTab, [tab, taste, counted])
+  // The tabs move when their counts change width: from "…" while a tab is
+  // not read yet to a number, or a count gaining or losing a digit. The
+  // selected tab is brought back whenever the shown counts change.
+  const shownCounts = (Object.keys(tabLabels) as CoverTab[])
+    .map((value) => (counts ? String(counts[value]) : '…'))
+    .join(' ')
+  useEffect(revealSelectedTab, [tab, taste, shownCounts])
   const router = useRouter()
   useEffect(() => router.subscribe('onRendered', revealSelectedTab), [router])
   return (

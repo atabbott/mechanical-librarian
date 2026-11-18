@@ -1077,6 +1077,58 @@ describe('Covers view (#1633)', () => {
   })
 })
 
+// On a phone the tabs scroll sideways; a count gaining a digit widens its tab
+// and can push the selected one out of the row, so it is brought back.
+it('brings the selected tab back into its row when a count changes width', async () => {
+  const widths = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(600)
+  const clients = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(300)
+  // The row runs 0 to 300; the selected tab sits at 320, past its edge.
+  const rects = vi
+    .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+    .mockImplementation(function (this: HTMLElement) {
+      const left =
+        this.closest('.covers-tabs') !== null && this.getAttribute('aria-pressed') === 'true'
+          ? 320
+          : 0
+      const right = this.classList.contains('covers-tabs') ? 300 : left + 80
+      return {
+        left,
+        right,
+        width: right - left,
+        top: 0,
+        bottom: 0,
+        height: 0,
+        x: left,
+        y: 0,
+        toJSON: () => ({}),
+      }
+    })
+  const setLefts = vi
+    .spyOn(Element.prototype, 'scrollLeft', 'set')
+    .mockImplementation(() => undefined)
+  try {
+    let decideCount = 2
+    const http = coversHttp({})
+    http.getCovers.mockImplementation(async (view) =>
+      page(view, [], null, { ...counts, decide: decideCount }),
+    )
+    const { queryClient } = renderRoute('/library?lens=all&view=covers&tab=kept', http)
+    const row = await screen.findByRole('navigation', { name: 'Cover views' })
+    await waitFor(() => expect(row).toHaveTextContent(/To decide 2/u))
+    await waitFor(() => expect(setLefts.mock.contexts).toContain(row))
+    setLefts.mockClear()
+    decideCount = 12
+    await act(() => queryClient.invalidateQueries({ queryKey: ['covers'] }))
+    await waitFor(() => expect(row).toHaveTextContent(/To decide 12/u))
+    await waitFor(() => expect(setLefts.mock.contexts).toContain(row))
+  } finally {
+    widths.mockRestore()
+    clients.mockRestore()
+    rects.mockRestore()
+    setLefts.mockRestore()
+  }
+})
+
 describe('Put back (#1363)', () => {
   const switchedRow = (
     put_back: NonNullable<CoverWorkView['switched']>['put_back'] = null,

@@ -10,17 +10,6 @@ import { librarySearchIdentity } from './libraryPreparation'
 
 const searchNavigationDelay = 150
 
-const selectionKeys = new Set(['preview', 'work', 'field', 'preparation'])
-
-/** Whether two Library search identities differ only in which work is selected. */
-const onlySelectionMoved = (before: string, after: string) => {
-  const query = (identity: string) =>
-    JSON.stringify(
-      (JSON.parse(identity) as [string, unknown][]).filter(([key]) => !selectionKeys.has(key)),
-    )
-  return query(before) === query(after)
-}
-
 export const useLibrarySearchNavigation = ({
   urlQuery,
   searchIdentity,
@@ -40,6 +29,7 @@ export const useLibrarySearchNavigation = ({
   const searchGeneration = useRef(0)
   const observedSearchIdentity = useRef(searchIdentity)
   const expectedSearchIdentity = useRef<string | null>(null)
+  const automaticSelectionIdentity = useRef<string | null>(null)
   // The URL owns the query. This holds only the exact characters typed since the
   // last URL move, so a trailing space survives the round trip; the moment the
   // URL says something this echo does not, the URL wins — which is what makes
@@ -58,16 +48,17 @@ export const useLibrarySearchNavigation = ({
   }, [])
   useEffect(() => {
     if (observedSearchIdentity.current === searchIdentity) return
-    const observed = observedSearchIdentity.current
     observedSearchIdentity.current = searchIdentity
+    const automatic = automaticSelectionIdentity.current
+    automaticSelectionIdentity.current = null
     if (expectedSearchIdentity.current === searchIdentity) {
       expectedSearchIdentity.current = null
       return
     }
-    // A selection that lands with no typed text waiting (the wide screen's
-    // first work arriving just after the owner pressed Attention) leaves the
-    // Attention move on its way. A typed draft still yields to a selection.
-    if (!searchPending && onlySelectionMoved(observed, searchIdentity)) return
+    // The wide screen's own first selection, landing just after the owner
+    // pressed Attention, leaves that press on its way. A selection the owner
+    // makes, Back and Forward still cancel it, and a typed draft still yields.
+    if (!searchPending && automatic === searchIdentity) return
     invalidateSearch()
     setSearchPending(false)
   }, [invalidateSearch, searchIdentity, searchPending])
@@ -145,5 +136,16 @@ export const useLibrarySearchNavigation = ({
     event.preventDefault()
     runSearch(queryText)
   }
-  return { queryText, searchPending, runSearch, changeAttentionSearch, submitSearch }
+  /** Marks the URL a selection the page made itself, not the owner, is moving to. */
+  const expectAutomaticSelection = useCallback((search: object) => {
+    automaticSelectionIdentity.current = librarySearchIdentity(search)
+  }, [])
+  return {
+    queryText,
+    searchPending,
+    runSearch,
+    changeAttentionSearch,
+    submitSearch,
+    expectAutomaticSelection,
+  }
 }
