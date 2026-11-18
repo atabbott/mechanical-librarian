@@ -4305,17 +4305,18 @@ describe('taste profile model (#1372)', () => {
     ).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('names the taste profile among the users of the shared key', async () => {
+  it('says every model shares the key, under each saved-key field', async () => {
     const http = createHttp()
     http.getSettings = vi.fn(async () => view())
     http.getReviewerAccess = vi.fn(async () => initial)
     renderRoute('/settings?group=reviewer', http)
     await section()
-    expect(
-      screen.getByText(
-        'Leave blank to use the saved key. Cover review and the taste profile use the same key, and replacing it keeps every model choice.',
-      ),
-    ).toBeVisible()
+    const notes = screen.getAllByText(
+      'Leave blank to use the saved key. Every model on this page uses the same key, and replacing it keeps every model choice.',
+    )
+    // Description advice, the taste profile and suggestions (#1372 PR 4b).
+    expect(notes).toHaveLength(3)
+    for (const note of notes) expect(note).toBeVisible()
   })
 
   it.each([

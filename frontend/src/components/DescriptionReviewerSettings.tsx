@@ -278,7 +278,7 @@ function DescriptionOpenRouterRow({
           autoComplete="new-password"
         />
         <small id="description-openrouter-key-help">
-          Leave blank to use the saved key. Cover review and the taste profile use the same key, and
+          Leave blank to use the saved key. Every model on this page uses the same key, and
           replacing it keeps every model choice.
         </small>
         <button
