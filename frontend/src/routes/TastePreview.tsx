@@ -1,17 +1,18 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import type { Ref } from 'react'
+import type { ReactNode, Ref } from 'react'
 
 import { ApiError } from '../api/http'
 import type { TastePreviewView, TasteProtection } from '../api/http'
 import { previewMeta, tastePreviewQuery } from '../tastePreview'
 import { coverCommand, coverField, failureOf, staleCopy, submitCover } from '../coverDecision'
+import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
 import type { Failure } from '../coverDecision'
 import type { ReviewField } from '../fieldDecision'
 import { coverFaultLabel, mediaKindLabels } from '../labels'
 import { useRequiredQuery as useQuery } from '../queryWork'
 import { routeFailureCopy } from '../routeFailure'
-import { detailQuery, useLiveStream, useReviewContext } from '../router'
+import { detailQuery, useReviewContext } from '../router'
 import { StatusPill } from '../components/StatusPill'
 import { TasteRuleGroups } from './TasteRuleGroups'
 
@@ -58,12 +59,14 @@ const switchReference = (item: Item) => {
   return match ? { consideration: match[1], reference: match[2] } : null
 }
 
-function PreviewItem({ item, onAnswered }: { item: Item; onAnswered: () => void }) {
+function PreviewItem({ item, onAnswered }: { item: Item; onAnswered: () => Promise<unknown> }) {
   const { http, queryClient } = useReviewContext()
   const [answer, setAnswer] = useState<Answer | null>(null)
   const [pending, setPending] = useState(false)
   const [failure, setFailure] = useState<Failure | null>(null)
   const state = useRef<HTMLParagraphElement>(null)
+  const looksRight = useRef<HTMLButtonElement>(null)
+  const staleReload = useRef<HTMLButtonElement>(null)
   const shown = answer ?? item.answer
   const recorded = useRef(false)
   useEffect(() => {
@@ -102,7 +105,7 @@ function PreviewItem({ item, onAnswered }: { item: Item; onAnswered: () => void 
           : coverCommand(field, 'keep_current', null),
       )
       setAnswer(outcome)
-      onAnswered()
+      void onAnswered()
     } catch (error) {
       setFailure(failureOf(error, field))
     } finally {
@@ -130,17 +133,19 @@ function PreviewItem({ item, onAnswered }: { item: Item; onAnswered: () => void 
           </p>
         )}
         <TasteRuleGroups rules={item.rules} />
-        {shown ? (
+        {/* Without the new cover's image route there is no switch to answer. */}
+        {!shown && !item.new ? null : shown ? (
           <p
             ref={state}
             tabIndex={-1}
             className={`taste-preview-state${shown === 'looks_right' ? ' is-ok' : ''}`}
           >
-            {shown === 'looks_right' ? 'Looks right' : 'Kept current'}
+            {shown === 'looks_right' ? 'New cover chosen' : 'Current cover kept'}
           </p>
         ) : (
           <div className="taste-preview-actions">
             <button
+              ref={looksRight}
               type="button"
               aria-describedby={titleId}
               aria-disabled={pending || undefined}
@@ -166,10 +171,18 @@ function PreviewItem({ item, onAnswered }: { item: Item; onAnswered: () => void 
           <div className="covers-failure" role="alert">
             <p>{staleCopy}</p>
             <button
+              ref={staleReload}
               type="button"
               onClick={() => {
-                setFailure(null)
-                onAnswered()
+                // Reload replaces itself: focus goes back to Looks right, or
+                // to the region when the switch has left the preview.
+                void onAnswered().then(() => {
+                  setFailure(null)
+                  focusAfterRetry(
+                    () => looksRight.current ?? document.getElementById('taste-preview-meta'),
+                    () => staleReload.current,
+                  )
+                })
               }}
             >
               Reload
@@ -189,31 +202,46 @@ export function TastePreview({
   protection,
   saving,
   headingRef,
+  scope,
   onTurnOn,
   onNotNow,
 }: {
   protection: TasteProtection
   saving: boolean
   headingRef: Ref<HTMLParagraphElement>
+  /** Only covers with a fault and its cost, above the switches it decides. */
+  scope: ReactNode
   onTurnOn: () => void
   onNotNow: () => void
 }) {
   const { http } = useReviewContext()
   const cache = useQueryClient()
-  const live = useLiveStream() === 'live'
-  const read = useQuery(tastePreviewQuery(http, protection, live))
-  const reread = () => void cache.invalidateQueries({ queryKey: ['covers', 'taste', 'preview'] })
+  const read = useQuery(tastePreviewQuery(http, protection))
+  const reread = () => cache.invalidateQueries({ queryKey: ['covers', 'taste', 'preview'] })
+  const readRetry = useRef<HTMLButtonElement>(null)
+  const meta = () => document.getElementById('taste-preview-meta')
   return (
     <section className="taste-preview" aria-labelledby="taste-preview-meta">
       <header>
-        <p id="taste-preview-meta" ref={headingRef} tabIndex={-1}>
+        <p id="taste-preview-meta" ref={headingRef} tabIndex={-1} aria-live="polite">
           {read.data ? previewMeta(read.data) : 'Checking covers…'}
         </p>
       </header>
+      {scope}
       {read.isError ? (
         <div className="covers-failure" role="alert">
           <p>{routeFailureCopy(read.error).message}</p>
-          <button type="button" onClick={() => void read.refetch()}>
+          <button
+            ref={readRetry}
+            type="button"
+            onClick={() =>
+              retryInPlace(
+                meta,
+                () => read.refetch(),
+                (result) => (result.isError ? readRetry.current : meta()),
+              )
+            }
+          >
             Reload
           </button>
         </div>

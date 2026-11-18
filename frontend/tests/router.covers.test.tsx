@@ -3767,10 +3767,24 @@ describe('Switching by taste (#1372 part 5)', () => {
     // The preview sits above the rules, under the meta (C1).
     const rules = screen.getByRole('region', { name: 'What you’re drawn to' })
     expect(preview.compareDocumentPosition(rules) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(within(group).getByRole('checkbox', { name: 'Only covers with a fault' })).toBeChecked()
+    // The scope it decides sits in the preview, under its line and before
+    // the switches and Turn on, and not in Switching (experience B1).
+    const box = within(preview).getByRole('checkbox', { name: 'Only covers with a fault' })
+    expect(box).toBeChecked()
+    expect(box).toHaveAccessibleDescription(
+      'Changing this has the suggestion model check every cover again, up to 5,000 a day.',
+    )
+    expect(within(group).queryByRole('checkbox')).toBeNull()
+    const turnOn = within(preview).getByRole('button', { name: 'Turn on' })
+    expect(box.compareDocumentPosition(turnOn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(
-      within(group).getByText('Changing this checks every cover again, up to 5,000 a day.'),
-    ).toBeVisible()
+      box.compareDocumentPosition(within(preview).getAllByRole('listitem')[0] as Node) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(within(preview).getByText('Found 1 switch in 40 covers.')).toHaveAttribute(
+      'aria-live',
+      'polite',
+    )
     await user.click(within(preview).getByRole('button', { name: 'Not now' }))
     expect(screen.queryByRole('region', { name: /^Found/u })).toBeNull()
     const suggest = within(group).getByRole('radio', { name: 'Suggest only' })
@@ -3791,7 +3805,7 @@ describe('Switching by taste (#1372 part 5)', () => {
     await user.click(await within(group).findByRole('radio', { name: 'Automatic' }))
     await screen.findByText('Found no switches in 3 covers so far.')
     // Clearing the checkbox asks the preview again, and still saves nothing.
-    await user.click(within(group).getByRole('checkbox', { name: 'Only covers with a fault' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Only covers with a fault' }))
     await waitFor(() =>
       expect(http.getTastePreview).toHaveBeenLastCalledWith(
         'unprotected',
@@ -3801,8 +3815,10 @@ describe('Switching by taste (#1372 part 5)', () => {
     )
     expect(http.writeSettings).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Turn on' }))
+    // Until the check passes Automatic only suggests, so nothing says it is
+    // switching (Q19).
     await waitFor(() =>
-      expect(within(group).getByRole('status')).toHaveTextContent('Automatic switching on.'),
+      expect(within(group).getByRole('status')).toHaveTextContent('Switching saved.'),
     )
     expect(http.writeSettings).toHaveBeenCalledTimes(1)
     const write = http.writeSettings.mock.calls[0]?.[0]
@@ -4011,7 +4027,7 @@ describe('Switching by taste (#1372 part 5)', () => {
     )
     expect(within(second).queryByText('Square on an ebook')).toBeNull()
     await user.click(within(first).getByRole('button', { name: 'Looks right' }))
-    const state = await within(first).findByText('Looks right', { selector: 'p' })
+    const state = await within(first).findByText('New cover chosen', { selector: 'p' })
     await waitFor(() => expect(state).toHaveFocus())
     // The same accept as choosing that card on the work's comparison (K8).
     expect(http.recordDecision).toHaveBeenCalledWith(
@@ -4025,7 +4041,7 @@ describe('Switching by taste (#1372 part 5)', () => {
       }),
     )
     await user.click(within(second).getByRole('button', { name: 'Keep current' }))
-    await waitFor(() => expect(within(second).getByText('Kept current')).toHaveFocus())
+    await waitFor(() => expect(within(second).getByText('Current cover kept')).toHaveFocus())
     expect(http.recordDecision).toHaveBeenLastCalledWith(
       'case-2',
       expect.objectContaining({ outcome: 'keep_current', selectedValue: null }),
@@ -4049,9 +4065,153 @@ describe('Switching by taste (#1372 part 5)', () => {
       await within(await switchingGroup()).findByRole('radio', { name: 'Automatic' }),
     )
     const region = await screen.findByRole('region', { name: 'Found 2 switches in 40 covers.' })
-    expect(within(region).getByText('Kept current')).toBeVisible()
-    expect(within(region).getByText('Looks right', { selector: 'p' })).toBeVisible()
+    expect(within(region).getByText('Current cover kept')).toBeVisible()
+    expect(within(region).getByText('New cover chosen', { selector: 'p' })).toBeVisible()
     expect(within(region).queryByRole('button', { name: 'Looks right' })).toBeNull()
+  })
+
+  // Under Never, Suggest only is the setting in force whatever is stored
+  // (Q10): Automatic is never shown chosen beside the Never line.
+  it('shows Suggest only in force under Never even with Automatic stored', async () => {
+    renderRoute(
+      tasteRoute,
+      switchingHttp(
+        {},
+        settingsWith({ taste_switching: 'automatic', current_protection: 'proposals_only' }),
+      ),
+    )
+    const group = await switchingGroup()
+    const automatic = within(group).getByRole('radio', { name: 'Automatic' })
+    await waitFor(() => expect(automatic).toBeDisabled())
+    expect(automatic).not.toBeChecked()
+    expect(within(group).getByRole('radio', { name: 'Suggest only' })).toBeChecked()
+    expect(within(group).queryByRole('checkbox')).toBeNull()
+    expect(group).toHaveAccessibleDescription(
+      'Automatic is off while Current covers is set to Never.',
+    )
+  })
+
+  // A refused Turn on, then Reload reading Never: the preview closes, Turn on
+  // is gone and nothing more is written (review B1). Focus lands on the
+  // checked choice, not the page (experience S3).
+  it('closes the preview when a Reload after a refused Turn on reads Never', async () => {
+    const user = userEvent.setup()
+    const http = switchingHttp()
+    http.writeSettings.mockRejectedValueOnce(new ApiError(409, 'stale_revision'))
+    renderRoute(tasteRoute, http)
+    const group = await switchingGroup()
+    await user.click(await within(group).findByRole('radio', { name: 'Automatic' }))
+    const preview = await screen.findByRole('region', { name: 'Found 1 switch in 40 covers.' })
+    await user.click(within(preview).getByRole('button', { name: 'Turn on' }))
+    expect(await within(group).findByRole('alert')).toHaveTextContent(
+      'Switching was not saved. Reload, then try again.',
+    )
+    http.getSettings.mockResolvedValue(settingsWith({ current_protection: 'proposals_only' }))
+    await user.click(within(group).getByRole('button', { name: 'Reload' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull())
+    expect(screen.queryByRole('region', { name: /^Found/u })).toBeNull()
+    const automatic = within(group).getByRole('radio', { name: 'Automatic' })
+    expect(automatic).toBeDisabled()
+    expect(automatic).not.toBeChecked()
+    const suggest = within(group).getByRole('radio', { name: 'Suggest only' })
+    await waitFor(() => expect(suggest).toHaveFocus())
+    expect(http.writeSettings).toHaveBeenCalledTimes(1)
+  })
+
+  it('says Automatic switching on after Turn on once the check has passed', async () => {
+    const user = userEvent.setup()
+    renderRoute(tasteRoute, switchingHttp({ automatic_available: true }))
+    const group = await switchingGroup()
+    await user.click(await within(group).findByRole('radio', { name: 'Automatic' }))
+    await user.click(await screen.findByRole('button', { name: 'Turn on' }))
+    await waitFor(() =>
+      expect(within(group).getByRole('status')).toHaveTextContent('Automatic switching on.'),
+    )
+  })
+
+  it('says one suggestion in the singular', async () => {
+    renderRoute(tasteRoute, switchingHttp({ confirmed: { confirmed: 1, suggested: 1 } }))
+    const group = await switchingGroup()
+    expect(within(group).getByText('Confirmed 1 of 1 suggestion')).toBeVisible()
+  })
+
+  // An idle page defers live updates, so the preview reads again every 5 s
+  // while it is checking, live or not, and stops once it is done (review S1).
+  it('reads the preview every 5 seconds while checking, with live updates on', async () => {
+    const user = userEvent.setup()
+    const updates = createLiveStream()
+    const http = switchingHttp(
+      {},
+      settingsWith({}),
+      previewOf({ checked: 3, found: [], state: 'checking' }),
+    )
+    renderRoute(tasteRoute, http, updates)
+    await user.click(
+      await within(await switchingGroup()).findByRole('radio', { name: 'Automatic' }),
+    )
+    await screen.findByText('Found no switches in 3 covers so far.')
+    const first = http.getTastePreview.mock.calls.length
+    http.getTastePreview.mockResolvedValue(previewOf({ checked: 12 }))
+    await waitFor(() => expect(http.getTastePreview.mock.calls.length).toBeGreaterThan(first), {
+      timeout: 7_000,
+    })
+    expect(await screen.findByText('Found 1 switch in 12 covers.')).toBeVisible()
+    const done = http.getTastePreview.mock.calls.length
+    await new Promise((resolve) => setTimeout(resolve, 5_500))
+    expect(http.getTastePreview).toHaveBeenCalledTimes(done)
+  }, 20_000)
+
+  // Without the new cover's image route there is nothing to answer (N1).
+  it('offers no answer for a switch without a new cover', async () => {
+    const user = userEvent.setup()
+    renderRoute(
+      tasteRoute,
+      switchingHttp(
+        {},
+        settingsWith({}),
+        previewOf({ found: [switchItem('case-1', { new: null })] }),
+      ),
+    )
+    await user.click(
+      await within(await switchingGroup()).findByRole('radio', { name: 'Automatic' }),
+    )
+    const region = await screen.findByRole('region', { name: 'Found 1 switch in 40 covers.' })
+    expect(within(region).queryByRole('button', { name: 'Looks right' })).toBeNull()
+    expect(within(region).queryByRole('button', { name: 'Keep current' })).toBeNull()
+    expect(within(region).getByRole('button', { name: 'Turn on' })).toBeVisible()
+  })
+
+  // A stale switch's Reload replaces itself: focus goes back to its Looks
+  // right (experience S3).
+  it('returns focus to Looks right after a stale switch is reloaded', async () => {
+    const user = userEvent.setup()
+    const http = switchingHttp(
+      {},
+      settingsWith({}),
+      previewOf({
+        found: [
+          switchItem('case-1', {
+            new: {
+              height: 1200,
+              preview_sha256: '9'.repeat(64),
+              url: `/api/v1/review-cases/case-1/cover-considerations/cover_consideration_old/images/cover_ref_${'9'.repeat(64)}`,
+              width: 800,
+            },
+          }),
+        ],
+      }),
+    )
+    renderRoute(tasteRoute, http)
+    await user.click(
+      await within(await switchingGroup()).findByRole('radio', { name: 'Automatic' }),
+    )
+    const region = await screen.findByRole('region', { name: 'Found 1 switch in 40 covers.' })
+    await user.click(within(region).getByRole('button', { name: 'Looks right' }))
+    await within(region).findByRole('alert')
+    await user.click(within(region).getByRole('button', { name: 'Reload' }))
+    await waitFor(() =>
+      expect(within(region).getByRole('button', { name: 'Looks right' })).toHaveFocus(),
+    )
   })
 
   it('says a switch the work no longer offers is stale, and a refused answer', async () => {
@@ -4140,11 +4300,11 @@ describe('Switching by taste (#1372 part 5)', () => {
     const rows = await screen.findAllByRole('listitem')
     const [one, three, rule] = rows.filter((row) => row.matches('.covers-switched-row'))
     if (!one || !three || !rule) throw new Error('three switched rows are required')
-    expect(within(one).getByText('Taste profile v2')).toBeVisible()
+    expect(within(one).getByText('Taste profile version 2')).toBeVisible()
     expect(within(one).getByRole('list', { name: 'What you’re drawn to' })).toHaveTextContent(
       '1Rule text 1.',
     )
-    expect(within(three).getByText('Taste profile v1')).toBeVisible()
+    expect(within(three).getByText('Taste profile version 1')).toBeVisible()
     expect(within(three).getByText('Square on an ebook')).toBeVisible()
     expect(within(three).getByRole('list', { name: 'What you avoid' })).toHaveTextContent(
       '3Rule text 3.',
@@ -4156,11 +4316,11 @@ describe('Switching by taste (#1372 part 5)', () => {
     await user.click(show)
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
       'All',
-      'Taste profile v2',
-      'Taste profile v1',
+      'Taste profile version 2',
+      'Taste profile version 1',
       'Square on an ebook',
     ])
-    await user.click(screen.getByRole('option', { name: 'Taste profile v1' }))
+    await user.click(screen.getByRole('option', { name: 'Taste profile version 1' }))
     await waitFor(() =>
       expect(
         screen.getAllByRole('listitem').filter((row) => row.matches('.covers-switched-row')),
@@ -4169,7 +4329,7 @@ describe('Switching by taste (#1372 part 5)', () => {
     const [left] = screen
       .getAllByRole('listitem')
       .filter((row) => row.matches('.covers-switched-row'))
-    expect(left).toHaveTextContent('Taste profile v1')
+    expect(left).toHaveTextContent('Taste profile version 1')
   })
 
   it('hides a taste row’s rules while Others is open and keeps its version (D2)', async () => {
@@ -4184,8 +4344,30 @@ describe('Switching by taste (#1372 part 5)', () => {
     await user.click(within(row).getByRole('button', { name: 'Others' }))
     await screen.findByRole('radiogroup', { name: 'Which cover should this work use?' })
     expect(within(row).queryByText('Rule text 2.')).toBeNull()
-    expect(within(row).getByText('Taste profile v2')).toBeVisible()
+    expect(within(row).getByText('Taste profile version 2')).toBeVisible()
     await user.click(within(row).getByRole('button', { name: 'Others' }))
     expect(within(row).getByText('Rule text 2.')).toBeVisible()
+  })
+
+  // A taste switch that cures a fault keeps its pill and version while
+  // Others is open but drops its reason line, so its covers start no lower
+  // than a measured row's (review S2).
+  it('hides a fault-cure taste row’s reason line while Others is open', async () => {
+    const user = userEvent.setup()
+    const switched = page('switched', [
+      tasteSwitch('case-1', 2, [1], { reason: 'wrong_shape', before: preview('b', 300, 300) }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [row] = (await screen.findAllByRole('listitem')).filter((item) =>
+      item.matches('.covers-switched-row'),
+    )
+    if (!row) throw new Error('a switched row is required')
+    const reason = 'Book-shaped art for an ebook whose cover was square.'
+    expect(within(row).getByText(reason)).toBeVisible()
+    await user.click(within(row).getByRole('button', { name: 'Others' }))
+    await screen.findByRole('radiogroup', { name: 'Which cover should this work use?' })
+    expect(within(row).queryByText(reason)).toBeNull()
+    expect(within(row).getByText('Square on an ebook')).toBeVisible()
+    expect(within(row).getByText('Taste profile version 2')).toBeVisible()
   })
 })

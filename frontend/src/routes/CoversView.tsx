@@ -439,11 +439,14 @@ function SwitchedRow({
         </h3>
         <p>{byline(work)}</p>
         <p>{switchedLead(switched.at, new Date())}</p>
-        {switched.taste ? <p>{`Taste profile v${String(switched.taste.version)}`}</p> : null}
+        {switched.taste ? <p>{`Taste profile version ${String(switched.taste.version)}`}</p> : null}
         {switched.reason ? (
           <>
             <FaultPill work={work} />
-            {reasonLine(work) ? <p>{reasonLine(work)}</p> : null}
+            {/* A taste switch that cures a fault keeps its pill but drops the
+                reason line while Others is open, so its covers start no
+                lower than a measured row's (#1372 PR 5). */}
+            {reasonLine(work) && !(switched.taste && open) ? <p>{reasonLine(work)}</p> : null}
           </>
         ) : null}
         {/* While Others is open the rules give way, so its covers start
@@ -998,7 +1001,7 @@ function SwitchedList({
     .sort((left, right) => right - left)
     .map((version) => ({
       value: `taste-${String(version)}`,
-      label: `Taste profile v${String(version)}`,
+      label: `Taste profile version ${String(version)}`,
     }))
   const faults = coverFaultCodes.flatMap((code) => {
     const first = works.find((work) => work.group === 'auto' && work.switched?.reason === code)

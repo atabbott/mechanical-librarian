@@ -763,7 +763,7 @@ function TasteSection({
 
 function Profile({ view }: { view: TasteProfile }) {
   const { container, editor } = useTasteRuleEditor(view)
-  const switching = useTasteSwitching()
+  const switching = useTasteSwitching(view.automatic_available)
   const profile = view.profile
   if (profile === null) return null
   return (
@@ -790,7 +790,7 @@ function Profile({ view }: { view: TasteProfile }) {
         {editor.status}
       </p>
       {/* Choosing Automatic opens the preview here, above the rules (#1372 PR 5). */}
-      <SwitchingPreview switching={switching} />
+      <SwitchingPreview switching={switching} view={view} />
       {/* Wide screens put Switching and Versions beside the rules, as the
           prototype does; phones put Switching above the rules. "Confirmed"
           sits inside Switching. */}

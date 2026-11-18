@@ -1741,6 +1741,7 @@ dialog.first-review-guide.covers-intro { width:min(34rem,calc(100vw - 2rem)); }
 /* The preview (C1): full width under the meta, above the rules. */
 .taste-preview { display:grid; gap:.9rem; min-width:0; padding:1.1rem 1.2rem 1.2rem; border:1px solid var(--accent); border-radius:14px; background:color-mix(in srgb,var(--accent-soft) 40%,var(--surface)); scroll-margin-top:84px; }
 .taste-preview header p { margin:0; max-width:75ch; font-size:.92rem; font-weight:700; }
+.taste-preview > .taste-mode-extra { padding-left:0; }
 .taste-preview header p:focus { outline-offset:4px; }
 .taste-preview-list { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap:.75rem; margin:0; padding:0; list-style:none; }
 .taste-preview-item { display:grid; gap:.8rem; align-content:start; min-width:0; padding:.85rem; border:1px solid var(--line); border-radius:12px; background:var(--surface-strong); }

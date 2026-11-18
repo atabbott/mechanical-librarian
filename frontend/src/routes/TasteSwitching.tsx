@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 
 import type { TasteProfileView as TasteProfile } from '../api/http'
 import { StaleBuildRead } from '../components/StaleBuildRead'
+import { retryInPlace } from '../focusAfterRetry'
 import { tasteSwitchingId as switchingId } from '../tasteSections'
 import type { TasteSwitching } from '../tasteSwitching'
 import { TastePreview } from './TastePreview'
@@ -12,9 +13,44 @@ import { TastePreview } from './TastePreview'
 
 const lost = 'No answer came back. Check whether Switching was saved before trying again.'
 const loadFailed = 'Cover settings could not be loaded.'
+const count = (value: number) => value.toLocaleString('en-GB')
+
+/**
+ * Only covers with a fault and what changing it costs. While the preview is
+ * open it sits in the preview, above the switches it decides and Turn on.
+ */
+function ScopeCheck({ switching, view }: { switching: TasteSwitching; view: TasteProfile }) {
+  const { previewing } = switching
+  const checked = previewing
+    ? switching.protect
+    : switching.shown?.current_protection === 'protected'
+  return (
+    <div className="taste-mode-extra">
+      <label className="taste-check">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={switching.settings.data?.authority === 'file'}
+          aria-describedby="taste-switching-again"
+          onChange={(event) => switching.tick(event.target.checked)}
+        />
+        <span>Only covers with a fault</span>
+      </label>
+      <p id="taste-switching-again" className="taste-switching-note">
+        {`Changing this has the suggestion model check every cover again, up to ${count(view.judge.daily_limit)} a day.`}
+      </p>
+    </div>
+  )
+}
 
 /** The preview, full width under the meta, focused when it opens. */
-export function SwitchingPreview({ switching }: { switching: TasteSwitching }) {
+export function SwitchingPreview({
+  switching,
+  view,
+}: {
+  switching: TasteSwitching
+  view: TasteProfile
+}) {
   const heading = useRef<HTMLParagraphElement>(null)
   useEffect(() => {
     if (!switching.previewing) return
@@ -26,6 +62,7 @@ export function SwitchingPreview({ switching }: { switching: TasteSwitching }) {
       protection={switching.protect ? 'protected' : 'unprotected'}
       saving={switching.saving}
       headingRef={heading}
+      scope={<ScopeCheck switching={switching} view={view} />}
       onTurnOn={switching.turnOn}
       onNotNow={switching.notNow}
     />
@@ -39,8 +76,10 @@ export function SwitchingControl({
   switching: TasteSwitching
   view: TasteProfile
 }) {
-  const { settings, preferences, previewing } = switching
+  const { settings, preferences, previewing, never } = switching
   const fieldset = useRef<HTMLFieldSetElement>(null)
+  const loadRetry = useRef<HTMLButtonElement>(null)
+  const refusedReload = useRef<HTMLButtonElement>(null)
   // Policy › Current covers links here: focus lands on Switching once.
   const arrived = useRef(false)
   const hash = useLocation({ select: (location) => location.hash })
@@ -53,12 +92,10 @@ export function SwitchingControl({
     })
   }, [preferences, hash])
   const locked = settings.data?.authority === 'file'
-  const never = preferences?.current_protection === 'proposals_only'
-  const automaticChecked = switching.shown?.taste_switching === 'automatic' || previewing
-  const protectChecked = previewing
-    ? switching.protect
-    : switching.shown?.current_protection === 'protected'
-  const confirmed = view.confirmed
+  // Under Never, Suggest only is in force whatever is stored (Q10).
+  const automaticChecked =
+    !never && (switching.shown?.taste_switching === 'automatic' || previewing)
+  const { confirmed, suggested } = view.confirmed
   return (
     <fieldset
       id={switchingId}
@@ -71,7 +108,20 @@ export function SwitchingControl({
       {settings.isError && !preferences ? (
         <div className="covers-failure" role="alert">
           <p>{loadFailed}</p>
-          <button type="button" onClick={() => void settings.refetch()}>
+          <button
+            ref={loadRetry}
+            type="button"
+            onClick={() =>
+              retryInPlace(
+                () => fieldset.current,
+                () => settings.refetch(),
+                (result) =>
+                  result.isSuccess
+                    ? fieldset.current?.querySelector<HTMLElement>('input:checked')
+                    : loadRetry.current,
+              )
+            }
+          >
             Reload
           </button>
         </div>
@@ -99,23 +149,7 @@ export function SwitchingControl({
         />
         <span>Automatic</span>
       </label>
-      {automaticChecked && !never ? (
-        <div className="taste-mode-extra">
-          <label className="taste-check">
-            <input
-              type="checkbox"
-              checked={protectChecked}
-              disabled={locked}
-              aria-describedby="taste-switching-again"
-              onChange={(event) => switching.tick(event.target.checked)}
-            />
-            <span>Only covers with a fault</span>
-          </label>
-          <p id="taste-switching-again" className="taste-switching-note">
-            {`Changing this checks every cover again, up to ${view.judge.daily_limit.toLocaleString('en-GB')} a day.`}
-          </p>
-        </div>
-      ) : null}
+      {automaticChecked && !previewing ? <ScopeCheck switching={switching} view={view} /> : null}
       {never ? (
         <p id="taste-switching-never" className="taste-switching-note">
           Automatic is off while{' '}
@@ -129,9 +163,9 @@ export function SwitchingControl({
           Until your check passes, Automatic only suggests switches.
         </p>
       )}
-      {confirmed.suggested === 0 ? null : (
+      {suggested === 0 ? null : (
         <p className="taste-confirmed">
-          {`Confirmed ${confirmed.confirmed.toLocaleString('en-GB')} of ${confirmed.suggested.toLocaleString('en-GB')} suggestions`}
+          {`Confirmed ${count(confirmed)} of ${count(suggested)} ${suggested === 1 ? 'suggestion' : 'suggestions'}`}
         </p>
       )}
       <p className="taste-switching-status" role="status">
@@ -143,7 +177,11 @@ export function SwitchingControl({
         <div className="covers-failure" role="alert">
           <p>{switching.failure === 'lost' ? lost : switching.refusal}</p>
           {switching.failure === 'refused' ? (
-            <button type="button" onClick={switching.reload}>
+            <button
+              ref={refusedReload}
+              type="button"
+              onClick={() => switching.reload(() => refusedReload.current)}
+            >
               Reload
             </button>
           ) : null}

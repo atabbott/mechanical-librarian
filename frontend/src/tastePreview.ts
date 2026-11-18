@@ -8,14 +8,14 @@ import { queryWorkClass } from './queryWork'
 const previewLimit = 100
 const pollMilliseconds = 5_000
 
-export const tastePreviewQuery = (http: ReviewHttp, protection: TasteProtection, live: boolean) =>
+export const tastePreviewQuery = (http: ReviewHttp, protection: TasteProtection) =>
   queryOptions({
     queryKey: ['covers', 'taste', 'preview', protection] as const,
     queryFn: (context) => http.getTastePreview(protection, context.signal, queryWorkClass(context)),
-    // Live updates refresh the read as the suggestion model checks covers;
-    // without them it is read again every five seconds until it is done.
-    refetchInterval: (query) =>
-      !live && query.state.data?.state === 'checking' ? pollMilliseconds : false,
+    // Read again every five seconds while the suggestion model is checking,
+    // live updates or not: an idle page defers live updates, so they alone
+    // could leave the preview at "so far". It stops once it is done.
+    refetchInterval: (query) => (query.state.data?.state === 'checking' ? pollMilliseconds : false),
     retry: false,
   })
 

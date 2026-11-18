@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import { BuildMismatchError, refusalCopy, uncertainWriteOutcome } from './api/http'
+import { focusAfterRetry } from './focusAfterRetry'
 import type { SettingsView } from './api/http'
 import { queryWorkClass, useRequiredQuery as useQuery } from './queryWork'
 import { useReviewContext } from './router'
@@ -11,20 +12,20 @@ import { tasteSwitchingId } from './tasteSections'
 // Automatic, and under Automatic, Only covers with a fault, which is Current
 // covers' protection. Both are owner settings, saved through the settings
 // document at its revision as Policy › Current covers saves them. Choosing
-// Automatic opens the preview first and saves nothing until Turn on.
+// Automatic opens the preview first and saves nothing until Turn on. Under
+// Current covers Never, Suggest only is the setting in force whatever is
+// stored, and Automatic cannot be turned on (Q10).
 
 type Preferences = SettingsView['document']['cover_preferences']
 type Change = Partial<Pick<Preferences, 'taste_switching' | 'current_protection'>>
 const notSaved = 'Switching was not saved. Reload, then try again.'
 
-const focusChecked = () =>
-  requestAnimationFrame(() =>
-    document
-      .querySelector<HTMLElement>(`#${tasteSwitchingId} input[type="radio"]:checked`)
-      ?.focus(),
-  )
+const checkedRadio = () =>
+  document.querySelector<HTMLElement>(`#${tasteSwitchingId} input[type="radio"]:checked`)
+const focusChecked = () => requestAnimationFrame(() => checkedRadio()?.focus())
 
-export function useTasteSwitching() {
+/** `qualified`: the taste identity has its record, so Automatic switches. */
+export function useTasteSwitching(qualified: boolean) {
   const { http } = useReviewContext()
   const cache = useQueryClient()
   const settings = useQuery({
@@ -61,6 +62,7 @@ export function useTasteSwitching() {
       cache.setQueryData(['settings'], saved)
       setStatus(done)
       setPreviewing(false)
+      if (saved.document.cover_preferences.taste_switching === 'automatic') focusChecked()
     },
     onError: (error) => {
       if (error instanceof BuildMismatchError) {
@@ -79,11 +81,19 @@ export function useTasteSwitching() {
     },
   })
   const preferences = settings.data?.document.cover_preferences
-  const automatic = preferences?.taste_switching === 'automatic'
+  const never = preferences?.current_protection === 'proposals_only'
+  const automatic = !never && preferences?.taste_switching === 'automatic'
   // While a save is on its way the choices show what it saves, so a click
-  // never looks ignored.
-  const shown =
+  // never looks ignored. Under Never, Suggest only is what is in force.
+  const pending =
     save.isPending && preferences ? { ...preferences, ...save.variables.change } : preferences
+  const shown =
+    pending?.current_protection === 'proposals_only'
+      ? { ...pending, taste_switching: 'suggest_only' as const }
+      : pending
+  // The preview is moot once the stored settings are Never or already
+  // Automatic, for example after another tab saved them.
+  if (previewing && (never || automatic)) setPreviewing(false)
   const write = (change: Change, done: string) => {
     if (!save.isPending) save.mutate({ change, done })
   }
@@ -112,28 +122,32 @@ export function useTasteSwitching() {
     }
     write({ current_protection: checked ? 'protected' : 'unprotected' }, 'Switching saved.')
   }
-  const turnOn = () =>
+  const turnOn = () => {
+    if (!preferences || never) return
     write(
       { taste_switching: 'automatic', current_protection: protect ? 'protected' : 'unprotected' },
-      'Automatic switching on.',
+      // Until the check passes Automatic only suggests (Q19), so nothing is
+      // said to be switching.
+      qualified ? 'Automatic switching on.' : 'Switching saved.',
     )
+  }
   const notNow = () => {
     setPreviewing(false)
     focusChecked()
   }
-  // Turn on lands focus on the Automatic choice it saved.
-  const turnedOn = save.isSuccess && save.variables.change.taste_switching === 'automatic'
-  useEffect(() => {
-    if (turnedOn) focusChecked()
-  }, [turnedOn])
-  const reload = () => {
-    setFailure(null)
-    void settings.refetch()
+  // A Reload replaces itself: focus goes to the checked choice once the
+  // settings are read again.
+  const reload = (button: () => HTMLElement | null) => {
+    void settings.refetch().then(() => {
+      setFailure(null)
+      focusAfterRetry(checkedRadio, button)
+    })
   }
   return {
     settings,
     preferences,
     shown,
+    never,
     automatic,
     previewing,
     protect,

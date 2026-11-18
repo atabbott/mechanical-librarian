@@ -104,7 +104,16 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         document: {
           ...base,
           revision: base.revision + 1,
-          cover_preferences: { ...base.cover_preferences, ...draft },
+          // Never turns Switching by taste back to Suggest only in the same
+          // save; lifting Never later leaves it there, and Automatic goes
+          // through Taste profile's preview again (#1372 PR 5).
+          cover_preferences: {
+            ...base.cover_preferences,
+            ...draft,
+            ...(draft.current_protection === 'proposals_only'
+              ? { taste_switching: 'suggest_only' as const }
+              : {}),
+          },
         },
         secrets: [],
       }),
@@ -199,7 +208,9 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
           </div>
           <div className="settings-field-control">
             <span>
-              {base.cover_preferences.taste_switching === 'automatic'
+              {/* Under Never, Suggest only is in force whatever is stored. */}
+              {base.cover_preferences.taste_switching === 'automatic' &&
+              base.cover_preferences.current_protection !== 'proposals_only'
                 ? 'Automatic'
                 : 'Suggest only'}
             </span>
