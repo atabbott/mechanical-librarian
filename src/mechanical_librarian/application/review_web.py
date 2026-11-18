@@ -79,6 +79,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionAction,
     HumanDecisionError,
     decision_actions,
+    description_unrestorable,
     genre_subset_available,
     list_union,
     offer_digest,
@@ -151,10 +152,11 @@ from mechanical_librarian.domain.shadow_outcome import (
 from mechanical_librarian.domain.validation import owner_password
 from mechanical_librarian.domain.value_flags import value_flags
 
-# v11: a cover field carries the taste judge's pending suggestion (#1372 PR 4b).
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v11"]
+# v12: a field says whether the description its case wrote over can be
+# restored from here (#1424).
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v12"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v11"
+    "review-case-detail-v12"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
@@ -2120,10 +2122,12 @@ class InspectCurrentReviewCase:
             # This case's own write set the field in its episode, so what it
             # read before is no longer the library's value (#1523).
             "written_by_case": destination in dict(snapshot.written_values),
-            # That value is a description stored with formatting a restore
-            # from here would lose, so it can't be gone back to (#1424).
-            "restore_unavailable": destination in dict(snapshot.written_values)
-            and _description_unrestorable(case, destination),
+            # What it wrote over is a description stored with formatting a
+            # restore from here would lose, so it can't be gone back to and a
+            # keep is refused (#1424).
+            "restore_unavailable": destination == "description"
+            and destination in dict(snapshot.written_values)
+            and description_unrestorable(case),
             "pin": pin,
             "pin_control": pin_control,
             # The offer a choice binds: its value, proposal and rule (#1355).
@@ -3465,16 +3469,6 @@ def _automatic_withheld(
     if paused:
         message = "Changes made for you are paused for this field. " + message
     return message, condition
-
-
-def _description_unrestorable(case: ReviewCase, destination: str) -> bool:
-    """Whether the description the case read has formatting a restore from
-    here would lose, as `field_effect_restore_refused` decides (#1424)."""
-    if destination != "description":
-        return False
-    fields = cast("list[dict[str, object]]", case.target["fields"])
-    field = next(item for item in fields if item["destination"] == destination)
-    return field["state"] == "value" and field.get("restorable") is not True
 
 
 def _presented_field(field: TargetField) -> dict[str, object]:

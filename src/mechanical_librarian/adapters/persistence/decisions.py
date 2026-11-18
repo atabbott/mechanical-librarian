@@ -94,6 +94,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
     chosen_value_fingerprint,
+    description_unrestorable,
     pinned_field_fingerprint,
     target_value,
 )
@@ -729,6 +730,15 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 # Keeping the empty value the case read would go back to
                 # empty, which this field cannot be (#1523).
                 raise HumanDecisionError("owner_value_required")
+            if (
+                decision.outcome == "keep_current"
+                and decision.follows is not None
+                and decision.destination == "description"
+                and description_unrestorable(case)
+            ):
+                # Its formatting can't be written back, so the keep would be
+                # recorded and its restore refused before any request (#1424).
+                raise HumanDecisionError("restore_unavailable")
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True
             )

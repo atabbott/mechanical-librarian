@@ -6714,6 +6714,9 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "offer_changed": 409,
             # The book link changed since the case's report (#1477 Q6).
             "link_changed": 409,
+            # A keep of a description whose formatting can't be written back
+            # (#1424).
+            "restore_unavailable": 409,
         }.get(error.code, 503)
         reason = getattr(error, "reason", None)
         raise HTTPException(

@@ -98,6 +98,7 @@
         "provider_e2dae467c54051b9202c0203e936cb26f016c7f6742db7bd73a51434fd94137c",
         "provider_fe07db53652cff3a2705227b53c1ec256664f7588a807f6d14c11b2d76c2a827"
       ],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -198,6 +199,7 @@
         }
       ],
       "provenance": ["provider_c5d00f6325d00d72af199f7c0702def45ae7370bea82b63ca0dc945103f7d7a8"],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -297,6 +299,7 @@
         "local_8a043456a2b2863fbbc99c0da87486b328687c1da4522147eda80d0210de19a6",
         "provider_e97d5b01d8c4d1ac75dd707cf93c8fab512629f95e64aa6695aa2dfa62ef913f"
       ],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": ["manifestation_verification_required"],
       "written_by_case": false
@@ -398,6 +401,7 @@
       "proposal_id": "review_proposal_202953faf83e59b20802fb0b35bf9d1f2e4d8b968824709470c457965ff39ebb",
       "proposed_values": [],
       "provenance": ["provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -459,6 +463,7 @@
       "proposal_id": "review_proposal_1268d84678d8603ef4e5e9c2dd626b02cc2988826e33767e461d4085ef871eca",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -561,6 +566,7 @@
       "proposal_id": "review_proposal_f1292048cf1346df7fd08a288c377ace3dcaa8edd80b2903650fb166162339eb",
       "proposed_values": [],
       "provenance": ["provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -622,6 +628,7 @@
       "proposal_id": "review_proposal_ae081d9368896353d80e6fa44bba2bc088e5ab97a1156e35561f5a1e863d41f8",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -683,6 +690,7 @@
       "proposal_id": "review_proposal_bd73e5b699f6ba8d654278ab285e80a8ca287a5ccab52ba308de9c6bb6bf881d",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -813,6 +821,7 @@
       "proposal_id": "review_proposal_8b1465fe66a95000ba6b2c4c57bd9566f5dcaf3944281bd397f24dba40c556ab",
       "proposed_values": [],
       "provenance": ["provider_8d5555b014ce6a5575d245545fd197836a76c7f8e5f496697d90521e01e2e5e4"],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -874,6 +883,7 @@
       "proposal_id": "review_proposal_caf2ac2b19b132b25d7d5930054de4e25aaa709689a6b15cd415766eed6ed0b8",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -935,6 +945,7 @@
       "proposal_id": "review_proposal_edfe6375dc3f736775f40fb707c7c49bece0e3e3463a82a9c9e9da75cc1d697d",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -1018,6 +1029,7 @@
         }
       ],
       "provenance": ["provider_e8f3d5f76eca4ea97b720bfe78e64cf22c5796eef346431fdfe943fc76f4e457"],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -1076,6 +1088,7 @@
       "proposal_id": "review_proposal_8785c013727efae95658845dbb8b6a8656b91cb3974d765035a1cddaf7523e48",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -1085,7 +1098,7 @@
   "recording_admission_basis": null,
   "recording_identity_basis": null,
   "review_case_id": "review_case_b62ec3e3209f7ad44663f982fa59cfbe8c9ae3fc88bf1a7413fc3102761699a6",
-  "schema_version": "review-case-detail-v11",
+  "schema_version": "review-case-detail-v12",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",

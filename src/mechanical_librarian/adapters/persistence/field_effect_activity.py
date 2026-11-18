@@ -158,6 +158,7 @@ from mechanical_librarian.domain.human_decision import (
     DecisionScope,
     HumanDecision,
     HumanDecisionError,
+    description_unrestorable,
     manual_cover_eligible,
 )
 from mechanical_librarian.domain.metadata_policy import (
@@ -2911,7 +2912,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         A corrective keep-current writes the case's admitted text. Where
         Audiobookshelf stored that text with formatting the admission rendered
         away, writing it would replace the formatting with its visible text, so
-        the restore is refused before any request (#1424).
+        the restore is refused before any request (#1424). The store now
+        refuses such a keep when it is recorded; this catches one recorded
+        before that.
         """
         if plan.destination != "description" or plan.authority.origin != "human":
             return False
@@ -2923,12 +2926,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if outcome != ("keep_current",):
             return False
         case = json.loads(self.get_review_case(plan.authority.review_case_id))["case"]
-        field = next(
-            item
-            for item in case["target"]["fields"]
-            if item["destination"] == "description"
-        )
-        return field["state"] == "value" and field["restorable"] is not True
+        return description_unrestorable(ReviewCase.from_json(_canonical_json(case)))
 
     @local_operation
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:

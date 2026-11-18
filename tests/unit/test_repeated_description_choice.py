@@ -6,6 +6,7 @@ is shown for it, never enters Attention, and changes no persisted fact.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -21,12 +22,14 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.human_decision import HumanDecision
+from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.description_advice import (
     _guarded_application,
     _prepared,
     _preserved_description_report,
     qualify_description_advice,
 )
+from tests.support.proposal_evidence import _report as _proposal_report
 
 REPEATED = (
     "Every source repeats your current description, so no review is needed. "
@@ -336,6 +339,66 @@ def test_keep_current_writes_back_after_the_advice_was_written(
     assert restored.pre_value == "Authored synthetic description."
     assert restored.decision_value == {"kind": "text", "value": snapshot.pre_value}
     assert apply(keep, corrective=True) == snapshot.pre_value
+    repository.close()
+
+
+@pytest.mark.parametrize("origin", ["human", "automatic_policy"])
+def test_keep_current_is_refused_after_advice_wrote_over_a_formatted_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, origin: str
+) -> None:
+    """The advice's write follows nothing a restore could write back: the
+    description it replaced was stored with formatting (#1424)."""
+    from tests.support.field_effects import CAPABILITY
+
+    qualify_description_advice(monkeypatch)
+    source, *_ = _automatic_no_change_inputs("description_preserved")
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path,
+        automatic=origin == "automatic_policy",
+        report_override=_proposal_report(
+            fields=tuple(
+                replace(field, restorable=False)
+                if field.destination.value == "description"
+                else field
+                for field in source.target.fields
+            ),
+            local_claims=source.local_claims,
+            providers=source.providers,
+        ),
+    )
+    case_id = binding.review_case_id
+    decision = store.admit(candidate.candidate_id, binding, origin, "a" * 64, 11)
+    authority = PersistedFieldEffectAuthority(repository)
+    application, target = _guarded_application(repository, tmp_path, authority)
+    resolved = authority.resolve(decision)
+    operation = application.plan(
+        decision,
+        connection=resolved.connection,
+        library=resolved.library,
+        work_id=resolved.work_id,
+        destination=resolved.destination,
+        pre_value=resolved.pre_value,
+        desired_value=resolved.decision_value,
+        target_fingerprint=resolved.target_fingerprint,
+        target_version=resolved.target_version,
+        dependency_digests=resolved.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    target.seed(operation.plan)
+    assert application.apply(operation.plan.plan_id).state == "verified"
+    assert _description(repository, case_id)["decision_actions"] == [
+        "keep_current",
+        "accept",
+    ]
+    recorded = "SELECT count(*) FROM human_decisions"
+    before = repository._connection.execute(recorded).fetchone()
+    with pytest.raises(ReviewWebError) as refusal:
+        _decide(repository, case_id, f"keep-formatted-{origin}", 40)
+    assert refusal.value.code == "restore_unavailable"
+    assert repository._connection.execute(recorded).fetchone() == before
+    assert repository.pending_field_effect_decision_documents(100) == ()
+    assert target.read(operation.plan).value == "Authored synthetic description."
     repository.close()
 
 

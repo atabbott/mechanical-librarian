@@ -3898,7 +3898,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v11",
+            "const": "review-case-detail-v12",
             "title": "Schema Version",
             "type": "string"
           },
