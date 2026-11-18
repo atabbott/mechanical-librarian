@@ -17,6 +17,7 @@ from mechanical_librarian.adapters.persistence.cover_taste_judge import (
     VERDICT_IN_FORCE_SQL,
     request_taste_judge_retries,
     taste_judge_facts,
+    taste_preview_walk,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -26,6 +27,11 @@ from mechanical_librarian.application.contained_reviewer_contract import canonic
 from mechanical_librarian.application.cover_taste_inputs import (
     TasteCandidateSource,
     TasteDecisionSource,
+)
+from mechanical_librarian.application.cover_taste_switching import (
+    PREVIEW_CHECKED,
+    PREVIEW_SWITCHES,
+    TastePreviewWalk,
 )
 from mechanical_librarian.domain.cover_taste import (
     COVER_TASTE_PROFILE_SCHEMA,
@@ -579,6 +585,20 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
         self, authority: tuple[str | None, str | None], now: int, daily_limit: int
     ) -> dict[str, object]:
         return taste_judge_facts(self._connection, authority, now, daily_limit)
+
+    def preview(self, protection: str) -> TastePreviewWalk:
+        """The switches the version in use would make under `protection`,
+        among the covers it has judged so far (K7); a read only."""
+        with self._cover_read() as authority:
+            return self._preview(authority, protection)
+
+    @local_operation
+    def _preview(
+        self, authority: tuple[str | None, str | None], protection: str
+    ) -> TastePreviewWalk:
+        return taste_preview_walk(
+            self._connection, authority, protection, PREVIEW_CHECKED, PREVIEW_SWITCHES
+        )
 
     def request_judge_retry(self, version: int, now: int) -> bool:
         """The owner's Try again for every failed check under `version`;

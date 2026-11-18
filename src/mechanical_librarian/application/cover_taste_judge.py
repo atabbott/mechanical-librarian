@@ -29,6 +29,9 @@ from mechanical_librarian.application.cover_taste_judge_contract import (
     admit_taste_verdict,
     taste_verdict_document,
 )
+from mechanical_librarian.application.cover_taste_switching import (
+    CoverTasteSwitching,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
@@ -454,17 +457,27 @@ class CoverTasteJudgeService:
 
 
 class CoverTasteBackground:
-    """The taste profile's background work on lane 1: a due build first,
-    then, when no build ran, at most one judgement (J6)."""
+    """The taste profile's background work on lane 1, one step per wake: a
+    due build; else retiring or admitting a taste switch (#1372 PR 5); else
+    at most one judgement (J6)."""
 
     def __init__(
-        self, build: CoverTasteBuildService, judge: CoverTasteJudgeService
+        self,
+        build: CoverTasteBuildService,
+        judge: CoverTasteJudgeService,
+        switching: CoverTasteSwitching,
     ) -> None:
         self._build = build
         self._judge = judge
+        self._switching = switching
 
     def wake(self, now: int, changed: Callable[[], object] = lambda: None) -> bool:
-        return self._build.wake(now, changed) or self._judge.wake(now, changed)
+        if self._build.wake(now, changed):
+            return True
+        if self._switching.wake(now):
+            changed()
+            return True
+        return self._judge.wake(now, changed)
 
 
 __all__ = [

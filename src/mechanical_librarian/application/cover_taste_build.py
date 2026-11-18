@@ -21,9 +21,19 @@ from mechanical_librarian.application.cover_taste_inputs import (
     TasteDecisionSource,
     assemble_taste_inputs,
 )
+from mechanical_librarian.application.cover_taste_switching import (
+    TASTE_PROTECTIONS,
+    CoverTasteSwitchingRepository,
+    TastePreviewWalk,
+    taste_preview,
+)
+from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
+)
+from mechanical_librarian.domain.cover_qualification_policy import (
+    taste_replacement_record,
 )
 from mechanical_librarian.domain.cover_taste import (
     CoverTasteError,
@@ -99,6 +109,8 @@ class CoverTasteRepository(Protocol):
 
     def request_judge_retry(self, version: int, now: int) -> bool: ...
 
+    def preview(self, protection: str) -> TastePreviewWalk: ...
+
 
 class CoverTasteRetryError(RuntimeError):
     """A retry names a build that is not the latest failed one."""
@@ -108,6 +120,8 @@ class CoverTasteRepositoryOwner(Protocol):
     def cover_taste_store(self) -> CoverTasteRepository: ...
 
     def cover_taste_judge_store(self) -> CoverTasteJudgeRepository: ...
+
+    def cover_taste_switching_store(self) -> CoverTasteSwitchingRepository: ...
 
     def close(self) -> None: ...
 
@@ -135,6 +149,9 @@ class CoverTasteRepositoryLease:
 
     def judge_store(self) -> CoverTasteJudgeRepository:
         return self._opened().cover_taste_judge_store()
+
+    def switching_store(self) -> CoverTasteSwitchingRepository:
+        return self._opened().cover_taste_switching_store()
 
     def close(self) -> None:
         with self._lock:
@@ -175,12 +192,21 @@ class CoverTasteBuildService:
             "configured": self._access.current_taste_build_model() is not None,
             "daily_limit": self._daily_limit,
             "confirmed": judge.pop("confirmed"),
+            "automatic_available": taste_replacement_record() is not None,
             "judge": {
                 **judge,
                 "configured": self._access.current_taste_judge_model() is not None,
                 "daily_limit": self._judge_daily_limit,
             },
         }
+
+    def preview(self, protection: str) -> dict[str, object]:
+        """What Switching Automatic would switch under `protection`, from
+        what the judge has stored (K7); raises `ReviewWebError` with no
+        profile."""
+        if protection not in TASTE_PROTECTIONS:
+            raise ReviewWebError("request")
+        return taste_preview(self._repository().preview(protection))
 
     def retry_judge(self, version: int) -> None:
         """Ask again for each work whose check failed under `version`, the

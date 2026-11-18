@@ -633,6 +633,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("automatic_decisions",),
             ("automatic_safety_state",),
             ("browse_fact_identity",),
+            ("cover_automatic_held",),
             ("cover_consideration_events",),
             ("cover_considerations",),
             ("cover_selection_authorities",),
@@ -949,6 +950,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 + "DROP TABLE retained_cover_listings;"
                 "DROP TABLE retained_cover_removals;"
                 "DROP TABLE retained_cover_bindings;"
+                "DROP TABLE cover_automatic_held;"
                 "DROP TABLE cover_taste_verdicts;"
                 "DROP TABLE cover_taste_judgements;"
                 "DROP TABLE cover_taste_profile_versions;"
@@ -2766,6 +2768,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     + "DROP TABLE retained_cover_listings;"
                     "DROP TABLE retained_cover_removals;"
                     "DROP TABLE retained_cover_bindings;"
+                    "DROP TABLE cover_automatic_held;"
                     "DROP TABLE cover_taste_verdicts;"
                     "DROP TABLE cover_taste_judgements;"
                     "DROP TABLE cover_taste_profile_versions;"
@@ -2816,6 +2819,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE retained_cover_listings;"
                     "DROP TABLE retained_cover_removals;"
                     "DROP TABLE retained_cover_bindings;"
+                    "DROP TABLE cover_automatic_held;"
                     "DROP TABLE cover_taste_verdicts;"
                     "DROP TABLE cover_taste_judgements;"
                     "DROP TABLE cover_taste_profile_versions;"

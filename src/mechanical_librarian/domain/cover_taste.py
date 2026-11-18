@@ -70,6 +70,15 @@ TASTE_PREVIEWS_PER_DECISION: Final = 4
 TASTE_MAX_IMAGES: Final = 100
 TASTE_MAX_REQUEST_BYTES: Final = 24_000_000
 TASTE_MIN_ARTS: Final = 2
+# The faults whose cure the judge may choose among (J1 b, Q9), and the
+# reasons a taste switch may record (#1372 PR 5, K2).
+TASTE_JUDGE_FAULTS: Final = (
+    "wrong_shape",
+    "below_floor",
+    "edition_language",
+    "sharper_copy",
+    "unreadable",
+)
 
 # The taste judge (#1372 PR 4, J1-J7): one closed verdict per eligible cover
 # field and profile version, over the current cover and at most 12 other arts.
@@ -389,6 +398,7 @@ __all__ = [
     "CoverTasteError",
     "TasteBuildFailure",
     "TASTE_JUDGE_MAX_ALTERNATIVES",
+    "TASTE_JUDGE_FAULTS",
     "TASTE_JUDGE_MAX_RULES",
     "TASTE_JUDGE_NOTICE_SECONDS",
     "TASTE_JUDGE_OUTAGE_PAUSE_SECONDS",

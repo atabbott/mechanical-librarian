@@ -180,6 +180,7 @@ def file_settings_projection(
                 "prefer_minimal_composition": review.cover_prefer_minimal_composition,
                 "current_protection": review.cover_current_protection,
                 "prefer_edition": review.cover_prefer_edition,
+                "taste_switching": review.cover_taste_switching,
             },
             "matching": {"work_identity": review.work_identity.value},
         }

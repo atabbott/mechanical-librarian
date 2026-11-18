@@ -30,6 +30,9 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
     preparation_work_id,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
 from mechanical_librarian.domain.owner_link import (
     OwnerLinkAction,
     OwnerLinkScope,
@@ -721,13 +724,22 @@ _PREDECESSORS = Path(__file__).parents[1] / "fixtures/predecessor-stores-5f775fd
 
 
 def test_the_review_store_main_created_before_the_file_source_is_refused_unchanged(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A store from 5f775fd (search links only, no import tables) needs a
     clean rebuild: it is refused before anything is written (ADR-0013)."""
     fixture = json.loads(_PREDECESSORS.read_text(encoding="utf-8"))
     path = tmp_path / "state.sqlite"
+    # Its automatic cover selection CHECK named decision v5 (#1372 PR 5).
+    monkeypatch.setattr(
+        schema,
+        "_COVER_SELECTION_AUTHORITIES_SQL",
+        schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
+            f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v5'"
+        ),
+    )
     open_repository(path).close()
+    monkeypatch.undo()
     connection = sqlite3.connect(path, isolation_level=None)
     try:
         # Every owner_links object but the table itself reads as it did then.
@@ -743,6 +755,7 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
             "DROP TABLE identifier_imports;"
             # The taste judge's tables, its request task and reviewer-access-v6
             # came later (#1372 PR 4).
+            "DROP TABLE cover_automatic_held;"
             "DROP TABLE cover_taste_verdicts;"
             "DROP TABLE cover_taste_judgements;"
             "DROP TABLE reviewer_task_requests;"

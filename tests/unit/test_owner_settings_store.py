@@ -86,6 +86,13 @@ def test_owner_settings_predecessors_are_rejected_and_clean_v4_restarts(
     with pytest.raises(ValidationError):
         OwnerSettingsDocument.model_validate(previous_v3)
 
+    # v6 had no Switching (#1372 PR 5); a v6 document is refused whole.
+    previous_v6 = _document().model_dump()
+    del previous_v6["cover_preferences"]["taste_switching"]
+    previous_v6["schema_version"] = "owner-settings-v6"
+    with pytest.raises(ValidationError):
+        OwnerSettingsDocument.model_validate(previous_v6)
+
     path = tmp_path / "owner-settings.sqlite3"
     connection = sqlite3.connect(path)
     store = _store(connection)
@@ -445,7 +452,7 @@ def test_library_display_name_rejects_noncanonical_text(display_name: str) -> No
 # key.
 _PRE_LANGUAGES_STORED_DOCUMENT = (
     '{"connections":[{"adapter":"audiobookshelf","endpoint":"https://library.example.invalid","name":"primary"}],'
-    '"cover_preferences":{"avoid_promotional_text":false,"avoid_tie_in_branding":false,"current_protection":"protected","prefer_edition":false,"prefer_minimal_composition":false},'
+    '"cover_preferences":{"avoid_promotional_text":false,"avoid_tie_in_branding":false,"current_protection":"protected","prefer_edition":false,"prefer_minimal_composition":false,"taste_switching":"suggest_only"},'
     '"description_advice":{"automatic_application":false,"remove_marketing":true,"remove_praise":true,"remove_sales_boasts":true},'
     '"libraries":[{"connection":"primary","library_id":"library-1","media_kind":"ebook","mount":"books","name":"ebooks","policy_override":null,"provider_connections":["books","open"]}],'
     '"limits":{"audio_source_bytes":8589934592,"provider_response_bytes":65536,"source_archive_bytes":268435456,"target_response_bytes":1048576,"timeout_seconds":30},'
@@ -1679,3 +1686,23 @@ def test_cover_authority_pair_refuses_policy_change_during_external_identity_cap
     armed = False
     after = service.current_authority()
     assert before[0] != after[0] and before[1] != after[1]
+
+
+def test_taste_switching_is_stored_closed_and_applied_live() -> None:
+    """#1372 PR 5 K3: Suggest only by default; Automatic round-trips."""
+    store = _store()
+    assert store.read().document.cover_preferences.taste_switching == "suggest_only"
+    value = _document(2).model_dump()
+    value["cover_preferences"]["taste_switching"] = "automatic"
+    store.write(OwnerSettingsDocument.model_validate(value), 1, ())
+    assert store.read().document.cover_preferences.taste_switching == "automatic"
+    field = next(
+        item
+        for item in store.read().fields
+        if item.field_id == "cover_preferences.taste_switching"
+    )
+    assert (field.managed_by_file, field.apply_effect) == (False, "applied_live")
+    for bad in ("Automatic", "off", True, None):
+        value["cover_preferences"]["taste_switching"] = bad
+        with pytest.raises(ValidationError):
+            OwnerSettingsDocument.model_validate(value)

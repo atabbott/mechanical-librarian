@@ -364,6 +364,7 @@ class ReviewInput(_Closed):
         "protected"
     )
     cover_prefer_edition: StrictBool = False
+    cover_taste_switching: Literal["suggest_only", "automatic"] = "suggest_only"
     description_remove_marketing: StrictBool = True
     description_remove_sales_boasts: StrictBool = True
     description_remove_praise: StrictBool = True
@@ -474,6 +475,7 @@ def load_configuration_document(payload: bytes) -> ApplicationConfiguration:
                 cover_prefer_minimal_composition=value.review.cover_prefer_minimal_composition,
                 cover_current_protection=value.review.cover_current_protection,
                 cover_prefer_edition=value.review.cover_prefer_edition,
+                cover_taste_switching=value.review.cover_taste_switching,
                 description_remove_marketing=value.review.description_remove_marketing,
                 description_remove_sales_boasts=value.review.description_remove_sales_boasts,
                 description_remove_praise=value.review.description_remove_praise,

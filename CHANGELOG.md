@@ -224,6 +224,11 @@ brackets are GitHub issues.
   suggested, Strong first, each with the rules behind it and Edit taste
   profile. Settings › Suggestions chooses the model, and Taste profile counts
   the suggestions you confirmed (#1372).
+- **Clean rebuild required.** Taste profile can switch covers automatically
+  once its check passes; until then Automatic only suggests switches. Switched
+  names the profile version behind each switch. A cover you took over from
+  Automatic offers Resume when the measured rules would fix a fault in it on a
+  later check (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when

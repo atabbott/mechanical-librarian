@@ -78,9 +78,8 @@ no fallback: the contained Codex reviewer or its own OpenRouter model under
 the shared key ([ADR-0095](decisions/0095-learned-cover-taste-profile.md)).
 It reads owner
 cover choices already recorded and writes only its own append-only profile
-versions; only the taste judge reads a profile, and its verdicts only suggest
-a switch the owner answers, so it cannot make an observation, decision or
-write.
+versions; only the taste judge reads a profile, so the builder cannot make an
+observation, decision or write.
 
 - **Inputs.** Up to 50 recorded choices, each with up to 4 previews and at
   most 100 images per request. A choice whose preview bytes are missing is
@@ -141,7 +140,12 @@ The taste judge (#1372) compares one work's covers with the active profile
 version on either engine, chosen separately as the suggestion model. It
 writes only its own append-only verdicts. A `choose` verdict is shown to the
 owner as a suggestion with its rules' texts; choosing it is the owner's
-ordinary decision, and Attention never counts it.
+ordinary decision, and Attention never counts it. Once switching by taste is
+qualified and the owner sets Switching to Automatic, a verdict can also become
+an automatic decision, under its own qualification identity and the gates in
+[ADR-0095](decisions/0095-learned-cover-taste-profile.md#note-automatic-switching-1372-pr-5).
+The judge itself writes nothing more, and Activity names only the profile
+version behind a switch.
 
 - **Inputs.** The current cover when readable, marked current, and one cover
   of each other acceptable art, at most 12, as the normalised PNG previews,

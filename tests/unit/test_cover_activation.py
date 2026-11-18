@@ -1714,3 +1714,117 @@ def test_cover_selection_sql_requires_explicit_current_automatic_document(nested
             )
     finally:
         connection.close()
+
+
+def _taste_arguments() -> dict[str, Any]:
+    """The arguments of the v2 fixture's fill, as a taste switch (#1372 PR 5)."""
+    raw = json.loads(
+        json.loads(
+            (Path(__file__).parents[1] / "fixtures/cover-authority-v2.json").read_text()
+        )["decisions"][0]
+    )
+    arguments = {
+        name: raw.get(name)
+        for name in inspect.signature(CoverAutomaticDecision.create).parameters
+    }
+    return arguments | {
+        "rank_key": tuple(raw["rank_key"]),
+        "citation_ids": tuple(raw["citation_ids"]),
+        "policy_option": "fixed_source_order:taste_replacement",
+        "qualification_identity": "cover_order:fixed_source_order:taste_replacement",
+        "verdict_id": "taste_verdict_" + "a" * 32,
+        "taste_version": 2,
+        "reason": None,
+    }
+
+
+def test_cover_decision_v6_binds_the_taste_verdict_and_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
+    from mechanical_librarian.domain.cover_automatic_decision import (
+        parse_automatic_authority,
+    )
+    from tests.support.audiobook_covers import SYNTHETIC_TASTE_RECORD
+
+    arguments = _taste_arguments()
+    # No record: a taste switch cannot be created at all.
+    with pytest.raises(AutomaticDecisionError):
+        CoverAutomaticDecision.create(**arguments)
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "TASTE_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_TASTE_RECORD,
+    )
+    # A fault-free switch (branch a) records no reason; a cure records its fault.
+    fault_free = CoverAutomaticDecision.create(**arguments)
+    assert fault_free.qualification_manifest_sha256 == SYNTHETIC_TASTE_RECORD
+    assert parse_automatic_authority(fault_free.to_json()) == fault_free
+    cure = CoverAutomaticDecision.create(**(arguments | {"reason": "wrong_shape"}))
+    assert parse_automatic_authority(cure.to_json()) == cure
+    # The verdict and version are members of the idempotency digest.
+    assert (
+        len(
+            {
+                CoverAutomaticDecision.create(**(arguments | change)).idempotency_digest
+                for change in (
+                    {},
+                    {"taste_version": 3},
+                    {"verdict_id": "taste_verdict_" + "b" * 32},
+                )
+            }
+        )
+        == 3
+    )
+    # A taste switch names both; no other identity names either.
+    for bad in (
+        {"verdict_id": None},
+        {"taste_version": None},
+        {"taste_version": 0},
+        {"taste_version": True},
+        {"verdict_id": "cover_taste_verdict_" + "a" * 32},
+        {"reason": "not_a_reason"},
+    ):
+        with pytest.raises(AutomaticDecisionError):
+            CoverAutomaticDecision.create(**(arguments | bad))
+    fill = arguments | {
+        "policy_option": "fixed_source_order",
+        "qualification_identity": None,
+    }
+    with pytest.raises(AutomaticDecisionError):
+        CoverAutomaticDecision.create(**fill)
+    assert (
+        CoverAutomaticDecision.create(
+            **(fill | {"verdict_id": None, "taste_version": None})
+        ).verdict_id
+        is None
+    )
+    # A measured replacement keeps v5's rule: a reason is required.
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        "5" * 64,
+    )
+    measured = arguments | {
+        "policy_option": "fixed_source_order:measured_replacement",
+        "qualification_identity": "cover_order:fixed_source_order:measured_replacement",
+        "verdict_id": None,
+        "taste_version": None,
+    }
+    with pytest.raises(AutomaticDecisionError):
+        CoverAutomaticDecision.create(**measured)
+    with pytest.raises(AutomaticDecisionError):
+        CoverAutomaticDecision.create(
+            **(measured | {"reason": "below_floor", "taste_version": 2})
+        )
+    # A v5 document is refused, and a taste document whose record is gone too.
+    v5 = json.loads(cure.to_json())
+    v5["schema_version"] = "cover-automatic-decision-v5"
+    del v5["verdict_id"], v5["taste_version"]
+    with pytest.raises(AutomaticDecisionError):
+        parse_automatic_authority(json.dumps(v5, sort_keys=True, separators=(",", ":")))
+    monkeypatch.setattr(
+        cover_qualification_policy, "TASTE_REPLACEMENT_QUALIFICATION_SHA256", None
+    )
+    with pytest.raises(AutomaticDecisionError):
+        parse_automatic_authority(cure.to_json())

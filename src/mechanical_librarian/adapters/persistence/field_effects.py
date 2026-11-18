@@ -79,7 +79,10 @@ from mechanical_librarian.adapters.persistence.transactions import (
     local_operation,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    AutomaticDecisionError,
+)
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.field_effect import (
@@ -145,6 +148,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             [FieldEffectOperation, str, int], None
         ],
         current_cover_authority: Callable[[], tuple[str | None, str | None]],
+        resume_automatic_cover: Callable[[str, str, int], None] = (
+            lambda _case, _decision, _at: None
+        ),
     ) -> None:
         super().__init__(connection, binding)
         self._record_field_effect_event = record_field_effect_event
@@ -154,6 +160,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         self.field_effect_authority_source = field_effect_authority_source
         self._retire_stale_cover_consideration = retire_stale_cover_consideration
         self._current_cover_authority = current_cover_authority
+        self._resume_automatic_cover = resume_automatic_cover
 
     @local_operation
     def record_current_field_effect_no_change(
@@ -993,11 +1000,31 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                             automatic[0],
                         ),
                     )
+            if updated == 1 and destination == "cover":
+                # Cover Resume (K9): the owner's cover goes back to Automatic
+                # in this transaction, which reads and writes only this store.
+                # The hold names the owner's latest answer, since every cover
+                # answer over a standing hold takes it over.
+                self._resume_automatic_cover(
+                    review_case_id, raw["decision_id"], changed_at
+                )
             transaction.commit()
             return context if updated == 1 else None
-        except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            sqlite3.Error,
+            TypeError,
+            # Cover Resume re-runs admission, which refuses stored state it
+            # cannot trust; the release is then undone with it (K9).
+            MetadataReportError,
+            AutomaticDecisionError,
+        ) as error:
             transaction.rollback()
             raise FieldEffectError("persistence") from error
+        except BaseException:
+            transaction.rollback()
+            raise
 
     @local_operation
     def next_field_effect_plan_id(

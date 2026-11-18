@@ -280,6 +280,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         "DROP TABLE retained_cover_listings;"
         "DROP TABLE retained_cover_removals;"
         "DROP TABLE retained_cover_bindings;"
+        "DROP TABLE cover_automatic_held;"
         "DROP TABLE cover_taste_verdicts;"
         "DROP TABLE cover_taste_judgements;"
         "DROP TABLE cover_taste_profile_versions;"

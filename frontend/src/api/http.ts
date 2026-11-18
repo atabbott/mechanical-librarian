@@ -41,6 +41,10 @@ export type CoversTab = CoverTab | 'taste' | 'picks'
 // The works calibration offers now, in the order to pick (#1372 PR 3).
 export type CoverCalibrationView = ResponseSchema<'_CoverCalibrationResponse'>
 export type TasteProfileView = ResponseSchema<'_TasteProfileResponse'>
+// What Automatic would switch by taste, from what has been checked so far
+// under the version in use (#1372 PR 5, K7).
+export type TastePreviewView = ResponseSchema<'_TastePreviewResponse'>
+export type TasteProtection = 'protected' | 'unprotected'
 // The two taste tasks Settings configures: the profile and the suggestions.
 export type TasteTask = 'cover_taste_build' | 'cover_taste_judge'
 export type CoverTasteSuggestion = ResponseSchema<'_CoverTasteSuggestion'>
@@ -2035,6 +2039,14 @@ export class ReviewApiClient implements ReviewHttp {
   async getTasteProfile(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapTasteProfile(await this.read('/api/v1/covers/taste', signal, workClass))
   }
+  async getTastePreview(
+    protection: TasteProtection,
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ) {
+    const p = new URLSearchParams({ protection })
+    return mapTastePreview(await this.read(`/api/v1/covers/taste/preview?${p}`, signal, workClass))
+  }
   async retryTasteBuild(buildId: string, signal?: AbortSignal) {
     return this.mutate(
       '/api/v1/covers/taste/retry',
@@ -2942,6 +2954,20 @@ export const mapTasteProfile = (value: TasteProfileView): TasteProfileView => {
     value.confirmed.confirmed > value.confirmed.suggested
   )
     throw new ApiError(502, 'invalid_taste_profile')
+  return value
+}
+
+// The preview's own invariants: it ends at five switches or 100 covers
+// checked, finds no more than it checked, and says it is a rerun only of a
+// switch it found (#1372 PR 5, K7).
+export const mapTastePreview = (value: TastePreviewView): TastePreviewView => {
+  if (
+    value.found.length > value.checked ||
+    ((value.found.length === 5 || value.checked === 100) && value.state !== 'done') ||
+    (value.rerun && value.found.length === 0) ||
+    new Set(value.found.map((item) => item.review_case_id)).size !== value.found.length
+  )
+    throw new ApiError(502, 'invalid_taste_preview')
   return value
 }
 

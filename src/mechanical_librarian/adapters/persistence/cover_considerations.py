@@ -56,9 +56,14 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 )
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.cover_qualification_policy import (
+    RECORDED_IDENTITIES,
     REPLACEMENT_TARGET_STATES,
+    TASTE_REPLACEMENT_IDENTITY,
+    TASTE_REPLACEMENT_TARGET_STATES,
     replacement_record,
+    taste_replacement_record,
 )
+from mechanical_librarian.domain.cover_taste import TASTE_JUDGE_FAULTS
 from mechanical_librarian.domain.deterministic_cover_election import (
     strictly_better_cover_rank,
 )
@@ -84,6 +89,71 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.review_case import ReviewCase
 
+# An automatic selection whose write has not started: none claimed,
+# applying, reconciling or verified, and no retry whose request may have
+# reached Audiobookshelf (#1363, #1402).
+_UNWRITTEN_SQL = (
+    "AND NOT EXISTS (SELECT 1 FROM field_effects effect "
+    "WHERE effect.decision_id=selection.decision_id "
+    "AND (effect.state IN ('claimed','applying','reconciling','verified') "
+    "OR (effect.state='retryable' AND EXISTS (SELECT 1 "
+    "FROM field_effect_events event WHERE event.plan_id=effect.plan_id "
+    "AND event.kind='applying'))))"
+)
+
+
+def taste_switch_candidate(
+    value: Mapping[str, Any],
+    policy_report: Mapping[str, Any],
+    verdict_document: str,
+    protection: object,
+) -> dict[str, Any] | None:
+    """The candidate a taste verdict would switch to, or None (K4 gates 4-6).
+
+    The verdict chooses a selectable candidate still in the comparison,
+    other than the current cover, with a rank key and citations; the stage
+    kept a fault-free cover and `protection` lets a preferred cover replace
+    it, or the stage would replace a fault the judge cures; and the current
+    cover's state is one the taste identity may change. Admission passes the
+    comparison's own protection; the preview passes the one asked about.
+    """
+    chosen = json.loads(verdict_document)
+    candidate = next(
+        (
+            item
+            for item in value.get("candidates", ())
+            if type(item) is dict
+            and item.get("reference") == chosen.get("candidate_reference")
+        ),
+        None,
+    )
+    stage = policy_report.get("stage")
+    if (
+        chosen.get("decision") != "choose"
+        or candidate is None
+        or candidate.get("incumbent") is not False
+        or candidate.get("selectable") is not True
+        or not candidate.get("deterministic_citations")
+        or type(candidate.get("deterministic_rank_key")) is not list
+        or type(stage) is not dict
+    ):
+        return None
+    if not (
+        (
+            stage.get("outcome") == "keep"
+            and stage.get("reason") is None
+            and protection == "unprotected"
+        )
+        or (
+            stage.get("outcome") == "replace"
+            and stage.get("reason") in TASTE_JUDGE_FAULTS
+        )
+    ):
+        return None
+    if policy_report.get("actual_target_state") not in TASTE_REPLACEMENT_TARGET_STATES:
+        return None
+    return cast("dict[str, Any]", candidate)
+
 
 class SQLiteCoverConsiderationRepository(ConnectionScoped):
     """Persist, read and retire the cover considerations of one review case."""
@@ -94,9 +164,11 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         *,
         revoke_automatic: Callable[[str, int], object] | None = None,
         current_cover_authority: Callable[[], tuple[str | None, str | None]],
+        taste_switching: Callable[[], bool] = lambda: False,
     ) -> None:
         super().__init__(connection)
         self._current_cover_authority = current_cover_authority
+        self._taste_switching = taste_switching
         self.require_owner_cover: Callable[[str, str | None], None] = (
             self._unavailable_owner_cover
         )
@@ -117,10 +189,23 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         replaces nothing (a 404 cover), and no owner choice or hold on the
         field; otherwise it stays the suggestion the policy report records.
         """
+        # The mark is worked out again on each admission of the comparison
+        # (K9): it goes first, so an admission that stops short, say while
+        # safety is paused, leaves no Resume the stage could not act on.
+        admitted = json.loads(document)
+        self._connection.execute(
+            "DELETE FROM cover_automatic_held WHERE review_case_id=? "
+            "AND consideration_id=?",
+            (admitted.get("review_case_id"), admitted.get("consideration_id")),
+        )
         basis = self._cover_admission_basis(document)
         if basis is None:
             return
         value, policy_report, case, report, lineage, resolved, generation = basis
+        self._connection.execute(
+            "DELETE FROM cover_automatic_held WHERE review_case_id=?",
+            (case.review_case_id,),
+        )
         stage = cast("dict[str, object]", policy_report["stage"])
         reference = policy_report.get("recommended_candidate_reference")
         candidate = next(
@@ -179,19 +264,19 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 keeps_original = cover_pre_value(report) is not None
             except FieldEffectError:
                 return
+            if replacement_record(qualification_identity) is None or (
+                keeps_original and not retained_cover_store_has_room(self._connection)
+            ):
+                return
             if (
-                replacement_record(qualification_identity) is None
-                or (
-                    keeps_original
-                    and not retained_cover_store_has_room(self._connection)
-                )
-                or self._connection.execute(
+                self._connection.execute(
                     "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
                     "AND destination='cover' AND active=1",
                     (case.review_case_id,),
                 ).fetchone()
                 is not None
             ):
+                self._held_for_owner(case.review_case_id, value, occurred_at)
                 return
         else:
             return
@@ -208,6 +293,165 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             if stage["outcome"] == "replace"
             else None,
             occurred_at,
+            on_owner=lambda: self._held_for_owner(
+                case.review_case_id, value, occurred_at
+            ),
+        )
+
+    def _held_for_owner(
+        self, review_case_id: str, value: Mapping[str, Any], occurred_at: int
+    ) -> None:
+        """Mark a comparison the stage would switch but for the owner (K9).
+
+        Only the stage marks one: every admission gate passed except the
+        owner's hold or choice, so Resume may show for this cover. Taste alone
+        never does, because the judge never looks at an owner's cover.
+        """
+        self._connection.execute(
+            "INSERT INTO cover_automatic_held(review_case_id,consideration_id,"
+            "occurred_at) VALUES(?,?,?) ON CONFLICT(review_case_id) DO UPDATE SET "
+            "consideration_id=excluded.consideration_id,occurred_at=excluded.occurred_at",
+            (review_case_id, value["consideration_id"], occurred_at),
+        )
+
+    def _resume_automatic_cover(
+        self, review_case_id: str, decision_id: str, changed_at: int
+    ) -> None:
+        """Hand a held cover back to Automatic as its hold clears (K9).
+
+        Inside the hold-clearing transaction: the owner's selection pointer
+        the cleared hold names is released, and admission runs again for the
+        work's current comparison. When the stage has nothing to switch, the
+        cover stays as it is with no owner pointer, and a later comparison
+        may switch it. A pointer from any other answer stays: every cover
+        answer over a standing hold takes the hold over.
+        """
+        self._connection.execute(
+            "DELETE FROM cover_automatic_held WHERE review_case_id=?",
+            (review_case_id,),
+        )
+        owner = self._connection.execute(
+            "SELECT selection_id,connection_name,library_name,item_id "
+            "FROM cover_selection_authorities WHERE kind='owner' AND decision_id=?",
+            (decision_id,),
+        ).fetchone()
+        if owner is None:
+            return
+        self._connection.execute(
+            "DELETE FROM current_cover_selection_authorities WHERE connection_name=? "
+            "AND library_name=? AND item_id=? AND selection_id=?",
+            (*owner[1:], owner[0]),
+        )
+        row = self._connection.execute(
+            "SELECT consideration.document,report.document,report.document_digest,"
+            "consideration.document_digest,consideration.report_id "
+            "FROM current_review_case_lineages lineage "
+            "JOIN current_cover_considerations current "
+            "ON current.review_case_id=lineage.review_case_id "
+            "JOIN cover_considerations consideration "
+            "ON consideration.consideration_id=current.consideration_id "
+            "JOIN metadata_reports report ON report.report_id=consideration.report_id "
+            "WHERE lineage.connection_name=? AND lineage.library_name=? "
+            "AND lineage.item_id=?",
+            owner[1:],
+        ).fetchone()
+        if row is not None:
+            self._admit_automatic_cover(expand_cover_consideration(*row), changed_at)
+
+    def _admit_taste_automatic_cover(
+        self, consideration_id: str, verdict_id: str, occurred_at: int
+    ) -> bool:
+        """Mint automatic authority for one taste verdict, or nothing (K4).
+
+        The gates run in a fixed order and the first that fails stores
+        nothing, so the verdict stays a suggestion: Switching is Automatic,
+        the taste identity has its record, the stage's admission basis
+        holds, the verdict is the comparison's newest, under the active
+        version, and chooses a selectable candidate other than the current
+        cover; the stage kept a fault-free cover under "When another is
+        preferred" or would replace a fault; the current cover's state is
+        one the identity may change; the original has room to be kept; no
+        hold; and the mint, which refuses over an owner's choice. Returns
+        whether this verdict's selection is the work's current one.
+        """
+        if not self._taste_switching():
+            return False
+        record = taste_replacement_record()
+        if record is None:
+            return False
+        row = self._connection.execute(
+            "SELECT consideration.document,report.document,report.document_digest,"
+            "consideration.document_digest,consideration.report_id "
+            "FROM current_cover_considerations current "
+            "JOIN cover_considerations consideration "
+            "ON consideration.consideration_id=current.consideration_id "
+            "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
+            "WHERE current.consideration_id=?",
+            (consideration_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        document = expand_cover_consideration(*row)
+        basis = self._cover_admission_basis(document)
+        if basis is None:
+            return False
+        value, policy_report, case, report, lineage, resolved, generation = basis
+        verdict = self._connection.execute(
+            "SELECT verdict.verdict_id,verdict.version,verdict.document "
+            "FROM cover_taste_verdicts verdict WHERE verdict.consideration_id=? "
+            "ORDER BY verdict.created_at DESC,verdict.rowid DESC LIMIT 1",
+            (consideration_id,),
+        ).fetchone()
+        active = self._connection.execute(
+            "SELECT max(version) FROM cover_taste_profile_versions"
+        ).fetchone()[0]
+        if verdict is None or verdict[0] != verdict_id or verdict[1] != active:
+            return False
+        candidate = taste_switch_candidate(
+            value,
+            policy_report,
+            verdict[2],
+            json.loads(value["policy_document"]).get("current_protection"),
+        )
+        if candidate is None:
+            return False
+        current = self._connection.execute(
+            "SELECT json_extract(json_extract(selection.document,'$.decision_document'),"
+            "'$.verdict_id') FROM current_cover_selection_authorities current "
+            "JOIN cover_selection_authorities selection "
+            "ON selection.selection_id=current.selection_id "
+            "WHERE current.connection_name=? AND current.library_name=? "
+            "AND current.item_id=? AND selection.kind='automatic'",
+            lineage,
+        ).fetchone()
+        if current is not None and current[0] == verdict_id:
+            return True
+        stage = cast("dict[str, object]", policy_report["stage"])
+        try:
+            keeps_original = cover_pre_value(report) is not None
+        except FieldEffectError:
+            return False
+        if (
+            keeps_original and not retained_cover_store_has_room(self._connection)
+        ) or self._connection.execute(
+            "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
+            "AND destination='cover' AND active=1",
+            (case.review_case_id,),
+        ).fetchone() is not None:
+            return False
+        return self._mint_cover_authority(
+            document,
+            value,
+            case,
+            lineage,
+            resolved,
+            generation,
+            candidate,
+            TASTE_REPLACEMENT_IDENTITY,
+            cast("str | None", stage["reason"]),
+            occurred_at,
+            verdict_id=verdict_id,
+            taste_version=cast(int, verdict[1]),
         )
 
     def _retire_unwritten_automatic_cover(
@@ -238,14 +482,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             "JOIN cover_selection_authorities selection "
             "ON selection.selection_id=current.selection_id "
             "WHERE lineage.review_case_id=? AND selection.kind='automatic' "
-            "AND NOT EXISTS (SELECT 1 FROM field_effects effect "
-            "WHERE effect.decision_id=selection.decision_id "
-            "AND (effect.state IN ('claimed','applying','reconciling','verified') "
-            # A retry whose request may have reached Audiobookshelf is a write
-            # that started (#1402).
-            "OR (effect.state='retryable' AND EXISTS (SELECT 1 "
-            "FROM field_effect_events event WHERE event.plan_id=effect.plan_id "
-            "AND event.kind='applying'))))",
+            + _UNWRITTEN_SQL,
             (review_case_id,),
         ).fetchone()
         if row is None or row[1] == policy_reference:
@@ -256,6 +493,37 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             "WHERE connection_name=? AND library_name=? AND item_id=?",
             row[2:],
         )
+
+    def _retire_unwritten_taste_covers(self, occurred_at: int, limit: int) -> int:
+        """Revoke unwritten taste switches the owner's profile or Switching
+        no longer stands behind (K6): each current one under an older
+        profile version, or any while Switching is Suggest only. Its verdict
+        shows as a suggestion again, and a newer version judges it again.
+        Returns how many were revoked."""
+        rows = self._connection.execute(
+            "SELECT selection.decision_id,current.connection_name,"
+            "current.library_name,current.item_id "
+            "FROM current_cover_selection_authorities current "
+            "JOIN cover_selection_authorities selection "
+            "ON selection.selection_id=current.selection_id "
+            "WHERE selection.kind='automatic' "
+            "AND json_extract(json_extract(selection.document,'$.decision_document'),"
+            "'$.qualification_identity')=? "
+            "AND (?=0 OR json_extract(json_extract(selection.document,"
+            "'$.decision_document'),'$.taste_version')<"
+            "(SELECT max(version) FROM cover_taste_profile_versions)) "
+            + _UNWRITTEN_SQL
+            + " ORDER BY selection.occurred_at,selection.selection_id LIMIT ?",
+            (TASTE_REPLACEMENT_IDENTITY, int(self._taste_switching()), limit),
+        ).fetchall()
+        for decision_id, *lineage in rows:
+            self._revoke_automatic(decision_id, occurred_at)
+            self._connection.execute(
+                "DELETE FROM current_cover_selection_authorities "
+                "WHERE connection_name=? AND library_name=? AND item_id=?",
+                lineage,
+            )
+        return len(rows)
 
     def _cover_admission_basis(
         self, document: str
@@ -387,12 +655,16 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         qualification_identity: str | None,
         reason: str | None,
         occurred_at: int,
-    ) -> None:
+        *,
+        verdict_id: str | None = None,
+        taste_version: int | None = None,
+        on_owner: Callable[[], None] = lambda: None,
+    ) -> bool:
         """Record one automatic selection over the case's proposal alternative.
 
         Never over an owner's choice; a fill replaces an earlier automatic
-        choice only with a strictly better rank, while a replacement
-        supersedes it.
+        choice only with a strictly better rank, while a replacement or a
+        taste switch supersedes it. Returns whether it recorded one.
         """
         connection_name, library_name, item_id = lineage
         proposal_row = self._connection.execute(
@@ -400,7 +672,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             (case.proposal_set_id,),
         ).fetchone()
         if proposal_row is None:
-            return
+            return False
         proposal = ProposalSet.from_json(proposal_row[0])
         cover = next(
             (
@@ -411,7 +683,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             None,
         )
         if cover is None:
-            return
+            return False
         alternative = next(
             (
                 item
@@ -429,7 +701,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             None,
         )
         if alternative is None or proposal_id != value["proposal_id"]:
-            return
+            return False
         current = self._connection.execute(
             "SELECT selection.document FROM current_cover_selection_authorities current "
             "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
@@ -437,16 +709,17 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             lineage,
         ).fetchone()
         prior = None if current is None else json.loads(current[0])
-        if prior is not None and (
-            prior["kind"] == "owner"
-            or (
-                qualification_identity not in REPLACEMENT_TARGET_STATES
-                and not strictly_better_cover_rank(
-                    candidate["deterministic_rank_key"], prior.get("rank_key")
-                )
+        if prior is not None and prior["kind"] == "owner":
+            on_owner()
+            return False
+        if (
+            prior is not None
+            and qualification_identity not in RECORDED_IDENTITIES
+            and not strictly_better_cover_rank(
+                candidate["deterministic_rank_key"], prior.get("rank_key")
             )
         ):
-            return
+            return False
         supersedes = None if prior is None else prior["decision_id"]
         decision = CoverAutomaticDecision.create(
             policy_option=(
@@ -474,6 +747,8 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             supersedes_decision_id=supersedes,
             occurred_at=occurred_at,
             reason=reason,
+            verdict_id=verdict_id,
+            taste_version=taste_version,
         )
         existing = self._connection.execute(
             "SELECT document FROM cover_selection_authorities WHERE decision_id=?",
@@ -488,7 +763,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 ) from error
             if existing_document.get("decision_document") != decision.to_json():
                 raise MetadataReportError("cover automatic authority disagrees")
-            return
+            return True
         if supersedes is not None:
             self._revoke_automatic(supersedes, occurred_at)
         selection_id = (
@@ -536,6 +811,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             occurred_at,
             decision.decision_id,
         )
+        return True
 
     def _retire_stale_cover_consideration(
         self,
@@ -801,6 +1077,10 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             )
             self._record_cover_consideration_event(
                 consideration_id, review_case_id, preparation_kind, occurred_at
+            )
+            self._connection.execute(
+                "DELETE FROM cover_automatic_held WHERE review_case_id=?",
+                (review_case_id,),
             )
             self._retire_unwritten_automatic_cover(
                 review_case_id, value.get("policy_reference"), occurred_at

@@ -19,12 +19,14 @@ from mechanical_librarian.domain.automatic_decision import (
 )
 from mechanical_librarian.domain.cover_qualification_policy import (
     COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
+    RECORDED_IDENTITIES,
     REPLACEMENT_TARGET_STATES,
+    TASTE_REPLACEMENT_IDENTITY,
     replacement_record,
 )
 from mechanical_librarian.domain.cover_rules import STAGE_REASONS
 
-SCHEMA_VERSION = "cover-automatic-decision-v5"
+SCHEMA_VERSION = "cover-automatic-decision-v6"
 
 
 def _canonical(value: object) -> str:
@@ -62,6 +64,10 @@ class CoverAutomaticDecision:
     qualification_identity: str | None = None
     # The measured rule's issue a replacement cures; a fill has none.
     reason: str | None = None
+    # The taste verdict and profile version a taste switch carries out
+    # (#1372 PR 5, K2); both None for every other identity.
+    verdict_id: str | None = None
+    taste_version: int | None = None
 
     destination = "cover"
     outcome = "candidate"
@@ -107,9 +113,11 @@ class CoverAutomaticDecision:
         occurred_at: int,
         qualification_identity: str | None = None,
         reason: str | None = None,
+        verdict_id: str | None = None,
+        taste_version: int | None = None,
     ) -> "CoverAutomaticDecision":
-        # Either replacement identity binds its own record (ADR-0094).
-        replacement = qualification_identity in REPLACEMENT_TARGET_STATES
+        # Each recorded identity binds its own record (ADR-0094, ADR-0095).
+        replacement = qualification_identity in RECORDED_IDENTITIES
         if qualification_identity is not None and (
             (
                 not replacement
@@ -142,6 +150,8 @@ class CoverAutomaticDecision:
             "review_case_id": review_case_id,
             "supersedes_decision_id": supersedes_decision_id,
             "target_fingerprint": target_fingerprint,
+            "taste_version": taste_version,
+            "verdict_id": verdict_id,
         }
         return cls(
             decision_id="automatic_decision_"
@@ -175,6 +185,8 @@ class CoverAutomaticDecision:
             ),
             qualification_identity=qualification_identity,
             reason=reason,
+            verdict_id=verdict_id,
+            taste_version=taste_version,
         )
 
     def __post_init__(self) -> None:
@@ -223,9 +235,29 @@ class CoverAutomaticDecision:
             raise AutomaticDecisionError("invalid")
         if type(self.qualification_manifest_sha256) is not str:
             raise AutomaticDecisionError("invalid")
-        # Only a replacement records a reason, and it must (#1363, #1362).
-        if (self.reason is None) == (
-            self.qualification_identity in REPLACEMENT_TARGET_STATES
+        taste = self.qualification_identity == TASTE_REPLACEMENT_IDENTITY
+        # Only a taste switch names a verdict and a profile version, and it
+        # must (#1372 PR 5, K2).
+        if (
+            taste
+            and (
+                type(self.verdict_id) is not str
+                or re.fullmatch(r"taste_verdict_[0-9a-f]{32}", self.verdict_id) is None
+                or type(self.taste_version) is not int
+                or self.taste_version < 1
+            )
+        ) or (
+            not taste
+            and (self.verdict_id is not None or self.taste_version is not None)
+        ):
+            raise AutomaticDecisionError("invalid")
+        # A measured replacement records the reason it cures, and must; a fill
+        # never does (#1363, #1362). A taste switch records the stage's fault
+        # it cures, or none when it replaces a fault-free cover (K2).
+        if (
+            not taste
+            and (self.reason is None)
+            == (self.qualification_identity in REPLACEMENT_TARGET_STATES)
         ) or (self.reason is not None and self.reason not in STAGE_REASONS):
             raise AutomaticDecisionError("invalid")
         if self.qualification_identity is None:
@@ -235,7 +267,7 @@ class CoverAutomaticDecision:
                 or self.policy_option != "fixed_source_order"
             ):
                 raise AutomaticDecisionError("invalid")
-        elif self.qualification_identity in REPLACEMENT_TARGET_STATES:
+        elif self.qualification_identity in RECORDED_IDENTITIES:
             record = replacement_record(self.qualification_identity)
             if (
                 record is None
@@ -284,6 +316,8 @@ class CoverAutomaticDecision:
             "review_case_id": self.review_case_id,
             "supersedes_decision_id": self.supersedes_decision_id,
             "target_fingerprint": self.target_fingerprint,
+            "taste_version": self.taste_version,
+            "verdict_id": self.verdict_id,
         }
 
     def to_json(self) -> str:

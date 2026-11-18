@@ -16,6 +16,14 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Literal, cast
 
+from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
+    expand_cover_consideration,
+)
+from mechanical_librarian.adapters.persistence.cover_considerations import (
+    _UNWRITTEN_SQL,
+    SQLiteCoverConsiderationRepository,
+    taste_switch_candidate,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -27,8 +35,14 @@ from mechanical_librarian.application.cover_taste_judge import (
     JudgeDue,
     TasteJudgeVersion,
 )
+from mechanical_librarian.application.cover_taste_switching import (
+    TastePreviewAnswer,
+    TastePreviewSwitch,
+    TastePreviewWalk,
+)
 from mechanical_librarian.domain.cover_taste import (
     COVER_TASTE_VERDICT_SCHEMA,
+    TASTE_JUDGE_FAULTS,
     TASTE_JUDGE_MAX_RULES,
     TASTE_MIN_ARTS,
     TasteJudgeFailure,
@@ -37,14 +51,6 @@ from mechanical_librarian.domain.cover_taste import (
 
 _TASK = "cover_taste_judge"
 _DAY_SECONDS = 86_400
-# The faults whose cure the judge may choose among (J1 b, Q9).
-_FAULTS = (
-    "wrong_shape",
-    "below_floor",
-    "edition_language",
-    "sharper_copy",
-    "unreadable",
-)
 # The newest verdict stored for a consideration, under any version.
 _LATEST_VERDICT_SQL = (
     "(SELECT json_extract(verdict.document,'$.decision') FROM cover_taste_verdicts "
@@ -91,7 +97,7 @@ _ELIGIBLE_FROM_SQL = (
     "OR (json_extract(consideration.currentness_document,'$.cover_stage.outcome') "
     "IN ('replace','suggest') "
     "AND json_extract(consideration.currentness_document,'$.cover_stage.reason') "
-    f"IN ({','.join(repr(fault) for fault in _FAULTS)}) "
+    f"IN ({','.join(repr(fault) for fault in TASTE_JUDGE_FAULTS)}) "
     "AND json_extract(consideration.currentness_document,'$.cover_stage.arts')>=?)) "
     "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
     "JOIN cover_selection_authorities answered "
@@ -99,7 +105,16 @@ _ELIGIBLE_FROM_SQL = (
     "WHERE current.connection_name=ml.connection_name "
     "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
     "AND (answered.kind='owner' "
-    "OR answered.consideration_id=consideration.consideration_id)) "
+    "OR (answered.consideration_id=consideration.consideration_id "
+    # An unwritten taste switch under an older version no longer answers
+    # its comparison: it is judged again (#1372 PR 5, K6).
+    "AND NOT (answered.kind='automatic' AND json_type(json_extract("
+    "answered.document,'$.decision_document'),'$.taste_version') IS 'integer' "
+    "AND json_extract(json_extract("
+    "answered.document,'$.decision_document'),'$.taste_version')<"
+    "(SELECT max(version) FROM cover_taste_profile_versions) "
+    + _UNWRITTEN_SQL.replace("selection.decision_id", "answered.decision_id")
+    + ")))) "
     "AND NOT EXISTS (SELECT 1 FROM human_decisions decided "
     "WHERE decided.review_case_id=ml.review_case_id AND decided.destination='cover') "
     "AND NOT EXISTS (SELECT 1 FROM field_effect_manual_holds held "
@@ -116,6 +131,84 @@ _DUE_FROM_SQL = (
     "AND attempted.version=?) OR EXISTS (SELECT 1 FROM cover_taste_judgements "
     "retried WHERE retried.consideration_id=consideration.consideration_id "
     "AND retried.version=? AND retried.state='requested')) "
+)
+# The oldest `choose` verdicts under the active version, each its
+# comparison's newest, on a current comparison no selection answers: what
+# taste admission tries, in order after a cursor (#1372 PR 5, K4).
+_SWITCH_CANDIDATES_SQL = (
+    "SELECT verdict.consideration_id,verdict.verdict_id,verdict.created_at,"
+    "verdict.rowid FROM cover_taste_verdicts verdict "
+    "JOIN current_cover_considerations pointer "
+    "ON pointer.consideration_id=verdict.consideration_id "
+    "JOIN current_review_case_lineages lineage "
+    "ON lineage.review_case_id=pointer.review_case_id "
+    "WHERE verdict.version=(SELECT max(version) FROM cover_taste_profile_versions) "
+    "AND (verdict.created_at,verdict.rowid)>(?,?) "
+    "AND json_extract(verdict.document,'$.decision')='choose' "
+    "AND verdict.rowid=(SELECT newest.rowid FROM cover_taste_verdicts newest "
+    "WHERE newest.consideration_id=verdict.consideration_id "
+    "ORDER BY newest.created_at DESC,newest.rowid DESC LIMIT 1) "
+    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
+    "JOIN cover_selection_authorities answered "
+    "ON answered.selection_id=current.selection_id "
+    "WHERE current.connection_name=lineage.connection_name "
+    "AND current.library_name=lineage.library_name "
+    "AND current.item_id=lineage.item_id "
+    "AND answered.consideration_id=verdict.consideration_id) "
+    "ORDER BY verdict.created_at,verdict.rowid LIMIT ?"
+)
+# The preview walk (K7): each current comparison's newest verdict under one
+# version, oldest first, read through `cover_taste_verdicts_version`. Only a
+# work's current case counts: an earlier case keeps its comparison pointer.
+_PREVIEW_WALK_SQL = (
+    "SELECT verdict.consideration_id,verdict.document,verdict.created_at,"
+    "pointer.review_case_id,consideration.document,report.document,"
+    "report.document_digest,consideration.document_digest,consideration.report_id "
+    "FROM cover_taste_verdicts verdict "
+    "JOIN current_cover_considerations pointer "
+    "ON pointer.consideration_id=verdict.consideration_id "
+    "JOIN current_review_case_lineages lineage "
+    "ON lineage.review_case_id=pointer.review_case_id "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=verdict.consideration_id "
+    "JOIN metadata_reports report ON report.report_id=consideration.report_id "
+    "WHERE verdict.version=? "
+    "AND verdict.rowid=(SELECT newest.rowid FROM cover_taste_verdicts newest "
+    "WHERE newest.consideration_id=verdict.consideration_id "
+    "ORDER BY newest.created_at DESC,newest.rowid DESC LIMIT 1) "
+    "ORDER BY verdict.created_at,verdict.rowid LIMIT ?"
+)
+# The owner's current cover selection for a case's work, if it is the owner's.
+_PREVIEW_ANSWER_SQL = (
+    "SELECT selection.consideration_id,selection.occurred_at,"
+    "json_extract(json_extract(selection.document,'$.decision_document'),"
+    "'$.outcome'),json_extract(selection.document,'$.candidate_reference') "
+    "FROM current_review_case_lineages lineage "
+    "JOIN current_cover_selection_authorities current "
+    "ON current.connection_name=lineage.connection_name "
+    "AND current.library_name=lineage.library_name "
+    "AND current.item_id=lineage.item_id "
+    "JOIN cover_selection_authorities selection "
+    "ON selection.selection_id=current.selection_id "
+    "WHERE lineage.review_case_id=? AND selection.kind='owner'"
+)
+# A judgement under one version in flight on a work's current comparison:
+# the preview is still checking until it ends (K7). A waiting Try again is
+# counted only while its field is due (`_DUE_SQL`): one whose field an owner
+# answer has since closed never runs.
+_PREVIEW_IN_FLIGHT_SQL = (
+    "SELECT 1 FROM cover_taste_judgements judgement "
+    "JOIN current_cover_considerations pointer "
+    "ON pointer.consideration_id=judgement.consideration_id "
+    "JOIN current_review_case_lineages lineage "
+    "ON lineage.review_case_id=pointer.review_case_id "
+    "WHERE judgement.version=? AND judgement.state='running' "
+    "LIMIT 1"
+)
+_PREVIEW_RERUN_SQL = (
+    "SELECT 1 FROM cover_taste_verdicts earlier WHERE earlier.consideration_id=? "
+    "AND earlier.version<? AND json_extract(earlier.document,'$.decision')='choose' "
+    "LIMIT 1"
 )
 # The fields still eligible for a check whose newest attempt under a version
 # failed: what Try again sends again, so it never clears a count it does not
@@ -319,6 +412,118 @@ def taste_judge_facts(
     }
 
 
+def _preview_answer(
+    connection: sqlite3.Connection,
+    review_case_id: str,
+    consideration_id: str,
+    verdict_at: int,
+    reference: str,
+) -> tuple[bool, TastePreviewAnswer | None]:
+    """Whether a switch stays in the preview, and the owner's answer to it.
+
+    An owner answer to that comparison since the verdict shows as itself
+    when it took the switch's cover or kept the current one; any other owner
+    answer takes the switch out of the preview (K7).
+    """
+    row = connection.execute(_PREVIEW_ANSWER_SQL, (review_case_id,)).fetchone()
+    if row is None:
+        return True, None
+    answered, occurred_at, outcome, candidate = row
+    if answered == consideration_id and occurred_at >= verdict_at:
+        if outcome == "accept" and candidate == reference:
+            return True, "looks_right"
+        if outcome == "keep_current":
+            return True, "kept_current"
+    return False, None
+
+
+def taste_preview_walk(
+    connection: sqlite3.Connection,
+    authority: tuple[str | None, str | None],
+    protection: str,
+    checked_limit: int,
+    switch_limit: int,
+) -> TastePreviewWalk:
+    """The switches the version in use would make under `protection`, among
+    up to `checked_limit` covers it has judged, stopping at `switch_limit`
+    (K7). Each current comparison's newest verdict under the version is one
+    checked cover; a switch is a `choose` meeting K4 gates 4-6. Posture,
+    record, room and holds are not asked (L5)."""
+    profile = connection.execute(
+        "SELECT version,document FROM cover_taste_profile_versions "
+        "ORDER BY version DESC LIMIT 1"
+    ).fetchone()
+    if profile is None:
+        return TastePreviewWalk(None, 0, (), False)
+    version = cast(int, profile[0])
+    rules = {
+        rule.number: rule
+        for rule in TasteProfile.from_rules(json.loads(profile[1])["rules"]).rules
+    }
+    checked = 0
+    switches: list[TastePreviewSwitch] = []
+    for row in connection.execute(_PREVIEW_WALK_SQL, (version, checked_limit)):
+        if len(switches) >= switch_limit:
+            break
+        checked += 1
+        consideration_id, verdict_document, verdict_at, case_id = row[:4]
+        value = json.loads(expand_cover_consideration(*row[4:]))
+        try:
+            policy_report = json.loads(value["policy_report_document"])
+        except (KeyError, TypeError, json.JSONDecodeError):
+            continue
+        if type(policy_report) is not dict:
+            continue
+        candidate = taste_switch_candidate(
+            value, policy_report, verdict_document, protection
+        )
+        if candidate is None:
+            continue
+        verdict = json.loads(verdict_document)
+        if any(number not in rules for number in verdict["rules"]):
+            continue
+        reference = cast(str, candidate["reference"])
+        shown, answer = _preview_answer(
+            connection, case_id, consideration_id, verdict_at, reference
+        )
+        if not shown:
+            continue
+        switches.append(
+            TastePreviewSwitch(
+                review_case_id=case_id,
+                consideration_id=consideration_id,
+                report_document=cast(str, value["report_document"]),
+                reference=reference,
+                preview_digest=cast("str | None", candidate.get("preview_sha256")),
+                width=cast("int | None", candidate.get("width")),
+                height=cast("int | None", candidate.get("height")),
+                reason=cast("str | None", policy_report["stage"]["reason"]),
+                rules=tuple(
+                    (number, rules[number].section, rules[number].text)
+                    for number in verdict["rules"]
+                ),
+                answer=answer,
+                rerun=connection.execute(
+                    _PREVIEW_RERUN_SQL, (consideration_id, version)
+                ).fetchone()
+                is not None,
+            )
+        )
+    policy, replay = authority
+    due = (
+        connection.execute(_PREVIEW_IN_FLIGHT_SQL, (version,)).fetchone() is not None
+    ) or (
+        policy is not None
+        and replay is not None
+        and connection.execute(
+            _DUE_SQL,
+            (policy, replay, TASTE_MIN_ARTS, TASTE_MIN_ARTS, version, version, 1),
+        ).fetchone()
+        is not None
+    )
+    return TastePreviewWalk(version, checked, tuple(switches), due)
+
+
 def request_taste_judge_retries(
     connection: sqlite3.Connection,
     authority: tuple[str | None, str | None],
@@ -359,9 +564,13 @@ class SQLiteCoverTasteJudgeRepository(ConnectionScoped):
         self,
         connection: sqlite3.Connection,
         cover_read: Callable[[], AbstractContextManager[tuple[str | None, str | None]]],
+        switches: SQLiteCoverConsiderationRepository,
+        taste_switching: Callable[[], bool],
     ) -> None:
         super().__init__(connection)
         self._cover_read = cover_read
+        self._switches = switches
+        self._taste_switching = taste_switching
 
     @local_operation
     def active(self) -> TasteJudgeVersion | None:
@@ -633,6 +842,51 @@ class SQLiteCoverTasteJudgeRepository(ConnectionScoped):
                 self._stop_day(now)
             transaction.commit()
             return row is not None
+        except BaseException:
+            transaction.rollback()
+            raise
+
+    def taste_switching(self) -> bool:
+        """Whether Switching is Automatic in this generation (K3)."""
+        return self._taste_switching()
+
+    @local_operation
+    def retire_switches(self, now: int, limit: int) -> int:
+        """Revoke up to `limit` unwritten taste switches nothing stands
+        behind any more, in one transaction (K6)."""
+        transaction = self._transaction("taste_switch_retire")
+        try:
+            transaction.begin()
+            retired = self._switches._retire_unwritten_taste_covers(now, limit)
+            transaction.commit()
+            return retired
+        except BaseException:
+            transaction.rollback()
+            raise
+
+    @local_operation
+    def switch_candidates(
+        self, after: tuple[int, int], limit: int
+    ) -> tuple[tuple[str, str, int, int], ...]:
+        """Up to `limit` (consideration, verdict, created_at, rowid) taste
+        admission may try, oldest first after `after` (K4)."""
+        return tuple(
+            (row[0], row[1], row[2], row[3])
+            for row in self._connection.execute(_SWITCH_CANDIDATES_SQL, (*after, limit))
+        )
+
+    @local_operation
+    def admit_switch(self, consideration_id: str, verdict_id: str, now: int) -> bool:
+        """Admit one taste verdict as an automatic decision, or nothing, in
+        one short transaction (K4)."""
+        transaction = self._transaction("taste_switch_admit")
+        try:
+            transaction.begin()
+            admitted = self._switches._admit_taste_automatic_cover(
+                consideration_id, verdict_id, now
+            )
+            transaction.commit()
+            return admitted
         except BaseException:
             transaction.rollback()
             raise

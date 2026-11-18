@@ -6682,7 +6682,7 @@ const readTasteProfile = (document: unknown) =>
     fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
   }).getTasteProfile()
 const tasteDocument = {
-  schema_version: 'review-taste-profile-v3',
+  schema_version: 'review-taste-profile-v4',
   configured: true,
   chosen: 30,
   required: 25,
@@ -6704,6 +6704,7 @@ const tasteDocument = {
   ],
   judge: { configured: true, daily_limit: 5000, stopped: null, retry_after: null, failed: 0 },
   confirmed: { confirmed: 0, suggested: 0 },
+  automatic_available: false,
 }
 // An edit version keeps its build's facts and its rules' numbers, with gaps.
 const editedTasteDocument = {
@@ -6760,7 +6761,7 @@ describe('cover calibration read (#1372 PR 3)', () => {
   it('reads the set from its route as decoded', async () => {
     const document = {
       items: [calibrationWork(1), calibrationWork(2)],
-      schema_version: 'review-cover-calibration-v2',
+      schema_version: 'review-cover-calibration-v3',
     }
     const { fetcher, read } = readCalibration(document)
     const view = await read
@@ -6771,13 +6772,13 @@ describe('cover calibration read (#1372 PR 3)', () => {
 
   it('refuses an extra member and more than 25 works', async () => {
     await expect(
-      readCalibration({ items: [], schema_version: 'review-cover-calibration-v2', next: null })
+      readCalibration({ items: [], schema_version: 'review-cover-calibration-v3', next: null })
         .read,
     ).rejects.toMatchObject({ code: 'invalid_response' })
     await expect(
       readCalibration({
         items: Array.from({ length: 26 }, (_, index) => calibrationWork(index)),
-        schema_version: 'review-cover-calibration-v2',
+        schema_version: 'review-cover-calibration-v3',
       }).read,
     ).rejects.toMatchObject({ code: 'invalid_response' })
   })
@@ -8121,5 +8122,53 @@ describe('the identifiers file wire (#1478)', () => {
       await expect(client(view(link)).http.getOwnerLinkView(address)).rejects.toMatchObject({
         code: 'contradictory_owner_link',
       })
+  })
+})
+
+// The taste preview's read (#1372 PR 5, K7): decoded whole, then its bounds.
+const readTastePreview = (document: unknown) =>
+  new ReviewApiClient({
+    csrf,
+    fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+  }).getTastePreview('unprotected')
+const previewItem = (n: number) => ({
+  review_case_id: `review_case_${String(n).repeat(64)}`,
+  title: 'Example Title',
+  authors: ['Example Author'],
+  media_kind: 'epub',
+  current: null,
+  new: null,
+  reason: null,
+  rules: [{ number: 1, section: 'drawn_to', text: 'Bold art.' }],
+  answer: null,
+})
+const previewDocument = {
+  schema_version: 'review-taste-preview-v1',
+  version: 2,
+  checked: 7,
+  found: [previewItem(1)],
+  state: 'checking',
+  rerun: true,
+}
+
+describe('taste preview decoder (#1372 PR 5)', () => {
+  it('asks for the protection and admits a preview', async () => {
+    const read = vi.fn<typeof fetch>(async () => Response.json(previewDocument))
+    await expect(
+      new ReviewApiClient({ csrf, fetch: read }).getTastePreview('protected'),
+    ).resolves.toEqual(previewDocument)
+    expect(read.mock.calls[0]?.[0]).toBe('/api/v1/covers/taste/preview?protection=protected')
+  })
+  it.each([
+    ['five found still checking', { found: [1, 2, 3, 4, 5].map(previewItem) }],
+    ['100 checked still checking', { checked: 100, found: [], rerun: false }],
+    ['more found than checked', { checked: 0 }],
+    ['a rerun with nothing found', { found: [], rerun: true }],
+    ['the same work twice', { found: [previewItem(1), previewItem(1)] }],
+  ])('refuses %s', async (_name, change) => {
+    await expect(readTastePreview({ ...previewDocument, ...change })).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_taste_preview',
+    })
   })
 })

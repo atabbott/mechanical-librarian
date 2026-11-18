@@ -188,6 +188,7 @@ from mechanical_librarian.application.cover_taste_judge import (
 from mechanical_librarian.application.cover_taste_judge_contract import (
     AdmittedTasteJudgeRequest,
 )
+from mechanical_librarian.application.cover_taste_switching import CoverTasteSwitching
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.description_advice import (
     admit_staged_description,
@@ -1803,6 +1804,7 @@ def create_review_pipeline(
                 review_configuration,
                 reviewer_access,
             ),
+            CoverTasteSwitching(taste_lease.switching_store),
         ).wake,
         background_close=taste_lease.close,
     )
@@ -3489,6 +3491,7 @@ def _compose_cover_considerations(
         work_identity_level=review.work_identity,
     )
     repository.bind_owner_cover_validation(service.require_owner_cover)
+    repository.bind_cover_taste_switching(review.cover_taste_switching)
     repository.bind_cover_consideration_currentness(
         lambda connection, library, item, report: (
             False

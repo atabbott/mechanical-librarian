@@ -410,8 +410,12 @@ Owner taste rules reach the builder and the
 [judge](ai-boundary.md#taste-judge) only as sealed packet data; edits are
 capped at 8 KiB. A judge verdict is admitted only by a reference sent in that
 request and rule numbers of its version, so it can pick only among the covers
-it was shown. A verdict only marks and orders a suggestion: the owner's answer
-is the ordinary cover decision, with its own checks. Try again needs the
+it was shown. A verdict marks and orders a suggestion, and the owner's answer
+is the ordinary cover decision, with its own checks. Once qualified, a verdict
+may also choose an automatic write. That write stays inside the eligible set,
+under its own identity and record. The owner's choice or hold refuses it when
+it is minted, and again when it is written. It adds no egress and no
+credential. Try again needs the
 owner session and its request token, and is refused unless it names the
 profile version in use.
 

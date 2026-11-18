@@ -220,6 +220,11 @@ All owner surfaces need a session and are `private, no-store`.
 - **Covers → To decide** shows a suggested work's strength and, in its open
   work, the texts of the rules the suggestion cites, read from the profile
   version it was made under. The verdict itself still holds no rule text.
+- **Covers → Switched** shows the texts of the rules a taste switch cited, read
+  from the version it was made under, and its preview shows the same for the
+  switches it found. An automatic taste decision keeps only the verdict's
+  identifier and the version number. Activity shows that number and no rule
+  text.
 - **Preparation status** shows only connection and library names, an opaque
   scan identifier, a closed state, counts and whether a request was
   coalesced: never titles, file names, queries, failure text or values.

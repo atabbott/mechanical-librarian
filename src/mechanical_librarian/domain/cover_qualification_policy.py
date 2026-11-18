@@ -30,6 +30,16 @@ REPLACEMENT_TARGET_STATES: Final = {
     MEASURED_REPLACEMENT_IDENTITY: "confirmed",
     UNCONFIRMED_REPLACEMENT_IDENTITY: "unknown",
 }
+# The shadow identity of a switch the taste profile chose (#1372 PR 5, K1).
+# One record covers a confirmed or an unconfirmed current cover; the decision
+# binds the state it saw and the write checks it again. Taste never fills.
+TASTE_REPLACEMENT_IDENTITY: Final = "cover_order:fixed_source_order:taste_replacement"
+TASTE_REPLACEMENT_QUALIFICATION_SHA256: str | None = None
+TASTE_REPLACEMENT_TARGET_STATES: Final = frozenset({"confirmed", "unknown"})
+# Every identity that parses only under its own record.
+RECORDED_IDENTITIES: Final = frozenset(
+    {*REPLACEMENT_TARGET_STATES, TASTE_REPLACEMENT_IDENTITY}
+)
 COVER_AWARE_QUALIFIED_POLICY_OPTIONS: Final = QUALIFIED_POLICY_OPTIONS | {
     COVER_QUALIFIED_POLICY_OPTION
 }
@@ -52,12 +62,22 @@ def unconfirmed_replacement_record() -> str | None:
     return UNCONFIRMED_REPLACEMENT_QUALIFICATION_SHA256
 
 
+def taste_replacement_record() -> str | None:
+    """Return the digest of the record qualifying taste switches, if any.
+
+    Read on each ask, like ``measured_replacement_record``.
+    """
+    return TASTE_REPLACEMENT_QUALIFICATION_SHA256
+
+
 def replacement_record(identity: str | None) -> str | None:
-    """Return the record of either replacement identity; ``None`` for any other."""
+    """Return the record of a recorded identity; ``None`` for any other."""
     if identity == MEASURED_REPLACEMENT_IDENTITY:
         return measured_replacement_record()
     if identity == UNCONFIRMED_REPLACEMENT_IDENTITY:
         return unconfirmed_replacement_record()
+    if identity == TASTE_REPLACEMENT_IDENTITY:
+        return taste_replacement_record()
     return None
 
 

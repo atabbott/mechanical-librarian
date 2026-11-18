@@ -54,6 +54,7 @@ export const document: SettingsView['document'] = {
     current_protection: 'protected',
     prefer_edition: false,
     prefer_minimal_composition: false,
+    taste_switching: 'suggest_only',
   },
   matching: { work_identity: 'identifier' },
 }

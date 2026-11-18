@@ -45,11 +45,11 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "POLICY_SCHEMA_VERSION",
         "metadata-policy-profile-v3",
     ),
-    ("mechanical_librarian.application.configuration", "CONFIG_SCHEMA", "config-v13"),
+    ("mechanical_librarian.application.configuration", "CONFIG_SCHEMA", "config-v14"),
     (
         "mechanical_librarian.domain.owner_settings",
         "OWNER_SETTINGS_SCHEMA",
-        "owner-settings-v6",
+        "owner-settings-v7",
     ),
     (
         "mechanical_librarian.domain.reviewer_cost",
@@ -85,17 +85,17 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.interfaces.web.app",
         "REVIEW_TASTE_PROFILE_SCHEMA",
-        "review-taste-profile-v3",
+        "review-taste-profile-v4",
     ),
     (
         "mechanical_librarian.application.review_covers",
         "REVIEW_COVERS_SCHEMA",
-        "review-covers-v2",
+        "review-covers-v3",
     ),
     (
         "mechanical_librarian.application.review_covers",
         "REVIEW_COVER_CALIBRATION_SCHEMA",
-        "review-cover-calibration-v2",
+        "review-cover-calibration-v3",
     ),
     (
         "mechanical_librarian.application.review_application",
@@ -175,7 +175,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.cover_automatic_decision",
         "SCHEMA_VERSION",
-        "cover-automatic-decision-v5",
+        "cover-automatic-decision-v6",
     ),
     (
         "mechanical_librarian.application.continuous_field_effects",

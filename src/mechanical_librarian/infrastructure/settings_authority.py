@@ -128,6 +128,7 @@ def store_runtime_configuration(
         cover_prefer_minimal_composition=document.cover_preferences.prefer_minimal_composition,
         cover_current_protection=document.cover_preferences.current_protection,
         cover_prefer_edition=document.cover_preferences.prefer_edition,
+        cover_taste_switching=document.cover_preferences.taste_switching,
         description_remove_marketing=document.description_advice.remove_marketing,
         description_remove_sales_boasts=document.description_advice.remove_sales_boasts,
         description_remove_praise=document.description_advice.remove_praise,

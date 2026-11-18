@@ -309,6 +309,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._cover_considerations = SQLiteCoverConsiderationRepository(
             connection,
             current_cover_authority=lambda: self._current_cover_authority,
+            taste_switching=lambda: self.cover_taste_switching(),
             revoke_automatic=lambda decision_id, changed_at: (
                 self._revoke_field_effect_authority_in_transaction(
                     decision_id, changed_at, required=False
@@ -400,11 +401,17 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             connection, self._judge_cover_read
         )
         self._cover_taste_judge = SQLiteCoverTasteJudgeRepository(
-            connection, self._judge_cover_read
+            connection,
+            self._judge_cover_read,
+            self._cover_considerations,
+            self.cover_taste_switching,
         )
         self._retained_covers = SQLiteRetainedCoverRepository(connection, binding)
         self._current_cover_authority: tuple[str | None, str | None] = (None, None)
         self._current_work_identity_level = "identifier"
+        # Switching (#1372 PR 5, K3): each runtime generation binds the
+        # setting it was composed from; Suggest only until bound.
+        self._cover_taste_switching = "suggest_only"
         self._capture_cover_read: Callable[[], CoverReadObservation] | None = None
         self._cover_read_observation: CoverReadObservation | None = None
         self._field_effects = SQLiteFieldEffectRepository(
@@ -429,6 +436,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
+            resume_automatic_cover=(
+                lambda review_case_id, decision_id, changed_at: (
+                    self._cover_considerations._resume_automatic_cover(
+                        review_case_id, decision_id, changed_at
+                    )
+                )
+            ),
         )
         # Every injected callable resolves its target through this repository at
         # call time rather than capturing a bound method here.  Three review
@@ -543,6 +557,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
             current_cover_policy_reference=(lambda: self._current_cover_authority[0]),
             current_cover_replay_reference=(lambda: self._current_cover_authority[1]),
+            taste_switching=lambda: self.cover_taste_switching(),
             require_owner_cover=lambda document, artifact: (
                 self._cover_considerations.require_owner_cover(document, artifact)
             ),
@@ -750,6 +765,16 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise ValueError("work identity level is invalid")
         self._current_cover_authority = (policy_reference, replay_reference)
         self._current_work_identity_level = work_identity_level
+
+    def bind_cover_taste_switching(self, value: str) -> None:
+        """Bind whether taste choices switch covers in this generation."""
+        if value not in {"suggest_only", "automatic"}:
+            raise ValueError("taste switching is invalid")
+        self._cover_taste_switching = value
+
+    def cover_taste_switching(self) -> bool:
+        """Whether Switching is Automatic in this generation."""
+        return self._cover_taste_switching == "automatic"
 
     @contextmanager
     def _judge_cover_read(self) -> Iterator[tuple[str | None, str | None]]:
@@ -1822,6 +1847,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._cover_taste
 
     def cover_taste_judge_store(self) -> SQLiteCoverTasteJudgeRepository:
+        return self._cover_taste_judge
+
+    def cover_taste_switching_store(self) -> SQLiteCoverTasteJudgeRepository:
         return self._cover_taste_judge
 
     def read_staged_description_preparation(

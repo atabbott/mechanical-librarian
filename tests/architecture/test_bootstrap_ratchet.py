@@ -103,7 +103,7 @@ CEILING = {
     # repository, the two lanes passed to CoverTasteBackground, and one
     # keyword argument for the judge's daily limit. 3487 since #1372 PR 4b
     # passed that limit to the taste profile read: one keyword argument.
-    "composition.py": 3487,
+    "composition.py": 3490,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer; PR 4 renamed it
     # run_taste_reviewer, which takes a build or a judgement: 146 for the
@@ -160,7 +160,7 @@ RESIDUAL: dict[str, int | None] = {
     # accepts the generation's pacers its owner search shares; 236 since
     # #1372 PR 4 passes the taste judge beside the build as the background
     # lane and opens the lane's repository with the cover authority bound.
-    _C + "create_review_pipeline": 236,
+    _C + "create_review_pipeline": 237,
     # Wires recovery to the built pipeline; catches an adapter error type.
     # 96 since #1064 passes the response store to the retry constructor.
     _C + "_provider_recovery_wiring": 96,

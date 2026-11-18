@@ -719,10 +719,15 @@ def test_taste_profile(tmp_path) -> None:
                     "text": "Bold illustrated art, never photography.",
                 },
             )
+            # Nothing is judged under version 2 yet (#1372 PR 5, K7).
+            preview = live.call(
+                "GET", "/api/v1/covers/taste/preview?protection=protected"
+            )
     finally:
         repository.close()
     _expect_wire("get-covers-taste", capture, {})
     _expect_wire("post-covers-taste-rules", edited, {})
+    _expect_wire("get-covers-taste-preview", preview, {})
 
 
 def test_library_progress(tmp_path) -> None:

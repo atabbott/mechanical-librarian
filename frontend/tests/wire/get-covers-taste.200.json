@@ -1,5 +1,6 @@
 {
   "body": {
+    "automatic_available": false,
     "build": null,
     "chosen": 25,
     "configured": true,
@@ -31,7 +32,7 @@
       "version": 1
     },
     "required": 25,
-    "schema_version": "review-taste-profile-v3",
+    "schema_version": "review-taste-profile-v4",
     "versions": [
       {
         "created_at": 1000,

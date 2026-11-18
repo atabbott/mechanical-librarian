@@ -1149,6 +1149,15 @@
           "title": "Cover Taste Judge Daily Requests",
           "type": "integer"
         },
+        "cover_taste_switching": {
+          "default": "suggest_only",
+          "enum": [
+            "suggest_only",
+            "automatic"
+          ],
+          "title": "Cover Taste Switching",
+          "type": "string"
+        },
         "description_automatic_application": {
           "default": false,
           "title": "Description Automatic Application",
@@ -1325,7 +1334,7 @@
       "default": null
     },
     "schema_version": {
-      "const": "config-v13",
+      "const": "config-v14",
       "title": "Schema Version",
       "type": "string"
     }

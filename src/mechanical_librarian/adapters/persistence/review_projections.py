@@ -367,6 +367,15 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 current_cover_automatic_decision_id=(
                     self._current_cover_automatic_decision_id(review_case_id)
                 ),
+                cover_automatic_held=self._connection.execute(
+                    "SELECT 1 FROM cover_automatic_held held "
+                    "JOIN current_cover_considerations current "
+                    "ON current.review_case_id=held.review_case_id "
+                    "AND current.consideration_id=held.consideration_id "
+                    "WHERE held.review_case_id=?",
+                    (review_case_id,),
+                ).fetchone()
+                is not None,
                 decision_effect_states=self._decision_effect_states(review_case_id),
                 held_destinations=tuple(
                     row[0]
