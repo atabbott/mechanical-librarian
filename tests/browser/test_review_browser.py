@@ -5711,15 +5711,20 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     )
                 set_root_text(page, "")
                 page.set_viewport_size({"width": 390, "height": 844})
-                # Covers load lazily (#1290): every cover's image waits until it
-                # nears the viewport. A phone's whole strip of covers is within
-                # the browser's lazy-load distance, now that the frameless
-                # workspace no longer clips it, so the attribute is what holds.
-                lazy = page.evaluate(
-                    "() => [...document.querySelectorAll('.library-cover-image img')]"
-                    ".map(image => image.loading)"
+                # Covers load lazily (#1290): a cover far below the fold has not
+                # asked for its image until it nears the viewport. A phone's
+                # strip of covers sits within the browser's lazy-load distance,
+                # so after the reload below the last cover is moved far down
+                # the page (a style set from script, which the CSP allows).
+                covers = page.locator(".library-cover-image").count()
+                page.add_init_script(
+                    "new MutationObserver((_, observer) => {"
+                    " const frames = document.querySelectorAll('.library-cover-image');"
+                    f" if (frames.length < {covers}) return;"
+                    " frames[frames.length - 1].style.marginTop = '6000px';"
+                    " observer.disconnect();"
+                    "}).observe(document, { childList: true, subtree: true });"
                 )
-                assert lazy and set(lazy) == {"lazy"}, lazy
 
                 assert errors == []
                 # A cover whose bytes never arrive keeps a bounded, labelled
@@ -5743,7 +5748,8 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 page.get_by_text("Image unavailable").first.wait_for()
                 page.wait_for_timeout(300)
                 frames = page.locator(".library-cover-image")
-                assert 0 < len(requested) <= frames.count(), requested
+                assert frames.count() == covers
+                assert 0 < len(requested) < covers, requested
                 for cover_frame in frames.all():
                     cover_frame.scroll_into_view_if_needed()
                 page.wait_for_function(
