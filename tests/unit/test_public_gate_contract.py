@@ -156,26 +156,76 @@ def test_retains_the_three_independent_timeout_bounded_tiers(job: str) -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert f"  {job}:\n" in workflow
     assert "  public-gate:\n" not in workflow
-    assert "needs:" not in workflow
+    # No job waits on another except the browser check on its own shards.
+    assert workflow.count("needs:") == 1
+    assert "    needs: protected-browser\n" in workflow
+
+
+def test_the_required_browser_check_passes_only_when_every_shard_has() -> None:
+    """Hold the browser split to the one check the ruleset requires.
+
+    The ruleset names `protected-browser`, so that context must come from a
+    job that waits for every shard, runs even when one failed or was
+    cancelled, and passes on nothing but success: a skipped required check
+    counts as passing, so a gate that a failed shard could skip would let
+    that failure merge. The shards run serially on runners of their own, and
+    the `--shard` count matches the matrix, so together they run the tier.
+    """
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    gate = re.search(r"^  browser-gate:\n((?:(?:    .*)?\n)*)", workflow, re.M)
+    assert gate is not None
+    assert gate[1] == (
+        "    name: protected-browser\n"
+        "    needs: protected-browser\n"
+        "    if: always()\n"
+        "    runs-on: ubuntu-26.04\n"
+        "    timeout-minutes: 5\n"
+        "    steps:\n"
+        "      - name: Require every browser shard to pass\n"
+        "        env:\n"
+        "          SHARDS: ${{ needs.protected-browser.result }}\n"
+        '        run: test "$SHARDS" = success\n'
+        "\n"
+    )
+    assert workflow.count("name: protected-browser\n") == 1
+    shards = re.search(r"^  protected-browser:\n((?:(?:    .*)?\n)*)", workflow, re.M)
+    assert shards is not None
+    assert shards[1].startswith(
+        "    name: browser shard ${{ matrix.shard }} of 3\n"
+        "    runs-on: ubuntu-26.04\n"
+        "    timeout-minutes: 15\n"
+        "    strategy:\n"
+        "      fail-fast: false\n"
+        "      matrix:\n"
+        "        shard: [1, 2, 3]\n"
+    )
+    assert (
+        "run: uv run python scripts/run_test_tier.py browser --shard "
+        "${{ matrix.shard }}/3 --test-timeout-seconds 180\n"
+    ) in shards[1]
+    assert "--workers" not in shards[1]
 
 
 def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "  container-image:\n" in workflow
     assert "  dependency-audit:\n" in workflow
-    assert workflow.count("runs-on: ubuntu-26.04") == 8
+    assert workflow.count("runs-on: ubuntu-26.04") == 9
     assert (
         "  fast-source:\n    runs-on: ubuntu-26.04\n    timeout-minutes: 25\n"
     ) in workflow
     assert workflow.count("timeout-minutes: 25") == 1
     assert (
-        "  protected-browser:\n    runs-on: ubuntu-26.04\n    timeout-minutes: 30\n"
+        "  protected-browser:\n    name: browser shard ${{ matrix.shard }} of 3\n"
+        "    runs-on: ubuntu-26.04\n    timeout-minutes: 15\n"
     ) in workflow
     assert (
         "  container-image:\n    runs-on: ubuntu-26.04\n    timeout-minutes: 15\n"
     ) in workflow
-    assert workflow.count("timeout-minutes: 15") == 1
-    assert workflow.count("timeout-minutes: 30") == 1
+    assert workflow.count("timeout-minutes: 15") == 2
+    assert "timeout-minutes: 30" not in workflow
+    assert workflow.count("timeout-minutes: 5\n") == 1
     for shard in (2, 3, 4):
         assert (
             f"  fast-source-{shard}:\n    runs-on: ubuntu-26.04\n"

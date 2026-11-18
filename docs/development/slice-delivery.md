@@ -105,7 +105,7 @@ passing required checks; nobody has a bypass.
 Pull requests authored by `renovate[bot]` whose update class requests
 auto-merge may use GitHub-native squash auto-merge instead of the controller.
 The default-branch ruleset still requires a pull request, a head current with
-`main`, and a passing check run for each of the eight gate jobs
+`main`, and a passing check run for each of the eight required checks
 (`fast-source`, `fast-source-2`, `fast-source-3`, `fast-source-4`,
 `exact-installed`, `protected-browser`, `container-image` and
 `dependency-audit`). Renovate has no bypass and cannot write to `main`. A
