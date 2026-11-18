@@ -15,7 +15,7 @@ brackets are GitHub issues.
 - After a write over a description stored with formatting, the field no
   longer offers Before your change, which was recorded and then never
   written. It says to restore the earlier description in Audiobookshelf. The
-  pin line now says you can pin after the next scan, and the recorded line
+  pin line after a write now says you can pin after the next scan, and the recorded line
   names the genres or names you chose (#1984).
 - Pressing your written choice again no longer leaves the field waiting for
   a write that never comes: it does nothing, and from another open tab it is

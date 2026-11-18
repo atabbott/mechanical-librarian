@@ -214,7 +214,11 @@ export function FieldDecisionCanvas({
   // each position come from a single list (#1290).
   type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
   const keepKind = keepCard(selected)
-  const wayBackSentence = noWayBackSentence(selected)
+  // A refused keep already says the same sentence under the choices.
+  const wayBackSentence =
+    choiceFailure && choiceStatus.text === noWayBackSentence(selected)
+      ? null
+      : noWayBackSentence(selected)
   // On the case that wrote the field the card holds what the case read before
   // its write, and never calls it current (#1523).
   const before = keepKind === 'before'

@@ -90,13 +90,17 @@ const pinnedValueSentence = (field: ReviewField) => {
 
 // Why a field that could be pinned offers no pin now. With no answer of the
 // owner's standing, or with the owner's choice of the adviser's description,
-// a change waits to be written. Over a standing answer the server refuses
+// a change waits to be written, and once it is, the next scan has to read it
+// back; while nothing is written, as with writes off, no scan reads a new
+// value, so the sentence waits for the write. Over a standing answer the server refuses
 // only once that answer's hold was released or a Resume was asked of it. A
 // rejection is history the owner can no longer record, so nothing is said.
 const notOffered = (field: ReviewField) =>
   field.humanDecision === null ||
   (field.destination === 'description' && field.descriptionAdvice?.selection?.origin === 'human')
-    ? 'You can pin this field after the next scan reads its new value.'
+    ? field.writtenByCase === true
+      ? 'You can pin this field after the next scan reads its new value.'
+      : 'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.'
     : field.humanDecision.outcome === 'reject'
       ? null
       : 'You chose Resume automatic handling for this field. Choose a value again to pin it.'

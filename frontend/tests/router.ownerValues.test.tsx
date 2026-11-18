@@ -1433,6 +1433,8 @@ describe('a pin on each value', () => {
       classification: 'automatic_recorded',
       classificationCause: 'automatic_decided',
       pinControl: { pin: 'change_waiting', unpin: false },
+      // Automatic's write verified; the next scan has not read it back.
+      writtenByCase: true,
     }
     const { http } = pins(waiting)
     const foot = await show(http)

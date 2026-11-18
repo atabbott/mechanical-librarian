@@ -77,15 +77,14 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    `restore_unavailable` (#1424). The case detail's `written_by_case` marks
    each field the case wrote in its current episode; a description written
    with the adviser's text counts, by the same rule as the write a keep
-   follows. `restore_unavailable` marks such a formatted description. On such
-   a field the browser shows that keep as a card
+   follows. On a field the case wrote the browser shows that keep as a card
    headed "Before your change", holding the value the case read, and never
    calls it current. It leaves the card out where owner entry already offers
    the same way back (Clear for an empty value, or that value as the previous
    value, names or genres), and where there is none, a field read empty that
-   cannot be emptied or such a formatted description, saying so in one
-   sentence. A field whose latest write
-   holds the value the case read again, after a keep, a clear or an entry, is
+   cannot be emptied or a formatted description (the detail's
+   `restore_unavailable`), saying so in one sentence. A field whose latest
+   write holds the value the case read again, after a keep, a clear or an entry, is
    not written: after a keep its card is Keep current value, and after a clear
    or an entry of that value, in the same order, the browser leaves the card
    out because the recorded value already holds it. History reads a keep that

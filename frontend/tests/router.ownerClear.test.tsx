@@ -647,6 +647,47 @@ describe('a description this case wrote over formatting (#1424)', () => {
     expect(sent(http)[0]).toMatchObject({ outcome: 'keep_current', destination: 'description' })
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(FORMATTED))
   })
+
+  it('says it once when the refreshed field shows the written description', async () => {
+    const user = userEvent.setup()
+    const stale = over({ writtenByCase: false, restoreUnavailable: false })
+    const accepted = decided(over(), { kind: 'text', value: 'A qualified description.' })
+    if (!accepted.humanDecision) throw new Error('a recorded decision is required')
+    const written: Field = {
+      ...accepted,
+      editable: true,
+      needsAttention: false,
+      ownerControl: control({ withdraw: 'written' }),
+      pinControl: null,
+      humanDecision: { ...accepted.humanDecision, outcome: 'accept' },
+      proposedValues: [
+        { kind: 'text', value: 'A qualified description.' },
+        { kind: 'text', value: 'Another description.' },
+      ],
+    }
+    let refused = false
+    const http = owner(stale, undefined, async () => {
+      refused = true
+      throw new ApiError(409, 'restore_unavailable')
+    })
+    http.getCaseDetail.mockImplementation(async () => ({
+      ...detail,
+      fields: [refused ? written : stale],
+    }))
+    renderRoute('/library?lens=all&preview=case-1&field=description', http)
+    await user.click(await screen.findByRole('radio', { name: /^Choose current value/u }))
+    await waitFor(() =>
+      expect(document.querySelector('.decision-failure')).toHaveTextContent(FORMATTED),
+    )
+    await waitFor(() => expect(keepCardShown()).toBeNull())
+    const heading = screen.getByRole('heading', { name: 'Description' })
+    const said = heading.parentElement?.querySelector('p')
+    expect(said).toHaveTextContent(
+      'The recorded outcome is marked below. You can choose another value.',
+    )
+    expect(said).not.toHaveTextContent(FORMATTED)
+    expect(screen.getAllByText(FORMATTED, { exact: false })).toHaveLength(1)
+  })
 })
 
 describe('the keep card on a field this case wrote (#1523)', () => {

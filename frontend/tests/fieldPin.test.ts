@@ -258,10 +258,16 @@ describe('the sentence at the foot of the field', () => {
   it('says a recorded change comes first where no pin is offered', () => {
     const waiting = field({ pinControl: { pin: 'change_waiting', unpin: false } })
     expect(pinFoot(waiting, { pinOnScreen: false })).toEqual({
-      sentence: 'You can pin this field after the next scan reads its new value.',
+      sentence:
+        'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
       unpin: false,
       quiet: true,
     })
+    // Once the case wrote it, the change waits only for the next scan to
+    // read it back, beside Applied and verified.
+    expect(pinFoot({ ...waiting, writtenByCase: true }, { pinOnScreen: false }).sentence).toBe(
+      'You can pin this field after the next scan reads its new value.',
+    )
   })
 
   it.each(['accept', 'keep_current', 'owner_entered'] as const)(
@@ -290,7 +296,12 @@ describe('the sentence at the foot of the field', () => {
         Field['descriptionAdvice']
       >,
     })
+    // Recorded but not written, as while writes are off: no scan reads a new
+    // value until it is.
     expect(pinFoot(advised, shown).sentence).toBe(
+      'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
+    )
+    expect(pinFoot({ ...advised, writtenByCase: true }, shown).sentence).toBe(
       'You can pin this field after the next scan reads its new value.',
     )
     // Automatic's own advised text is no choice of the owner's.
