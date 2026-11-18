@@ -13,9 +13,8 @@ brackets are GitHub issues.
 ## 0.39.0 — Owner trust (in progress)
 
 - **Clean rebuild required.** A write that lands after a work returns to an
-  earlier case counts as that case's own, and one still waiting there holds
-  off a pin as it does anywhere. History shows exactly what each decision
-  replaced, even when a later write followed in the same second (#1973).
+  earlier case counts as that case's own, and one still waiting holds off a
+  pin. History shows what each decision replaced, even within a second (#1973).
 - When a choice is refused or can't be confirmed, the reason now shows right
   under the choices, with Try the same decision again or Reload current case,
   and the page scrolls just far enough to show it. Before, it appeared below
