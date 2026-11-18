@@ -11898,12 +11898,22 @@ def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch)
                 expect(
                     page.get_by_role("article", name="Advised description")
                 ).to_have_count(0)
+                # A verified advice write replaced the description the case
+                # read, so its card is the value before the change (#1523).
                 current = chooser.get_by_role(
-                    "radio", name="Choose current value: Existing description."
+                    "radio",
+                    name=(
+                        "Choose the value before your change: Existing description."
+                        if state == "automatic"
+                        else "Choose current value: Existing description."
+                    ),
                 )
                 provider = chooser.get_by_role(
                     "radio", name="Choose proposed value: A qualified description."
                 )
+                expect(
+                    chooser.get_by_text("Before your change", exact=True)
+                ).to_have_count(1 if state == "automatic" else 0)
                 expect(current).to_be_enabled()
                 expect(provider).to_be_enabled()
                 select = chooser.get_by_role(
