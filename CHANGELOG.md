@@ -31,7 +31,7 @@ brackets are GitHub issues.
 - After the description adviser's text is written, the description's first
   card reads Before your change and writes back the description it replaced.
   Once you keep the value a field had before your change, its card reads Keep
-  current value again (#1523).
+  current value again (#1976).
 
 ## 0.38.0 — Owner-directed matching (in progress)
 
