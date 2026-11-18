@@ -35,7 +35,7 @@ COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v3"
 # An automatic cover choice keeps the first selection version.
 AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v1"
 
-HUMAN_DECISION_SCHEMA: Final = "human-decision-v6"
+HUMAN_DECISION_SCHEMA: Final = "human-decision-v7"
 HumanDecisionEventSchemaVersion = Literal["human-decision-event-v1"]
 HUMAN_DECISION_EVENT_SCHEMA: Final[HumanDecisionEventSchemaVersion] = (
     "human-decision-event-v1"

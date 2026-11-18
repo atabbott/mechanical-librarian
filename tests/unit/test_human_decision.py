@@ -712,12 +712,17 @@ def test_an_unreadable_value_cannot_be_pinned() -> None:
     _owner(case, "title", None, outcome="unpin")
 
 
-def test_a_v5_decision_document_is_refused(case: ReviewCase) -> None:
+@pytest.mark.parametrize("version", ("human-decision-v5", "human-decision-v6"))
+def test_an_earlier_decision_document_is_refused(
+    case: ReviewCase, version: str
+) -> None:
+    """A v6 decision named `follows` on a keep only, so its null on another
+    outcome would read as following no write (#ISSUE)."""
     raw = json.loads(_owner(case, "title", None, outcome="keep_current").to_json())
     with pytest.raises(HumanDecisionError):
         HumanDecision.from_json(
             json.dumps(
-                {**raw, "schema_version": "human-decision-v5"},
+                {**raw, "schema_version": version},
                 separators=(",", ":"),
                 sort_keys=True,
             )
