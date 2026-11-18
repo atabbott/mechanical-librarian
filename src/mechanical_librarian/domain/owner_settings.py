@@ -38,8 +38,8 @@ from mechanical_librarian.domain.validation import (
 if TYPE_CHECKING:
     from mechanical_librarian.domain.metadata_report import MetadataReport
 
-OwnerSettingsSchemaVersion = Literal["owner-settings-v6"]
-OWNER_SETTINGS_SCHEMA: Final[OwnerSettingsSchemaVersion] = "owner-settings-v6"
+OwnerSettingsSchemaVersion = Literal["owner-settings-v7"]
+OWNER_SETTINGS_SCHEMA: Final[OwnerSettingsSchemaVersion] = "owner-settings-v7"
 
 Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
 Email = Annotated[StrictStr, Field(min_length=3, max_length=254)]
@@ -313,6 +313,10 @@ class CoverPreferenceSettings(_Closed):
         "protected"
     )
     prefer_edition: StrictBool = False
+    # Whether the taste profile's choices switch covers or only suggest
+    # them (#1372 PR 5, K3). Outside the cover policy: saving it prepares
+    # nothing again.
+    taste_switching: Literal["suggest_only", "automatic"] = "suggest_only"
 
 
 # The Book matching levels' values for closed settings models, which need a
@@ -548,6 +552,7 @@ def store_field_metadata(document: OwnerSettingsDocument) -> tuple[SettingField,
                 "cover_preferences.current_protection",
                 "cover_preferences.prefer_edition",
                 "cover_preferences.prefer_minimal_composition",
+                "cover_preferences.taste_switching",
                 "matching.work_identity",
             }
         )

@@ -31,8 +31,8 @@ from mechanical_librarian.domain.validation import (
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-ConfigSchemaVersion = Literal["config-v13"]
-CONFIG_SCHEMA: Final[ConfigSchemaVersion] = "config-v13"
+ConfigSchemaVersion = Literal["config-v14"]
+CONFIG_SCHEMA: Final[ConfigSchemaVersion] = "config-v14"
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _CONTACT_EMAIL = re.compile(
@@ -131,6 +131,8 @@ class ReviewWebConfiguration:
     cover_prefer_minimal_composition: bool = False
     cover_current_protection: str = "protected"
     cover_prefer_edition: bool = False
+    # Whether taste profile choices switch covers (#1372 PR 5, K3).
+    cover_taste_switching: str = "suggest_only"
     description_remove_marketing: bool = True
     description_remove_sales_boasts: bool = True
     description_remove_praise: bool = True
@@ -182,6 +184,8 @@ class ReviewWebConfiguration:
             or type(self.cover_current_protection) is not str
             or self.cover_current_protection
             not in {item.value for item in CoverProtection}
+            or type(self.cover_taste_switching) is not str
+            or self.cover_taste_switching not in {"suggest_only", "automatic"}
             or any(
                 type(value) is not bool
                 for value in (

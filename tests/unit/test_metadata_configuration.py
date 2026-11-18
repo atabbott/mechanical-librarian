@@ -551,7 +551,7 @@ def _original_schema_version(source: dict[str, object]) -> None:
 
 
 def _previous_schema_version(source: dict[str, object]) -> None:
-    source["schema_version"] = "config-v12"
+    source["schema_version"] = "config-v13"
 
 
 def _enabled_provider_without_a_secret(source: dict[str, object]) -> None:
@@ -1191,7 +1191,39 @@ def test_the_taste_judge_ceiling_is_bounded(value: object, accepted: bool) -> No
     assert default.review.cover_taste_judge_daily_requests == 5_000
 
 
-@pytest.mark.parametrize("version", ("config-v9", "config-v10", "config-v12"))
+@pytest.mark.parametrize(
+    ("value", "accepted"),
+    (
+        ("suggest_only", True),
+        ("automatic", True),
+        ("Automatic", False),
+        ("off", False),
+        (True, False),
+        (None, False),
+    ),
+)
+def test_taste_switching_is_closed(value: object, accepted: bool) -> None:
+    """#1372 PR 5 K3: Suggest only (the default) or Automatic."""
+    document = json.dumps(
+        _review_with_work_identity(cover_taste_switching=value)
+    ).encode()
+    if not accepted:
+        with pytest.raises(ConfigurationError):
+            load_configuration_document(document)
+        return
+    loaded = load_configuration_document(document)
+    assert loaded.review is not None
+    assert loaded.review.cover_taste_switching == value
+    default = load_configuration_document(
+        json.dumps(_review_with_work_identity()).encode()
+    )
+    assert default.review is not None
+    assert default.review.cover_taste_switching == "suggest_only"
+
+
+@pytest.mark.parametrize(
+    "version", ("config-v9", "config-v10", "config-v12", "config-v13")
+)
 def test_real_predecessor_configuration_is_rejected_without_mutating_input(
     tmp_path: Path, version: str
 ) -> None:

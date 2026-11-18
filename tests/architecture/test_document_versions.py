@@ -45,11 +45,11 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "POLICY_SCHEMA_VERSION",
         "metadata-policy-profile-v3",
     ),
-    ("mechanical_librarian.application.configuration", "CONFIG_SCHEMA", "config-v13"),
+    ("mechanical_librarian.application.configuration", "CONFIG_SCHEMA", "config-v14"),
     (
         "mechanical_librarian.domain.owner_settings",
         "OWNER_SETTINGS_SCHEMA",
-        "owner-settings-v6",
+        "owner-settings-v7",
     ),
     (
         "mechanical_librarian.domain.reviewer_cost",

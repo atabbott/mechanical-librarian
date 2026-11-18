@@ -111,6 +111,7 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
             "cover_preferences": {
                 "current_protection": "proposals_only",
                 "prefer_edition": True,
+                "taste_switching": "automatic",
             },
         }
     )
@@ -169,7 +170,8 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
     assert (
         configuration.review.cover_current_protection,
         configuration.review.cover_prefer_edition,
-    ) == ("proposals_only", True)
+        configuration.review.cover_taste_switching,
+    ) == ("proposals_only", True, "automatic")
     projected = file_settings_projection(configuration)
     assert projected.authority == "file"
     assert projected.document.cover_preferences == document.cover_preferences

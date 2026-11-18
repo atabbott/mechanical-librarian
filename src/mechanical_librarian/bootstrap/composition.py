@@ -3489,6 +3489,7 @@ def _compose_cover_considerations(
         work_identity_level=review.work_identity,
     )
     repository.bind_owner_cover_validation(service.require_owner_cover)
+    repository.bind_cover_taste_switching(review.cover_taste_switching)
     repository.bind_cover_consideration_currentness(
         lambda connection, library, item, report: (
             False
