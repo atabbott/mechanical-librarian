@@ -62,7 +62,8 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
 4. **The written value is current.** On the case whose own latest verified
    write in its episode set a field, owner entry treats the desired value of
    that write as the field's current value: it is refused as unchanged, and
-   `owner_control.current` carries it. On any case, "Use previous value", the
+   `owner_control.current` carries it. A latest write is always the one that
+   landed last, whichever decision was recorded first. On any case, "Use previous value", the
    previous names and genres marked Previous are offered only while the field
    reads the latest verified write's desired value, and offer the value that
    write replaced. An empty replaced value is never offered: emptying the
@@ -82,9 +83,10 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    from the keep's own first plan, or before one exists from the write it
    follows. That write is frozen when the keep is recorded: the stored keep
    names the decision of the write planning resolves for it then, or null
-   when it follows none, and History's From and Activity's written value
-   read that write's own verified effect, never episode floors, so a later
-   return changes neither. Its result is Went back once that write back
+   when it follows none or when that write already holds the value the case
+   read, which makes the keep a plain keep. The pending set, History's From
+   and Activity's written value read that write's own verified effect, never
+   episode floors, so a later return changes none of them. Its result is Went back once that write back
    verifies; until then it is the write's own word (Planned, Closed and so
    on, with the reason), or Recorded while unplanned, and never Kept
    current. Activity's shared fact store re-reads an owner decision's row
