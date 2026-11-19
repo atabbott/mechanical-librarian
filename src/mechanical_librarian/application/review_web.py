@@ -1277,9 +1277,6 @@ class _ReviewCaseReadContext:
     report: MetadataReport
     snapshot: CurrentReviewCaseSnapshot
     decisions: dict[str, HumanDecision]
-    # Every field with an owner row, withdrawn or not: Automatic records no
-    # decision on it in any generation (ADR-0085).
-    owner_rows: frozenset[str]
     automatic: dict[str, dict[str, object]]
     automatic_source_outcome_ids: dict[str, str]
     automatic_sources: dict[str, tuple[str, ...]]
@@ -1677,7 +1674,6 @@ class InspectCurrentReviewCase:
             if report.report_id != case.report_id:
                 raise ReviewWebError("unavailable")
             decisions: dict[str, HumanDecision] = {}
-            owner_rows: set[str] = set()
             automatic: dict[str, dict[str, object]] = {}
             automatic_source_outcome_ids: dict[str, str] = {}
             automatic_sources: dict[str, tuple[str, ...]] = {}
@@ -1704,7 +1700,6 @@ class InspectCurrentReviewCase:
                 projected = _automatic_decision_projection(document)
                 if projected is None:
                     decision = HumanDecision.from_json(document)
-                    owner_rows.add(decision.destination)
                     if decision.outcome in {"pin", "unpin"}:
                         # Never a field's latest decision: a pin acts through
                         # its hold, and the answer under it stands (ADR-0085,
@@ -1792,7 +1787,6 @@ class InspectCurrentReviewCase:
             report=report,
             snapshot=snapshot,
             decisions=decisions,
-            owner_rows=frozenset(owner_rows),
             automatic=automatic,
             automatic_source_outcome_ids=automatic_source_outcome_ids,
             automatic_sources=automatic_sources,
@@ -2093,13 +2087,12 @@ class InspectCurrentReviewCase:
             "automatic_withheld_condition": None,
             # Shown only on a field that reads No change with no decision of
             # its own; the earlier choice decides nothing now (#1575). Its
-            # line says turning Automatic on decides the field again, which
-            # no field with an owner row, a withdrawal included, ever is.
+            # line says turning Automatic on decides the field again, so the
+            # store leaves out one the owner keeps Automatic off (#1996).
             "earlier_automatic_value": (
                 dict(snapshot.earlier_automatic_values).get(destination)
                 if automatic_decision is None
                 and decision is None
-                and destination not in context.owner_rows
                 and classification.state == "unsupported"
                 and destination != "cover"
                 else None

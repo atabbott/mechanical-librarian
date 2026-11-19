@@ -38,6 +38,7 @@ from mechanical_librarian.adapters.persistence.decisions import (
     _automatic_decision_documents,
     field_change_waiting_sql,
     field_write_waiting_sql,
+    owner_keeps_automatic_off,
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
@@ -623,7 +624,10 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         The first tuple maps each current candidate decision to its value and
         fails closed. The second maps a destination to the value its latest
         earlier-generation candidate chose; one that no longer binds is left
-        out, so the case reads as it would without it (#1575).
+        out, so the case reads as it would without it (#1575). So is one the
+        owner keeps Automatic off, on its field or another of its bundle, by
+        the rows that refuse its decision or a hold that refuses its write:
+        the page says turning Automatic on decides the field again.
         """
         decisions = tuple(
             AutomaticDecision.from_json(document)
@@ -666,7 +670,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 values.append((decision.decision_id, value))
         except (KeyError, FieldEffectError) as error:
             raise MetadataReportError("review case snapshot is unavailable") from error
-        earlier: dict[str, tuple[int, dict[str, object]]] = {}
+        earlier: dict[str, tuple[int, dict[str, object], str | None]] = {}
         for document in earlier_documents:
             try:
                 decision = AutomaticDecision.from_json(document)
@@ -682,12 +686,40 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             if (
                 type(value) is dict
                 and decision.policy_generation
-                >= earlier.get(decision.destination, (0, {}))[0]
+                >= earlier.get(decision.destination, (0, {}, None))[0]
             ):
-                earlier[decision.destination] = (decision.policy_generation, value)
+                earlier[decision.destination] = (
+                    decision.policy_generation,
+                    value,
+                    decision.bundle_id,
+                )
         return tuple(values), tuple(
-            (destination, value) for destination, (_, value) in sorted(earlier.items())
+            (destination, value)
+            for destination, (generation, value, bundle) in sorted(earlier.items())
+            if not owner_keeps_automatic_off(
+                self._connection,
+                case.review_case_id,
+                {destination}
+                if bundle is None
+                else self._automatic_bundle_destinations(case.review_case_id, bundle),
+                # Automatic decides again only in a later generation.
+                generation + 1,
+            )
         )
+
+    def _automatic_bundle_destinations(
+        self, review_case_id: str, bundle_id: str
+    ) -> set[str]:
+        """Every field of one automatic bundle on the case, whatever each
+        member decided, as the mint drops the bundle all or none."""
+        return {
+            str(destination)
+            for (destination,) in self._connection.execute(
+                "SELECT destination FROM automatic_decisions WHERE review_case_id=? "
+                "AND json_extract(document,'$.bundle_id')=?",
+                (review_case_id, bundle_id),
+            )
+        }
 
     def _cover_taste_verdict(
         self, review_case_id: str
