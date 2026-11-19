@@ -276,6 +276,17 @@ describe('the sentence at the foot of the field', () => {
       unpin: false,
       quiet: true,
     })
+    // Once the change is written, it waits only for the next scan to read it
+    // back, beside Applied and verified.
+    expect(
+      pinFoot({ ...waiting, writtenByCase: true, changeWritten: true }, { pinOnScreen: false })
+        .sentence,
+    ).toBe('You can pin this field after the next scan reads its new value.')
+    // An earlier write by the case says nothing of a later change still to be
+    // written, as Automatic's in a later policy generation.
+    expect(pinFoot({ ...waiting, writtenByCase: true }, { pinOnScreen: false }).sentence).toBe(
+      'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
+    )
   })
 
   it.each(['accept', 'keep_current', 'owner_entered'] as const)(
@@ -304,8 +315,26 @@ describe('the sentence at the foot of the field', () => {
         Field['descriptionAdvice']
       >,
     })
+    // Recorded but not written, as while writes are off: no scan reads a new
+    // value until it is.
     expect(pinFoot(advised, shown).sentence).toBe(
       'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
+    )
+    // An earlier write by the case, as Automatic's, leaves the choice unwritten.
+    expect(pinFoot({ ...advised, writtenByCase: true }, shown).sentence).toBe(
+      'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
+    )
+    // The choice's own write verified: the next scan is all it waits for.
+    const verified = {
+      ...advised,
+      writtenByCase: true,
+      descriptionAdvice: {
+        selection: { origin: 'human' },
+        application_outcome: 'verified',
+      } as NonNullable<Field['descriptionAdvice']>,
+    }
+    expect(pinFoot(verified, shown).sentence).toBe(
+      'You can pin this field after the next scan reads its new value.',
     )
     // Automatic's own advised text is no choice of the owner's.
     const automatic = {

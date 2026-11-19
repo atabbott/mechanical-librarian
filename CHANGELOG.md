@@ -12,6 +12,17 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- After a write over a description stored with formatting, the field no
+  longer offers Before your change, which was recorded and then never
+  written. It says to restore the earlier description in Audiobookshelf. The
+  pin line after a write now says you can pin after the next scan, and the recorded line
+  names the genres or names you chose (#1984).
+- Activating a policy, or leaving Automatic, no longer reports a work the
+  app has just written as failed. The work is read again from
+  Audiobookshelf, so its new case starts from the written value (#1986).
+- A library whose books once took part in a policy change can again be
+  prepared after one of those books leaves Audiobookshelf. Before, every
+  later look for new books in that library failed (#1986).
 - Pressing your written choice again no longer leaves the field waiting for
   a write that never comes: it does nothing, and from another open tab it is
   refused as already current (#1980).
@@ -50,6 +61,10 @@ brackets are GitHub issues.
   narrators, and enter authors and narrators by name. A cleared field stays out
   of automatic handling until you choose Resume automatic handling. A character
   or name count shows only once a value is over its limit (#1523).
+- After the description adviser's text is written, the description's first
+  card reads Before your change and writes back the description it replaced.
+  Once you keep the value a field had before your change, its card reads Keep
+  current value again (#1976).
 
 ## 0.38.0 — Owner-directed matching (in progress)
 

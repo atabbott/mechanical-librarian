@@ -9,10 +9,10 @@ import {
   usePreparation,
   useReviewContext,
 } from '../router'
+import { listPhrase } from '../labels'
 import { useLibraryName } from '../libraryNames'
 import {
   handoffNeedsLibraryNames,
-  libraryList,
   readWriteConsent,
   writesEnabled,
   writesOffSentence,
@@ -73,7 +73,7 @@ export const WriteReadyNotice = () => {
   const held = data.capabilities
     .filter((item) => item.destinations.some(writesEnabled))
     .map((item) => names.name(item.library))
-  const enabledFor = consent.lapsed && held.length ? ` for ${libraryList(held)}` : ''
+  const enabledFor = consent.lapsed && held.length ? ` for ${listPhrase(held)}` : ''
   // Writes are off only for the libraries still waiting on permission; beside
   // one that holds it, the heading says which is which, and a held one is
   // named as held (#1286).

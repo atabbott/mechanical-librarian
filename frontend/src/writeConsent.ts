@@ -7,7 +7,7 @@ import type {
   ActivityWaitingReasonsView,
   DestinationState,
 } from './api/http'
-import { writeHoldReasons } from './labels'
+import { listPhrase, writeHoldReasons } from './labels'
 
 // A lapse, and a library that holds permission beside one that does not, are
 // named as Settings names them, so the Library handoff needs the settings
@@ -59,10 +59,6 @@ export interface WriteConsentOffer {
   readonly lapsed: string | null
 }
 
-/** Library names as one phrase: `Books`, `Books and Audiobooks`, `A, B, and C`. */
-export const libraryList = (names: readonly string[]) =>
-  new Intl.ListFormat('en', { type: 'conjunction' }).format(names)
-
 /**
  * Writes are enabled for a destination only while it holds permission and is
  * not suspended. Consent and capability are independent: a current consent
@@ -109,20 +105,20 @@ export const writesOffSentence = (
   const held = others.filter((library) => libraryWritesHeld(destinations(library)))
   if (!on.length)
     return holding.length && held.length
-      ? `Writes are off. Writes to ${libraryList(held.map(libraryName))} are held.`
+      ? `Writes are off. Writes to ${listPhrase(held.map(libraryName))} are held.`
       : 'Writes are off.'
   // Every library writes; a field still waiting on permission is said by the
   // line under this sentence, not by calling writes off (#1765).
-  if (!others.length) return `Writes are enabled for ${libraryList(on.map(libraryName))}.`
+  if (!others.length) return `Writes are enabled for ${listPhrase(on.map(libraryName))}.`
   const waiting = others.filter((library) => !held.includes(library))
   return [
-    `Writes are enabled for ${libraryList(on.map(libraryName))}`,
+    `Writes are enabled for ${listPhrase(on.map(libraryName))}`,
     ...(waiting.length
       ? [
-          `${libraryList(waiting.map(libraryName))} ${waiting.length === 1 ? 'needs' : 'need'} permission`,
+          `${listPhrase(waiting.map(libraryName))} ${waiting.length === 1 ? 'needs' : 'need'} permission`,
         ]
       : []),
-    ...(held.length ? [`Writes to ${libraryList(held.map(libraryName))} are held`] : []),
+    ...(held.length ? [`Writes to ${listPhrase(held.map(libraryName))} are held`] : []),
   ]
     .join('. ')
     .concat('.')
@@ -155,7 +151,7 @@ const lapsedSentence = (
                 .map((item) => libraryName(item.library)),
             ),
           ]
-          return `Write permission for ${libraryList(names)} lapsed because ${lapseReason(reason, names.length)}.`
+          return `Write permission for ${listPhrase(names)} lapsed because ${lapseReason(reason, names.length)}.`
         })
         .join(' ')
     : null

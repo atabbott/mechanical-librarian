@@ -97,6 +97,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
     chosen_value_fingerprint,
+    description_unrestorable,
     pinned_field_fingerprint,
     target_value,
 )
@@ -126,18 +127,10 @@ _AUTOMATIC_MINT_CONFLICT_SQL = (
 )
 
 
-def _field_effect_waiting_sql(case: str, destination: str) -> str:
-    """Whether a write for the field waits or was not yet read back on the case.
-
-    The write is planned, in flight or retryable, whichever episode planned
-    it, or it landed in the case's episode, under an owner decision of the
-    episode, an automatic or a description decision on the case, or as a
-    subtitle companion of one. The case's value is then not what the library
-    will hold. A reused plan appends no event, so no bound places a live write
-    in an episode: one planned before the case was admitted again still waits
-    (#1973).
-    """
-    authorities = (
+def _field_effect_authorities_sql(case: str, destination: str) -> str:
+    """The decisions whose writes count for the field of the case: the owner
+    decisions of its episode, and its automatic and description decisions."""
+    return (
         "SELECT waiting_human.decision_id FROM human_decisions waiting_human "
         f"WHERE waiting_human.review_case_id={case} "
         f"AND waiting_human.destination={destination} AND "
@@ -149,6 +142,20 @@ def _field_effect_waiting_sql(case: str, destination: str) -> str:
         f"waiting_authored WHERE waiting_authored.review_case_id={case} "
         f"AND {destination}='description'"
     )
+
+
+def _field_effect_waiting_sql(case: str, destination: str) -> str:
+    """Whether a write for the field waits or was not yet read back on the case.
+
+    The write is planned, in flight or retryable, whichever episode planned
+    it, or it landed in the case's episode, under an owner decision of the
+    episode, an automatic or a description decision on the case, or as a
+    subtitle companion of one. The case's value is then not what the library
+    will hold. A reused plan appends no event, so no bound places a live write
+    in an episode: one planned before the case was admitted again still waits
+    (#1973).
+    """
+    authorities = _field_effect_authorities_sql(case, destination)
     return (
         "EXISTS (SELECT 1 FROM field_effects waiting_effect WHERE "
         "waiting_effect.rowid IN (SELECT rowid FROM field_effects WHERE decision_id IN ("
@@ -164,6 +171,56 @@ def _field_effect_waiting_sql(case: str, destination: str) -> str:
         "AND landed.kind='verified')>COALESCE((SELECT waiting_episode.event_floor "
         "FROM review_case_episodes waiting_episode "
         f"WHERE waiting_episode.review_case_id={case}),0)))"
+    )
+
+
+def field_write_waiting_sql(case: str, destination: str) -> str:
+    """Whether a change to the field of the case is still to be written.
+
+    A write for it is planned, in flight or retryable; Automatic's decision of
+    the field's latest policy generation on the case chose a value and has no
+    verified write; or the description's chosen advice has none. While a pin
+    is refused as `pin_change_waiting` and none of these holds, what is left
+    is the next scan reading the written value back, which the pin line says
+    (#1984). Writes off plan nothing, so an unwritten decision counts by its
+    missing verified write rather than by a waiting one.
+    """
+
+    def unwritten(alias: str) -> str:
+        return (
+            "NOT EXISTS (SELECT 1 FROM field_effects written WHERE "
+            "written.rowid IN (SELECT rowid FROM field_effects WHERE "
+            f"decision_id={alias}.decision_id UNION ALL SELECT rowid FROM "
+            "field_effects WHERE "
+            + _FIELD_EFFECT_COMPANION_DECISION_SQL
+            + f"={alias}.decision_id) AND written.state='verified')"
+        )
+
+    authorities = _field_effect_authorities_sql(case, destination)
+    return (
+        "(EXISTS (SELECT 1 FROM field_effects pending_effect WHERE "
+        "pending_effect.rowid IN (SELECT rowid FROM field_effects WHERE decision_id IN ("
+        + authorities
+        + ") UNION ALL SELECT rowid FROM field_effects WHERE "
+        + _FIELD_EFFECT_COMPANION_DECISION_SQL
+        + " IN ("
+        + authorities
+        + ")) AND pending_effect.state IN "
+        "('planned','claimed','applying','reconciling','retryable')) "
+        "OR EXISTS (SELECT 1 FROM automatic_decisions latest_automatic "
+        f"WHERE latest_automatic.review_case_id={case} "
+        f"AND latest_automatic.destination={destination} "
+        "AND json_extract(latest_automatic.document,'$.outcome')='candidate' "
+        "AND latest_automatic.policy_generation=(SELECT MAX(generation.policy_generation) "
+        "FROM automatic_decisions generation "
+        f"WHERE generation.review_case_id={case} "
+        f"AND generation.destination={destination}) AND "
+        + unwritten("latest_automatic")
+        + f") OR ({destination}='description' AND EXISTS (SELECT 1 FROM "
+        "current_description_decisions chosen_text "
+        f"WHERE chosen_text.review_case_id={case} AND "
+        + unwritten("chosen_text")
+        + ")))"
     )
 
 
@@ -775,6 +832,15 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 # Keeping the empty value the case read would go back to
                 # empty, which this field cannot be (#1523).
                 raise HumanDecisionError("owner_value_required")
+            if (
+                decision.outcome == "keep_current"
+                and decision.follows is not None
+                and decision.destination == "description"
+                and description_unrestorable(case)
+            ):
+                # Its formatting can't be written back, so the keep would be
+                # recorded and its restore refused before any request (#1424).
+                raise HumanDecisionError("restore_unavailable")
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True
             )

@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import pytest
@@ -55,6 +55,7 @@ from mechanical_librarian.application.field_effects import (
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
+    ReviewPipelineError,
     ReviewPipelineRepository,
     ReviewPreparationPipeline,
 )
@@ -81,6 +82,10 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderObservation,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase
@@ -88,6 +93,51 @@ from tests.support.author_evidence import author_report
 
 _PRODUCER = "f" * 64
 _LINEAGE = "connection_name='primary' AND library_name='ebooks' AND item_id='item-1'"
+
+
+@dataclass
+class _Held:
+    """What Audiobookshelf holds for the work now: the opt-in library model.
+
+    Discovery lists the work with these authors, extraction reads these
+    fields into its report, and proposal and admission refuse a report whose
+    target differs from them, as `require_report_current` does in production.
+    """
+
+    target: TargetFacts
+    # Every extraction claimed after preparation, and every report proposed.
+    extractions: list[PipelineAction] = field(default_factory=list)
+    proposed: list[str] = field(default_factory=list)
+    # Failure codes the next extractions raise, in order.
+    failures: list[str] = field(default_factory=list)
+
+    def write(self, destination: TargetDestination, value: tuple[str, ...]) -> None:
+        """Record a value the library now holds, as a verified write leaves it."""
+        self.target = TargetFacts(
+            self.target.connection,
+            self.target.library,
+            self.target.item,
+            tuple(
+                TargetField(destination, TargetFieldState.VALUE, value)
+                if held.destination is destination
+                else held
+                for held in self.target.fields
+            ),
+        )
+
+    @property
+    def authors(self) -> tuple[str, ...]:
+        (authors,) = (
+            held.value
+            for held in self.target.fields
+            if held.destination is TargetDestination.AUTHORS
+        )
+        assert type(authors) is tuple
+        return cast(tuple[str, ...], authors)
+
+    def require_current(self, report: MetadataReport) -> None:
+        if report.target.fields != self.target.fields:
+            raise ReviewPipelineError("stale")
 
 
 @dataclass
@@ -101,6 +151,7 @@ class _Library:
     # Every call that would read the file, Audiobookshelf or a provider in
     # production, by stage, once the harness has prepared its work.
     external: list[str] = field(default_factory=list)
+    held: _Held | None = None
 
     def drain(self) -> None:
         for _ in range(32):
@@ -194,6 +245,7 @@ def _prepared(
     providers: tuple[ProviderObservation, ...] | None = None,
     before_projection: Callable[[ReviewPipelineRepository, Any], None] | None = None,
     cover_order: str | None = None,
+    library_model: Literal["publication", "advance"] | None = None,
 ) -> Iterator[_Library]:
     """One work prepared under a qualified Automatic contributor-names policy.
 
@@ -203,6 +255,12 @@ def _prepared(
     `before_projection`, when given, runs before each projection as the cover
     stage does in production. `cover_order`, when given, makes covers
     automatic under that cover-order option.
+
+    `library_model`, when given, turns on the library model (`_Held`):
+    discovery runs, extraction reads what the library holds now, and proposal
+    and admission check currentness as production does. Extraction completes
+    through `complete_review_extraction_publication`, as production does,
+    with "publication", and through the pipeline's advance with "advance".
     """
     database = tmp_path / "application.sqlite3"
     report = author_report(tmp_path / "media", "supported")
@@ -239,6 +297,26 @@ def _prepared(
     )
     if automatic:
         root.activate_qualified_automatic(3)
+    held = None if library_model is None else _Held(report.target)
+
+    def entry(authors: tuple[str, ...]) -> CatalogueEntry:
+        return CatalogueEntry(
+            "primary",
+            "ebooks",
+            "lib-1",
+            "item-1",
+            1,
+            "Synthetic work",
+            authors,
+            True,
+            False,
+            "singular-supported",
+            report.file.identity,
+            "/book.epub",
+            "epub",
+            "books",
+        )
+
     root.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 4)
     discovery = root.claim_review_pipeline_action(5)
     assert discovery is not None
@@ -246,24 +324,7 @@ def _prepared(
         discovery,
         1,
         "a" * 64,
-        (
-            CatalogueEntry(
-                "primary",
-                "ebooks",
-                "lib-1",
-                "item-1",
-                1,
-                "Synthetic work",
-                ("Ada Example",),
-                True,
-                False,
-                "singular-supported",
-                report.file.identity,
-                "/book.epub",
-                "epub",
-                "books",
-            ),
-        ),
+        (entry(("Ada Example",) if held is None else held.authors),),
         6,
     )
     now = [10]
@@ -274,16 +335,43 @@ def _prepared(
     prepared = [False]
 
     def extract(
-        repository: ReviewPipelineRepository, _: PipelineAction, __: bool
+        repository: ReviewPipelineRepository, action: PipelineAction, claim_next: bool
     ) -> tuple[str, bool]:
         if prepared[0]:
             external.append("extraction")
-        cast(SQLiteMetadataReportRepository, repository).publish(report, lambda: True)
-        return report.report_id, False
+        if held is None:
+            cast(SQLiteMetadataReportRepository, repository).publish(
+                report, lambda: True
+            )
+            return report.report_id, False
+        return _extract_held(
+            cast(SQLiteMetadataReportRepository, repository),
+            action,
+            claim_next,
+            held,
+            report,
+            library_model == "publication",
+            now[0],
+            prepared[0],
+        )
+
+    discoveries = [1]
+
+    def discover(
+        _connection: str, _library: str
+    ) -> tuple[int, str, tuple[CatalogueEntry, ...]]:
+        if held is None:
+            raise AssertionError()
+        external.append("discovery")
+        discoveries[0] += 1
+        return discoveries[0], f"{discoveries[0]:064x}", (entry(held.authors),)
 
     def propose(repository: ReviewPipelineRepository, report_id: str) -> str:
         concrete = cast(SQLiteMetadataReportRepository, repository)
         value = MetadataReport.from_json(concrete.get(report_id))
+        if held is not None:
+            held.proposed.append(report_id)
+            held.require_current(value)
         policy = _resolved(concrete, value.target.library)
         proposal = evaluate_report(
             value, policy.resolved_id, human_review_destinations(policy)
@@ -297,6 +385,10 @@ def _prepared(
     ) -> tuple[str, str | None]:
         concrete = cast(SQLiteMetadataReportRepository, repository)
         proposal = ProposalSet.from_json(concrete.get_proposal(proposal_set_id))
+        if held is not None:
+            held.require_current(
+                MetadataReport.from_json(concrete.get(proposal.report_id))
+            )
         result = ReviewAdmissionResult.from_json(concrete.admit_review_case(proposal))
         admissions.append((result.status, result.review_case_id))
         return result.status, result.review_case_id
@@ -317,7 +409,7 @@ def _prepared(
     pipeline = ReviewPreparationPipeline(
         repository_factory=lambda: open_repository(database, authority=root.authority),
         libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
-        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        discover=discover,
         extract=extract,
         providers=lambda *_: (),
         propose=propose,
@@ -328,7 +420,9 @@ def _prepared(
         ),
         clock=lambda: now[0],
     )
-    value = _Library(root, pipeline, report, admissions, evaluations, now, external)
+    value = _Library(
+        root, pipeline, report, admissions, evaluations, now, external, held
+    )
     try:
         value.drain()
         prepared[0] = True
@@ -342,6 +436,55 @@ def _prepared(
         yield value
     finally:
         root.close()
+
+
+def _extract_held(
+    repository: SQLiteMetadataReportRepository,
+    action: PipelineAction,
+    claim_next: bool,
+    held: _Held,
+    prepared: MetadataReport,
+    publication: bool,
+    now: int,
+    recorded: bool,
+) -> tuple[str, bool]:
+    """Read the work as the library holds it now and publish that report."""
+    if recorded:
+        held.extractions.append(action)
+    if held.failures:
+        raise ReviewPipelineError(held.failures.pop(0))
+    report = (
+        prepared
+        if held.target == prepared.target
+        else MetadataReport.create(
+            target=held.target,
+            file=prepared.file,
+            local_claims=prepared.local_claims,
+            local_reasons=prepared.local_reasons,
+            providers=prepared.providers,
+            cover_sources=prepared.cover_sources,
+        )
+    )
+    current = repository._connection.execute(
+        "SELECT report_id FROM current_metadata_reports WHERE " + _LINEAGE
+    ).fetchone()
+    repository.publish(
+        report,
+        lambda: True,
+        None if current is None else current[0],
+        after_publication=(
+            (
+                lambda bound, published: cast(
+                    SQLiteMetadataReportRepository, bound
+                ).complete_review_extraction_publication(
+                    action, published.report_id, now, claim_next=claim_next
+                )
+            )
+            if publication
+            else None
+        ),
+    )
+    return report.report_id, publication
 
 
 @pytest.fixture
@@ -439,6 +582,7 @@ def test_leaving_automatic_with_an_unchanged_policy_keeps_the_review_case(
 
     assert library.admissions[-1] == ("admitted", case_before)
     assert library.evaluations[-1] == library.evaluations[0]
+    assert library.external == []
     assert connection.execute(
         "SELECT review_case_id,checkpoint,outcome FROM current_review_case_lineages "
         "WHERE " + _LINEAGE
@@ -1140,6 +1284,40 @@ def test_an_earlier_generation_write_in_flight_still_refuses_an_owner_answer(
     assert root.get_field_effect(plan.plan_id).state == state
 
 
+def test_an_earlier_generation_write_settled_unwritten_lets_the_owner_answer(
+    library: _Library, tmp_path: Path
+) -> None:
+    """A settled earlier-generation write no longer stands in the owner's way (#1573).
+
+    The write went stale without changing the library, so the report still
+    holds and leaving Automatic returns the same case, where the earlier
+    generation's decision is replaced by the owner's answer.
+    """
+    root = library.root
+    automatic = library.automatic()
+    root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+    scheduler, _, _ = _applier(library, tmp_path)
+    library.now[0] = 13
+    scheduler.schedule()
+    plan = _planned(library)[automatic.decision_id].plan
+    root.claim_field_effect(plan.plan_id, "planned", "c" * 64, 14)
+    root.transition_field_effect(plan.plan_id, "claimed", "applying", 15)
+    root.transition_field_effect(
+        plan.plan_id, "applying", "stale", 16, "target_changed"
+    )
+
+    library.leave_automatic()
+
+    assert library.external == []
+    assert library.case_id() == automatic.review_case_id
+    owner = _accept(library.case(), "authors", "owner-after-writing", 40)
+    root.record_human_decision(owner)
+    assert root._connection.execute(
+        "SELECT decision_id FROM human_decisions WHERE review_case_id=?",
+        (automatic.review_case_id,),
+    ).fetchall() == [(owner.decision_id,)]
+
+
 def _automatic_written(
     library: _Library, tmp_path: Path
 ) -> tuple[AutomaticDecision, ContinuousGuardedApplication]:
@@ -1179,26 +1357,9 @@ def _settled_without_a_write(
     assert _read(library, scheduler)["fields"]["authors"]["no_change_required"] is True
 
 
-def test_an_earlier_generation_write_once_settled_lets_the_owner_answer(
-    library: _Library, tmp_path: Path
-) -> None:
-    """A settled earlier-generation write no longer stands in the owner's way,
-    and accepting the value it wrote needs no write."""
-    root = library.root
-    automatic, scheduler = _automatic_written(library, tmp_path)
-
-    library.leave_automatic()
-
-    owner = _accept(library.case(), "authors", "owner-after-writing", 40)
-    root.record_human_decision(owner)
-    assert root._connection.execute(
-        "SELECT decision_id FROM human_decisions WHERE review_case_id=?",
-        (automatic.review_case_id,),
-    ).fetchall() == [(owner.decision_id,)]
-    _settled_without_a_write(library, scheduler, owner)
-
-
-@pytest.mark.parametrize("posture", ["automatic", "preview_paused"])
+# Leaving Automatic after the write reads the work again into a new case
+# (#1986), so the old case is pressed under Automatic, running or paused.
+@pytest.mark.parametrize("posture", ["automatic", "automatic_paused"])
 def test_choosing_automatics_written_value_needs_no_write(
     library: _Library, tmp_path: Path, posture: str
 ) -> None:
@@ -1206,8 +1367,7 @@ def test_choosing_automatics_written_value_needs_no_write(
     answer with nothing to write; Activity lists it as kept (ADR-0105)."""
     root = library.root
     automatic, scheduler = _automatic_written(library, tmp_path)
-    if posture == "preview_paused":
-        library.leave_automatic()
+    if posture == "automatic_paused":
         root.pause_automatic_safety(True, 31)
 
     owner = _accept(library.case(), "authors", "owner-presses-automatics-card", 40)
@@ -1357,6 +1517,55 @@ def test_the_card_pin_on_automatics_written_value_settles(
     held = json.loads(hold)
     assert held["decision_id"] == accept.decision_id
     assert held["pin"] is not None
+
+
+def test_an_earlier_generation_write_once_settled_lets_the_owner_answer(
+    tmp_path: Path,
+) -> None:
+    """A settled earlier-generation write no longer stands in the owner's way.
+
+    Its report predates the write, so leaving Automatic reads the work again
+    from the library (ADR-0034): the current case starts from the written
+    authors, and the owner's answer on that field is recorded there.
+    """
+    with _prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root = library.root
+        automatic = library.automatic()
+        root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+        scheduler, service, target = _applier(library, tmp_path)
+        library.now[0] = 13
+        scheduler.schedule()
+        plan = _planned(library)[automatic.decision_id].plan
+        target.seed(plan)
+        assert service.apply(plan.plan_id).state == "verified"
+        assert library.held is not None
+        library.held.write(TargetDestination.AUTHORS, ("Ada Example",))
+
+        library.leave_automatic()
+
+        case = library.case()
+        assert case.review_case_id != automatic.review_case_id
+        authors = _read(library, scheduler)["fields"]["authors"]
+        assert authors["owner_control"]["current"] == ["Ada Example"]
+        proposal = next(
+            value for value in case.proposals if value["destination"] == "authors"
+        )
+        owner = HumanDecision.create(
+            case,
+            proposal_id=str(proposal["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination="authors",
+            actor="owner",
+            outcome="pin",
+            selected_value=None,
+            idempotency_key="owner-after-writing",
+            occurred_at=40,
+        )
+        root.record_human_decision(owner)
+        assert root._connection.execute(
+            "SELECT decision_id FROM human_decisions WHERE review_case_id=?",
+            (case.review_case_id,),
+        ).fetchall() == [(owner.decision_id,)]
 
 
 def test_a_new_generation_write_waits_for_an_earlier_write_still_out(

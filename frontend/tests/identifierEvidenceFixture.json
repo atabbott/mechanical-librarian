@@ -50,6 +50,8 @@
         },
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [
           {
             "kind": "list",
@@ -172,6 +174,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [
           {
             "kind": "text",
@@ -290,6 +294,8 @@
         },
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -397,6 +403,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -470,6 +478,8 @@
         },
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -577,6 +587,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -639,6 +651,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -701,6 +715,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -763,6 +779,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -825,6 +843,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -887,6 +907,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -949,6 +971,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1011,6 +1035,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1073,6 +1099,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1135,6 +1163,8 @@
         "owner_control": null,
         "written_by_case": false,
         "no_change_required": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1166,7 +1196,7 @@
     ],
     "media_health": [],
     "review_case_id": "review_case_a441009f289e33ef0de0eafd434ac2e62fc000afc53dbfe71b5e7df98203c283",
-    "schema_version": "review-case-detail-v12",
+    "schema_version": "review-case-detail-v13",
     "target": {
       "authors": ["Example Author"],
       "connection": "primary",

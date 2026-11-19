@@ -11,6 +11,7 @@ import {
   refusalCopy,
 } from './api/http'
 import type { CaseDetailView, DecisionCommand, DecisionOutcome } from './api/http'
+import { formattedNoWayBackSentence } from './fieldDecision'
 import { STILL_PINNED } from './fieldPin'
 import { destinationPhrase } from './labels'
 import {
@@ -149,6 +150,8 @@ export const ownerRefusalCopy = (
     decision_written: writtenRefusal,
     pinned: 'This field is pinned. Unpin it to withdraw the decision.',
     link_changed: linkChangedNotice,
+    // A keep of a description whose formatting can't be written back (#1424).
+    restore_unavailable: formattedNoWayBackSentence,
   }[error.code]
 }
 // A choice refused because Book matching changed (#1355): the field's offer

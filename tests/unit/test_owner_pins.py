@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -57,6 +58,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     TargetSeries,
 )
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.support.audiobook_reports import synthetic_audiobook_bibliographic_report
 from tests.support.evidence_led_titles import isbn_title_report
 from tests.support.genre_reports import genre_report
@@ -312,6 +314,41 @@ def test_a_pin_is_refused_while_automatics_change_waits(
         "pin": "change_waiting",
         "unpin": False,
     }
+    store.close()
+
+
+# #1984: the pin line says only the next scan is left once the field's change
+# is written. An earlier write says nothing of Automatic's decision in a later
+# policy generation on the same case, which is still to be written.
+def test_a_refused_pin_says_whether_the_change_is_written(tmp_path: Path) -> None:
+    store, report, _ = _store(tmp_path)
+    store.publish(report)
+    queued = _queued(store)
+    assert queued is not None
+    store.plan(queued)
+    assert _field(store, "title")["change_written"] is False
+    store.write(queued)
+    written = _field(store, "title")
+    assert written["pin_control"]["pin"] == "change_waiting"
+    assert (written["written_by_case"], written["change_written"]) == (True, True)
+
+    (document,) = store.repository._connection.execute(
+        "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=?",
+        (store.case.review_case_id,),
+    ).fetchone()
+    outcome = ShadowOutcomeSet.from_json(document)
+    later = {name: getattr(outcome, name) for name in outcome.__slots__} | {
+        "policy_generation": outcome.policy_generation + 1
+    }
+    store.repository._record_automatic_outcomes(
+        cast(ShadowOutcomeSet, SimpleNamespace(**later)), store.clock()
+    )
+    unwritten = _field(store, "title")
+    assert unwritten["pin_control"]["pin"] == "change_waiting"
+    assert (unwritten["written_by_case"], unwritten["change_written"]) == (
+        True,
+        False,
+    )
     store.close()
 
 

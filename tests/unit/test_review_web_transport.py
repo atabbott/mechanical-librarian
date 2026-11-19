@@ -4559,6 +4559,52 @@ def test_choose_then_pin_through_the_decision_route(
         store.close()
 
 
+def test_keeping_a_formatted_description_the_case_wrote_over_is_a_conflict(
+    tmp_path: Path,
+) -> None:
+    """The description the case read was stored with formatting a restore
+    from here would lose: Keep current is refused before anything is recorded
+    or planned (#1424)."""
+    from tests.support.genre_reports import genre_report
+    from tests.support.owner_values import OwnerStore, rewritten
+
+    # `rewritten` reads the text back as Audiobookshelf stored it with markup.
+    store = OwnerStore(
+        tmp_path, rewritten(genre_report(), description="Fish & chips, formatted.")
+    )
+    store.write(
+        store.decide(
+            "accept",
+            {"kind": "text", "value": "A qualified description."},
+            destination="description",
+        )
+    )
+    context = review_web_context(lambda *_: cast(Any, store.repository))
+    web = next(context)
+    try:
+        decide = _decision_poster(
+            web, web.login(), store.case.review_case_id, "keep-formatted-request"
+        )
+
+        def counts() -> tuple[int, int]:
+            return store.repository._connection.execute(
+                "SELECT (SELECT count(*) FROM human_decisions),"
+                "(SELECT count(*) FROM field_effects)"
+            ).fetchone()
+
+        before = counts()
+        kept = decide("description", "keep_current")
+        assert (kept.status_code, kept.json()["error"]["code"]) == (
+            409,
+            "restore_unavailable",
+        )
+        assert counts() == before
+        assert store.repository.pending_field_effect_decision_documents(10) == ()
+    finally:
+        next(context, None)
+        store.close()
+
+
 def test_keep_and_empty_values_the_route_refuses_append_nothing(
     tmp_path: Path,
 ) -> None:
