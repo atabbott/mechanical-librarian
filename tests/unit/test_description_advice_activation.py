@@ -3536,3 +3536,44 @@ def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
     assert automatic_counted() >= 1
     assert store.read(binding.review_case_id)["current"] is True
     repository.close()
+
+
+@pytest.mark.parametrize(
+    ("current", "advised"),
+    (
+        ("Authored synthetic description.", "<p>Authored synthetic description.</p>"),
+        (
+            "Fish & chips for the earlier text.",
+            "Fish &amp; chips for the earlier text.",
+        ),
+    ),
+    ids=("markup", "character-reference"),
+)
+def test_advice_that_reads_as_the_current_text_records_no_change_that_reopens(
+    tmp_path: Path, current: str, advised: str
+) -> None:
+    """Advice whose visible text is what the library holds records no change,
+    and startup validation reads it by the same reading (#1995)."""
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        _validate_field_effect_state,
+    )
+    from tests.support.automatic_no_change import _automatic_no_change_inputs
+    from tests.support.owner_values import rewritten
+
+    report, *_ = _automatic_no_change_inputs("description_preserved")
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path,
+        automatic=False,
+        description=advised,
+        report_override=rewritten(report, description=current),
+    )
+    try:
+        assert candidate.output.description == advised
+        decision = store.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
+        assert repository.record_current_field_effect_no_change(decision, 12)
+        _validate_field_effect_state(repository._connection)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (1,)
+    finally:
+        repository.close()

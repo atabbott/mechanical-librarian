@@ -16,6 +16,7 @@ from typing import Final, cast
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
     expand_cover_consideration,
 )
+from mechanical_librarian.adapters.providers.visible_text import read_description
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
@@ -990,8 +991,13 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                     if authored_target.state.value == "value"
                     else None
                 )
+                # The advice is compared as it is written: its visible text,
+                # by the same reading the write uses (#1995). Text the reader
+                # refuses was never recordable.
+                advised = read_description(candidate.output.description)[0]
                 if (
-                    authored.review_case_id != record.review_case_id
+                    type(advised) is not str
+                    or authored.review_case_id != record.review_case_id
                     or authored.report_id != record.report_id
                     or authored.target_fingerprint != record.target_fingerprint
                     or authored.origin != record.origin
@@ -1002,7 +1008,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                     or not values_match(
                         TargetDestination.DESCRIPTION,
                         before,
-                        candidate.output.description,
+                        advised,
                     )
                     or record.target_version
                     != field_value_version("description", before)
