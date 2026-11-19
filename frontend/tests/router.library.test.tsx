@@ -13014,6 +13014,112 @@ describe('Library route', () => {
     })
   })
 
+  describe('a field an earlier decision holds in Preview', () => {
+    const HELD =
+      'Your earlier decision still holds this field, so turning on Automatic leaves it as it is.'
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const unchanged = (
+      destination: 'genres' | 'language' | 'title',
+      overrides: Partial<CaseDetailView['fields'][number]> = {},
+    ) => ({
+      ...titleField,
+      classification: 'unsupported' as const,
+      classificationCause: 'nothing_to_decide' as const,
+      classificationReason: 'Nothing to decide for this field.',
+      decisionActions: [],
+      destination,
+      editable: false,
+      humanDecision: null,
+      automaticDecision: null,
+      manualHold: false,
+      needsAttention: false,
+      navigationRole: 'inspect' as const,
+      preservationOnly: false,
+      proposalId: `proposal-${destination}`,
+      targetFingerprint: `fingerprint-${destination}`,
+      ...overrides,
+    })
+    const held = (
+      destination: 'genres' | 'language',
+      overrides: Partial<CaseDetailView['fields'][number]> = {},
+    ) =>
+      unchanged(destination, {
+        classificationCause: 'held_in_preview',
+        classificationReason: HELD,
+        currentValue: 'Not set',
+        proposedValues: [
+          destination === 'genres'
+            ? { kind: 'list', value: ['Fantasy'] }
+            : { kind: 'text', value: 'English' },
+        ],
+        ...overrides,
+      })
+    const genresControl = {
+      entry: null,
+      subset: {
+        maxItems: 32,
+        options: [{ value: 'Fantasy', current: false, proposed: true, previous: false }],
+      },
+      names: null,
+      clear: false,
+      current: [],
+      withdraw: null,
+    }
+    const open = async (field: string, fields: CaseDetailView['fields'][number][]) => {
+      renderRoute(`/library?lens=all&preview=case-1&field=${field}`, {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields,
+        })),
+      })
+      return await screen.findByRole('navigation', { name: 'Review fields' })
+    }
+
+    it.each([
+      ['genres', /^Genres/u, { ownerControl: genresControl }],
+      ['language', /^Language/u, {}],
+    ] as const)(
+      'reads Decided on %s and says the hold keeps Automatic off, with no Resume',
+      async (destination, tab, overrides) => {
+        const rail = await open(destination, [
+          held(destination, overrides),
+          unchanged('title', { proposedValues: [] }),
+        ])
+        expect(within(rail).getByRole('button', { name: tab })).toHaveTextContent('Decided')
+        expect(screen.getByText(HELD)).toBeVisible()
+        expect(screen.queryByRole('button', { name: 'Resume automatic handling' })).toBeNull()
+        expect(screen.queryByText('No source offered a different value.')).toBeNull()
+      },
+    )
+
+    it('still offers the pin and the owner entry on a held field', async () => {
+      await open('genres', [
+        held('genres', {
+          ownerControl: genresControl,
+          pinControl: { pin: 'available', unpin: false },
+        }),
+        unchanged('title', { proposedValues: [] }),
+      ])
+      expect(screen.getByRole('button', { name: 'Pin this value' })).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Choose genres' })).toBeVisible()
+    })
+
+    it('says nothing of an unheld field a source offers another value for', async () => {
+      await open('language', [
+        unchanged('language', {
+          currentValue: 'Not set',
+          proposedValues: [{ kind: 'text', value: 'English' }],
+        }),
+        unchanged('title', { proposedValues: [] }),
+      ])
+      expect(screen.getByLabelText('Language current value')).toBeVisible()
+      expect(document.querySelector('.decision-context')).toBeNull()
+      expect(screen.queryByText('No source offered a different value.')).toBeNull()
+    })
+  })
+
   describe('the fields with nothing to decide (#1514)', () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')

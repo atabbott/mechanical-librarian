@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- In Preview, a field your earlier answer or a taken-back pin still holds
+  reads Decided and says turning on Automatic leaves it as it is. A field
+  no longer says no source offered a different value when one did (#ISSUE).
+- Activity marks an automatic choice your earlier decision keeps unwritten
+  "Held by you" until you choose Resume automatic handling (#ISSUE).
 - In Preview, a field your answer, hold or pin keeps Automatic off no longer
   shows Automatic's earlier choice or says turning on Automatic decides it
   again. That includes an answer given before the work was changed and

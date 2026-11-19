@@ -74,12 +74,18 @@ const contextKinds = {
   nothing_to_decide: 'unchanged',
   pinned: 'unchanged',
   pin_changed: 'unavailable',
+  // Never contextual: a held field needs a value a source offered.
+  held_in_preview: 'unchanged',
 } as const satisfies Record<FieldCause, 'unchanged' | 'waiting' | 'unavailable'>
 // A held field never reads unchanged.
 export const contextKind = (field: ReviewField) => {
   const kind = contextKinds[field.classificationCause]
   return field.manualHold && kind === 'unchanged' ? 'unavailable' : kind
 }
+// Whether a source offered a value other than the current one, read from the
+// server's facts, never from its reason's wording.
+export const offeredAnotherValue = (field: ReviewField) =>
+  field.proposedValues.length > 0 && !field.preservationOnly
 // An optional choice already says no review is needed, so a limitation worded
 // as asking the owner to choose is left off its evidence too (#1557).
 export const ownerContext = (field: ReviewField, context: ChoiceContextView) =>
