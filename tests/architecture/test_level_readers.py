@@ -8,7 +8,9 @@ its role, so a new reader fails here and is reviewed against S11 before it
 lands. The report module itself, which validates, serializes and bounds them,
 and the provider adapters, which only copy their lanes' records into the lane
 result, are allowed whole. The review API and the write plan read them only to
-name the evidence of a choice the owner made from a level offer.
+name the evidence of a choice the owner made from a level offer, and the
+description copy lookup reads only the formatted copy of claims an
+alternative already cites, never to make an offer (#1995).
 
 The level storage tables are read and written only by the level
 reconciliation module, and created only by the schema (S10, amendment 2).

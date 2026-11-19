@@ -1282,6 +1282,21 @@ def test_a_description_plan_carries_its_form_in_its_identity() -> None:
             invalid()
 
 
+def test_a_formatted_copy_counts_toward_the_plan_bound() -> None:
+    # A plan holds three description values (ADR-0107): a long non-ASCII
+    # description fits as text alone, and with its copy reaches the bound.
+    long = "\u20ac" * 10_000
+    _plan("description", "Earlier description.", long)
+    with pytest.raises(FieldEffectError) as refused:
+        _plan(
+            "description",
+            "Earlier description.",
+            long,
+            desired_form="<p>" + long + "</p>",
+        )
+    assert refused.value.code == "plan_too_large"
+
+
 @pytest.mark.parametrize(
     "form",
     (
