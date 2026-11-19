@@ -675,7 +675,7 @@ describe('review keys', () => {
     await screen.findByRole('button', { name: 'Withdraw' })
     fields = [{ ...title, needsAttention: false }]
     await press('u')
-    const outcome = await screen.findByText('Withdrawn. This field needs a decision again.')
+    const outcome = await screen.findByText('Withdrawn.')
     await waitFor(() => expect(outcome).toHaveFocus())
     expect(sent(http)).toEqual([
       expect.objectContaining({ outcome: 'withdraw', selectedValue: null }),

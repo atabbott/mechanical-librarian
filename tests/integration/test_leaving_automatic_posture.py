@@ -1613,3 +1613,85 @@ def test_a_new_generation_write_waits_for_an_earlier_write_still_out(
     assert not root.field_effect_deferred(renewed.plan_id)
     assert root.next_field_effect_plan_id(None) == (renewed.plan_id, "ebooks")
     assert service.apply(renewed.plan_id).state == "verified"
+
+
+def _withdraw(library: _Library, key: str, at: int) -> HumanDecision:
+    case = library.case()
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "authors"
+    )
+    return HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="authors",
+        actor="owner",
+        outcome="withdraw",
+        selected_value=None,
+        idempotency_key=key,
+        occurred_at=at,
+    )
+
+
+def _confirm_automatic(library: _Library, at: int) -> None:
+    library.root.activate_qualified_automatic(at)
+    library.now[0] = at + 1
+    library.drain()
+
+
+@pytest.mark.parametrize(
+    "answered", ["before_leaving", "in_preview", "before_leaving_then_confirmed"]
+)
+def test_an_answer_beside_an_earlier_generation_decision_can_be_withdrawn(
+    library: _Library, answered: str
+) -> None:
+    """The page offers Withdraw where only an earlier generation's automatic
+    decision is on the field, so the store accepts it: that decision holds
+    nothing and no Resume shows to release it (ADR-0036, ADR-0085)."""
+    root = library.root
+    earlier = library.automatic()
+    if answered != "in_preview":
+        root.record_human_decision(
+            _accept(library.case(), "authors", "answer-before-leaving", 11)
+        )
+        # Beside this generation's decision the refusal stands, and says so.
+        assert _read_fields(library)["authors"]["owner_control"]["withdraw"] == (
+            "automatic_hold"
+        )
+        with pytest.raises(HumanDecisionError) as refused:
+            root.record_human_decision(_withdraw(library, "withdraw-in-automatic", 12))
+        assert refused.value.code == "automatic_hold"
+    library.leave_automatic()
+    if answered == "in_preview":
+        root.record_human_decision(
+            _accept(library.case(), "authors", "answer-in-preview-mode", 31)
+        )
+    if answered.endswith("confirmed"):
+        _confirm_automatic(library, 40)
+    assert library.decisions() == [("authors", 2)]
+    field = _read_fields(library)["authors"]
+    assert (field["manual_hold"], field["owner_control"]["withdraw"]) == (
+        False,
+        "available",
+    )
+
+    root.record_human_decision(_withdraw(library, "withdraw-earlier-generation", 50))
+
+    # The earlier decision still writes nothing and nothing holds the field.
+    assert earlier.decision_id not in library.pending()
+    assert library.pending() == []
+    assert root._connection.execute(
+        "SELECT count(*) FROM field_effect_manual_holds WHERE active=1"
+    ).fetchone() == (0,)
+    field = _read_fields(library)["authors"]
+    assert field["human_decision"] is None
+    assert field["owner_control"]["withdraw"] is None
+    assert field["needs_attention"] is False
+    # Automatic stays off a field the owner has answered, a withdrawal
+    # included, so the page doesn't say turning it on decides it again.
+    assert field["earlier_automatic_value"] is None
+    if not answered.endswith("confirmed"):
+        _confirm_automatic(library, 60)
+    assert library.decisions() == [("authors", 2)]
+    assert library.pending() == []
+    assert _read_fields(library)["authors"]["automatic_decision"] is None

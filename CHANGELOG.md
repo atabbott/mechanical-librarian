@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- After you leave Automatic, Withdraw works on a field you answered while
+  Automatic was on, instead of being refused with a line pointing to a Resume
+  the field no longer showed. A field you have answered no longer says turning
+  Automatic on decides it again, since Automatic stays off it, and a withdrawal
+  says only "Withdrawn." when nothing will ask about the field again (#1997).
 - A description's bold, italics, paragraphs and lists now show as
   formatting, not as tags, wherever the workspace shows a description.
   Markup that cannot be read safely is still shown as written (#1992).
