@@ -12,10 +12,12 @@ import type {
 } from '../src/api/http'
 import { destinationLabel } from '../src/labels'
 import { SettledFieldContext } from '../src/routes/FieldDecisionOutcome'
+import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import {
   createHttp,
   detail,
   library,
+  readCaseDetail,
   recordedAcknowledgement,
   renderRoute,
   loadRouteModules,
@@ -399,7 +401,7 @@ describe('names entry', () => {
       outcome: 'owner_entered',
       selectedValue: { kind: 'list', value: ['Old Writer', 'Ada Example'] },
     })
-    const recorded = await within(panel).findByText('You entered 2 names.')
+    const recorded = await within(panel).findByText('You entered Old Writer and Ada Example.')
     await waitFor(() => expect(recorded).toHaveFocus())
   })
 
@@ -412,7 +414,7 @@ describe('names entry', () => {
     await user.clear(names)
     await user.type(names, 'Bo Reader')
     await user.click(within(panel).getByRole('button', { name: 'Record these names' }))
-    expect(await within(panel).findByText('You entered 1 name.')).toBeVisible()
+    expect(await within(panel).findByText('You entered Bo Reader.')).toBeVisible()
   })
 
   it.each([
@@ -557,6 +559,137 @@ describe('keeping an empty value on the case that wrote it', () => {
         'The ISBN can’t be emptied. Choose a new value.',
       ),
     )
+  })
+})
+
+describe('a description this case wrote over formatting (#1424)', () => {
+  const FORMATTED = 'The earlier description has formatting, so restore it in Audiobookshelf.'
+  const over = (rest: Partial<Field> = {}): Field => ({
+    ...base,
+    destination: 'description',
+    classification: 'actionable',
+    decisionActions: ['keep_current', 'accept'],
+    currentValue: 'Fish & chips for the earlier text.',
+    currentRaw: 'Fish & chips for the earlier text.',
+    proposedValues: [{ kind: 'text', value: 'A qualified description.' }],
+    proposalId: 'proposal-description',
+    targetFingerprint: 'fingerprint-description',
+    ownerControl: null,
+    writtenByCase: true,
+    restoreUnavailable: true,
+    ...rest,
+  })
+  const keepCardShown = () => screen.queryByText(/^(Keep current value|Before your change)$/u)
+
+  it('offers no card while the field asks, and says why under the question', async () => {
+    renderRoute('/library?lens=all&preview=case-1&field=description', owner(over()))
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(keepCardShown()).toBeNull()
+    const question = document.querySelector('.decision-question')
+    expect(question?.nextElementSibling).toHaveTextContent(new RegExp(`\\. ${FORMATTED}$`, 'u'))
+    expect(screen.getAllByText(FORMATTED, { exact: false })).toHaveLength(1)
+  })
+
+  it('still offers Before your change where the earlier description can be restored', async () => {
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=description',
+      owner(over({ restoreUnavailable: false })),
+    )
+    expect(await screen.findByText('Before your change')).toBeVisible()
+  })
+
+  it.each([
+    ['nothing else', [{ kind: 'text', value: 'A qualified description.' }], false],
+    [
+      'another proposal',
+      [
+        { kind: 'text', value: 'A qualified description.' },
+        { kind: 'text', value: 'Another description.' },
+      ],
+      true,
+    ],
+  ] as const)(
+    'says why under the question once it is decided, with %s on offer',
+    async (_, proposedValues, another) => {
+      const written = decided(over({ proposedValues: [...proposedValues] }), {
+        kind: 'text',
+        value: 'A qualified description.',
+      })
+      if (!written.humanDecision) throw new Error('a recorded decision is required')
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=description',
+        owner({
+          ...written,
+          editable: true,
+          needsAttention: false,
+          ownerControl: control({ withdraw: 'written' }),
+          pinControl: null,
+          humanDecision: { ...written.humanDecision, outcome: 'accept' },
+        }),
+      )
+      const heading = await screen.findByRole('heading', { name: 'Description' })
+      const said = heading.parentElement?.querySelector('p')
+      expect(said).toHaveTextContent(`The recorded outcome is marked below. ${FORMATTED}`)
+      if (another) expect(said).toHaveTextContent(`${FORMATTED} You can choose another value.`)
+      else expect(said).not.toHaveTextContent('You can choose another value.')
+      expect(keepCardShown()).toBeNull()
+    },
+  )
+
+  it('says why when the store refuses a keep pressed on a page from before the write', async () => {
+    const user = userEvent.setup()
+    const http = owner(
+      over({ writtenByCase: false, restoreUnavailable: false }),
+      undefined,
+      async () => {
+        throw new ApiError(409, 'restore_unavailable')
+      },
+    )
+    renderRoute('/library?lens=all&preview=case-1&field=description', http)
+    await user.click(await screen.findByRole('radio', { name: /^Choose current value/u }))
+    expect(sent(http)[0]).toMatchObject({ outcome: 'keep_current', destination: 'description' })
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(FORMATTED))
+  })
+
+  it('says it once when the refreshed field shows the written description', async () => {
+    const user = userEvent.setup()
+    const stale = over({ writtenByCase: false, restoreUnavailable: false })
+    const accepted = decided(over(), { kind: 'text', value: 'A qualified description.' })
+    if (!accepted.humanDecision) throw new Error('a recorded decision is required')
+    const written: Field = {
+      ...accepted,
+      editable: true,
+      needsAttention: false,
+      ownerControl: control({ withdraw: 'written' }),
+      pinControl: null,
+      humanDecision: { ...accepted.humanDecision, outcome: 'accept' },
+      proposedValues: [
+        { kind: 'text', value: 'A qualified description.' },
+        { kind: 'text', value: 'Another description.' },
+      ],
+    }
+    let refused = false
+    const http = owner(stale, undefined, async () => {
+      refused = true
+      throw new ApiError(409, 'restore_unavailable')
+    })
+    http.getCaseDetail.mockImplementation(async () => ({
+      ...detail,
+      fields: [refused ? written : stale],
+    }))
+    renderRoute('/library?lens=all&preview=case-1&field=description', http)
+    await user.click(await screen.findByRole('radio', { name: /^Choose current value/u }))
+    await waitFor(() =>
+      expect(document.querySelector('.decision-failure')).toHaveTextContent(FORMATTED),
+    )
+    await waitFor(() => expect(keepCardShown()).toBeNull())
+    const heading = screen.getByRole('heading', { name: 'Description' })
+    const said = heading.parentElement?.querySelector('p')
+    expect(said).toHaveTextContent(
+      'The recorded outcome is marked below. You can choose another value.',
+    )
+    expect(said).not.toHaveTextContent(FORMATTED)
+    expect(screen.getAllByText(FORMATTED, { exact: false })).toHaveLength(1)
   })
 })
 
@@ -769,6 +902,224 @@ describe('the keep card on a field this case wrote (#1523)', () => {
       expect(keepCardShown()).toBeNull()
     },
   )
+
+  // A description the adviser's text replaced, read back after the write.
+  const adviceWritten = (before: string | null): Field => {
+    const authored = readCaseDetail(descriptionAdviceFixture)
+    const field = authored.fields.find((item) => item.destination === 'description')
+    const advice = field?.descriptionAdvice
+    if (!field || !advice?.candidate) throw new Error('description fixture requires its advice')
+    const [current, ...others] = field.choiceContexts
+    if (!current) throw new Error('description fixture requires its current context')
+    return {
+      ...field,
+      writtenByCase: true,
+      currentValue: before ?? 'Not set in Audiobookshelf',
+      currentRaw: before,
+      choiceContexts: [
+        {
+          ...current,
+          evidence: [
+            ...current.evidence,
+            {
+              language: null,
+              observation: 'Description: the same text.',
+              role: 'external_corroboration',
+              source: 'Hardcover',
+            },
+          ],
+        },
+        ...others,
+      ],
+      descriptionAdvice: {
+        ...advice,
+        current: false,
+        application_outcome: 'verified',
+        selected_advice: { candidate: advice.candidate, binding: advice.binding, current: false },
+        selection: {
+          decision_id: `automatic_decision_${'a'.repeat(64)}`,
+          candidate_id: advice.candidate.candidate_id,
+          binding: advice.binding,
+          origin: 'automatic_policy',
+          resolved_policy_id: `resolved_policy_${'b'.repeat(64)}`,
+          qualification_manifest_sha256: 'c'.repeat(64),
+          idempotency_digest: 'd'.repeat(64),
+          occurred_at: 10,
+          destination: 'description' as const,
+          outcome: 'accept',
+          application: 'guarded',
+        },
+      },
+    }
+  }
+
+  it('offers the description before the adviser’s text was written', async () => {
+    const user = userEvent.setup()
+    const http = owner(adviceWritten(`An earlier description. ${'It goes on. '.repeat(30)}`))
+    renderRoute('/library?lens=all&preview=case-1&field=description', http)
+    const advised = await screen.findByRole('radio', { name: /^Choose advised value:/u })
+    expect(advised).toHaveTextContent('Applied and verified')
+    const card = screen.getByText('Before your change').closest('.current-choice-list')
+    if (!(card instanceof HTMLElement)) throw new Error('the before-your-change card is required')
+    expect(
+      within(card).getByRole('radio', { name: 'Choose the description before your change' }),
+    ).toHaveAttribute('aria-checked', 'false')
+    await user.click(
+      within(card).getByRole('button', {
+        name: 'Evidence for the description before your change',
+      }),
+    )
+    expect(card).toHaveTextContent('Description: the same text.')
+    expect(screen.queryByText('Keep current value')).toBeNull()
+  })
+
+  it('says a description read empty has no way back once the advice is written', async () => {
+    renderRoute('/library?lens=all&preview=case-1&field=description', owner(adviceWritten(null)))
+    await screen.findByRole('radio', { name: /^Choose advised value:/u })
+    const heading = screen.getByRole('heading', { name: 'Description' })
+    expect(heading.parentElement?.querySelector('p')).toHaveTextContent(
+      'The description was empty before your change, and it can’t be emptied.',
+    )
+    expect(keepCardShown()).toBeNull()
+  })
+
+  it('marks a recorded keep on a field back at the value the case read', async () => {
+    const kept = decided({ ...isbnOver('9780306406157'), writtenByCase: false }, null)
+    if (!kept.humanDecision) throw new Error('a recorded decision is required')
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=isbn',
+      owner({
+        ...kept,
+        editable: true,
+        needsAttention: false,
+        humanDecision: { ...kept.humanDecision, outcome: 'keep_current' },
+      }),
+    )
+    const card = await screen.findByRole('radio', {
+      name: /^Choose current value: 9780306406157/u,
+    })
+    expect(screen.getByText('Keep current value')).toBeVisible()
+    expect(card).toHaveAttribute('aria-checked', 'true')
+    expect(card).toHaveTextContent('Your choice')
+  })
+
+  // A field the case wrote, then took back to the value it read with an
+  // owner entry or a clear: no longer written, and the entry is the outcome.
+  const genresBack = (before: readonly string[] | null, entered: unknown): Field => {
+    const back = decided(
+      offered('genres', {
+        writtenByCase: false,
+        currentValue: before ? before.join(' · ') : 'Not set in Audiobookshelf',
+        currentRaw: before,
+        proposedValues: [{ kind: 'list', value: ['Fantasy'] }],
+        ownerControl: control({
+          clear: true,
+          current: before,
+          subset: {
+            maxItems: 32,
+            options: [
+              ...(before ?? []).map((value) => ({
+                value,
+                current: true,
+                proposed: false,
+                previous: false,
+              })),
+              { value: 'Fantasy', current: false, proposed: true, previous: false },
+            ],
+          },
+        }),
+      }),
+      entered,
+    )
+    return { ...back, editable: true, needsAttention: false }
+  }
+
+  it.each([
+    ['a clear back to empty genres', null, EMPTY, 'You cleared the genres.'],
+    [
+      'an entry back to the genres read',
+      ['Drama'],
+      { kind: 'list', value: ['Drama'] },
+      'You chose Drama.',
+    ],
+  ] as const)('leaves it out after %s', async (_, before, entered, said) => {
+    renderRoute('/library?lens=all&preview=case-1&field=genres', owner(genresBack(before, entered)))
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(keepCardShown()).toBeNull()
+    expect(screen.queryByRole('radio', { name: /^Choose current value/u })).toBeNull()
+    expect(screen.getByText(said)).toBeVisible()
+    // The value read has one pin, the recorded entry's, beside the proposed value's.
+    const pins = screen.getAllByRole('button', { name: 'Pin this value' })
+    expect(pins).toHaveLength(2)
+    expect(pins.filter((pin) => pin.closest('.owner-recorded-pin'))).toHaveLength(1)
+  })
+
+  it('leaves it out after authors entered back as they were read', async () => {
+    const back = decided(
+      offered('authors', {
+        writtenByCase: false,
+        currentValue: 'Ada Example · Bo Example',
+        currentRaw: ['Ada Example', 'Bo Example'],
+        proposedValues: [{ kind: 'list', value: ['Mick Herron'] }],
+        ownerControl: namesControl(['Ada Example', 'Bo Example'], false),
+      }),
+      { kind: 'list', value: ['Ada Example', 'Bo Example'] },
+    )
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=authors',
+      owner({ ...back, editable: true, needsAttention: false }),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(keepCardShown()).toBeNull()
+  })
+
+  it('still offers the way back after genres entered back in another order', async () => {
+    // The store compares in order: Drama · Mystery is not the Mystery · Drama it read.
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=genres',
+      owner({
+        ...genresBack(['Mystery', 'Drama'], { kind: 'list', value: ['Drama', 'Mystery'] }),
+        writtenByCase: true,
+      }),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(screen.getByText('Before your change')).toBeVisible()
+    expect(
+      screen.getByRole('radio', { name: 'Choose the value before your change: Mystery · Drama' }),
+    ).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('leaves it out after a subtitle entered back as it was read', async () => {
+    const back = decided(
+      offered('subtitle', {
+        writtenByCase: false,
+        currentValue: 'Original subtitle',
+        currentRaw: 'Original subtitle',
+        proposedValues: [{ kind: 'text', value: 'A Quiet Subtitle' }],
+        ownerControl: textControl('Original subtitle', true),
+      }),
+      { kind: 'text', value: 'Original subtitle' },
+    )
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=subtitle',
+      owner({ ...back, editable: true, needsAttention: false }),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(keepCardShown()).toBeNull()
+  })
+
+  it('still offers it beside an entry of another value', async () => {
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=genres',
+      owner(genresBack(['Drama'], { kind: 'list', value: ['Fantasy'] })),
+    )
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    expect(screen.getByText('Keep current value')).toBeVisible()
+    expect(screen.getByRole('radio', { name: /^Choose current value: Drama/u })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    )
+  })
 
   it('says it in the plural on authors written over nothing', async () => {
     const written = decided(
@@ -988,7 +1339,9 @@ describe('names the store keeps apart (#1523)', () => {
     await user.click(names)
     await user.paste('Nilay Yılmaz\nNilay Yilmaz')
     await user.click(within(panel).getByRole('button', { name: 'Record these names' }))
-    expect(await within(panel).findByText('You entered 2 names.')).toBeVisible()
+    expect(
+      await within(panel).findByText('You entered Nilay Yılmaz and Nilay Yilmaz.'),
+    ).toBeVisible()
     expect(http.recordDecision).toHaveBeenCalledOnce()
   })
 })

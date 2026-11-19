@@ -248,8 +248,9 @@ instruction that one field of one work is finished.
   carries a value and neither grants write authority: no planning query,
   pending count or authority reader accepts them. A pin may be recorded on
   any field of the case except the cover, whether or not the field offers a
-  choice. It is refused while a change to the field waits to be written and
-  no answer of the owner's stands on the case, where an answer stands
+  choice. It is refused while a change to the field waits to be written, or
+  was written and not yet read back by a scan, and no answer of the owner's
+  stands on the case, where an answer stands
   whose hold was released or has a Resume asked of it, and on a description
   while the owner's choice of the advised text stands, which a pin would
   otherwise drop before it is written (`pin_change_waiting`). It is refused where the library's value could

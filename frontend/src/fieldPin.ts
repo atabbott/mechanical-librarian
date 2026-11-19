@@ -94,16 +94,30 @@ const pinnedValueSentence = (field: ReviewField) => {
 
 // Why a field that could be pinned offers no pin now. With no answer of the
 // owner's standing, or with the owner's choice of the adviser's description,
-// a change waits to be written. Over a standing answer the server refuses
-// only once that answer's hold was released or a Resume was asked of it. A
-// rejection is history the owner can no longer record, so nothing is said.
-const notOffered = (field: ReviewField) =>
-  field.humanDecision === null ||
-  (field.destination === 'description' && field.descriptionAdvice?.selection?.origin === 'human')
-    ? 'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.'
-    : field.humanDecision.outcome === 'reject'
+// a change waits to be written, and once it is, the next scan has to read it
+// back; while nothing is written, as with writes off, no scan reads a new
+// value, so the sentence waits for the write. The server says the change is
+// written once nothing of it waits to be written; the owner's advice choice is
+// written once its own write is verified, which an earlier write by the case
+// says nothing about. Over a standing answer the server refuses only once that
+// answer's hold was released or a Resume was asked of it. A rejection is
+// history the owner can no longer record, so nothing is said.
+const ownerAdviceChoice = (field: ReviewField) =>
+  field.destination === 'description' && field.descriptionAdvice?.selection?.origin === 'human'
+    ? field.descriptionAdvice
+    : null
+const notOffered = (field: ReviewField) => {
+  const advice = ownerAdviceChoice(field)
+  if (field.humanDecision !== null && advice === null)
+    return field.humanDecision.outcome === 'reject'
       ? null
       : 'You chose Resume automatic handling for this field. Choose a value again to pin it.'
+  const written =
+    advice !== null ? advice.application_outcome === 'verified' : field.changeWritten === true
+  return written
+    ? 'You can pin this field after the next scan reads its new value.'
+    : 'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.'
+}
 
 // What a failed unpin says where the foot's own Unpin is the control to press.
 export const STILL_PINNED = 'This field is still pinned. Press the pin again.'

@@ -1433,16 +1433,21 @@ describe('a pin on each value', () => {
       classification: 'automatic_recorded',
       classificationCause: 'automatic_decided',
       pinControl: { pin: 'change_waiting', unpin: false },
+      // Automatic's write verified; the next scan has not read it back.
+      writtenByCase: true,
+      changeWritten: true,
     }
     const { http } = pins(waiting)
     const foot = await show(http)
     expect(foot).toHaveTextContent(
-      'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
+      'You can pin this field after the next scan reads its new value.',
     )
     expect(screen.queryByRole('button', { name: 'Pin this value' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Unpin' })).toBeNull()
     // An explanation, not a state: plain supporting text, not a pin's box.
-    expect(foot.querySelector('.pin-why')).toHaveTextContent('A change to this field is recorded.')
+    expect(foot.querySelector('.pin-why')).toHaveTextContent(
+      'You can pin this field after the next scan reads its new value.',
+    )
     expect(foot.querySelector('.pin-note')).toBeNull()
     expect(foot).not.toHaveClass('has-note')
   })
@@ -2008,5 +2013,55 @@ describe('a pin in the No change panel', () => {
     await screen.findByRole('navigation', { name: 'Review fields' })
     expect(panel()).not.toBe(second)
     expect(panel()).not.toHaveAttribute('open')
+  })
+})
+
+// The recorded choice on a field this case wrote is the written value, so
+// choosing it again would change nothing and sends nothing (#1980).
+describe('the written choice', () => {
+  const NEW = { kind: 'text', value: 'New title' } as const
+  const PROPOSED = 'Choose proposed value: New title'
+  // `ownWrite` is whether the accept's own write has landed (the server's
+  // withdraw 'written'); `writtenByCase` whether any write of the case has.
+  const written = (writtenByCase: boolean, ownWrite = writtenByCase): Field => ({
+    ...base,
+    needsAttention: false,
+    classification: 'human_recorded',
+    classificationCause: 'human_decided',
+    classificationReason: 'You decided this field. You can change it here.',
+    humanDecision: decision('accept', NEW),
+    ownerControl: control({ withdraw: ownWrite ? 'written' : 'available' }),
+    writtenByCase,
+  })
+
+  it('W1 leaves the chosen card of a written field a no-op that still reads as chosen', async () => {
+    const user = userEvent.setup()
+    const http = owner(() => [written(true)])
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    const chosen = await screen.findByRole('radio', { name: PROPOSED })
+    expect(chosen).toBeChecked()
+    expect(chosen).toBeEnabled()
+    expect(chosen).toHaveAttribute('tabindex', '0')
+    expect(chosen.closest('article')).toHaveTextContent('Your choice')
+    await user.click(chosen)
+    chosen.focus()
+    await user.keyboard('{Enter}')
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('W2 still sends the chosen card of a field this case has not written', async () => {
+    const user = userEvent.setup()
+    const http = owner(() => [written(false)])
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(await screen.findByRole('radio', { name: PROPOSED }))
+    await waitFor(() => expect(sent(http).map((command) => command.outcome)).toEqual(['accept']))
+  })
+
+  it('W3 still sends a chosen accept not yet written after an earlier write of the case', async () => {
+    const user = userEvent.setup()
+    const http = owner(() => [written(true, false)])
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await user.click(await screen.findByRole('radio', { name: PROPOSED }))
+    await waitFor(() => expect(sent(http).map((command) => command.outcome)).toEqual(['accept']))
   })
 })

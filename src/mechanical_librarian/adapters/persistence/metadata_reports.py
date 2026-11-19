@@ -2492,8 +2492,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         work_stage: str,
         report_id: str,
         updated_at: int,
-    ) -> None:
-        self._review_preparation._restart_metadata_policy_work(
+    ) -> str:
+        return self._review_preparation._restart_metadata_policy_work(
             work_id, work_stage, report_id, updated_at
         )
 

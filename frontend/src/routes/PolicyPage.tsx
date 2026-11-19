@@ -36,10 +36,9 @@ import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
 import { FinishTray } from '../components/FinishTray'
 import { SegmentedControl } from '../components/SegmentedControl'
-import { destinationLabel } from '../labels'
+import { destinationLabel, listPhrase } from '../labels'
 import { useLibraryName } from '../libraryNames'
 import { PolicySafety } from './PolicySafety'
-import { libraryList } from '../writeConsent'
 import { policyRoute, useReviewContext } from '../router'
 import type { PolicyCritical } from '../router'
 import {
@@ -1016,7 +1015,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       ? 'Write permission is unchanged: each library keeps what it has.'
                       : 'Checking which libraries keep write permission…'
                     : keptPermission.length
-                      ? `Write permission stays on for ${libraryList(keptPermission)}.`
+                      ? `Write permission stays on for ${listPhrase(keptPermission)}.`
                       : 'No library has write permission, and activating grants none.'}
                 </span>
                 <ul>

@@ -562,10 +562,10 @@ def _validate_owner_command(
         raise HumanDecisionError("owner_value_invalid")
 
 
-def target_value(case: ReviewCase, destination: str) -> object:
-    """The case's recorded target value for one destination; ``None`` if empty."""
+def _target_field(case: ReviewCase, destination: str) -> dict[str, object] | None:
+    """The case's recorded target field for one destination, if it has one."""
     fields = case.target.get("fields")
-    field = next(
+    return next(
         (
             item
             for item in (fields if type(fields) is list else ())
@@ -573,9 +573,30 @@ def target_value(case: ReviewCase, destination: str) -> object:
         ),
         None,
     )
-    if type(field) is not dict or field.get("state") != "value":
+
+
+def target_value(case: ReviewCase, destination: str) -> object:
+    """The case's recorded target value for one destination; ``None`` if empty."""
+    field = _target_field(case, destination)
+    if field is None or field.get("state") != "value":
         return None
     return field.get("value")
+
+
+def description_unrestorable(case: ReviewCase) -> bool:
+    """Whether the description the case read can't be written back from here.
+
+    Audiobookshelf stored it with formatting the admitted text renders away,
+    so writing that text would replace the formatting with its visible text
+    (#1424). Store refusal, the case detail and the planned restore all ask
+    this one question.
+    """
+    field = _target_field(case, "description")
+    return (
+        field is not None
+        and field.get("state") == "value"
+        and field.get("restorable") is not True
+    )
 
 
 def pinned_field_fingerprint(case: ReviewCase, destination: str) -> str | None:
@@ -585,17 +606,9 @@ def pinned_field_fingerprint(case: ReviewCase, destination: str) -> str | None:
     stays pinned however the library stores nothing; ``restorable`` and other
     metadata are left out (ADR-0085, Amendment 2).
     """
-    fields = case.target.get("fields")
-    field = next(
-        (
-            item
-            for item in (fields if type(fields) is list else ())
-            if type(item) is dict and item.get("destination") == destination
-        ),
-        None,
-    )
-    state = field.get("state") if type(field) is dict else None
-    value = field.get("value") if type(field) is dict else None
+    field = _target_field(case, destination)
+    state = field.get("state") if field is not None else None
+    value = field.get("value") if field is not None else None
     # A target value is never empty (`TargetField` refuses one), so only these
     # three states are empty.
     if state in {"missing", "null", "empty"}:

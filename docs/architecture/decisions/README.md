@@ -44,7 +44,7 @@ status line that says who accepted it and when.
 | [0031](0031-persisted-review-preparation.md) | accepted; partly superseded by 0032; amended by 0105 (proposed) | Persist progressive review preparation |
 | [0032](0032-continuous-review-reconciliation.md) | accepted | Reconcile reviews continuously |
 | [0033](0033-versioned-policy-draft-preview.md) | accepted | Persist immutable policy drafts before activation |
-| [0034](0034-atomic-policy-generation-cutover.md) | accepted | Cut over metadata policy in one atomic generation |
+| [0034](0034-atomic-policy-generation-cutover.md) | accepted; amendment 1 proposed | Cut over metadata policy in one atomic generation |
 | [0035](0035-persist-non-authoritative-policy-preview-outcomes.md) | accepted | Persist non-authoritative policy Preview outcomes |
 | [0036](0036-qualified-decision-only-automatic-policy.md) | accepted | Qualify decision-only automatic policy defaults |
 | [0037](0037-origin-neutral-guarded-field-effects.md) | accepted | Use one guarded field-effect boundary for every origin |

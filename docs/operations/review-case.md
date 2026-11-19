@@ -33,6 +33,9 @@ changed, and preparation asks no cover or description advice for it. An
 actionable result replaces it as usual. The first scan of the unchanged work
 once the write is 30 days old sends it back to admission, which retires the
 case ([ADR-0105](../architecture/decisions/0105-going-back-after-a-write.md)).
+A re-preparation that identifies nothing retires a kept case like any other
+(below); if the work is identified again while the write is under 30 days
+old, admission keeps its case again.
 
 A scheduled search whose proposals equal the current case's, that fails at a
 provider, or that now identifies nothing never reaches admission
@@ -209,17 +212,25 @@ body is refused before parsing.
   with `422`: `owner_value_required` for an empty title or authors,
   `owner_value_invalid` for a value outside its bounds and
   `owner_value_unchanged` for the field's current value, which on the case
-  that wrote the field is the written value. On that case `keep_current`
-  writes back the value the case read; where that was empty, a clearable
-  field goes back to empty and any other field is refused as
-  `owner_value_required`. Where the case's latest write already holds that
-  value, the keep is recorded as a plain keep and writes nothing.
+  that wrote the field is the written value. An accept of the value the
+  case's latest write holds is refused the same way while the owner
+  decision that made that write is still the field's answer. On that case
+  `keep_current` writes back the value the case read; where that was empty,
+  a clearable field goes back to empty and any other field is refused as
+  `owner_value_required`. Where it read a description stored with formatting
+  a restore would lose, the keep is refused with `409 restore_unavailable`,
+  and the field's `restore_unavailable` is true. Where the case's latest
+  write already holds that value, the keep is recorded as a plain keep and
+  writes nothing.
 - "Use previous value" and the names entry's previous names are offered only
   while the field reads its latest verified write's value, and never when the
   value that write replaced was empty: emptying the field is that choice.
 - A pin is refused with `409 pin_change_waiting` while a change to the field
-  that is not the owner's standing answer waits to be written, or while the
-  owner's choice of the advised description stands, and
+  that is not the owner's standing answer waits to be written or was written
+  and not yet read back by a scan, or while the owner's choice of the advised
+  description stands; the field's `change_written` is true while the refusal
+  waits only for that scan, because nothing of the change is still to be
+  written. A pin is refused with
   `409 already_pinned` when the field is already pinned at this value; an
   unpin is refused with `409 not_pinned`, and a withdrawal with `409 pinned`
   while the field is pinned.
@@ -244,15 +255,20 @@ authority.
 Activation is one transaction: it stores the resolved per-library policy,
 retires every current unapplied old-policy case, fixes the transition total and
 switches the active generation. Successors return through ordinary preparation
-from retained evidence, with no new provider lookup, decision transfer or
-write. Once an automatic decision has been recorded, leaving Automatic
-reactivates the unchanged policy. A current automatic cover selection or a
-current automatic description decision counts as one; a description counts
+from retained evidence, with no decision transfer or write. The exception is a
+work whose report predates a write the product verified: that report no longer
+says what Audiobookshelf holds, so the work is read again, after a discovery
+of its library when its scan is idle, and its new case starts from the written
+value. Its transition item counts as checked on the new report. Once an
+automatic decision has been recorded, leaving Automatic reactivates the
+unchanged policy. A current automatic cover selection or a current automatic
+description decision counts as one; a description counts
 even under a policy with no automatic destination, since its admission
 depends on the description advice setting, not on the policy. Each work
 then returns as its same case, which continues its episode: the owner's
 answers, holds and queued writes on it stay current, since no decision moves
-to a successor case. A work still
+to a successor case. A work written since its report is read again instead,
+and gets a new case. A work still
 retired by an earlier change of policy when that happens starts a new episode
 on return, as any case does after a policy change. An automatic
 decision writes only in the Automatic posture, and one from an earlier policy
@@ -270,9 +286,10 @@ preparation could not bring back closes at the next activation.
 
 The transition status survives restart. `completed_with_failures` keeps typed
 diagnostics and a retry. Retry restarts failed items whose evidence is still
-current, shows items that moved to a newer report as reconciled, and leaves an
-item with no preparation work failed. Work prepared after activation uses the
-new policy at once; the transition total stays fixed. Acknowledging a finished
+current, reads a work written since its report again as activation does, shows
+items that moved to a newer report as reconciled, and leaves an item with no
+preparation work failed. Work prepared after activation uses the new policy at
+once; the transition total stays fixed. Acknowledging a finished
 transition only dismisses its notice, and a new activation acknowledges any
 undismissed one. Activations cannot overlap. A retry after a lost response
 returns the original transition.

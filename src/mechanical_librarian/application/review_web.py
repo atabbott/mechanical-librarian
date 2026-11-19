@@ -79,6 +79,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionAction,
     HumanDecisionError,
     decision_actions,
+    description_unrestorable,
     genre_subset_available,
     list_union,
     offer_digest,
@@ -151,10 +152,11 @@ from mechanical_librarian.domain.shadow_outcome import (
 from mechanical_librarian.domain.validation import owner_password
 from mechanical_librarian.domain.value_flags import value_flags
 
-# v11: a cover field carries the taste judge's pending suggestion (#1372 PR 4b).
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v11"]
+# v12: a field says whether the description its case wrote over can be
+# restored from here (#1424).
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v12"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v11"
+    "review-case-detail-v12"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
@@ -377,6 +379,9 @@ class CurrentReviewCaseSnapshot:
     pins: tuple[tuple[str, bool, str], ...] = ()
     # Destinations whose change waits to be written, so a pin is refused.
     change_waiting_destinations: tuple[str, ...] = ()
+    # Destinations whose change is still to be written; a refused pin on any
+    # other waits only for the next scan to read the written value (#1984).
+    write_waiting_destinations: tuple[str, ...] = ()
     # Held destinations whose return to automatic handling the owner has
     # requested; the hold stays until the requested checks finish (#1755).
     return_requested_destinations: tuple[str, ...] = ()
@@ -2120,8 +2125,18 @@ class InspectCurrentReviewCase:
             # This case's own write set the field in its episode, so what it
             # read before is no longer the library's value (#1523).
             "written_by_case": destination in dict(snapshot.written_values),
+            # What it wrote over is a description stored with formatting a
+            # restore from here would lose, so it can't be gone back to and a
+            # keep is refused (#1424).
+            "restore_unavailable": destination == "description"
+            and destination in dict(snapshot.written_values)
+            and description_unrestorable(case),
             "pin": pin,
             "pin_control": pin_control,
+            # A refused pin waits only for the next scan to read the written
+            # value back: the field's change is written (#1984).
+            "change_written": destination in snapshot.change_waiting_destinations
+            and destination not in snapshot.write_waiting_destinations,
             # The offer a choice binds: its value, proposal and rule (#1355).
             "offer_digest": offer_digest(proposals, destination),
             "proposal_id": proposal["proposal_id"],

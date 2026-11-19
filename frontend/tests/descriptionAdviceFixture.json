@@ -10,6 +10,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -98,6 +99,7 @@
         "provider_e2dae467c54051b9202c0203e936cb26f016c7f6742db7bd73a51434fd94137c",
         "provider_fe07db53652cff3a2705227b53c1ec256664f7588a807f6d14c11b2d76c2a827"
       ],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "written_by_case": false
@@ -107,6 +109,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -198,6 +201,7 @@
         }
       ],
       "provenance": ["provider_c5d00f6325d00d72af199f7c0702def45ae7370bea82b63ca0dc945103f7d7a8"],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "written_by_case": false
@@ -207,6 +211,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -297,6 +302,7 @@
         "local_8a043456a2b2863fbbc99c0da87486b328687c1da4522147eda80d0210de19a6",
         "provider_e97d5b01d8c4d1ac75dd707cf93c8fab512629f95e64aa6695aa2dfa62ef913f"
       ],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": ["manifestation_verification_required"],
       "written_by_case": false
@@ -306,6 +312,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -398,6 +405,7 @@
       "proposal_id": "review_proposal_1295ab3c56737b3556504bb3ce0514ba69ccf601579bf12b288b2362ba7e3d39",
       "proposed_values": [],
       "provenance": ["provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "written_by_case": false
@@ -407,6 +415,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -459,6 +468,7 @@
       "proposal_id": "review_proposal_23ecbbd85888c06c557ab07a2c3b1eb8b7d7eaee5f255e5a66f818c5a42b6ba0",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "written_by_case": false
@@ -468,6 +478,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -561,6 +572,7 @@
       "proposal_id": "review_proposal_219905bf0784a699d4f625973a7d5b757cdc1466e7f49ab28828884e9663acd8",
       "proposed_values": [],
       "provenance": ["provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "written_by_case": false
@@ -570,6 +582,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -622,6 +635,7 @@
       "proposal_id": "review_proposal_486104af9a3e16da0f319388b826f5f590bf067931b68f917fa0b8f8bbcfe19d",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "written_by_case": false
@@ -631,6 +645,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -683,6 +698,7 @@
       "proposal_id": "review_proposal_f952e6053ae09fbff784b90666a6cef28838ecc1a142e3cedd3d1940d5c8bc5b",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "written_by_case": false
@@ -702,6 +718,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -822,6 +839,7 @@
         }
       ],
       "provenance": ["provider_8d5555b014ce6a5575d245545fd197836a76c7f8e5f496697d90521e01e2e5e4"],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": ["populated_subjective_field", "populated_value_meets_floor"],
       "written_by_case": false
@@ -831,6 +849,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -883,6 +902,7 @@
       "proposal_id": "review_proposal_5e16756de267871a6827402a854c9963d4150b6a419c03c9863b66bcc5f3a205",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "written_by_case": false
@@ -892,6 +912,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -944,6 +965,7 @@
       "proposal_id": "review_proposal_446ca5b317d8d64c86949b5cc422f1b602621a556f7ebb271778e3b35c646c28",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "written_by_case": false
@@ -953,6 +975,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -1027,6 +1050,7 @@
         }
       ],
       "provenance": ["provider_e8f3d5f76eca4ea97b720bfe78e64cf22c5796eef346431fdfe943fc76f4e457"],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "written_by_case": false
@@ -1036,6 +1060,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -1085,6 +1110,7 @@
       "proposal_id": "review_proposal_84fc8d044adbfa88f657e073c8ead4f86783ad72f72dbc879285602d9237c7ea",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "written_by_case": false
@@ -1094,7 +1120,7 @@
   "recording_admission_basis": null,
   "recording_identity_basis": null,
   "review_case_id": "review_case_c2cc1b111cf058886df69a6af7e08b2904e7d734699482b9978fa255d2cacac6",
-  "schema_version": "review-case-detail-v11",
+  "schema_version": "review-case-detail-v12",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",

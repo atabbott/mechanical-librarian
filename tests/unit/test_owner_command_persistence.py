@@ -42,7 +42,14 @@ from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
 )
-from mechanical_librarian.domain.metadata_report import ClaimScope, MetadataReport
+from mechanical_librarian.domain.metadata_report import (
+    ClaimScope,
+    MetadataReport,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+)
 from tests.support.genre_reports import genre_report, publish_genre_case
 from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
 from tests.support.proposal_evidence import _local_subtitle
@@ -654,6 +661,80 @@ def test_keeping_an_empty_isbn_after_a_write_is_refused(store: OwnerStore) -> No
         == effects
     )
     assert store.target.read(written.plan).value == "9780306406157"
+
+
+def _described(restorable: bool) -> MetadataReport:
+    """The genre work with a description Audiobookshelf stored with formatting
+    (`restorable` False) or exactly as its text (#1424)."""
+    report = genre_report()
+    fields = tuple(
+        TargetField(
+            field.destination,
+            TargetFieldState.VALUE,
+            "Fish & chips for the earlier text.",
+            restorable,
+        )
+        if field.destination is TargetDestination.DESCRIPTION
+        else field
+        for field in report.target.fields
+    )
+    target = report.target
+    return MetadataReport.create(
+        target=TargetFacts(target.connection, target.library, target.item, fields),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+    )
+
+
+@pytest.mark.parametrize("formatted", [True, False], ids=["formatted", "plain"])
+def test_keeping_a_formatted_description_after_a_write_is_refused(
+    tmp_path: Path, formatted: bool
+) -> None:
+    """The case that wrote over a description stored with formatting can't go
+    back to it from here: the detail says so on that field alone, and a keep is
+    refused before anything is recorded or planned (#1424)."""
+    store = OwnerStore(tmp_path, _described(restorable=not formatted))
+    try:
+        assert _field(store, "description")["restore_unavailable"] is False
+        written = store.write(
+            store.decide(
+                "accept",
+                {"kind": "text", "value": "A qualified description."},
+                destination="description",
+            )
+        )
+        description = _field(store, "description")
+        assert description["written_by_case"] is True
+        assert description["decision_actions"] == ["keep_current", "accept"]
+        assert description["restore_unavailable"] is formatted
+        assert _field(store, "title")["restore_unavailable"] is False
+        if not formatted:
+            store.write(store.decide("keep_current", destination="description"))
+            assert len(store.patches) == 2
+            assert store.target.read(written.plan).value == (
+                "Fish & chips for the earlier text."
+            )
+            return
+        effects = store.repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone()
+        pending = _pending(store)
+        _refused(
+            store, "restore_unavailable", "keep_current", destination="description"
+        )
+        assert _pending(store) == pending
+        assert (
+            store.repository._connection.execute(
+                "SELECT count(*) FROM field_effects"
+            ).fetchone()
+            == effects
+        )
+        assert store.patches == [written.plan.plan_id]
+        assert store.target.read(written.plan).value == "A qualified description."
+    finally:
+        store.close()
 
 
 def test_keeping_an_empty_isbn_before_any_write_is_recorded(
@@ -1805,6 +1886,57 @@ def test_history_reads_what_a_decision_replaced_not_a_later_automatic_write(
         store.close()
 
 
+def test_accepting_the_value_the_case_wrote_is_unchanged(store: OwnerStore) -> None:
+    """An accept of the value the case's latest write already holds would
+    plan nothing and wait for ever, so it is refused as unchanged and records
+    nothing; the first accept still replays, and a keep still records."""
+    first = store.decide("accept", _FANTASY, destination="genres")
+    store.write(first)
+    hold = _hold_document(store)
+    _refused(store, "owner_value_unchanged", "accept", _FANTASY, destination="genres")
+    assert _pending(store) == []
+    assert _hold_document(store) == hold
+    replay = HumanDecision.create(
+        store.case,
+        proposal_id=first.proposal_id,
+        target_fingerprint=first.target_fingerprint,
+        destination="genres",
+        actor="owner",
+        outcome="accept",
+        selected_value=first.selected_value,
+        idempotency_key=f"owner-command-{first.occurred_at - 1:08d}",
+        occurred_at=first.occurred_at,
+    )
+    assert (
+        HumanDecision.from_json(store.repository.record_human_decision(replay)) == first
+    )
+    keep = store.decide("keep_current", destination="genres")
+    assert _pending(store) == [keep.decision_id]
+
+
+@pytest.mark.parametrize("later", ["keep_current", "owner_entered"])
+def test_accepting_the_written_value_replaces_a_later_unwritten_answer(
+    tmp_path: Path, later: str
+) -> None:
+    """Read Drama, accept Fantasy, written, then go back to Drama, still
+    unwritten. That later decision is the field's answer, so accepting
+    Fantasy again records and replaces it before it writes Drama, rather
+    than being refused as unchanged (#1980)."""
+    store = OwnerStore(tmp_path, _HELD)
+    try:
+        store.write(store.decide("accept", _FANTASY, destination="genres"))
+        replaced = store.decide(
+            later,
+            {"kind": "list", "value": ["Drama"]} if later == "owner_entered" else None,
+            destination="genres",
+        )
+        assert _pending(store) == [replaced.decision_id]
+        again = store.decide("accept", _FANTASY, destination="genres")
+        assert _pending(store) == [again.decision_id]
+    finally:
+        store.close()
+
+
 _DRAMA = {"kind": "list", "value": ["Drama"]}
 
 
@@ -1999,6 +2131,57 @@ def test_a_keep_freezes_the_write_planning_resolves_for_it(
         "kind": "list",
         "value": ["Fantasy"],
     }
+
+
+_GONE_BACK: dict[str, tuple[tuple[str, ...] | None, str, dict[str, Any] | None]] = {
+    "keep_back": (("Drama",), "keep_current", None),
+    "clear_back": (None, "owner_entered", {"kind": "empty", "value": None}),
+    "entry_back": (
+        ("Drama",),
+        "owner_entered",
+        {"kind": "list", "value": ["Drama"]},
+    ),
+}
+
+
+@pytest.mark.parametrize("back", sorted(_GONE_BACK))
+def test_a_field_back_at_the_value_the_case_read_is_not_written(
+    tmp_path: Path, back: str
+) -> None:
+    """A field whose latest write holds the value the case read again, after a
+    keep, a clear or an entry, does not count as written, so its card is Keep
+    current value (#1523)."""
+    current, outcome, value = _GONE_BACK[back]
+    store = OwnerStore(tmp_path, genre_report(current=current))
+    try:
+        store.write(
+            store.decide(
+                "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+            )
+        )
+        assert _field(store, "genres")["written_by_case"] is True
+        store.write(store.decide(outcome, value, destination="genres"))
+        assert _field(store, "genres")["written_by_case"] is False
+        assert store.repository.written_field_values(store.case.review_case_id) == ()
+        assert cast("dict[str, Any]", _field(store, "genres")["owner_control"])[
+            "current"
+        ] == (list(current) if current is not None else None)
+        if back == "keep_back":
+            _refused(
+                store,
+                "owner_value_unchanged",
+                "owner_entered",
+                {"kind": "list", "value": ["Drama"]},
+                destination="genres",
+            )
+            entered = store.decide(
+                "owner_entered",
+                {"kind": "list", "value": ["Fantasy"]},
+                destination="genres",
+            )
+            assert entered.outcome == "owner_entered"
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize(

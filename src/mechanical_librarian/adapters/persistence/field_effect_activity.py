@@ -158,6 +158,7 @@ from mechanical_librarian.domain.human_decision import (
     DecisionScope,
     HumanDecision,
     HumanDecisionError,
+    description_unrestorable,
     manual_cover_eligible,
 )
 from mechanical_librarian.domain.metadata_policy import (
@@ -1867,8 +1868,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self, review_case_id: str
     ) -> tuple[tuple[str, object], ...]:
         """What the case's own write that landed last in its episode put in
-        each field but the cover, whichever episode planned it; ``None`` is a
-        write that emptied it (#1523, S5, #1973).
+        each field but the cover, whichever episode planned it, where that is
+        not the value the case read: a field back at that value after a keep,
+        a clear or an entry reads as unwritten. ``None`` is a write that
+        emptied it (#1523, S5, #1973).
 
         Owner entry on the case that wrote a field compares with this value
         rather than the target its report read before the write, so the
@@ -1877,18 +1880,21 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         fields the case wrote, so it offers no keep of what it replaced.
         """
         try:
+            case: ReviewCase | None = None
             values: list[tuple[str, object]] = []
             for destination in _WRITTEN_DESTINATIONS:
-                row = self._episode_write(review_case_id, destination, None)
-                if row is not None:
-                    values.append(
-                        (
-                            destination,
-                            _written_plan(
-                                row[0], review_case_id, destination
-                            ).desired_value,
-                        )
-                    )
+                row = self._case_write(review_case_id, destination, None)
+                if row is None:
+                    continue
+                written = _written_plan(
+                    row[0], review_case_id, destination
+                ).desired_value
+                case = case or self._recorded_case(review_case_id)
+                if field_value_version(destination, written) == field_value_version(
+                    destination, self._case_target_pre_value(case, destination)
+                ):
+                    continue
+                values.append((destination, written))
             return tuple(values)
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
@@ -1897,13 +1903,21 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self, decision: HumanDecision
     ) -> sqlite3.Row | tuple[str, ...] | None:
         """Find the verified effect an owner decision follows: the case's
-        write to the field that landed last in its episode. A description
-        follows the case's advice write instead when that landed later, by
-        landing order, never by a clock in whole seconds (#1973)."""
-        predecessor = self._episode_write(
+        write to the field that landed last in its episode before it."""
+        return self._case_write(
             decision.review_case_id, decision.destination, decision.decision_id
         )
-        if decision.destination == "description":
+
+    def _case_write(
+        self, review_case_id: str, destination: str, before: str | None
+    ) -> sqlite3.Row | tuple[str, ...] | None:
+        """The case's verified write to a field that landed last in its
+        episode, before the decision ``before`` when one is named. A
+        description follows the case's advice write instead when that landed
+        later, by landing order, never by a clock in whole seconds (#1523,
+        #1973)."""
+        predecessor = self._episode_write(review_case_id, destination, before)
+        if destination == "description":
             authored_predecessor = self._connection.execute(
                 "SELECT effect.document FROM field_effects effect "
                 "JOIN description_decisions authored ON authored.decision_id=effect.decision_id "
@@ -1914,8 +1928,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + ">COALESCE((SELECT MAX(rowid) FROM field_effect_events "
                 "WHERE plan_id=? AND kind='verified'),0) " + _LANDED_LAST_SQL,
                 (
-                    decision.review_case_id,
-                    decision.review_case_id,
+                    review_case_id,
+                    review_case_id,
                     None
                     if predecessor is None
                     else FieldEffectOperation.from_json(predecessor[0]).plan.plan_id,
@@ -1934,24 +1948,59 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
 
         A keep whose predecessor already holds the value the case read names
         none: going back would change nothing, so it is a plain keep, as owner
-        entry calls an entry of the written value unchanged.
-        `field_value_version` normalises both values as planning does, so
-        they are equal exactly when planning would write nothing."""
+        entry calls an entry of the written value unchanged. An accept of the
+        value that write holds, while the owner decision that made it is
+        still the field's answer, is refused as `owner_value_unchanged`
+        before anything is recorded, since planning would write nothing and
+        the accept would wait for ever. `field_value_version` normalises both
+        values as planning does, so they are equal exactly when planning
+        would write nothing."""
         predecessor = self._human_predecessor(decision)
         if predecessor is None:
             return None
-        if decision.outcome == "keep_current":
-            written = _written_plan(
-                predecessor[0], decision.review_case_id, decision.destination
-            ).desired_value
-            before = self._case_target_pre_value(
-                self._recorded_case(decision.review_case_id), decision.destination
+        if decision.outcome in {"accept", "keep_current"}:
+            written = field_value_version(
+                decision.destination,
+                _written_plan(
+                    predecessor[0], decision.review_case_id, decision.destination
+                ).desired_value,
             )
-            if field_value_version(
-                decision.destination, written
-            ) == field_value_version(decision.destination, before):
+            if decision.outcome == "accept":
+                if written == field_value_version(
+                    decision.destination,
+                    project_decision_value(
+                        decision.destination, decision.selected_value
+                    ),
+                ) and self._written_answer_stands(decision, predecessor[0]):
+                    raise HumanDecisionError("owner_value_unchanged")
+            elif written == field_value_version(
+                decision.destination,
+                self._case_target_pre_value(
+                    self._recorded_case(decision.review_case_id),
+                    decision.destination,
+                ),
+            ):
                 return None
         return FieldEffectOperation.from_json(predecessor[0]).plan.authority.decision_id
+
+    def _written_answer_stands(self, decision: HumanDecision, write: str) -> bool:
+        """Whether the write is the owner's own answer that still stands: its
+        decision is the field's latest owner decision in the case's episode,
+        pins and unpins aside (ADR-0085, Amendment 2).
+
+        A later owner decision still unwritten (a keep, an entry, a clear) is
+        the field's answer instead, and an accept recorded now replaces it;
+        an automatic write is no owner answer (#1980)."""
+        standing = self._connection.execute(
+            "SELECT decision_id FROM human_decisions WHERE review_case_id=? "
+            "AND destination=? AND outcome NOT IN ('pin','unpin') AND "
+            + _episode_decision_sql("human_decisions")
+            + " ORDER BY ordinal DESC LIMIT 1",
+            (decision.review_case_id, decision.destination),
+        ).fetchone()
+        return standing is not None and standing[0] == (
+            FieldEffectOperation.from_json(write).plan.authority.decision_id
+        )
 
     def _followed_write(
         self, decision: HumanDecision
@@ -2911,7 +2960,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         A corrective keep-current writes the case's admitted text. Where
         Audiobookshelf stored that text with formatting the admission rendered
         away, writing it would replace the formatting with its visible text, so
-        the restore is refused before any request (#1424).
+        the restore is refused before any request (#1424). The store now
+        refuses such a keep when it is recorded; this catches one recorded
+        before that.
         """
         if plan.destination != "description" or plan.authority.origin != "human":
             return False
@@ -2923,12 +2974,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if outcome != ("keep_current",):
             return False
         case = json.loads(self.get_review_case(plan.authority.review_case_id))["case"]
-        field = next(
-            item
-            for item in case["target"]["fields"]
-            if item["destination"] == "description"
-        )
-        return field["state"] == "value" and field["restorable"] is not True
+        return description_unrestorable(ReviewCase.from_json(_canonical_json(case)))
 
     @local_operation
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:

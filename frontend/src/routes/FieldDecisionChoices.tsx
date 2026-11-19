@@ -303,8 +303,10 @@ export function MetadataChoice({
     retainedAdvice && advice?.selected_advice ? advice.selected_advice.candidate : advice
   const evidenceId = `choice-evidence-${current ? 'current' : (context?.alternativeId ?? 'alternative')}`
   const evidenceLabel =
-    evidenceName ??
-    (longDescription ? `Evidence for ${label} description` : `Evidence for ${label}: ${value}`)
+    beforeChange && longDescription
+      ? 'Evidence for the description before your change'
+      : (evidenceName ??
+        (longDescription ? `Evidence for ${label} description` : `Evidence for ${label}: ${value}`))
   // The card's source line says a title-and-author value as Evidence does.
   const rationale = adviceSource
     ? `${adviceSource.engine} · ${adviceSource.model}`
@@ -324,6 +326,7 @@ export function MetadataChoice({
   const choiceName = beforeChange
     ? `Choose the ${longDescription ? 'description before your change' : `value before your change: ${value}`}`
     : `Choose ${kind} ${longDescription ? 'description' : `value: ${value}`}`
+  const eyebrow = `${label}${context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}`
   // A pin carried from an earlier case marks a card no decision of this case chose.
   const badge = selected
     ? `${automatic ? 'Automatic’s choice' : 'Your choice'}${pinned ? ' · Pinned' : ''}`
@@ -351,8 +354,7 @@ export function MetadataChoice({
       >
         <KeyBadge position={radio['aria-posinset']} />
         <small>
-          {label}
-          {context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}
+          {eyebrow ? <span className="choice-eyebrow">{eyebrow}</span> : null}
           {badge ? <b className="choice-chosen">{badge}</b> : null}
         </small>
         <strong id={valueId}>

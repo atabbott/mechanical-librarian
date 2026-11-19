@@ -37,6 +37,7 @@ from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBind
 from mechanical_librarian.adapters.persistence.decisions import (
     _automatic_decision_documents,
     field_change_waiting_sql,
+    field_write_waiting_sql,
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
@@ -430,6 +431,21 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         "review_case_id=:review_case_id UNION SELECT 'description') "
                         "field WHERE "
                         + field_change_waiting_sql(
+                            ":review_case_id", "field.destination"
+                        )
+                        + " ORDER BY field.destination",
+                        {"review_case_id": review_case_id},
+                    )
+                ),
+                write_waiting_destinations=tuple(
+                    row[0]
+                    for row in self._connection.execute(
+                        "SELECT field.destination FROM (SELECT destination FROM "
+                        "human_decisions WHERE review_case_id=:review_case_id UNION "
+                        "SELECT destination FROM automatic_decisions WHERE "
+                        "review_case_id=:review_case_id UNION SELECT 'description') "
+                        "field WHERE "
+                        + field_write_waiting_sql(
                             ":review_case_id", "field.destination"
                         )
                         + " ORDER BY field.destination",
