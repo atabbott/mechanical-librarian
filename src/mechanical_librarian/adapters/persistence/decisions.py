@@ -122,7 +122,9 @@ _REPLACEMENT_BLOCKING_EFFECT_SQL = (
 # released by Resume: Automatic decides it again, a hold in force refuses the
 # write until Resume and a released one lets it plan, so leaving Automatic and
 # turning it on again leaves the field as it was (ADR-0085, Amendment 4). A
-# withdrawal deletes the row its answer set, so it still refuses. Bound by
+# withdrawal still refuses: it deletes the row its answer set, and where it
+# gives the field back to the work's earlier hold, the field's latest answer is
+# the withdrawal, which the exemption leaves out. Bound by
 # `_automatic_mint_conflict`.
 _AUTOMATIC_MINT_CONFLICT_SQL = (
     "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
@@ -130,7 +132,11 @@ _AUTOMATIC_MINT_CONFLICT_SQL = (
     "WHERE held.review_case_id=? AND held.destination=?) "
     "AND EXISTS (SELECT 1 FROM automatic_decisions earlier "
     "WHERE earlier.review_case_id=? AND earlier.destination=? "
-    "AND earlier.policy_generation<?)) "
+    "AND earlier.policy_generation<?) "
+    "AND COALESCE((SELECT latest.outcome FROM human_decisions latest "
+    "WHERE latest.review_case_id=? AND latest.destination=? "
+    "AND latest.outcome NOT IN ('pin','unpin') "
+    "ORDER BY latest.ordinal DESC LIMIT 1),'')<>'withdraw') "
     "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
     "AND policy_generation=? "
     "UNION ALL SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
@@ -286,7 +292,7 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
 
 def _automatic_mint_conflict(
     decision: AutomaticDecision,
-) -> tuple[str, str, str, str, str, str, int, str, str, int, str, str]:
+) -> tuple[str, str, str, str, str, str, int, str, str, str, str, int, str, str]:
     case, destination = decision.review_case_id, decision.destination
     return (
         case,
@@ -296,6 +302,8 @@ def _automatic_mint_conflict(
         case,
         destination,
         decision.policy_generation,
+        case,
+        destination,
         case,
         destination,
         decision.policy_generation,

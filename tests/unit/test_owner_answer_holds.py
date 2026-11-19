@@ -442,3 +442,51 @@ def test_a_cover_answer_removes_a_released_cover_row_it_meets(tmp_path: Path) ->
         "SELECT count(*) FROM field_effect_manual_holds"
     ).fetchone() == (0,)
     repository.close()
+
+
+# A withdrawal still keeps Automatic off the field, also where it gives the
+# field back to the work's earlier hold on a case Automatic decided in an
+# earlier generation (ADR-0085, Amendment 4).
+def test_a_withdrawal_that_restores_an_earlier_hold_still_refuses_automatic(
+    tmp_path: Path,
+) -> None:
+    store, report, _ = _store(tmp_path)
+    store.publish(report)
+    earlier = store.decide("keep_current", destination="title")
+    successor = rewritten(report, publisher="Changed Elsewhere")
+    store.publish(successor)
+    assert _hold(store) == earlier.decision_id  # carried to the successor
+    decided = _automatic(store, "title")[-1]
+    assert decided.review_case_id == store.case.review_case_id
+    store.decide("owner_entered", OWN)
+    # Leaving Automatic re-admits the case in Preview; Automatic's decision is
+    # then of an earlier generation, so the answer can be withdrawn, which
+    # gives the field back to the earlier hold.
+    assert store.repository.enter_shadow_preview(store.clock(), ()) == "preview"
+    store.publish(successor)
+    assert store.case.review_case_id == decided.review_case_id
+    store.decide("withdraw", destination="title")
+    assert _hold(store) == earlier.decision_id
+    # The preparation pipeline settles the case's reconciliation, then
+    # Automatic is turned on again: the withdrawal still keeps it off the field.
+    connection = store.repository._connection
+    (transition,) = connection.execute(
+        "SELECT transition_id FROM metadata_policy_transitions "
+        "ORDER BY rowid DESC LIMIT 1"
+    ).fetchone()
+    connection.execute(
+        "UPDATE metadata_policy_transition_items SET state='complete' "
+        "WHERE transition_id=?",
+        (transition,),
+    )
+    connection.execute(
+        "UPDATE metadata_policy_transitions SET state='completed' "
+        "WHERE transition_id=?",
+        (transition,),
+    )
+    connection.commit()
+    store.repository.activate_qualified_automatic(store.clock())
+    store.repository.persist_shadow_outcome(store.case.review_case_id, store.clock())
+    assert _automatic(store, "title")[-1].decision_id == decided.decision_id
+    assert _queued(store) is None
+    store.close()

@@ -421,8 +421,10 @@ had nothing left to write.
   Automatic had not decided the field on the case, so an answer given before
   Automatic decided anything there still shows as an ordinary answer until a
   later case (Amendment 1). A pin still refuses it (Amendment 2), and so does
-  a withdrawal, which deletes the hold row its answer set: a withdrawal
-  never re-arms automatic handling.
+  a withdrawal, which deletes the hold row its answer set or gives the field
+  back to the work's earlier hold: a field whose latest answer is a
+  withdrawal is not decided again, so a withdrawal never re-arms automatic
+  handling.
 
 No stored document changes shape and no version moves; an existing database
 gains the decision at the case's next admission.
@@ -432,4 +434,6 @@ Proof: `test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_
 `test_an_owner_answer_on_an_automatic_field_outlasts_confirming_automatic` and
 `test_an_answer_with_no_earlier_automatic_decision_still_keeps_automatic_off`
 in `tests/integration/test_leaving_automatic_posture.py`; the first two fail
-before this amendment.
+before this amendment. `test_a_withdrawal_that_restores_an_earlier_hold_still_refuses_automatic`
+in `tests/unit/test_owner_answer_holds.py` keeps a withdrawal refusing where it
+gives the field back to an earlier hold.
