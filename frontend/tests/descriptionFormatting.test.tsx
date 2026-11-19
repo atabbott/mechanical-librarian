@@ -12,6 +12,7 @@ import {
   visibleText,
   wasCut,
 } from '../src/descriptionFormatting'
+import { ChoiceEvidencePanel } from '../src/routes/FieldDecisionChoices'
 
 // The formatted content inside its own block, or the value as written.
 const html = (value: string, limit?: number, cut?: boolean) => {
@@ -337,6 +338,47 @@ describe('description formatting', () => {
         container.querySelectorAll('.description-formatted, .description-formatted *').length,
       )
     }
+  })
+
+  it("shows a description's formatting in a choice's evidence, and other rows as text", () => {
+    const row = (observation: string) => ({
+      language: null,
+      observation,
+      role: 'external_observation' as const,
+      source: 'Open Library',
+    })
+    const { container } = render(
+      <ChoiceEvidencePanel
+        context={{
+          alternativeId: null,
+          evidence: [
+            row('Description: <p>Kept <b>bold</b></p>'),
+            row(`Description: <p>${'w'.repeat(149)} <b>bold…`),
+            row('Title: <b>Not a description</b>'),
+            row('Description: <p>An <b>unfinished…'),
+          ],
+          limitations: [],
+          rationale: '',
+          recommendation: 'no_recommendation',
+          recommendationReason: '',
+          selection: 'current',
+        }}
+        evidenceId="evidence"
+        label="Description current value"
+      />,
+    )
+    const rows = [...container.querySelectorAll('li')]
+    expect(rows[0]?.querySelector('.description-formatted')?.innerHTML).toBe(
+      '<p>Kept <strong>bold</strong></p>',
+    )
+    expect(rows[0]).toHaveTextContent('Description:')
+    expect(rows[1]?.querySelector('.description-formatted')?.innerHTML).toBe(
+      `<p>${'w'.repeat(149)} <strong>bold…</strong></p>`,
+    )
+    expect(rows[2]?.querySelector('.description-formatted')).toBeNull()
+    expect(rows[2]).toHaveTextContent('Title: <b>Not a description</b>')
+    expect(rows[3]?.querySelector('.description-formatted')).toBeNull()
+    expect(rows[3]).toHaveTextContent('Description: <p>An <b>unfinished…')
   })
 
   it('names a formatted description by its visible text', () => {
