@@ -52,6 +52,12 @@ _READERS: dict[str, str] = {
     # cites (#1336): the provider's name only, never the record or an offer.
     "adapters/persistence/field_effect_activity.py::"
     "SQLiteFieldEffectActivityRepository._plan_source_labels": "write_plan_source_name",
+    # A description alternative a level choice offers cites a refused
+    # product's claim; its formatted copy is read from the claims the
+    # alternative already cites, never to make an offer (#1995, S8).
+    "domain/description_formatting.py::alternative_formatted": (
+        "cited_description_copy"
+    ),
     # A retry successor keeps each carried lane's own records (AC6); since
     # #1477 it and preparation's link phase merge lanes through one producer.
     "application/metadata_report.py::persisted_lane_result": "producer",

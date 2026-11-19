@@ -341,11 +341,23 @@ def retained_report_as_current(document: str) -> MetadataReport:
         if field["destination"] == "description":
             field["restorable"] = False
             field["formatted"] = None
-    for provider in data["providers"]:
-        for candidate in provider["candidates"]:
-            for claim in candidate["claims"]:
-                if claim["kind"] == "description":
-                    claim["formatted"] = None
+
+    # Every provider description claim, in any candidate list a provider
+    # keeps (live, refused, recording lookup), gains the null copy.
+    def described(value: object) -> None:
+        if isinstance(value, dict):
+            claims = value.get("claims")
+            if isinstance(claims, list):
+                for claim in claims:
+                    if isinstance(claim, dict) and claim.get("kind") == "description":
+                        claim["formatted"] = None
+            for item in value.values():
+                described(item)
+        elif isinstance(value, list):
+            for item in value:
+                described(item)
+
+    described(data["providers"])
     if data.get("audio") is not None:
         data["audio"]["discovery_titles"] = []
     for result in data["field_results"]:

@@ -323,8 +323,9 @@ def test_actual_v32_baseline_table_refuses_before_rows_without_mutation(
     # description's restore flag v58 added (#1424), in the field-result
     # source v60 added (#1316), in the comparison version v61 moved
     # (#1307), in the library languages v62 added (#1315), in the companion
-    # section v63 added (#1319), in the EPUB cover recovery (#1357) and in
-    # the owner-link facts v82 added (#1477).
+    # section v63 added (#1319), in the EPUB cover recovery (#1357), in
+    # the owner-link facts v82 added (#1477) and in the description's
+    # formatted copy v83 added (#1995).
     produced = report.to_data()
     produced.pop("owner_link")
     produced.pop("library_languages")
@@ -334,6 +335,7 @@ def test_actual_v32_baseline_table_refuses_before_rows_without_mutation(
     produced["comparison_version"] = "closed-title-creator-publication-work-identity-v5"
     for field in produced["target"]["fields"]:
         field.pop("restorable", None)
+        field.pop("formatted", None)
     for result in produced["field_results"]:
         result["sources"] = [
             source
