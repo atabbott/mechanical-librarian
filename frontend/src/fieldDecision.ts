@@ -274,7 +274,10 @@ export const valueText = (destination: TargetDestination, value: string) =>
   destination === 'language' ? languageName(value) : value
 export const decisionValue = (field: ReviewField) => {
   if (authoredOwnerRecorded(field) && field.descriptionAdvice?.selected_advice)
-    return field.descriptionAdvice.selected_advice.candidate.output.description
+    return (
+      field.descriptionAdvice.selected_advice.visible_text ??
+      field.descriptionAdvice.selected_advice.candidate.output.description
+    )
   // A hold carried from an earlier case keeps the library's value (ADR-0085).
   const selected = (field.humanDecision ?? (field.manualHold ? null : field.automaticDecision))
     ?.selected_value

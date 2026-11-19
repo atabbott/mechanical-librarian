@@ -941,6 +941,7 @@ describe('the keep card on a field this case wrote (#1523)', () => {
           binding: advice.binding,
           current: false,
           formatted: null,
+          visible_text: advice.visible_text,
         },
         selection: {
           decision_id: `automatic_decision_${'a'.repeat(64)}`,

@@ -341,7 +341,9 @@ export function FieldDecisionCanvas({
             label: 'Description adviser · Earlier choice',
             longDescription: isLongDescription(
               'description',
-              selectedAdvice.selected_advice.candidate.output.description,
+              selectedAdvice.selected_advice.formatted ??
+                selectedAdvice.selected_advice.visible_text ??
+                selectedAdvice.selected_advice.candidate.output.description,
             ),
             onChoose: () => undefined,
             recording: false,
@@ -349,8 +351,13 @@ export function FieldDecisionCanvas({
               selectedAdvice.selected_advice.current || selectedAdvice.application_outcome,
             ),
             toggle: () => undefined,
-            value: selectedAdvice.selected_advice.candidate.output.description,
+            // The card shows what is written: the copy, else the visible
+            // text, never the adviser's own markup (#1995).
+            value:
+              selectedAdvice.selected_advice.visible_text ??
+              selectedAdvice.selected_advice.candidate.output.description,
             formatted: selectedAdvice.selected_advice.formatted,
+            plainText: selectedAdvice.selected_advice.visible_text !== null,
           },
         ]
       : []
@@ -377,7 +384,12 @@ export function FieldDecisionCanvas({
               selectedAdvice.state === 'running',
             expanded: false,
             label: 'Description adviser',
-            longDescription: isLongDescription('description', adviceCandidate.output.description),
+            longDescription: isLongDescription(
+              'description',
+              selectedAdvice.formatted ??
+                selectedAdvice.visible_text ??
+                adviceCandidate.output.description,
+            ),
             onChoose: () => {
               if (!selectedAdvice.current || !selectedAdvice.readable || !selected.editable) return
               choose(
@@ -400,8 +412,9 @@ export function FieldDecisionCanvas({
                     selectedAdvice.selection?.candidate_id === adviceCandidate.candidate_id,
                   ),
             toggle: () => undefined,
-            value: adviceCandidate.output.description,
+            value: selectedAdvice.visible_text ?? adviceCandidate.output.description,
             formatted: selectedAdvice.formatted,
+            plainText: selectedAdvice.visible_text !== null,
           },
         ]
       : []

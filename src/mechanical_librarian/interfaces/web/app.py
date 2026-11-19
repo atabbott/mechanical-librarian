@@ -967,8 +967,10 @@ class _SelectedDescriptionAdvice(_ClosedModel):
     candidate: _DescriptionCandidateCopy
     binding: DescriptionAdviceBinding
     current: bool
-    # The advice's formatted copy, as it is shown and written (#1995).
+    # The advice's formatted copy and visible text, as it is shown and
+    # written (#1995); both null where the reader refuses the text.
     formatted: Annotated[str, Field(max_length=16_384)] | None
+    visible_text: Annotated[str, Field(max_length=16_384)] | None
 
 
 class _DescriptionAdviceResponse(_ClosedModel):
@@ -986,6 +988,8 @@ class _DescriptionAdviceResponse(_ClosedModel):
     # The candidate's formatted copy, and whether its text can be written at
     # all: text the description reader refuses can't be chosen (#1995).
     formatted: Annotated[str, Field(max_length=16_384)] | None
+    # The text that is written where the advice has no copy (#1995).
+    visible_text: Annotated[str, Field(max_length=16_384)] | None
     readable: bool
 
     @model_validator(mode="after")

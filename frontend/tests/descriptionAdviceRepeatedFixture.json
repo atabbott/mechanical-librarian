@@ -830,7 +830,8 @@
         "readable": true,
         "selected_advice": null,
         "selection": null,
-        "state": "succeeded"
+        "state": "succeeded",
+        "visible_text": "Authored synthetic description."
       },
       "destination": "description",
       "deterministic_disposition": "keep",

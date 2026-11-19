@@ -49,7 +49,8 @@
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true,
-      "formatted": null
+      "formatted": null,
+      "visible_text": "Authored synthetic description."
     },
     "selection": {
       "application": "guarded",
@@ -72,7 +73,8 @@
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
       "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
-    "state": "failed"
+    "state": "failed",
+    "visible_text": null
   },
   "interrupted": {
     "application_outcome": null,
@@ -124,7 +126,8 @@
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true,
-      "formatted": null
+      "formatted": null,
+      "visible_text": "Authored synthetic description."
     },
     "selection": {
       "application": "guarded",
@@ -147,7 +150,8 @@
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
       "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
-    "state": "interrupted"
+    "state": "interrupted",
+    "visible_text": null
   },
   "requested": {
     "application_outcome": null,
@@ -199,7 +203,8 @@
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true,
-      "formatted": null
+      "formatted": null,
+      "visible_text": "Authored synthetic description."
     },
     "selection": {
       "application": "guarded",
@@ -222,7 +227,8 @@
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
       "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
-    "state": "requested"
+    "state": "requested",
+    "visible_text": null
   },
   "running": {
     "application_outcome": null,
@@ -274,7 +280,8 @@
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true,
-      "formatted": null
+      "formatted": null,
+      "visible_text": "Authored synthetic description."
     },
     "selection": {
       "application": "guarded",
@@ -297,7 +304,8 @@
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
       "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
-    "state": "running"
+    "state": "running",
+    "visible_text": null
   },
   "selected": {
     "application_outcome": null,
@@ -368,7 +376,8 @@
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true,
-      "formatted": null
+      "formatted": null,
+      "visible_text": "Authored synthetic description."
     },
     "selection": {
       "application": "guarded",
@@ -391,7 +400,8 @@
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
       "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
-    "state": "succeeded"
+    "state": "succeeded",
+    "visible_text": "Authored synthetic description."
   },
   "succeeded": {
     "application_outcome": null,
@@ -462,7 +472,8 @@
         "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
       },
       "current": true,
-      "formatted": null
+      "formatted": null,
+      "visible_text": "Authored synthetic description."
     },
     "selection": {
       "application": "guarded",
@@ -485,6 +496,7 @@
       "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
       "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
     },
-    "state": "succeeded"
+    "state": "succeeded",
+    "visible_text": "Authored synthetic description."
   }
 }

@@ -302,8 +302,18 @@ def test_automatic_admission_refuses_rewrite_below_description_floor(
     advice = store.read(binding.review_case_id)
     assert advice["candidate"]["candidate_id"] == candidate.candidate_id
     assert advice["selection"] is None
+    # The card shows what is written: the copy, else the visible text.
+    marked = description.startswith("<")
+    assert (advice["formatted"], advice["visible_text"]) == (
+        ("<p>A story.</p>", "A story.") if marked else (None, description)
+    )
     decision = store.admit(candidate.candidate_id, binding, "human", "b" * 64, 12)
     assert decision.origin == "human"
+    selected = store.read(binding.review_case_id)["selected_advice"]
+    assert (selected["formatted"], selected["visible_text"]) == (
+        advice["formatted"],
+        advice["visible_text"],
+    )
     # The advice is read as any description is: markup is written as its
     # formatted copy beside the visible text (#1995).
     snapshot = PersistedFieldEffectAuthority(repository).resolve(decision)
@@ -326,7 +336,11 @@ def test_advice_the_reader_refuses_cannot_be_chosen(
         tmp_path, description=description
     )
     advice = store.read(binding.review_case_id)
-    assert (advice["readable"], advice["formatted"]) == (False, None)
+    assert (advice["readable"], advice["formatted"], advice["visible_text"]) == (
+        False,
+        None,
+        None,
+    )
     with pytest.raises(ValueError, match="description advice unreadable"):
         store.admit(candidate.candidate_id, binding, "human", "b" * 64, 12)
     assert repository._connection.execute(

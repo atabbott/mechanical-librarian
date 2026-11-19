@@ -14559,6 +14559,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
                 binding: advice.binding,
                 current: true,
                 formatted: null,
+                visible_text: advice.visible_text,
               },
               selection: {
                 decision_id: `human_decision_${'a'.repeat(64)}`,
@@ -14633,6 +14634,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
 
 // Adviser text with formatting, read into elements from a closed set (ADR-0106).
 const formattedAdvice = '<p>An <b>authored</b> line.</p><ul><li>One</li><li><i>Two</i></li></ul>'
+const formattedVisible = 'An authored line. • One • Two'
 const formattedAuthored = () => {
   const authored = readCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
@@ -14643,7 +14645,13 @@ const formattedAuthored = () => {
     ...advice.candidate,
     output: { ...advice.candidate.output, description: formattedAdvice },
   }
-  field.descriptionAdvice = { ...advice, candidate }
+  // The server reads the advice as it writes it: its copy and visible text.
+  field.descriptionAdvice = {
+    ...advice,
+    candidate,
+    formatted: formattedAdvice,
+    visible_text: formattedVisible,
+  }
   return { authored, field, advice: field.descriptionAdvice, candidate }
 }
 
@@ -14709,10 +14717,41 @@ it('shows each description’s formatted copy on its card and names it by its te
     expect(element.attributes).toHaveLength(0)
 })
 
+it('shows advice with no formatted copy as the visible text that is written', async () => {
+  // A link is dropped when written, so the card shows the text, never the link (#1995).
+  const { authored, field, advice, candidate } = formattedAuthored()
+  const tail = ' More words.'.repeat(30)
+  field.descriptionAdvice = {
+    ...advice,
+    candidate: {
+      ...candidate,
+      output: {
+        ...candidate.output,
+        description: `See <a href="https://example.org/">this</a>.${tail}`,
+      },
+    },
+    formatted: null,
+    visible_text: `See this.${tail}`,
+  }
+  renderRoute('/library?lens=all&preview=case-1&field=description', {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+      ...authored,
+      id: 'case-1',
+      fields: [field],
+    })),
+  })
+  const option = await screen.findByRole('radio', { name: 'Choose advised description' })
+  const content = option.closest('article')?.querySelector('.description-choice-content')
+  expect(content?.querySelector('a')).toBeNull()
+  expect(content).toHaveTextContent('See this. More words.')
+  expect(content).not.toHaveTextContent('<a')
+})
+
 it('says advice it cannot read safely cannot be chosen', async () => {
   // Text the description reader refuses is never written (#1995).
   const { authored, field, advice } = formattedAuthored()
-  field.descriptionAdvice = { ...advice, readable: false, formatted: null }
+  field.descriptionAdvice = { ...advice, readable: false, formatted: null, visible_text: null }
   renderRoute('/library?lens=all&preview=case-1&field=description', {
     ...createHttp(),
     getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
@@ -14725,7 +14764,7 @@ it('says advice it cannot read safely cannot be chosen', async () => {
   expect(option).toBeDisabled()
   expect(
     within(option).getByText(
-      'This advice’s formatting can’t be read safely. Ask for advice again.',
+      'This advice’s formatting can’t be read safely. Retry description advice.',
     ),
   ).toBeVisible()
 })
@@ -14771,6 +14810,7 @@ it('names a formatted description in Review complete by its visible text', async
                 binding: advice.binding,
                 current: true,
                 formatted: null,
+                visible_text: formattedVisible,
               },
               selection: {
                 decision_id: `human_decision_${'a'.repeat(64)}`,
@@ -14799,9 +14839,9 @@ it('names a formatted description in Review complete by its visible text', async
   const completed = screen.getByRole('button', {
     name: (name) =>
       name.replace(/\s+/gu, ' ') ===
-      'Description · Adviser’s description chosenAn authored line. One Two',
+      'Description · Adviser’s description chosenAn authored line. • One • Two',
   })
-  expect(completed.querySelector('strong')?.textContent).toBe('An authored line. One Two')
+  expect(completed.querySelector('strong')?.textContent).toBe('An authored line. • One • Two')
   expect(completed).not.toHaveTextContent('<')
 })
 
@@ -14818,6 +14858,10 @@ it('renders hostile multiline advice as text and refuses stale selection while o
       ...advice.candidate,
       output: { description: '<img src=x onerror=alert(1)>\nSecond line', disposition: 'ready' },
     },
+    // The reader refuses this text, so the server sends no reading of it.
+    formatted: null,
+    visible_text: null,
+    readable: false,
   }
   renderRoute('/library?lens=all&preview=case-1&field=description', {
     ...createHttp(),
@@ -15176,6 +15220,7 @@ it.each(['verified', 'no_change_required'] as const)(
         binding: advice.binding,
         current: outcome === 'no_change_required',
         formatted: null,
+        visible_text: advice.visible_text,
       },
       selection: {
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
@@ -15238,6 +15283,7 @@ it.each([
         binding: advice.binding,
         current,
         formatted: null,
+        visible_text: advice.visible_text,
       },
       selection: {
         decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
@@ -15350,6 +15396,7 @@ it.each(['human', 'automatic_policy'] as const)(
           binding: advice.binding,
           current: scenario.current,
           formatted: null,
+          visible_text: advice.visible_text,
         },
         selection: {
           decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
@@ -15405,7 +15452,13 @@ it.each([true, false])(
       ...advice,
       current: true,
       application_outcome: null,
-      selected_advice: { candidate, binding: advice.binding, current: true, formatted: null },
+      selected_advice: {
+        candidate,
+        binding: advice.binding,
+        current: true,
+        formatted: formattedAdvice,
+        visible_text: formattedVisible,
+      },
       selection: {
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
         candidate_id: candidate.candidate_id,

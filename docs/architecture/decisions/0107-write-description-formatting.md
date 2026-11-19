@@ -57,7 +57,8 @@ writing its visible text back would flatten it.
    declarations, as its copy. `restore_unavailable` remains for a link, an
    attribute, any other tag or markup the renderer refuses.
 9. **Shown.** Cards, advice and the Library summary show the copy in place of
-   the text; names, sentences and evidence keep the visible text.
+   the text; advice without a copy shows the visible text that is written,
+   never its own markup. Names, sentences and evidence keep the visible text.
 10. Sources that record no rendering keep their description as stated, as
     before.
 

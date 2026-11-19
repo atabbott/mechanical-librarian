@@ -858,7 +858,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 "current": self._candidate_is_current(
                     selected_candidate, selection.binding
                 ),
-                "formatted": _advised_form(selected_candidate),
+                **_advised_reading(selected_candidate),
             }
         advised = (
             None
@@ -891,6 +891,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             # How the advice shows and is written (#1995): its formatted copy,
             # and whether the reader refused it, so it can't be chosen.
             "formatted": None if advised is None else advised[1],
+            "visible_text": None if advised is None else advised[0],
             "readable": candidate is None or advised is not None,
             "binding": DescriptionAdviceBinding.model_validate_json(
                 row[6]
@@ -906,9 +907,13 @@ def advised_description(text: str) -> tuple[str, str | None] | None:
     return (shown, formatted) if type(shown) is str else None
 
 
-def _advised_form(candidate: DescriptionAdviceCandidate) -> str | None:
+def _advised_reading(candidate: DescriptionAdviceCandidate) -> dict[str, str | None]:
+    """A chosen advice's formatted copy and visible text, as it is written."""
     advised = advised_description(candidate.output.description)
-    return None if advised is None else advised[1]
+    return {
+        "formatted": None if advised is None else advised[1],
+        "visible_text": None if advised is None else advised[0],
+    }
 
 
 def request_description_preparation(
