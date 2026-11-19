@@ -2,6 +2,7 @@
 // outcomes, and the way on to the next work that needs attention. Moved out of
 // the Library route under the route-size rule (#1742); the page keeps the
 // attention read, the completion record, the next work and the card's focus.
+import { formattedLength, visibleText } from '../descriptionFormatting'
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query'
 import { useRef } from 'react'
 import type { RefObject } from 'react'
@@ -74,7 +75,7 @@ export const ReviewCompletion = ({
             <button
               type="button"
               aria-label={
-                field.destination === 'description' && decisionValue(field).length > 240
+                field.destination === 'description' && formattedLength(decisionValue(field)) > 240
                   ? `Revisit description: ${completionOutcome(field)}`
                   : undefined
               }
@@ -83,7 +84,11 @@ export const ReviewCompletion = ({
               <small>
                 {destinationLabel(field.destination)} · {completionOutcome(field)}
               </small>
-              <strong>{decisionValue(field)}</strong>
+              <strong>
+                {field.destination === 'description'
+                  ? visibleText(decisionValue(field))
+                  : decisionValue(field)}
+              </strong>
             </button>
           </li>
         ))}

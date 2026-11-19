@@ -12,6 +12,9 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- A description's bold, italics, paragraphs and lists now show as
+  formatting, not as tags, wherever the workspace shows a description.
+  Markup that cannot be read safely is still shown as written (#1992).
 - After you choose Resume automatic handling, a field no longer tells you
   to use Resume to release your decision, and its pin line says to choose a
   value and then pin it, since choosing alone doesn't pin (#1988).
