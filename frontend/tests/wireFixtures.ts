@@ -117,6 +117,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
   written_by_case: false,
   restore_unavailable: false,
   pin: null,
+  change_written: false,
   pin_control: null,
   preservation_only: false,
   proposal_id: 'proposal-1',

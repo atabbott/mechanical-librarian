@@ -581,10 +581,13 @@ describe('a description this case wrote over formatting (#1424)', () => {
   })
   const keepCardShown = () => screen.queryByText(/^(Keep current value|Before your change)$/u)
 
-  it('offers no card while the field asks', async () => {
+  it('offers no card while the field asks, and says why under the question', async () => {
     renderRoute('/library?lens=all&preview=case-1&field=description', owner(over()))
     await screen.findByRole('radio', { name: /^Choose proposed value/u })
     expect(keepCardShown()).toBeNull()
+    const question = document.querySelector('.decision-question')
+    expect(question?.nextElementSibling).toHaveTextContent(new RegExp(`\\. ${FORMATTED}$`, 'u'))
+    expect(screen.getAllByText(FORMATTED, { exact: false })).toHaveLength(1)
   })
 
   it('still offers Before your change where the earlier description can be restored', async () => {

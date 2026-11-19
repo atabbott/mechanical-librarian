@@ -263,10 +263,16 @@ describe('the sentence at the foot of the field', () => {
       unpin: false,
       quiet: true,
     })
-    // Once the case wrote it, the change waits only for the next scan to
-    // read it back, beside Applied and verified.
+    // Once the change is written, it waits only for the next scan to read it
+    // back, beside Applied and verified.
+    expect(
+      pinFoot({ ...waiting, writtenByCase: true, changeWritten: true }, { pinOnScreen: false })
+        .sentence,
+    ).toBe('You can pin this field after the next scan reads its new value.')
+    // An earlier write by the case says nothing of a later change still to be
+    // written, as Automatic's in a later policy generation.
     expect(pinFoot({ ...waiting, writtenByCase: true }, { pinOnScreen: false }).sentence).toBe(
-      'You can pin this field after the next scan reads its new value.',
+      'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
     )
   })
 

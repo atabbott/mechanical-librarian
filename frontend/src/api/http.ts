@@ -817,6 +817,9 @@ export interface ReviewFieldView {
   // The value the case read is a description stored with formatting that a
   // restore from here would lose, so there is no way back to it (#1424).
   restoreUnavailable?: boolean
+  // A refused pin waits only for the next scan to read the written value
+  // back: the field's change is written (#1984).
+  changeWritten?: boolean
   // An owner pin on the field with the value it keeps: in force, waiting for
   // the chosen value to be read back, or changed. And whether a pin or an
   // unpin is accepted now (ADR-0085, Amendment 2): a pin is available, or
@@ -3529,6 +3532,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   writtenByCase: field.written_by_case,
   restoreUnavailable: field.restore_unavailable,
   pin: field.pin,
+  changeWritten: field.change_written,
   pinControl: field.pin_control,
   coverConsideration:
     field.cover_consideration === null ? null : mapCoverConsideration(field.cover_consideration),

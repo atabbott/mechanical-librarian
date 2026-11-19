@@ -13182,6 +13182,10 @@
             ],
             "title": "Automatic Withheld Reason"
           },
+          "change_written": {
+            "title": "Change Written",
+            "type": "boolean"
+          },
           "choice_contexts": {
             "items": {
               "$ref": "#/components/schemas/_FieldChoiceContext"
@@ -13528,6 +13532,7 @@
           "written_by_case",
           "restore_unavailable",
           "pin",
+          "change_written",
           "pin_control",
           "proposed_values",
           "choice_contexts",

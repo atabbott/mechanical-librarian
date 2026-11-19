@@ -446,11 +446,13 @@ export function FieldDecisionCanvas({
               : destinationLabel(selected.destination)}
           </h3>
           {selectedActionable ? (
-            // One line under the question: this field's own reason (#1519).
+            // One line under the question: this field's own reason (#1519),
+            // and why a field this case wrote has no way back (#1523, #1424).
             <p
               className={selected.automaticWithheldReason ? 'automatic-withheld-reason' : undefined}
             >
               {questionReason(selected, mediaKind)}
+              {wayBackSentence ? ` ${wayBackSentence}` : ''}
             </p>
           ) : selectedRevisitable ? (
             // A pin in force is said once, at the foot of the field.

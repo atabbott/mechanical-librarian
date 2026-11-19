@@ -1121,6 +1121,8 @@ class _ReviewField(_ClosedModel):
     # The value the case read is a description a restore can't write (#1424).
     restore_unavailable: bool
     pin: _FieldPin | None
+    # A refused pin waits only for the next scan: the change is written (#1984).
+    change_written: bool
     pin_control: _PinControl | None
     proposed_values: list[_ProposedValue]
     choice_contexts: list["_FieldChoiceContext"]

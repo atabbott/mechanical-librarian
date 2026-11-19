@@ -379,6 +379,9 @@ class CurrentReviewCaseSnapshot:
     pins: tuple[tuple[str, bool, str], ...] = ()
     # Destinations whose change waits to be written, so a pin is refused.
     change_waiting_destinations: tuple[str, ...] = ()
+    # Destinations whose change is still to be written; a refused pin on any
+    # other waits only for the next scan to read the written value (#1984).
+    write_waiting_destinations: tuple[str, ...] = ()
     # Held destinations whose return to automatic handling the owner has
     # requested; the hold stays until the requested checks finish (#1755).
     return_requested_destinations: tuple[str, ...] = ()
@@ -2130,6 +2133,10 @@ class InspectCurrentReviewCase:
             and description_unrestorable(case),
             "pin": pin,
             "pin_control": pin_control,
+            # A refused pin waits only for the next scan to read the written
+            # value back: the field's change is written (#1984).
+            "change_written": destination in snapshot.change_waiting_destinations
+            and destination not in snapshot.write_waiting_destinations,
             # The offer a choice binds: its value, proposal and rule (#1355).
             "offer_digest": offer_digest(proposals, destination),
             "proposal_id": proposal["proposal_id"],

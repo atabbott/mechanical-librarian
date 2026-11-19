@@ -1435,6 +1435,7 @@ describe('a pin on each value', () => {
       pinControl: { pin: 'change_waiting', unpin: false },
       // Automatic's write verified; the next scan has not read it back.
       writtenByCase: true,
+      changeWritten: true,
     }
     const { http } = pins(waiting)
     const foot = await show(http)
