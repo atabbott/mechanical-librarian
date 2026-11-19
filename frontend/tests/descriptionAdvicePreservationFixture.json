@@ -10,6 +10,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -98,6 +99,7 @@
         "provider_e2dae467c54051b9202c0203e936cb26f016c7f6742db7bd73a51434fd94137c",
         "provider_fe07db53652cff3a2705227b53c1ec256664f7588a807f6d14c11b2d76c2a827"
       ],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -107,6 +109,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -198,6 +201,7 @@
         }
       ],
       "provenance": ["provider_c5d00f6325d00d72af199f7c0702def45ae7370bea82b63ca0dc945103f7d7a8"],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -207,6 +211,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -297,6 +302,7 @@
         "local_8a043456a2b2863fbbc99c0da87486b328687c1da4522147eda80d0210de19a6",
         "provider_e97d5b01d8c4d1ac75dd707cf93c8fab512629f95e64aa6695aa2dfa62ef913f"
       ],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": ["manifestation_verification_required"],
       "written_by_case": false
@@ -306,6 +312,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -398,6 +405,7 @@
       "proposal_id": "review_proposal_1ab6cd91842fd56a6f00c65df24d411e8fb0faef09c1aafbf22da988aeac0c88",
       "proposed_values": [],
       "provenance": ["provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -407,6 +415,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -459,6 +468,7 @@
       "proposal_id": "review_proposal_ede72a65700ddc80bc1a6612da653fdfcdc1f82f33ad7680fa909fc867f04d7c",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -468,6 +478,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -561,6 +572,7 @@
       "proposal_id": "review_proposal_9bd6589a3b7e109d67b1a09fecad8bd7a324e0ed50224f629f01f5efe8372872",
       "proposed_values": [],
       "provenance": ["provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -570,6 +582,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -622,6 +635,7 @@
       "proposal_id": "review_proposal_28a5928507f73cd27d2b5d9d9a43568e798e907e24f3f864d74a2c060e15f373",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -631,6 +645,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -683,6 +698,7 @@
       "proposal_id": "review_proposal_e2f477f8c3cbed5f7ac280f780fd54250b7bfdd6286af225183cdc69272ad572",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -692,6 +708,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -845,6 +862,7 @@
       "proposal_id": "review_proposal_b8cbbfb9c8f03e623263884fbca36bad30335a28e1d086a726cbdb45e7faa67b",
       "proposed_values": [],
       "provenance": ["provider_8d5555b014ce6a5575d245545fd197836a76c7f8e5f496697d90521e01e2e5e4"],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -854,6 +872,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -906,6 +925,7 @@
       "proposal_id": "review_proposal_04a2ac69bb109b0855d02ce3c33757ae0b9b1556ed62dbbac5c2900e7406df23",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -915,6 +935,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -967,6 +988,7 @@
       "proposal_id": "review_proposal_a8600fb05fe2f563d26db2ad254d507376268e46708945ef16de7f858bcd1ee2",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -976,6 +998,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -1050,6 +1073,7 @@
         }
       ],
       "provenance": ["provider_e8f3d5f76eca4ea97b720bfe78e64cf22c5796eef346431fdfe943fc76f4e457"],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -1059,6 +1083,7 @@
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
       "automatic_withheld_reason": null,
+      "change_written": false,
       "choice_contexts": [
         {
           "alternative_id": null,
@@ -1108,6 +1133,7 @@
       "proposal_id": "review_proposal_15c10773a19fbbf56d26a214b8dde306a267f04354c18baa3c2f208517e2fc42",
       "proposed_values": [],
       "provenance": [],
+      "restore_unavailable": false,
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "written_by_case": false
@@ -1117,7 +1143,7 @@
   "recording_admission_basis": null,
   "recording_identity_basis": null,
   "review_case_id": "review_case_30a58f3eacf500c795113538c044b2a95e8d87af71be60da55fc950882c19278",
-  "schema_version": "review-case-detail-v11",
+  "schema_version": "review-case-detail-v12",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",

@@ -3898,7 +3898,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v11",
+            "const": "review-case-detail-v12",
             "title": "Schema Version",
             "type": "string"
           },
@@ -13182,6 +13182,10 @@
             ],
             "title": "Automatic Withheld Reason"
           },
+          "change_written": {
+            "title": "Change Written",
+            "type": "boolean"
+          },
           "choice_contexts": {
             "items": {
               "$ref": "#/components/schemas/_FieldChoiceContext"
@@ -13482,6 +13486,10 @@
             "title": "Provenance",
             "type": "array"
           },
+          "restore_unavailable": {
+            "title": "Restore Unavailable",
+            "type": "boolean"
+          },
           "target_fingerprint": {
             "title": "Target Fingerprint",
             "type": "string"
@@ -13522,7 +13530,9 @@
           "notices",
           "owner_control",
           "written_by_case",
+          "restore_unavailable",
           "pin",
+          "change_written",
           "pin_control",
           "proposed_values",
           "choice_contexts",

@@ -13020,7 +13020,9 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
             "owner_entered",
             {"kind": "list", "value": ["Fantasy", "Mystery"]},
         )
-        expect(panel.get_by_text("You chose 2 genres.", exact=True)).to_be_focused()
+        expect(
+            panel.get_by_text("You chose Fantasy and Mystery.", exact=True)
+        ).to_be_focused()
         assert "genres" not in _attention_destinations(page, case_id)
         with page.expect_response(
             lambda response: response.url.endswith("/decisions")
@@ -13125,7 +13127,9 @@ def test_owner_enters_names_one_per_line():
         _owner_layout_holds(page)
         page.set_viewport_size({"width": 1440, "height": 900})
         panel.get_by_role("button", name="Record these names", exact=True).click()
-        recorded = panel.get_by_text("You entered 2 names.", exact=True)
+        recorded = panel.get_by_text(
+            "You entered Ada Example and Bo Writer.", exact=True
+        )
         expect(recorded).to_be_focused()
         assert [(body["outcome"], body["selected_value"]) for body in sent] == [
             ("owner_entered", {"kind": "list", "value": ["Ada Example", "Bo Writer"]})
@@ -13979,10 +13983,12 @@ def test_owner_values_keep_the_work_that_leaves_attention_in_view():
         assert _attention_destinations(page, case_id) == ["genres"]
         page.evaluate(_WATCH_ANNOUNCEMENTS)
         with page.expect_response(_lens_read("needs_attention")):
-            _record_genres(panel, "Fantasy", said="You chose 2 genres.")
+            _record_genres(panel, "Fantasy", said="You chose Drama and Fantasy.")
         _work_stays_in_view(page)
-        expect(panel.get_by_text("You chose 2 genres.", exact=True)).to_be_focused()
-        _record_genres(panel, "Drama", said="You chose 1 genre.", opener="Change")
+        expect(
+            panel.get_by_text("You chose Drama and Fantasy.", exact=True)
+        ).to_be_focused()
+        _record_genres(panel, "Drama", said="You chose Fantasy.", opener="Change")
         _work_stays_in_view(page)
 
 
@@ -13992,7 +13998,7 @@ def test_withdrawing_keeps_the_work_that_leaves_its_lens_in_view():
     with _owner_page(**_SOLE_GENRES) as (page, origin, case_id):
         page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
         panel = page.get_by_role("region", name="Your value for Genres")
-        _record_genres(panel, "Fantasy", said="You chose 2 genres.")
+        _record_genres(panel, "Fantasy", said="You chose Drama and Fantasy.")
         page.goto(
             f"{origin}/library?lens=no_attention_needed&preview={case_id}&field=genres"
         )
@@ -14030,7 +14036,7 @@ def test_withdrawing_at_compact_width_focuses_its_outcome_in_place(width):
     with _owner_page(**_SOLE_GENRES) as (page, origin, case_id):
         page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
         panel = page.get_by_role("region", name="Your value for Genres")
-        _record_genres(panel, "Fantasy", said="You chose 2 genres.")
+        _record_genres(panel, "Fantasy", said="You chose Drama and Fantasy.")
         page.set_viewport_size({"width": width, "height": 844})
         page.goto(
             f"{origin}/library?lens=no_attention_needed&preview={case_id}&field=genres"
@@ -14077,7 +14083,7 @@ def test_a_deep_link_to_a_work_off_the_current_page_shows_it():
     with _owner_page(**_SOLE_GENRES) as (page, origin, case_id):
         page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
         panel = page.get_by_role("region", name="Your value for Genres")
-        _record_genres(panel, "Fantasy", said="You chose 2 genres.")
+        _record_genres(panel, "Fantasy", said="You chose Drama and Fantasy.")
         assert _attention_destinations(page, case_id) == []
         # Watch from the first paint, so a passing absence is caught too.
         page.add_init_script(

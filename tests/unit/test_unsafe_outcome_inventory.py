@@ -131,6 +131,7 @@ _DECISION: Row = {
             "already_pinned",
             "not_pinned",
             "pinned",
+            "restore_unavailable",
         )
     },
     **{
