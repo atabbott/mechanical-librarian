@@ -283,8 +283,8 @@ Each tab names the field's status:
   is a choice only beside another eligible value or description advice. Each
   such field shows its value, never a selectable `Not set`. In Preview, a
   field Automatic chose earlier reads No change, shows that choice and says
-  turning on Automatic decides it, unless your answer or pin holds it. With
-  another value offered, one your answer or taken-back pin holds reads Decided.
+  turning on Automatic decides it, unless your answer or pin holds it. A field
+  your answer or taken-back pin holds reads Decided beside another offered value.
 
 Empty fields with no proposal sit behind one `Show N more fields` tab, and
 fields with nothing to decide in one closed panel headed `No change:` and their
@@ -488,7 +488,7 @@ A replacement stays listed only while Mechanical Librarian keeps a copy of the
 old cover. Keep keeps the current cover, releases that copy and marks the row
 Kept. Others opens the comparison. Both need another cover to choose from.
 
-Once a replaced cover's work is prepared again, its row also offers Put back,
+Once a replaced cover's work is prepared again, its row offers Put back,
 and the comparison names the old cover Replaced cover; an unreadable one shows
 "Image unavailable" there and under Before. Put back records choosing
 the old cover and uploads it from the kept copy. The row reads Put back while
