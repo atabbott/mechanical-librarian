@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- After you pin a field and take the pin back on a work Automatic had not
+  decided yet, turning on Automatic now shows that your earlier decision holds
+  the field, with Automatic's choice and Resume automatic handling, on the
+  same work. A field set to Ignore says "Set to Ignore in Policy." with a
+  link, instead of claiming no source offered a value (#2009).
 - In Preview, a field your earlier answer or a taken-back pin still holds
   reads Decided and says turning on Automatic leaves it as it is. A field
   no longer says no source offered a different value when one did (#2007).
