@@ -547,6 +547,79 @@ _PENDING_PREPARED_SQL = (
     + "))) "
 )
 
+# A hold Activity notes against an automatic choice: one the owner can end
+# with Resume. A pinned hold offers Unpin instead, and a requested return is
+# already on its way, unless its checks ended with failures, which keeps the
+# hold and asks for Resume again (#1755). Bound to the hold as `hold`.
+_RESUMABLE_HOLD_SQL = (
+    "hold.active=1 AND COALESCE(json_type(hold.document,'$.pin'),'null')<>'object' "
+    "AND (COALESCE(json_type(hold.document,'$.pending_return'),'null')<>'object' "
+    "OR EXISTS (SELECT 1 FROM review_preparation_scans scan "
+    "WHERE scan.scan_id=json_extract(hold.document,'$.pending_return.scan_id') "
+    "AND scan.state='completed_with_failures'))"
+)
+
+
+def _unwritten_choice_sql(decision: str) -> str:
+    """Whether choice `decision` still waits to be written: the pending query
+    would plan it but for a hold. No change it records, no change stopped for
+    the owner, and no write of it or of the title it travels with has
+    started; a planned or retryable write waits like the choice does, and a
+    superseded or abandoned one plans the choice again."""
+    holding = (
+        _FIELD_EFFECT_HOLDS_DECISION_SQL + " AND state NOT IN ('planned','retryable')"
+    )
+    return (
+        f"NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change "
+        f"WHERE no_change.decision_id={decision}) "
+        f"AND NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id={decision} "
+        f"AND {holding}) AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
+        f"{_FIELD_EFFECT_COMPANION_DECISION_SQL}={decision} AND {holding})"
+    )
+
+
+# Automatic's choices on the page that an owner hold keeps unwritten until
+# Resume (ADR-0085). A title and subtitle pair is written together, so a hold
+# on either member keeps both. An automatic description is chosen in its own
+# table. Leaving Automatic always starts a new generation, so an
+# active-generation choice means Automatic is on. Bound by the page's
+# automatic event ids as JSON, twice.
+_HELD_AUTOMATIC_NOTE_SQL = (
+    "SELECT automatic.decision_id FROM automatic_decisions automatic "
+    "JOIN current_review_packages current "
+    "ON current.review_case_id=automatic.review_case_id "
+    "WHERE automatic.decision_id IN (SELECT value FROM json_each(?)) "
+    "AND json_extract(automatic.document,'$.outcome')='candidate' AND "
+    + _active_generation_automatic_sql("automatic")
+    + " AND NOT (automatic.destination='description' AND EXISTS (SELECT 1 FROM "
+    "current_description_decisions authored "
+    "WHERE authored.review_case_id=automatic.review_case_id)) "
+    "AND EXISTS (SELECT 1 FROM automatic_decisions member "
+    "JOIN field_effect_manual_holds hold ON hold.review_case_id=member.review_case_id "
+    "AND hold.destination=member.destination "
+    "WHERE member.review_case_id=automatic.review_case_id "
+    "AND (member.decision_id=automatic.decision_id "
+    "OR (member.policy_generation=automatic.policy_generation "
+    "AND json_extract(member.document,'$.bundle_id')="
+    "json_extract(automatic.document,'$.bundle_id'))) AND "
+    + _RESUMABLE_HOLD_SQL
+    + ") AND "
+    + _unwritten_choice_sql("automatic.decision_id")
+    + " UNION ALL SELECT d.decision_id FROM current_description_decisions p "
+    "JOIN description_decisions d ON d.decision_id=p.decision_id "
+    "JOIN field_effect_manual_holds hold ON hold.review_case_id=d.review_case_id "
+    "AND hold.destination='description' "
+    "WHERE d.decision_id IN (SELECT value FROM json_each(?)) "
+    "AND json_extract(d.document,'$.origin')<>'human' AND "
+    + _AUTOMATIC_POSTURE_SQL
+    + _ACTIVE_GENERATION_DESCRIPTION_SQL
+    + " AND "
+    + _RESUMABLE_HOLD_SQL
+    + " AND "
+    + _unwritten_choice_sql("d.decision_id")
+)
+
+
 # The plan lists fields in the order the owner reads them everywhere else.
 _PLAN_DESTINATION_ORDER = json.dumps(
     [destination.value for destination in TargetDestination]
@@ -4912,33 +4985,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchall()
             notes.update((row[0], "waiting_for_check") for row in rows)
         if automatic:
-            # An automatic choice that an owner hold keeps unwritten until
-            # Resume: a pinned hold offers Unpin instead, a requested return
-            # is already on its way (one whose checks ended with failures
-            # keeps the hold and asks for Resume again, #1755), and a keep or
-            # ignore has nothing to write. Leaving Automatic always starts a
-            # new generation, so an active-generation row means Automatic is
-            # on (ADR-0085).
             rows = self._connection.execute(
-                "SELECT automatic.decision_id FROM automatic_decisions automatic "
-                "JOIN current_review_packages current "
-                "ON current.review_case_id=automatic.review_case_id "
-                "JOIN field_effect_manual_holds hold "
-                "ON hold.review_case_id=automatic.review_case_id "
-                "AND hold.destination=automatic.destination AND hold.active=1 "
-                "WHERE automatic.decision_id IN ("
-                + ",".join("?" for _ in automatic)
-                + ") AND json_extract(automatic.document,'$.outcome')='candidate' AND "
-                + _active_generation_automatic_sql("automatic")
-                + " AND COALESCE(json_type(hold.document,'$.pin'),'null')<>'object' "
-                "AND (COALESCE(json_type(hold.document,'$.pending_return'),'null')"
-                "<>'object' OR EXISTS (SELECT 1 FROM review_preparation_scans scan "
-                "WHERE scan.scan_id=json_extract(hold.document,'$.pending_return.scan_id') "
-                "AND scan.state='completed_with_failures')) "
-                "AND NOT EXISTS (SELECT 1 FROM field_effects effect "
-                "WHERE effect.decision_id=automatic.decision_id AND effect.state IN "
-                "('claimed','applying','reconciling','verified'))",
-                list(automatic),
+                _HELD_AUTOMATIC_NOTE_SQL, (json.dumps(list(automatic)),) * 2
             ).fetchall()
             notes.update((row[0], "held") for row in rows)
         return notes

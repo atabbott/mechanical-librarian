@@ -48,8 +48,9 @@ cached, searched or filtered (#1711):
   Audiobookshelf keeps the value already written.
 - **Held back**: a planned automatic write while the posture is not Automatic;
   it will not be written unless Automatic is turned back on.
-- **Held by you**: an automatic choice on a field your earlier decision holds;
-  it is not written until you choose Resume automatic handling.
+- **Held by you**: an automatic choice on a field your earlier decision holds,
+  or on the title or subtitle written with one; it is not written until you
+  choose Resume automatic handling.
 
 The Activity ledger is read-only. Activity offers no queue administration,
 blind retry or export. Its only actions are the existing server-checked

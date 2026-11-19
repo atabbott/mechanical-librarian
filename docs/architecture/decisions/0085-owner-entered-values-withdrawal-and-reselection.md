@@ -464,6 +464,10 @@ said why.
   field reads No change.
 - **Activity.** An automatic choice that an active hold without a pin or a
   requested return keeps unwritten reads "Held by you" while Automatic is on.
+  That includes an automatic description, and both halves of a split title and
+  subtitle when either is held, since the pair is written together. A choice
+  with nothing left to write, or whose write was stopped for the owner, reads
+  no note.
 
 No stored document changes shape; `review-case-detail-v15` and
 `continuous-field-activity-v5` carry the new cause and note. No clean rebuild.
