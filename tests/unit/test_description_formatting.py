@@ -316,3 +316,36 @@ def test_a_copy_beside_other_words_is_refused_where_it_is_held() -> None:
         for other in ("<p>Other</p>", "<p>Expected words &amp; more</p>"):
             with pytest.raises(ReportValueError):
                 holder(other)
+
+
+@pytest.mark.parametrize(
+    "copy",
+    (
+        "<p><b>Words.</p></b>",
+        "<b>Words.</p>",
+        "</b>Words.<b>",
+        "<p>Words.",
+        "<ul>Words.</ul>",
+        "<ul><li>Words.</li> </ul>",
+        "<li>Words.</li>",
+        "<p><p>Words.</p></p>",
+        "<b><p>Words.</p></b>",
+        "<p><ul><li>Words.</li></ul></p>",
+        "<p></p>Words.",
+        "<p> </p>Words.",
+        "Words.<br></br>",
+        "<ul><br><li>Words.</li></ul>",
+        "<b>" * 33 + "Words." + "</b>" * 33,
+    ),
+)
+def test_a_copy_that_does_not_nest_as_a_copy_is_refused(copy: str) -> None:
+    # Only bare tags of the set is not enough: a copy also nests as the
+    # serialiser writes one, so a stored report or plan can't hold a copy
+    # the reader would refuse (#1995).
+    with pytest.raises(EvidenceValueError):
+        validate_formatted_description(copy, "copy", MAX_DESCRIPTION_CHARACTERS)
+
+
+def test_the_deepest_copy_the_serialiser_writes_is_admitted() -> None:
+    copy = "<b>" * MAX_FORMATTED_DEPTH + "Words." + "</b>" * MAX_FORMATTED_DEPTH
+    assert validate_formatted_description(copy, "copy", MAX_DESCRIPTION_CHARACTERS)

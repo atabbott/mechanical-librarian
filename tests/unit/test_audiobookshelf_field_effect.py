@@ -1310,9 +1310,17 @@ def test_a_description_plan_carries_its_form_in_its_identity() -> None:
             "description", "Earlier.", _PLAIN, desired_form='<p class="x">A</p>'
         ),
         lambda: _plan("description", "Earlier.", _PLAIN, desired_form="no tags"),
-        # Another description's copy is refused when the plan is built or read.
+        # Another description's copy, or a badly nested one, is refused when
+        # the plan is built or read.
         lambda: _plan(
             "description", "Earlier.", _PLAIN, desired_form="<p>Other <b>words</b>.</p>"
+        ),
+        lambda: _plan(
+            "description",
+            "Earlier.",
+            _PLAIN,
+            desired_form="<p>A <strong>bold</strong> one.<p>Two &amp; three</p></p>"
+            "<ul><li>a</li><li>b</li></ul>",
         ),
         lambda: FieldEffectPlan.from_data(missing),
     ):
@@ -1338,13 +1346,14 @@ def test_a_formatted_copy_counts_toward_the_plan_bound() -> None:
 @pytest.mark.parametrize(
     "form",
     (
-        # The right words, but not Mechanical Librarian's own serialisation.
-        # (A plan never holds another description's copy: it is refused when
-        # the plan is built.)
+        # The right words, nested as a copy nests, but not Mechanical
+        # Librarian's own serialisation. (A plan never holds another
+        # description's copy or a badly nested one: either is refused when the
+        # plan is built.)
         "<p>A  <b>bold</b> one.</p><p>Two &amp; three</p><ul><li>a</li><li>b</li></ul>",
-        "<p>A <strong>bold</strong> one.<p>Two &amp; three</p></p><ul><li>a</li><li>b</li></ul>",
+        "<p>A <b>bold</b> one.</p><p>Two &#38; three</p><ul><li>a</li><li>b</li></ul>",
     ),
-    ids=("not_canonical", "nested"),
+    ids=("not_canonical", "reference"),
 )
 def test_a_form_that_is_not_its_text_s_copy_is_never_sent(
     case: _Case, form: str

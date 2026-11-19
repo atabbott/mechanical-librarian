@@ -35,6 +35,7 @@ from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 
 from mechanical_librarian.domain.evidence_bounds import (
+    MAX_FORMATTED_DEPTH,
     EvidenceValueError,
     validate_formatted_description,
 )
@@ -205,8 +206,6 @@ _BLOCK_ELEMENTS = _DescriptionParser._BLOCKS - {"br"}
 _BLOCK_MARKUP = frozenset(
     f"<{close}{tag}>" for tag in ("p", "ul", "ol", "li") for close in ("", "/")
 )
-# A copy is never nested deeper than this, and markup nested deeper has none.
-MAX_FORMATTED_DEPTH = 32
 # The line breaks `str.splitlines` reads, which the renderer reads as one too.
 _LINE_BREAK = re.compile(r"\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]")
 _SPACE_RUN = re.compile(r"\s+")
