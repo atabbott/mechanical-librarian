@@ -18,7 +18,7 @@ brackets are GitHub issues.
   Such a field also stops saying that turning Automatic on decides it again,
   since Automatic stays off a field you have answered, and after the
   withdrawal it says only "Withdrawn." when nothing will ask about it again
-  (#ISSUE).
+  (#1997).
 - After you choose Resume automatic handling, a field no longer tells you
   to use Resume to release your decision, and its pin line says to choose a
   value and then pin it, since choosing alone doesn't pin (#1988).
