@@ -2,7 +2,7 @@
 // representations, what each representation does, and where Automatic may
 // decide. Moved out of the Policy route under the route-size rule (#1571).
 import { TARGET_DESTINATIONS } from './api/http'
-import type { PolicyFieldDefault, PolicySection } from './api/http'
+import type { PolicyFieldDefault, PolicySection, TargetDestination } from './api/http'
 import { destinationLabel } from './labels'
 
 export const audiobookOperationLabels = {
@@ -493,3 +493,26 @@ export const representationConsequence = (guidance: RepresentationGuidance | und
   guidance === undefined
     ? 'Nothing is recorded for this option.'
     : `${guidance.effect.slice(0, 1).toUpperCase()}${guidance.effect.slice(1)}. ${guidance.fallback.slice(0, 1).toUpperCase()}${guidance.fallback.slice(1)}.`
+// The policy field that governs each library field, as the server's
+// `_POLICY_DESTINATIONS` names it, so a field's sentence can link its setting.
+export const governingField = {
+  title: 'title_layout',
+  subtitle: 'subtitle',
+  authors: 'contributor_names',
+  narrators: 'contributor_names',
+  series: 'series',
+  genres: 'genres',
+  publishedYear: 'date_precision',
+  publishedDate: 'date_precision',
+  publisher: 'publisher_preference',
+  description: 'description_fill',
+  isbn: 'isbn_form',
+  asin: 'asin',
+  language: 'language_rendering',
+  explicit: 'explicit',
+  tags: 'tags',
+  cover: 'cover_order',
+} as const satisfies Record<TargetDestination, string>
+/** The Policy chapter that holds a library field's setting. */
+export const policyChapterOf = (destination: TargetDestination): PolicySection =>
+  fields.find((field) => field.key === governingField[destination])?.chapter ?? 'identity'

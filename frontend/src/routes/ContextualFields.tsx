@@ -12,6 +12,7 @@ import type { ReviewField } from '../fieldDecision'
 import { valuePin } from '../fieldPin'
 import { contextKind, fieldReason } from '../fieldReasons'
 import { destinationLabel } from '../labels'
+import { policyChapterOf } from '../policyFields'
 import type { useReviewDecisionController } from '../reviewDecisionController'
 import { PinButton } from './FieldDecisionPin'
 
@@ -19,12 +20,13 @@ import { PinButton } from './FieldDecisionPin'
 const QUIET = new Set(['Pinning…', 'Unpinning…', 'Pinned.', 'Unpinned.'])
 
 // Why an unchanged row is unchanged: a field set to Ignore is left as it is by
-// its setting, whatever its sources offer; any other had no other value offered.
+// its setting, whatever its sources offer, and links the chapter holding it;
+// any other had no other value offered.
 const unchangedReason = (field: ReviewField) =>
   field.notices.includes('policy_ignored') ? (
     <>
       Set to Ignore in{' '}
-      <Link to="/policy" search={{ section: 'identity' }}>
+      <Link to="/policy" search={{ section: policyChapterOf(field.destination) }}>
         Policy
       </Link>
       .

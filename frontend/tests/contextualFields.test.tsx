@@ -11,7 +11,9 @@ import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
+import { TARGET_DESTINATIONS } from '../src/api/http'
 import type { CaseDetailView } from '../src/api/http'
+import { fields as policyCatalogue, governingField, policyChapterOf } from '../src/policyFields'
 import { ContextualFields } from '../src/routes/ContextualFields'
 import { detail } from './fixtures'
 
@@ -291,7 +293,11 @@ describe('a field set to Ignore', () => {
   it('says its setting leaves it as it is and links Policy, whatever its sources offer', async () => {
     // A router with only the route the link names.
     const root = createRootRoute({ component: () => <Outlet /> })
-    const fields = [row('authors', 'Current Writer', { notices: ['policy_ignored'] }), publisher]
+    const fields = [
+      row('authors', 'Current Writer', { notices: ['policy_ignored'] }),
+      row('genres', 'Drama', { notices: ['policy_ignored'] }),
+      publisher,
+    ]
     const router = createRouter({
       routeTree: root.addChildren([
         createRoute({
@@ -321,7 +327,21 @@ describe('a field set to Ignore', () => {
     expect(rowOf('Publisher')).toHaveTextContent('No source offered a different value.')
     const link = within(rowOf('Authors')).getByRole('link', { name: 'Policy' })
     expect(link).toHaveAttribute('href', '/policy?section=identity')
+    // Each links the chapter that holds its own setting.
+    expect(within(rowOf('Genres')).getByRole('link', { name: 'Policy' })).toHaveAttribute(
+      'href',
+      '/policy?section=curation',
+    )
     await userEvent.click(link)
     expect(await screen.findByRole('heading', { name: 'Policy' })).toBeInTheDocument()
+  })
+
+  it('links the Policy chapter that holds each field', () => {
+    for (const destination of TARGET_DESTINATIONS)
+      expect(policyCatalogue.map((field) => field.key)).toContain(governingField[destination])
+    expect(policyChapterOf('authors')).toBe('identity')
+    expect(policyChapterOf('genres')).toBe('curation')
+    expect(policyChapterOf('publisher')).toBe('publication')
+    expect(policyChapterOf('explicit')).toBe('unsupported')
   })
 })
