@@ -647,6 +647,7 @@ def _field(
         "corroboration_sources": corroboration_sources or [],
         "owner_control": owner_control,
         "written_by_case": False,
+        "no_change_required": False,
         "uncertainty": [],
         # Absent members the lenient reader took as none.
         "cover_consideration": None,
