@@ -36,7 +36,8 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
-    files: ['src/router.tsx'],
+    // The description reader exports its helpers beside the component they serve.
+    files: ['src/router.tsx', 'src/descriptionFormatting.tsx'],
     rules: { 'react-refresh/only-export-components': 'off' },
   },
   {

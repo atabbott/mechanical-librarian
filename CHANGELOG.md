@@ -19,6 +19,9 @@ brackets are GitHub issues.
   since Automatic stays off a field you have answered, and after the
   withdrawal it says only "Withdrawn." when nothing will ask about it again
   (#1997).
+- A description's bold, italics, paragraphs and lists now show as
+  formatting, not as tags, wherever the workspace shows a description.
+  Markup that cannot be read safely is still shown as written (#1992).
 - After you choose Resume automatic handling, a field no longer tells you
   to use Resume to release your decision, and its pin line says to choose a
   value and then pin it, since choosing alone doesn't pin (#1988).

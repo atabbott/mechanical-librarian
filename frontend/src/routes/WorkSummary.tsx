@@ -10,6 +10,7 @@ import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatRunningTime } from '../dates'
 import { retryInPlace } from '../focusAfterRetry'
+import { FormattedDescription } from '../descriptionFormatting'
 import { valueText } from '../fieldDecision'
 import {
   audioSurfaceLabels,
@@ -268,7 +269,13 @@ export function WorkSummary({ work }: { work: LibraryWorkView }) {
             <div key={field.destination}>
               <dt>{destinationLabel(field.destination)}</dt>
               <dd>
-                {field.state === 'value' ? valueText(field.destination, field.value) : field.value}
+                {field.state === 'value' && field.destination === 'description' ? (
+                  <FormattedDescription value={field.value}>{field.value}</FormattedDescription>
+                ) : field.state === 'value' ? (
+                  valueText(field.destination, field.value)
+                ) : (
+                  field.value
+                )}
               </dd>
             </div>
           ))}
