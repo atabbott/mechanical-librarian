@@ -23,7 +23,8 @@ from mechanical_librarian.domain.proposal_set import (
     proposal_alternative_from_data,
 )
 
-REVIEW_CASE_SCHEMA = "review-case-v2"
+# v3: a description target field carries its formatted copy (#1995).
+REVIEW_CASE_SCHEMA = "review-case-v3"
 REVIEW_ADMISSION_SCHEMA = "review-admission-v1"
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _PROPOSAL_SET_ID = re.compile(r"^proposal_set_[0-9a-f]{64}$")

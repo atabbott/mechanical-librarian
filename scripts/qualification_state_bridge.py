@@ -368,6 +368,11 @@ def _provider_requires_work_lineage(provider: dict[str, object]) -> bool:
 
 
 def _augment_provider(provider: dict[str, object]) -> None:
+    # A v26 description claim predates the formatted copy (#1995).
+    for candidate in _list(provider["candidates"]):
+        for claim in _list(candidate["claims"]):
+            if claim["kind"] == "description":
+                claim["formatted"] = None
     provider["recording_lookup_candidates"] = []
     provider["refused_products"] = []
     provider["audio_editions"] = []

@@ -739,9 +739,10 @@ def test_keeping_an_empty_isbn_after_a_write_is_refused(store: OwnerStore) -> No
     assert store.target.read(written.plan).value == "9780306406157"
 
 
-def _described(restorable: bool) -> MetadataReport:
+def _described(restorable: bool, formatted: str | None = None) -> MetadataReport:
     """The genre work with a description Audiobookshelf stored with formatting
-    (`restorable` False) or exactly as its text (#1424)."""
+    it can't write (`restorable` False), exactly as its text, or with
+    formatting it writes as its copy (#1424, #1995)."""
     report = genre_report()
     fields = tuple(
         TargetField(
@@ -749,6 +750,7 @@ def _described(restorable: bool) -> MetadataReport:
             TargetFieldState.VALUE,
             "Fish & chips for the earlier text.",
             restorable,
+            formatted,
         )
         if field.destination is TargetDestination.DESCRIPTION
         else field
@@ -809,6 +811,33 @@ def test_keeping_a_formatted_description_after_a_write_is_refused(
         )
         assert store.patches == [written.plan.plan_id]
         assert store.target.read(written.plan).value == "A qualified description."
+    finally:
+        store.close()
+
+
+def test_keeping_a_description_stored_with_writable_formatting_writes_its_copy(
+    tmp_path: Path,
+) -> None:
+    """A description stored with formatting from the closed set goes back as
+    its copy: the plan keeps the text as its value and the copy as its form
+    (#1995, ADR-0107)."""
+    copy = "<p>Fish &amp; chips <em>for the earlier text.</em></p>"
+    store = OwnerStore(tmp_path, _described(restorable=True, formatted=copy))
+    try:
+        store.write(
+            store.decide(
+                "accept",
+                {"kind": "text", "value": "A qualified description."},
+                destination="description",
+            )
+        )
+        assert _field(store, "description")["restore_unavailable"] is False
+        kept = store.write(store.decide("keep_current", destination="description"))
+        assert (kept.plan.desired_value, kept.plan.desired_form) == (
+            "Fish & chips for the earlier text.",
+            copy,
+        )
+        assert len(store.patches) == 2
     finally:
         store.close()
 
@@ -2495,3 +2524,137 @@ def test_the_store_admits_a_named_write_on_any_decision(store: OwnerStore) -> No
     assert not admitted("keep_current", 1)
     assert admitted("accept", accept.decision_id)
     assert not admitted("accept", 1)
+
+
+# --- a description's formatted copy in History and Activity (#2003) ----------
+
+
+def _description_history(store: OwnerStore) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in InspectCurrentReviewCase(store.repository).history(
+            store.case.review_case_id
+        )["items"]
+        if item.get("destination") == "description"
+        and item["kind"] == "human_decision_recorded"
+    ]
+
+
+def _description_rows(store: OwnerStore) -> list[dict[str, Any]]:
+    return [row for row in _activity(store) if row["field_label"] == "Description"]
+
+
+def _copies(row: dict[str, Any]) -> dict[str, str | None]:
+    return {fact["label"]: fact.get("formatted") for fact in row["evidence"]}
+
+
+def test_history_and_activity_show_each_description_value_with_its_own_copy(
+    tmp_path: Path,
+) -> None:
+    """An accepted formatted description, written, then gone back from:
+    every value is shown with the copy of exactly that value (#2003)."""
+    from tests.support.genre_reports import (
+        OFFERED_DESCRIPTION_COPY,
+        STORED_DESCRIPTION,
+        STORED_DESCRIPTION_COPY,
+        formatted_description_report,
+    )
+
+    offered = "A qualified description."
+    store = OwnerStore(tmp_path, formatted_description_report())
+    try:
+        accept = store.decide(
+            "accept", {"kind": "text", "value": offered}, destination="description"
+        )
+        store.write(accept)
+        (accepted,) = _description_history(store)
+        assert accepted["previous_value"]["value"] == STORED_DESCRIPTION
+        assert accepted["previous_formatted"] == STORED_DESCRIPTION_COPY
+        assert accepted["selected_value"]["value"] == offered
+        assert accepted["selected_formatted"] == OFFERED_DESCRIPTION_COPY
+        rows = _description_rows(store)
+        for row in rows:
+            assert _copies(row)["Previous value"] == STORED_DESCRIPTION_COPY
+            assert _copies(row)["New value"] == OFFERED_DESCRIPTION_COPY
+            # The change line stays the visible text.
+            assert "<" not in row["change"] and "<" not in row["change_detail"]
+        assert {row["state"] for row in rows} == {"accept", "verified"}
+        before = [row for row in rows if row["state"] == "accept"]
+
+        keep = store.decide("keep_current", destination="description")
+        went_back = next(
+            item
+            for item in _description_history(store)
+            if item["decision_id"] == keep.decision_id
+        )
+        assert (
+            went_back["previous_value"]["value"],
+            went_back["previous_formatted"],
+        ) == (
+            offered,
+            OFFERED_DESCRIPTION_COPY,
+        )
+        assert (
+            went_back["selected_value"]["value"],
+            went_back["selected_formatted"],
+        ) == (STORED_DESCRIPTION, STORED_DESCRIPTION_COPY)
+        store.write(keep)
+        rows = _description_rows(store)
+        keep_row = next(row for row in rows if row["state"] == "went_back")
+        assert _copies(keep_row)["Written value"] == OFFERED_DESCRIPTION_COPY
+        assert _copies(keep_row)["Value before your change"] == STORED_DESCRIPTION_COPY
+        # A row projected before a later write on the case says the same after.
+        assert [row for row in rows if row["state"] == "accept"] == before
+    finally:
+        store.close()
+
+
+def test_a_plain_keep_shows_the_case_description_copy(tmp_path: Path) -> None:
+    from tests.support.genre_reports import (
+        STORED_DESCRIPTION,
+        STORED_DESCRIPTION_COPY,
+        formatted_description_report,
+    )
+
+    store = OwnerStore(tmp_path, formatted_description_report())
+    try:
+        store.decide("keep_current", destination="description")
+        (kept,) = _description_history(store)
+        assert kept["previous_formatted"] == STORED_DESCRIPTION_COPY
+        assert (kept["selected_value"]["value"], kept["selected_formatted"]) == (
+            STORED_DESCRIPTION,
+            STORED_DESCRIPTION_COPY,
+        )
+        (row,) = _description_rows(store)
+        assert _copies(row) == {
+            "Current value": STORED_DESCRIPTION_COPY,
+            "Selected value": STORED_DESCRIPTION_COPY,
+            "Chosen by": None,
+        }
+        # A value matched to no pair is never shown with another's copy.
+        activity = store.repository._field_effect_activity
+        assert (
+            activity._replaced_form(store.case.review_case_id, None, STORED_DESCRIPTION)
+            == STORED_DESCRIPTION_COPY
+        )
+        assert (
+            activity._replaced_form(store.case.review_case_id, None, "Other words.")
+            is None
+        )
+    finally:
+        store.close()
+
+
+def test_other_fields_carry_no_copy_in_history(store: OwnerStore) -> None:
+    store.write(
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+    )
+    items = InspectCurrentReviewCase(store.repository).history(
+        store.case.review_case_id
+    )["items"]
+    assert all(
+        "previous_formatted" not in item and "selected_formatted" not in item
+        for item in items
+    )

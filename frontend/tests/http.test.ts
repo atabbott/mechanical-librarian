@@ -1292,6 +1292,7 @@ describe('ReviewApiClient', () => {
     const retainedEvidence = field({
       decision_actions: ['keep_current', 'accept'],
       proposed_values: [{ kind: 'text', value: 'Alternative' }],
+      proposed_formatted: [null],
       choice_contexts: [
         fieldChoiceContext({ rationale: 'Current evidence.' }),
         fieldChoiceContext({
@@ -1458,6 +1459,33 @@ describe('ReviewApiClient', () => {
       { ...payload, source_ledger: [{ provider: 'Hardcover' }] },
     ])
       await expect(readEvidence(invalid)).rejects.toThrow(ApiError)
+  })
+
+  it("maps a description value's copy beside it, and refuses one anywhere else", async () => {
+    const described = historyDecisionItem({
+      destination: 'description',
+      previous_value: { kind: 'text', value: 'Old words' },
+      selected_value: { kind: 'text', value: 'New words' },
+      previous_formatted: '<p>Old <b>words</b></p>',
+      selected_formatted: '<p>New <em>words</em></p>',
+    })
+    const [item] = (await readHistory(caseHistory({ items: [described] }))).items
+    expect(item).toMatchObject({
+      category: 'owner',
+      previousFormatted: '<p>Old <b>words</b></p>',
+      selectedFormatted: '<p>New <em>words</em></p>',
+    })
+    // A copy is optional: an item without one reads as before (#2003).
+    const [plain] = (await readHistory(caseHistory({ items: [historyDecisionItem()] }))).items
+    expect(plain).not.toHaveProperty('previousFormatted')
+    for (const invalid of [
+      { ...described, destination: 'title' },
+      { ...described, previous_value: null },
+      { ...described, selected_value: { kind: 'empty', value: null } },
+    ])
+      await expect(readHistory(caseHistory({ items: [invalid] }))).rejects.toMatchObject({
+        code: 'invalid_history_formatted',
+      })
   })
 
   it('maps history without exposing retained identities and rejects malformed values', async () => {
@@ -1907,8 +1935,13 @@ describe('ReviewApiClient', () => {
                 state: 'no_decision_recorded',
                 reason: 'No review decision is recorded for this work.',
                 fields: [
-                  { destination: 'title', state: 'value', value: 'Catalogue-only work' },
-                  { destination: 'subtitle', state: 'missing', value: null },
+                  {
+                    destination: 'title',
+                    state: 'value',
+                    value: 'Catalogue-only work',
+                    formatted: null,
+                  },
+                  { destination: 'subtitle', state: 'missing', value: null, formatted: null },
                 ],
               },
             }),
@@ -1976,8 +2009,18 @@ describe('ReviewApiClient', () => {
         state: 'no_decision_recorded',
         reason: 'No review decision is recorded for this work.',
         fields: [
-          { destination: 'title', state: 'value', value: 'Catalogue-only work' },
-          { destination: 'subtitle', state: 'missing', value: 'Not set in Audiobookshelf' },
+          {
+            destination: 'title',
+            state: 'value',
+            value: 'Catalogue-only work',
+            formatted: null,
+          },
+          {
+            destination: 'subtitle',
+            state: 'missing',
+            value: 'Not set in Audiobookshelf',
+            formatted: null,
+          },
         ],
       },
       valueFlags: [],
@@ -3315,7 +3358,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v11', error: { code: 'busy' } },
+          { schema_version: 'review-library-v12', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3413,9 +3456,13 @@ describe('ReviewApiClient', () => {
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v8' }),
     ).rejects.toMatchObject(refused('const@/schema_version'))
-    // v9 added each row's book link (#1477); a v8 row lacks it.
+    // v12 added a summary description's formatted copy (#1995); a v11
+    // summary lacks it.
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v11' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v12' }),
     ).resolves.toBeDefined()
   })
 

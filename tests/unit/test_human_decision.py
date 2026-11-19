@@ -779,6 +779,33 @@ def test_pinned_field_fingerprint_ignores_description_restorable() -> None:
     assert described(True) == described(False) is not None
 
 
+def test_pinned_field_fingerprint_ignores_description_formatting() -> None:
+    # A pin keeps the visible text only: the same words stored with another
+    # formatted copy, or none, stay pinned (#1995, ADR-0107).
+    text = "A synthetic description of a quiet orchard."
+
+    def described(formatted: str | None) -> str | None:
+        return pinned_field_fingerprint(
+            _case_with(
+                TargetField(
+                    TargetDestination.DESCRIPTION,
+                    TargetFieldState.VALUE,
+                    text,
+                    True,
+                    formatted,
+                )
+            ),
+            "description",
+        )
+
+    assert (
+        described(None)
+        == described(f"<p>{text}</p>")
+        == described(f"<p><em>{text}</em></p>")
+        is not None
+    )
+
+
 def test_pinned_field_fingerprint_distinguishes_values_and_destinations() -> None:
     title = pinned_field_fingerprint(_case_with(), "title")
     assert title is not None

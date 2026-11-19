@@ -77,7 +77,14 @@ def test_incumbent_description_markup_is_admitted_as_its_visible_text(
         ("Fish & chips", True),
         ("He said &quot;yes&quot;", False),
         ("Text&nbsp;more", False),
-        ("<p>Fish &amp; chips</p>", False),
+        # Markup all in the closed set is restored as its own copy (#1995).
+        ("<p>Fish &amp; chips</p>", True),
+        ("<p>A <b>bold</b> one.</p><ul><li>a</li><li>b</li></ul>", True),
+        # A link, an attribute, a tag outside the set or a comment is lost.
+        ('<p>See <a href="https://example.org">this</a>.</p>', False),
+        ('<p class="lead">A lead.</p>', False),
+        ("<p><u>Underlined</u> text.</p>", False),
+        ("<!-- note --><p>Text.</p>", False),
         # Written back, admitted text carrying a bracket or a reference is not
         # the text the library showed, so it is never restored from here.
         ("&lt;b&gt;bold text", False),
@@ -396,7 +403,7 @@ def test_a_stated_description_equal_to_the_incumbent_text_keeps_it(
         for field in target_snapshot({"title": "Title", "description": stored}).fields
         if field.destination is TargetDestination.DESCRIPTION
     )
-    candidate, transformed = projected_description(stated)
+    candidate, transformed, _ = projected_description(stated)
     assert type(candidate) is str and transformed is False
     result = _result(
         evaluate_report(

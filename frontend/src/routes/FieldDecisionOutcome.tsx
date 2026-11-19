@@ -2,7 +2,13 @@
 // and the automatic statements beside it. Moved out of the Library route under
 // the route-size rule (#1571).
 import { displayValue, isClear } from '../api/http'
-import { completionOutcome, decisionValue, sameSelectedValue, valueText } from '../fieldDecision'
+import {
+  authoredOwnerRecorded,
+  completionOutcome,
+  decisionValue,
+  sameSelectedValue,
+  valueText,
+} from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
 import {
   choiceContext,
@@ -98,7 +104,10 @@ export function ContextValue({
           <dt>{field.pin?.state === 'in_force' ? 'Current value · Pinned' : 'Current value'}</dt>
           <dd id={valueId}>
             {field.destination === 'description' ? (
-              <DescriptionText key={field.currentValue} value={field.currentValue} />
+              <DescriptionText
+                key={field.currentValue}
+                value={field.currentFormatted ?? field.currentValue}
+              />
             ) : (
               valueText(field.destination, field.currentValue)
             )}
@@ -287,6 +296,19 @@ export function RecordedOutcome({
   const valueId = `recorded-value-${field.destination}`
   const pinned = pin && field.pin?.state === 'in_force' ? ' · Pinned' : ''
   const accepted = decision.outcome === 'accept' || decision.outcome === 'candidate'
+  // A recorded description shows the formatted copy it is written with, in
+  // place of its visible text, which names and sentences keep (#1995).
+  const recordedFormatted =
+    field.destination !== 'description'
+      ? null
+      : authoredOwnerRecorded(field) && field.descriptionAdvice?.selected_advice
+        ? (field.descriptionAdvice.selected_advice.formatted ?? null)
+        : selectedProposed
+          ? (field.proposedFormatted?.[proposed] ?? null)
+          : decision.outcome === 'keep_current'
+            ? (field.currentFormatted ?? null)
+            : null
+  const recordedDescription = recordedFormatted ?? decisionValue(field)
   const evidenceToggle = (
     <button
       type="button"
@@ -316,7 +338,7 @@ export function RecordedOutcome({
             <dt>Chosen value{pinned}</dt>
             <dd id={valueId}>
               {field.destination === 'description' ? (
-                <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
+                <DescriptionText key={recordedDescription} value={recordedDescription} />
               ) : (
                 decisionValue(field)
               )}
@@ -335,7 +357,7 @@ export function RecordedOutcome({
             </dt>
             <dd id={valueId}>
               {field.destination === 'description' ? (
-                <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
+                <DescriptionText key={recordedDescription} value={recordedDescription} />
               ) : (
                 decisionValue(field)
               )}

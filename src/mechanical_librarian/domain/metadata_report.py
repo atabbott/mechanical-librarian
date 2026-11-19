@@ -68,6 +68,8 @@ from mechanical_librarian.domain.epub_inspection import (
 )
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
+    formatted_description_text,
+    validate_formatted_description,
     validate_incumbent_description,
     validate_projection_text,
     validate_role_projection,
@@ -114,7 +116,8 @@ from mechanical_librarian.domain.work_identity import (
 if TYPE_CHECKING:
     from mechanical_librarian.domain.owner_link import OwnerLinkLookup
 
-REPORT_SCHEMA = "metadata-report-v82"
+# v83: a rendered description keeps its formatted copy (#1995, ADR-0107).
+REPORT_SCHEMA = "metadata-report-v83"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -480,6 +483,10 @@ class TargetField:
     # library stores it in (#1424). Only a description value can be restorable,
     # and only a description carries the flag.
     restorable: bool = False
+    # The description's formatted copy, Mechanical Librarian's own
+    # serialisation of the stored markup from a closed set of tags (#1995,
+    # ADR-0107). Only a description value carries one.
+    formatted: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -487,7 +494,7 @@ class TargetField:
             or type(self.state) is not TargetFieldState
             or type(self.restorable) is not bool
             or (
-                self.restorable
+                (self.restorable or self.formatted is not None)
                 and (
                     self.destination is not TargetDestination.DESCRIPTION
                     or self.state is not TargetFieldState.VALUE
@@ -495,6 +502,8 @@ class TargetField:
             )
         ):
             raise ReportValueError("target field is invalid")
+        if self.formatted is not None:
+            _formatted_text(self.formatted, "target formatted description", self.value)
         if self.state is not TargetFieldState.VALUE:
             if self.value is not None:
                 raise ReportValueError("nonvalue target field has a value")
@@ -566,6 +575,7 @@ class TargetField:
         }
         if self.destination is TargetDestination.DESCRIPTION:
             data["restorable"] = self.restorable
+            data["formatted"] = self.formatted
         return data
 
 
@@ -1858,12 +1868,24 @@ class ProviderClaim:
     date_precision: DatePrecision | None = None
     date_lexical: str | None = None
     date_confidence: DateLinkConfidence | None = None
+    # A rendered description's formatted copy (#1995, ADR-0107). The claim's
+    # identity and every comparison read its visible text only.
+    formatted: str | None = None
 
     def __post_init__(self) -> None:
         if _REFERENCE.fullmatch(
             self.reference
         ) is None or not self.reference.startswith("provider_"):
             raise ReportValueError("provider claim reference is invalid")
+        if self.formatted is not None:
+            if (
+                self.kind is not ClaimKind.DESCRIPTION
+                or self.state is not FieldState.VALID
+            ):
+                raise ReportValueError("provider claim formatting is invalid")
+            _formatted_text(
+                self.formatted, "provider formatted description", self.value
+            )
         if type(self.kind) is not ClaimKind:
             raise ReportValueError("provider claim is invalid")
         if (
@@ -2053,6 +2075,11 @@ class ProviderClaim:
             "date_lexical": self.date_lexical,
             "date_confidence": (
                 None if self.date_confidence is None else self.date_confidence.value
+            ),
+            **(
+                {"formatted": self.formatted}
+                if self.kind is ClaimKind.DESCRIPTION
+                else {}
             ),
         }
 
@@ -8956,13 +8983,15 @@ def _audio_chapter_from_data(value: object) -> AudioChapter:
 
 def _target_field_from_data(value: object, *, flagged: bool = True) -> TargetField:
     # A report of an earlier schema is read in its own shape, without the
-    # description's restore flag (scripts/qualification_state_bridge.py).
+    # description's restore flag and formatted copy
+    # (scripts/qualification_state_bridge.py).
     described = (
         flagged and type(value) is dict and value.get("destination") == "description"
     )
     item = _object(
         value,
-        {"destination", "state", "value"} | ({"restorable"} if described else set()),
+        {"destination", "state", "value"}
+        | ({"restorable", "formatted"} if described else set()),
     )
     destination = TargetDestination(item["destination"])
     state = TargetFieldState(item["state"])
@@ -8990,9 +9019,14 @@ def _target_field_from_data(value: object, *, flagged: bool = True) -> TargetFie
     elif raw is not None:
         raise ReportValueError("nonvalue target field has a value")
     restorable = item.get("restorable", False)
-    if type(restorable) is not bool:
+    formatted = item.get("formatted")
+    if (
+        type(restorable) is not bool
+        or formatted is not None
+        and type(formatted) is not str
+    ):
         raise ReportValueError("target field is invalid")
-    return TargetField(destination, state, parsed, restorable)
+    return TargetField(destination, state, parsed, restorable, formatted)
 
 
 def _field_result_from_data(value: object) -> FieldResult:
@@ -9416,6 +9450,7 @@ def _candidate_from_data(value: object) -> ProviderCandidate:
 
 
 def _provider_claim_from_data(value: object) -> ProviderClaim:
+    described = type(value) is dict and value.get("kind") == ClaimKind.DESCRIPTION.value
     item = _object(
         value,
         {
@@ -9432,8 +9467,12 @@ def _provider_claim_from_data(value: object) -> ProviderClaim:
             "scope",
             "state",
             "value",
-        },
+        }
+        | ({"formatted"} if described else set()),
     )
+    formatted = item.get("formatted")
+    if formatted is not None and type(formatted) is not str:
+        raise ReportValueError("provider claim formatting is invalid")
     links = tuple(_comparison_link_from_data(link) for link in _list(item["links"]))
     return ProviderClaim(
         item["reference"],
@@ -9455,6 +9494,7 @@ def _provider_claim_from_data(value: object) -> ProviderClaim:
             if item["date_confidence"] is None
             else DateLinkConfidence(item["date_confidence"])
         ),
+        formatted,
     )
 
 
@@ -9626,6 +9666,16 @@ def _projection_text(value: object, label: str, maximum: int) -> None:
         validate_projection_text(value, label, maximum)
     except EvidenceValueError as error:
         raise ReportValueError(f"{label} is invalid") from error
+
+
+def _formatted_text(value: object, label: str, text: object) -> None:
+    """Admit a formatted copy only beside the visible text it reads as."""
+    try:
+        copy = validate_formatted_description(value, label, MAX_DESCRIPTION_CHARACTERS)
+    except EvidenceValueError as error:
+        raise ReportValueError(f"{label} is invalid") from error
+    if formatted_description_text(copy) != text:
+        raise ReportValueError(f"{label} is invalid")
 
 
 def _sentinel_state(value: str) -> FieldState | None:

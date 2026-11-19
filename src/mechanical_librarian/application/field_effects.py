@@ -95,7 +95,8 @@ class TargetObservation:
 
 @dataclass(frozen=True, slots=True)
 class TargetEffectResult:
-    outcome: Literal["accepted", "ambiguous", "conflict"]
+    # `refused`: the target checked the plan and sent nothing (#1995).
+    outcome: Literal["accepted", "ambiguous", "conflict", "refused"]
     suspension_scope: Literal["connection", "destination"] | None = None
     suspension_reason: (
         Literal[
@@ -142,6 +143,9 @@ class AuthoritySnapshot:
     dependency_digests: tuple[str, ...] = ()
     paired_bundle_id: str | None = None
     paired_decision_id: str | None = None
+    # The formatted copy a description decision writes in place of its
+    # visible text, where its authority carries one (#1995, ADR-0107).
+    decision_form: str | None = None
 
 
 class FieldEffectRepository(Protocol):
@@ -647,6 +651,7 @@ class GuardedFieldApplication:
             consent=consent,
             capability_digest=capability_digest,
             created_at=self._clock(),
+            desired_form=snapshot.decision_form,
         )
         if plan.pre_value == plan.desired_value:
             return None
@@ -831,6 +836,12 @@ class GuardedFieldApplication:
         if result.outcome == "conflict":
             return self._with_affected_review_cases(
                 self._stale(operation, "target_changed"), affected
+            )
+        if result.outcome == "refused":
+            # Nothing was sent and nothing is suspended: the owner reads that
+            # the change was not sent (#1995, A5).
+            return self._with_affected_review_cases(
+                self._stale(operation, "not_sent"), affected
             )
         return self._with_affected_review_cases(
             self._verify(operation, affected_review_case_ids), affected

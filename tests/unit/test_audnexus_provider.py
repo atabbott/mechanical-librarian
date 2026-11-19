@@ -16,7 +16,10 @@ from mechanical_librarian.adapters.providers.audnexus_metadata import (
     AudnexusPacer,
     _candidate,
 )
-from mechanical_librarian.adapters.providers.visible_text import visible_description
+from mechanical_librarian.adapters.providers.visible_text import (
+    read_description,
+    visible_description,
+)
 from mechanical_librarian.application import metadata_report as m
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain import metadata_report as d
@@ -492,6 +495,10 @@ def test_a_plain_description_is_read_with_its_character_references_decoded() -> 
         claim.value for claim in _claims(candidate, ClaimKind.DESCRIPTION)
     ]
     assert () == _evidence(candidate, ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION)
+    # Plain text has no formatted copy (#1995).
+    assert [None] == [
+        claim.formatted for claim in _claims(candidate, ClaimKind.DESCRIPTION)
+    ]
 
 
 def test_an_html_summary_is_read_only_when_no_plain_description_is_stated() -> None:
@@ -506,6 +513,9 @@ def test_an_html_summary_is_read_only_when_no_plain_description_is_stated() -> N
     assert "<" in stated
     assert description.value is not None
     assert "<" not in description.value and ">" not in description.value
+    # It also carries its formatted copy from the same reading (#1995).
+    assert description.formatted is not None
+    assert description.formatted == read_description(stated)[2]
     assert ("html-visible-text-v1",) == tuple(
         value.value
         for value in _evidence(

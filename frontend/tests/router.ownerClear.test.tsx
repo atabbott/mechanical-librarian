@@ -563,7 +563,8 @@ describe('keeping an empty value on the case that wrote it', () => {
 })
 
 describe('a description this case wrote over formatting (#1424)', () => {
-  const FORMATTED = 'The earlier description has formatting, so restore it in Audiobookshelf.'
+  const FORMATTED =
+    'The earlier description has a link or formatting Mechanical Librarian can’t write, so restore it in Audiobookshelf.'
   const over = (rest: Partial<Field> = {}): Field => ({
     ...base,
     destination: 'description',
@@ -935,7 +936,13 @@ describe('the keep card on a field this case wrote (#1523)', () => {
         ...advice,
         current: false,
         application_outcome: 'verified',
-        selected_advice: { candidate: advice.candidate, binding: advice.binding, current: false },
+        selected_advice: {
+          candidate: advice.candidate,
+          binding: advice.binding,
+          current: false,
+          formatted: null,
+          visible_text: advice.visible_text,
+        },
         selection: {
           decision_id: `automatic_decision_${'a'.repeat(64)}`,
           candidate_id: advice.candidate.candidate_id,

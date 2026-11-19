@@ -609,6 +609,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             written_field_values=self._field_effect_activity._written_field_values,
             recorded_follows=self._field_effect_activity._recorded_follows,
             followed_write=self._field_effect_activity._followed_write,
+            description_form=self._field_effect_activity._description_form,
         )
         self._review_projections = SQLiteReviewProjectionRepository(
             connection,

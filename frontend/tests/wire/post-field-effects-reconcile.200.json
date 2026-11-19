@@ -34,7 +34,7 @@
       "library": "books",
       "plan_id": "effect_plan_97cb5e111bf5506876842d9cb6efc67ea7373c8eed9053dd9f79b77bda48a391",
       "pre_value": "old",
-      "schema_version": "field-effect-plan-v1",
+      "schema_version": "field-effect-plan-v2",
       "target_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "target_version": "version-1",
       "work_id": "book-1"

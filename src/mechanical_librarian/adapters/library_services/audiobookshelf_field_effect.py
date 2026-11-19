@@ -16,6 +16,7 @@ from urllib.parse import quote
 import httpx
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+    stored_description_reading,
     visible_stored_description,
 )
 from mechanical_librarian.adapters.providers.visible_text import (
@@ -216,7 +217,14 @@ class AudiobookshelfFieldEffectTarget:
                 if hashlib.sha256(cover_body).hexdigest() != digest:
                     return TargetEffectResult("conflict")
             else:
-                media_payload = _media_payload(plan.destination, plan.desired_value)
+                if not _form_is_written(plan):
+                    return TargetEffectResult("refused")
+                media_payload = _media_payload(
+                    plan.destination,
+                    plan.desired_value
+                    if plan.desired_form is None
+                    else plan.desired_form,
+                )
                 if plan.subtitle_companion is not None:
                     subtitle_payload = _media_payload("subtitle", plan.subtitle_companion.desired_value)
                     media_payload["metadata"].update(subtitle_payload["metadata"])
@@ -462,6 +470,18 @@ def _write_status(client: httpx.Client, method: str, url: str, **kwargs: Any) ->
     """Issue exactly one write and deliberately discard its response body."""
     with client.stream(method, url, headers={"Accept-Encoding": "identity"}, **kwargs) as response:
         return response.status_code
+
+
+def _form_is_written(plan: FieldEffectPlan) -> bool:
+    """Whether a description's formatted copy may be sent (#1995, ADR-0107).
+
+    It is sent only as Mechanical Librarian's own copy, which reads as
+    itself again, of exactly the visible text every comparison reads.
+    """
+    if plan.desired_form is None:
+        return True
+    shown, formatted, _ = stored_description_reading(plan.desired_form)
+    return shown == plan.desired_value and formatted == plan.desired_form
 
 
 def _media_payload(destination: str, value: object) -> dict[str, object]:

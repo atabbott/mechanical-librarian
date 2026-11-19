@@ -2309,7 +2309,7 @@ def test_automatic_history_values_require_an_exact_decision_identity(
         tmp_path, automatic=False
     )
     cases = InspectCurrentReviewCase(repository)
-    detail, report, snapshot = cases._read(binding.review_case_id, 50)
+    detail, report, snapshot, citations = cases._read_cited(binding.review_case_id, 50)
     event = next(
         value
         for value in snapshot.history
@@ -2342,7 +2342,9 @@ def test_automatic_history_values_require_an_exact_decision_identity(
             documents += (changed.to_json(),)
             event = {**event, "decision_id": changed.decision_id}
     snapshot = replace(snapshot, decision_documents=documents, history=(event, other))
-    with patch.object(cases, "_read", return_value=(detail, report, snapshot)):
+    with patch.object(
+        cases, "_read_cited", return_value=(detail, report, snapshot, citations)
+    ):
         history = cases.history(binding.review_case_id)
     expected = (
         {"kind": "text", "value": "Existing description."} if mismatch is None else None

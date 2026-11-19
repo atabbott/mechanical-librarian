@@ -35,6 +35,7 @@ from mechanical_librarian.adapters.providers.sdk import (
     run_owner_search,
 )
 from mechanical_librarian.adapters.providers.visible_text import (
+    formatted_claim,
     projected_description,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -784,14 +785,53 @@ def _candidate(
     description = info.get("description")
     # Hostile markup is unprojectable rather than an apparent absence, and a
     # value that is not text stays what it is for the field to judge (#1424).
-    projected, description_transformed = (
+    projected, description_transformed, formatted = (
         projected_description(description)
         if type(description) is str
-        else (description, False)
+        else (description, False, None)
     )
     add(ClaimKind.DESCRIPTION, projected, ClaimScope.WORK)
+    claims[-1] = formatted_claim(claims[-1], projected, formatted)
     add(ClaimKind.LANGUAGE, info.get("language"), ClaimScope.EDITION)
 
+    evidence = _volume_evidence(info, description_transformed, schema_rejections)
+    # Keep each returned occurrence.  Source ordinals are allocated before
+    # canonical ordering so repeated provider values remain independently
+    # attributable to this candidate.
+    canonical_evidence = tuple(
+        sorted(
+            (
+                replace(value, source_ordinal=index)
+                for index, value in enumerate(evidence)
+            ),
+            key=lambda value: (
+                value.scope.value,
+                value.kind.value,
+                value.value,
+                value.role or "",
+            ),
+        )
+    )
+    if len(canonical_evidence) > MAX_PROVIDER_EVIDENCE:
+        raise ValueError("provider rich evidence exceeds its bound")
+    return finalize_candidate_comparisons(
+        ProviderCandidate(
+            identity,
+            "unresolved",
+            tuple(claims),
+            canonical_evidence,
+        ),
+        local_claims,
+        provider,
+    )
+
+
+def _volume_evidence(
+    info: dict[str, Any],
+    description_transformed: bool,
+    schema_rejections: Callable[[int], None],
+) -> list[ProviderEvidence]:
+    """A volume's rich evidence in the order Google states it."""
     evidence = [
         ProviderEvidence(
             ProviderEvidenceKind.EDITION_WORK_RELATION,
@@ -863,35 +903,7 @@ def _candidate(
                 ClaimScope.WORK,
             )
         )
-    # Keep each returned occurrence.  Source ordinals are allocated before
-    # canonical ordering so repeated provider values remain independently
-    # attributable to this candidate.
-    canonical_evidence = tuple(
-        sorted(
-            (
-                replace(value, source_ordinal=index)
-                for index, value in enumerate(evidence)
-            ),
-            key=lambda value: (
-                value.scope.value,
-                value.kind.value,
-                value.value,
-                value.role or "",
-            ),
-        )
-    )
-    if len(canonical_evidence) > MAX_PROVIDER_EVIDENCE:
-        raise ValueError("provider rich evidence exceeds its bound")
-    return finalize_candidate_comparisons(
-        ProviderCandidate(
-            identity,
-            "unresolved",
-            tuple(claims),
-            canonical_evidence,
-        ),
-        local_claims,
-        provider,
-    )
+    return evidence
 
 
 def _string_list(value: object, maximum: int) -> tuple[str, ...]:

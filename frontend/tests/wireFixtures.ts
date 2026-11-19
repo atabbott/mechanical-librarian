@@ -77,6 +77,7 @@ export const targetField = (overrides: Overrides = {}) => ({
   destination: 'title',
   state: 'value',
   value: 'A Book',
+  formatted: null,
   ...overrides,
 })
 
@@ -123,6 +124,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
   preservation_only: false,
   proposal_id: 'proposal-1',
   proposed_values: [],
+  proposed_formatted: [],
   provenance: [],
   target_fingerprint: 'fingerprint-1',
   uncertainty: [],
@@ -141,7 +143,7 @@ export const caseDetail = (overrides: Overrides = {}) => ({
   recording_admission_basis: null,
   recording_identity_basis: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-detail-v14',
+  schema_version: 'review-case-detail-v15',
   target: targetIdentity(),
   writes_consented: false,
   ...overrides,
@@ -320,7 +322,7 @@ export const caseHistory = (overrides: Overrides = {}) => ({
   items: [],
   next_cursor: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-history-v7',
+  schema_version: 'review-case-history-v8',
   ...overrides,
 })
 
@@ -436,7 +438,7 @@ export const library = (overrides: Overrides = {}) => ({
   page: 1,
   previous_cursor: null,
   query: null,
-  schema_version: 'review-library-v11',
+  schema_version: 'review-library-v12',
   ...overrides,
 })
 
@@ -494,7 +496,7 @@ export const activityResponse = (overrides: Overrides = {}) => ({
   paused: false,
   prepared: { automatic: 0, human: 0, total: 0 },
   provider_recovery: [],
-  schema_version: 'continuous-field-activity-v4',
+  schema_version: 'continuous-field-activity-v5',
   suspensions: [],
   waiting: { applying: 0, awaiting_permission: 0, held_for_recovery: 0, retrying: 0, scheduled: 0 },
   ...overrides,

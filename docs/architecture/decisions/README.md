@@ -115,5 +115,6 @@ status line that says who accepted it and when.
 | [0102](0102-search-every-finished-book-again.md) | proposed | Search every finished book again every 90 days |
 | [0103](0103-keep-the-library-visit-on-the-server.md) | proposed | Keep the owner's Library visit on the server and read New from it |
 | [0104](0104-owner-identity-links.md) | proposed | Link a work to the record that is its book, and read it through that link |
-| [0105](0105-going-back-after-a-write.md) | proposed | Go back after a write: clear a field, enter names, and keep a written work's case for 30 days |
-| [0106](0106-show-description-formatting.md) | proposed | Show a description's formatting from a closed set of tags |
+| [0105](0105-going-back-after-a-write.md) | proposed; amended by 0107 (proposed) | Go back after a write: clear a field, enter names, and keep a written work's case for 30 days |
+| [0106](0106-show-description-formatting.md) | proposed; amended by 0107 (proposed) | Show a description's formatting from a closed set of tags |
+| [0107](0107-write-description-formatting.md) | proposed | Write a description's formatting from a closed set of tags |

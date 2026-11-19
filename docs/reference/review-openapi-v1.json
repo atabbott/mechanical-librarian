@@ -2446,6 +2446,18 @@
       "_ActivityEvidence": {
         "additionalProperties": false,
         "properties": {
+          "formatted": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formatted"
+          },
           "label": {
             "maxLength": 64,
             "title": "Label",
@@ -2808,7 +2820,7 @@
             "type": "array"
           },
           "schema_version": {
-            "const": "continuous-field-activity-v4",
+            "const": "continuous-field-activity-v5",
             "title": "Schema Version",
             "type": "string"
           },
@@ -3899,7 +3911,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v14",
+            "const": "review-case-detail-v15",
             "title": "Schema Version",
             "type": "string"
           },
@@ -6450,10 +6462,26 @@
             ],
             "title": "Failure"
           },
+          "formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formatted"
+          },
           "model": {
             "maxLength": 256,
             "title": "Model",
             "type": "string"
+          },
+          "readable": {
+            "title": "Readable",
+            "type": "boolean"
           },
           "selected_advice": {
             "anyOf": [
@@ -6485,6 +6513,18 @@
             ],
             "title": "State",
             "type": "string"
+          },
+          "visible_text": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Visible Text"
           }
         },
         "required": [
@@ -6498,7 +6538,10 @@
           "binding",
           "selection",
           "selected_advice",
-          "application_outcome"
+          "application_outcome",
+          "formatted",
+          "visible_text",
+          "readable"
         ],
         "title": "_DescriptionAdviceResponse",
         "type": "object"
@@ -7227,6 +7270,18 @@
             "title": "Outcome",
             "type": "string"
           },
+          "previous_formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Formatted"
+          },
           "previous_value": {
             "anyOf": [
               {
@@ -7245,6 +7300,18 @@
             "const": "automatic-decision-history-event-v1",
             "title": "Schema Version",
             "type": "string"
+          },
+          "selected_formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Formatted"
           },
           "selected_value": {
             "anyOf": [
@@ -7432,6 +7499,18 @@
             "title": "Outcome",
             "type": "string"
           },
+          "previous_formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Formatted"
+          },
           "previous_value": {
             "anyOf": [
               {
@@ -7450,6 +7529,18 @@
             "const": "human-decision-event-v1",
             "title": "Schema Version",
             "type": "string"
+          },
+          "selected_formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Formatted"
           },
           "selected_value": {
             "anyOf": [
@@ -7514,6 +7605,18 @@
             "title": "Engine",
             "type": "string"
           },
+          "formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formatted"
+          },
           "kind": {
             "enum": [
               "description_advice_recorded",
@@ -7563,6 +7666,18 @@
             ],
             "title": "State",
             "type": "string"
+          },
+          "visible_text": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Visible Text"
           }
         },
         "required": [
@@ -7884,7 +7999,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v7",
+            "const": "review-case-history-v8",
             "title": "Schema Version",
             "type": "string"
           }
@@ -8714,7 +8829,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v11",
+            "const": "review-library-v12",
             "title": "Schema Version",
             "type": "string"
           }
@@ -13479,6 +13594,21 @@
             "title": "Proposal Id",
             "type": "string"
           },
+          "proposed_formatted": {
+            "items": {
+              "anyOf": [
+                {
+                  "maxLength": 16384,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Proposed Formatted",
+            "type": "array"
+          },
           "proposed_values": {
             "items": {
               "$ref": "#/components/schemas/_ProposedValue"
@@ -13542,6 +13672,7 @@
           "change_written",
           "pin_control",
           "proposed_values",
+          "proposed_formatted",
           "choice_contexts",
           "provenance",
           "preservation_only",
@@ -13728,12 +13859,38 @@
           "current": {
             "title": "Current",
             "type": "boolean"
+          },
+          "formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formatted"
+          },
+          "visible_text": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Visible Text"
           }
         },
         "required": [
           "candidate",
           "binding",
-          "current"
+          "current",
+          "formatted",
+          "visible_text"
         ],
         "title": "_SelectedDescriptionAdvice",
         "type": "object"
@@ -14262,6 +14419,18 @@
             ],
             "title": "Destination",
             "type": "string"
+          },
+          "formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formatted"
           },
           "state": {
             "enum": [

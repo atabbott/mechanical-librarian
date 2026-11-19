@@ -296,7 +296,8 @@ def retained_report_as_current(document: str) -> MetadataReport:
     lane's `identity_refused_new`: empty and zero here, since an earlier
     producer kept nothing of a refused WORK answer (#1355). v82 added the
     report's `owner_link`: null here, since a v49 item had no owner link
-    (#1477).
+    (#1477). v83 added each description's `formatted` copy: null here, since
+    a v49 report kept none (#1995).
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
@@ -339,6 +340,24 @@ def retained_report_as_current(document: str) -> MetadataReport:
     for field in data["target"]["fields"]:
         if field["destination"] == "description":
             field["restorable"] = False
+            field["formatted"] = None
+
+    # Every provider description claim, in any candidate list a provider
+    # keeps (live, refused, recording lookup), gains the null copy.
+    def described(value: object) -> None:
+        if isinstance(value, dict):
+            claims = value.get("claims")
+            if isinstance(claims, list):
+                for claim in claims:
+                    if isinstance(claim, dict) and claim.get("kind") == "description":
+                        claim["formatted"] = None
+            for item in value.values():
+                described(item)
+        elif isinstance(value, list):
+            for item in value:
+                described(item)
+
+    described(data["providers"])
     if data.get("audio") is not None:
         data["audio"]["discovery_titles"] = []
     for result in data["field_results"]:

@@ -465,8 +465,8 @@ said why.
 - **Activity.** An automatic choice that an active hold without a pin or a
   requested return keeps unwritten reads "Held by you" while Automatic is on.
 
-No stored document changes shape; `review-case-detail-v14` and
-`continuous-field-activity-v4` carry the new cause and note. No clean rebuild.
+No stored document changes shape; `review-case-detail-v15` and
+`continuous-field-activity-v5` carry the new cause and note. No clean rebuild.
 
 Proof: `test_preview_shows_an_earlier_choice_only_where_automatic_decides_again`
 and `test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided` in

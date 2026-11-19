@@ -17,6 +17,14 @@ brackets are GitHub issues.
   no longer says no source offered a different value when one did (#ISSUE).
 - Activity marks an automatic choice your earlier decision keeps unwritten
   "Held by you" until you choose Resume automatic handling (#ISSUE).
+- History and Activity show a description's paragraphs, bold, italics and
+  lists as it was chosen and written. Description advice there reads as the
+  text that is written, not the adviser's own markup (#2003).
+- **Clean rebuild required.** A chosen description is written to
+  Audiobookshelf with its paragraphs, bold, italics and lists instead of as
+  one line joined by dots. Before your change can put back a formatted
+  description unless it has a link or formatting Mechanical Librarian can't
+  write (#1995).
 - In Preview, a field your answer, hold or pin keeps Automatic off no longer
   shows Automatic's earlier choice or says turning on Automatic decides it
   again. That includes an answer given before the work was changed and

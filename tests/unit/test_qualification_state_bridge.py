@@ -97,8 +97,10 @@ def _v26_document(
     data["schema_version"] = "metadata-report-v26"
     data["comparison_version"] = "closed-title-creator-publication-v4"
     for field in data["target"]["fields"]:
-        # v26 predates the description restore flag (#1424).
+        # v26 predates the description restore flag (#1424) and its
+        # formatted copy (#1995).
         field.pop("restorable", None)
+        field.pop("formatted", None)
     data["field_results"] = [
         {
             **value,

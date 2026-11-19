@@ -69,6 +69,9 @@ from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBind
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
     expand_cover_consideration,
 )
+from mechanical_librarian.adapters.persistence.description_advice import (
+    advised_description,
+)
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
@@ -131,6 +134,7 @@ from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceCandidate,
 )
+from mechanical_librarian.domain.description_formatting import alternative_formatted
 from mechanical_librarian.domain.field_effect import (
     CLEARABLE_DESTINATIONS,
     EMPTY_DECISION_KIND,
@@ -779,10 +783,18 @@ def _shared_activity_record(
         durable["model"] = candidate.model
         durable["target_fingerprint"] = authored.target_fingerprint
         if row.source_kind == "description_decision":
+            # The description written, as its visible text and copy, never
+            # the adviser's own markup (#2003). Unreadable advice can't be
+            # chosen; were it ever, its text shows as text.
+            advised = advised_description(candidate.output.description)
             durable["selected_value"] = {
                 "kind": "text",
-                "value": candidate.output.description,
+                "value": candidate.output.description
+                if advised is None
+                else advised[0],
             }
+            if advised is not None and advised[1] is not None:
+                durable["selected_form"] = advised[1]
     return durable
 
 
@@ -1234,7 +1246,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         current_cover_replay_reference: Callable[[], str | None],
         require_owner_cover: Callable[[str, str | None], None],
         taste_switching: Callable[[], bool] = lambda: False,
-        description_authority_value: Callable[[AuthoredDescriptionDecision], object],
+        description_authority_value: Callable[
+            [AuthoredDescriptionDecision], tuple[object, str | None]
+        ],
     ) -> None:
         super().__init__(connection, binding)
         self._review_case_accepts_authority = review_case_accepts_authority
@@ -1385,8 +1399,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # ``value`` carries either a human selection envelope or the projected
         # automatic envelope, so it is declared at the widest of the two.
         value: object
+        form: str | None = None
         if type(decision) is AuthoredDescriptionDecision:
-            value = self._description_authority_value(decision)
+            value, form = self._description_authority_value(decision)
         elif type(decision) is HumanDecision:
             # A choice of a level alternative stands in the stored offer its
             # digest binds; the check validates, it never decides (#1355).
@@ -1426,6 +1441,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             value = self._decision_value_for_target(
                 decision.destination, case_pre_value
             )
+        if decision.destination == "description" and type(decision) in {
+            HumanDecision,
+            AutomaticDecision,
+        }:
+            form = self._description_form(
+                cast(HumanDecision | AutomaticDecision, decision), case, value
+            )
         dependency_digests: tuple[str, ...] = (decision.target_fingerprint,)
         if type(decision) is CoverAutomaticDecision:
             dependency_digests = (
@@ -1450,7 +1472,92 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "source": "persisted_review_case",
             "pre_value": pre_value,
             "dependency_digests": dependency_digests,
+            "decision_form": form,
         }
+
+    def _description_form(
+        self,
+        decision: HumanDecision | AutomaticDecision,
+        case: ReviewCase,
+        value: object,
+    ) -> str | None:
+        """The formatted copy a description decision writes (#1995, ADR-0107).
+
+        A keep writes back the case's own description's copy, only where
+        restoring it loses nothing. An accepted or automatic value writes the
+        one copy its cited claims agree on; anything else writes plain text.
+        """
+        if type(decision) is HumanDecision and decision.outcome == "keep_current":
+            field = self._case_target_field(case, decision.destination)
+            formatted = field.get("formatted")
+            return (
+                formatted
+                if field.get("restorable") is True and type(formatted) is str
+                else None
+            )
+        if type(decision) is HumanDecision and decision.outcome == "accept":
+            references = self._accepted_references(decision, case)
+        elif type(decision) is AutomaticDecision:
+            references = self._automatic_references(decision)
+        else:
+            return None
+        return alternative_formatted(
+            self._plan_report(case.report_id),
+            references,
+            value.get("value") if type(value) is dict else None,
+        )
+
+    def _accepted_references(
+        self, decision: HumanDecision, case: ReviewCase
+    ) -> tuple[str, ...]:
+        """The evidence of the alternative an owner accepted, in its bound offer."""
+        return next(
+            (
+                tuple(cast("list[str]", alternative.get("evidence_references", [])))
+                for proposal in decision.bound_offer(
+                    DecisionScope.of(
+                        case,
+                        stored_level_offer_documents(
+                            self._connection, case.review_case_id
+                        ),
+                    )
+                )
+                if proposal.get("proposal_id") == decision.proposal_id
+                for alternative in cast(
+                    "list[dict[str, object]]",
+                    cast("dict[str, object]", proposal["result"]).get(
+                        "alternatives", []
+                    ),
+                )
+                if alternative.get("value") == decision.selected_value
+            ),
+            (),
+        )
+
+    def _automatic_references(self, decision: AutomaticDecision) -> tuple[str, ...]:
+        """The citations of the newest outcome an automatic decision came from."""
+        row = self._connection.execute(
+            "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
+            "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
+            "ORDER BY json_extract(document,'$.policy_generation') DESC,"
+            "evaluated_at DESC,outcome_set_id DESC LIMIT 1",
+            (
+                decision.review_case_id,
+                decision.report_id,
+                decision.proposal_set_id,
+                decision.resolved_policy_id,
+            ),
+        ).fetchone()
+        if row is None:
+            return ()
+        return next(
+            (
+                outcome.citation_ids
+                for outcome in self._parsed_outcome(row[0]).outcomes
+                if outcome.outcome_id == decision.source_outcome_id
+            ),
+            (),
+        )
 
     @local_operation
     def field_effect_plan_row(
@@ -1475,32 +1582,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             references: tuple[str, ...] = ()
             report_id = case.report_id
             if type(decision) is HumanDecision and decision.outcome == "accept":
-                references = next(
-                    (
-                        tuple(
-                            cast(
-                                "list[str]", alternative.get("evidence_references", [])
-                            )
-                        )
-                        for proposal in decision.bound_offer(
-                            DecisionScope.of(
-                                case,
-                                stored_level_offer_documents(
-                                    self._connection, case.review_case_id
-                                ),
-                            )
-                        )
-                        if proposal.get("proposal_id") == decision.proposal_id
-                        for alternative in cast(
-                            "list[dict[str, object]]",
-                            cast("dict[str, object]", proposal["result"]).get(
-                                "alternatives", []
-                            ),
-                        )
-                        if alternative.get("value") == decision.selected_value
-                    ),
-                    (),
-                )
+                references = self._accepted_references(decision, case)
             elif type(decision) is CoverAutomaticDecision:
                 references = decision.citation_ids
                 row = self._connection.execute(
@@ -1509,27 +1591,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 ).fetchone()
                 report_id = report_id if row is None else row[0]
             elif type(decision) is AutomaticDecision:
-                row = self._connection.execute(
-                    "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
-                    "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
-                    "ORDER BY json_extract(document,'$.policy_generation') DESC,"
-                    "evaluated_at DESC,outcome_set_id DESC LIMIT 1",
-                    (
-                        decision.review_case_id,
-                        decision.report_id,
-                        decision.proposal_set_id,
-                        decision.resolved_policy_id,
-                    ),
-                ).fetchone()
-                if row is not None:
-                    references = next(
-                        (
-                            outcome.citation_ids
-                            for outcome in self._parsed_outcome(row[0]).outcomes
-                            if outcome.outcome_id == decision.source_outcome_id
-                        ),
-                        (),
-                    )
+                references = self._automatic_references(decision)
             return {
                 "work": work,
                 "authors": authors,
@@ -1787,8 +1849,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             raise FieldEffectError("authority_binding") from error
         return value, paired_bundle_id, paired_decision_id
 
-    def _case_target_pre_value(self, case: ReviewCase, destination: str) -> object:
-        """Read the case's own pre-value for the destination, with the cover override."""
+    def _case_target_field(
+        self, case: ReviewCase, destination: str
+    ) -> dict[str, object]:
+        """The case's own target field for the destination, if it read one."""
         target_fields = case.target.get("fields")
         if type(target_fields) is not list:
             raise FieldEffectError("authority_binding")
@@ -1807,6 +1871,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "missing",
         }:
             raise FieldEffectError("authority_binding")
+        return target_field
+
+    def _case_target_pre_value(self, case: ReviewCase, destination: str) -> object:
+        """Read the case's own pre-value for the destination, with the cover override."""
+        target_field = self._case_target_field(case, destination)
         case_pre_value = (
             target_field.get("value") if target_field["state"] == "value" else None
         )
@@ -2077,6 +2146,94 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "state": None,
             "failure": None,
         }
+
+    def _replaced_form(
+        self, review_case_id: str, decision: HumanDecision | None, value: object
+    ) -> str | None:
+        """The copy of a description value a write replaced or kept (#2003).
+
+        A value is shown with a copy only from its own pair: the write an
+        owner decision follows, then the case's own description, whichever
+        reads as exactly this value. A binding that can't be read, or no pair
+        that matches, leaves the value plain.
+        """
+        try:
+            pairs: list[tuple[object, object]] = []
+            followed = None if decision is None else self._followed_write(decision)
+            if followed is not None:
+                plan = _written_plan(followed[0], review_case_id, "description")
+                pairs.append((plan.desired_value, plan.desired_form))
+            target = self._case_target_field(
+                self._recorded_case(review_case_id), "description"
+            )
+            if target["state"] == "value":
+                pairs.append((target.get("value"), target.get("formatted")))
+        except FieldEffectError as error:
+            if error.code != "authority_binding":
+                raise
+            return None
+        return next(
+            (form for plain, form in pairs if plain == value and type(form) is str),
+            None,
+        )
+
+    def _owner_decision(self, decision_id: object) -> HumanDecision | None:
+        """The owner decision behind a description row, when an owner made it."""
+        row = self._connection.execute(
+            "SELECT document FROM human_decisions WHERE decision_id=?", (decision_id,)
+        ).fetchone()
+        return None if row is None else HumanDecision.from_json(row[0])
+
+    def _write_forms(self, raw: dict[str, Any], plan_id: str) -> dict[str, object]:
+        """A description write's copies: what it writes, from its own plan,
+        and what it replaced, by the pair rule (#2003)."""
+        row = self._connection.execute(
+            "SELECT document FROM field_effects WHERE plan_id=?", (plan_id,)
+        ).fetchone()
+        if row is None:
+            return {}
+        plan = FieldEffectOperation.from_json(row[0]).plan
+        forms: dict[str, object] = {}
+        if plan.desired_form is not None and plan.desired_value == raw["desired_value"]:
+            forms["desired_form"] = plan.desired_form
+        pre_form = self._replaced_form(
+            plan.authority.review_case_id,
+            self._owner_decision(raw["decision_id"]),
+            raw["pre_value"],
+        )
+        if pre_form is not None:
+            forms["pre_form"] = pre_form
+        return forms
+
+    def _owner_forms(self, decision: HumanDecision, durable: dict[str, object]) -> None:
+        """An owner description decision's copies, beside each value its row
+        names: what it replaced, chose, or went back between (#2003)."""
+        review_case_id = decision.review_case_id
+        if "pre_value" in durable:
+            pre_form = self._replaced_form(
+                review_case_id, decision, durable["pre_value"]
+            )
+            if pre_form is not None:
+                durable["pre_form"] = pre_form
+        if decision.outcome == "accept":
+            try:
+                selected_form = self._description_form(
+                    decision,
+                    self._recorded_case(review_case_id),
+                    decision.selected_value,
+                )
+            except FieldEffectError as error:
+                if error.code != "authority_binding":
+                    raise
+                selected_form = None
+            if selected_form is not None:
+                durable["selected_form"] = selected_form
+        went_back = durable.get("went_back")
+        if type(went_back) is dict:
+            for key, pair in (("written", decision), ("before", None)):
+                form = self._replaced_form(review_case_id, pair, went_back[key])
+                if form is not None:
+                    went_back[f"{key}_form"] = form
 
     def _cover_pre_value(self, case: ReviewCase) -> str | None:
         """Bind a cover write to the bytes its case's report read (#1362)."""
@@ -3764,6 +3921,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         durable = _shared_activity_record(row, dependencies.authored_records)
         durable["pre_value"] = raw["pre_value"]
         durable["desired_value"] = raw["desired_value"]
+        if row.destination == "description":
+            durable.update(self._write_forms(raw, row.source_parent_id))
         if "subtitle_companion" in raw:
             durable["subtitle_companion"] = raw["subtitle_companion"]
         if raw["kind"] == "stale" and row.failure == "connection":
@@ -3835,13 +3994,22 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             (row.source_identity,),
         ).fetchone()[0]
         owner = self._connection.execute(
-            "SELECT selected_value_document FROM human_decisions WHERE decision_id=?",
+            "SELECT selected_value_document,document FROM human_decisions "
+            "WHERE decision_id=?",
             (row.source_identity,),
         ).fetchone()
         if owner is not None:
             durable["kept_value"] = project_decision_value(
                 record.destination, json.loads(owner[0])
             )
+            if record.destination == "description":
+                kept_form = self._replaced_form(
+                    record.review_case_id,
+                    HumanDecision.from_json(owner[1]),
+                    durable["kept_value"],
+                )
+                if kept_form is not None:
+                    durable["kept_form"] = kept_form
         return _finished_activity_event(row, durable)
 
     def _project_description_preparation(
@@ -4002,6 +4170,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     key: planned[key]
                     for key in ("written", "before", "state", "failure")
                 }
+        if decision.destination == "description":
+            self._owner_forms(decision, durable)
         return _finished_activity_event(row, durable)
 
     def _project_automatic_decision(
@@ -4083,6 +4253,28 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         proposal,
                         outcome,
                     )
+                    if (
+                        projected_automatic.destination == "description"
+                        and projected_automatic.outcome == "candidate"
+                        and type(selected_value) is dict
+                    ):
+                        # The copy its own outcome's citations agree on, as
+                        # its write would carry (#2003).
+                        selected_form = alternative_formatted(
+                            report,
+                            next(
+                                (
+                                    source.citation_ids
+                                    for source in outcome.outcomes
+                                    if source.outcome_id
+                                    == projected_automatic.source_outcome_id
+                                ),
+                                (),
+                            ),
+                            selected_value.get("value"),
+                        )
+                        if selected_form is not None:
+                            durable["selected_form"] = selected_form
                 else:
                     _validate_automatic_decision_authority(
                         cast(AutomaticDecision, projected_automatic),

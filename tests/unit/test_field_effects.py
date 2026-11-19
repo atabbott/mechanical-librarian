@@ -8422,6 +8422,7 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
     from mechanical_librarian.domain.cover_automatic_decision import (
         CoverAutomaticDecision,
     )
+    from mechanical_librarian.domain.field_effect import FIELD_EFFECT_PLAN_SCHEMA
     from tests.support.metadata_report_schemas import retained_report_as_current
 
     fixture = json.loads(
@@ -8430,9 +8431,15 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
             / "support/retained_qualification_predecessors/cover.json"
         ).read_text()
     )
+    # The retained bytes stay frozen. Plan v2 added only a description's
+    # `desired_form` (#1995), outside a cover plan's identity, so an in-memory
+    # copy relabelled as current keeps its plan id; nothing is written back.
+    retained = dict(fixture["operation"])
+    retained["plan"] = {**retained["plan"], "schema_version": FIELD_EFFECT_PLAN_SCHEMA}
     operation = FieldEffectOperation.from_json(
-        json.dumps(fixture["operation"], sort_keys=True, separators=(",", ":"))
+        json.dumps(retained, sort_keys=True, separators=(",", ":"))
     )
+    assert operation.plan.plan_id == fixture["operation"]["plan"]["plan_id"]
     path = tmp_path / "state.sqlite"
     with closing(open_repository(path)) as source:
         report = retained_report_as_current(fixture["report"])

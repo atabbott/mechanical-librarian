@@ -835,12 +835,14 @@ def test_multiline_incumbent_description_persists_and_applies(
     (
         ("Plain incumbent description.", True),
         ("Fish &amp; chips for the incumbent.", True),
-        ("<p>Fish &amp; chips</p><p>for the <b>incumbent</b>.</p>", False),
+        # Formatting all in the closed set is written back as its copy (#1995).
+        ("<p>Fish &amp; chips</p><p>for the <b>incumbent</b>.</p>", True),
+        ('<p>See <a href="https://example.org">the incumbent</a>.</p>', False),
         ("&lt;b&gt;bold incumbent text.", False),
         ("Already &amp;amp; escaped incumbent.", False),
         ("&lt;img src=x onerror=alert(1)&gt;Incumbent.", False),
     ),
-    ids=("plain", "entity", "formatted", "escaped_tag", "double", "handler"),
+    ids=("plain", "entity", "formatted", "link", "escaped_tag", "double", "handler"),
 )
 def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
     tmp_path: Path, stored: str, restorable: bool, monkeypatch: pytest.MonkeyPatch
@@ -848,10 +850,11 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
     """Keeping the current description after a verified write restores it (#1424).
 
     Only text that the library stores exactly as written, or with nothing but
-    a bare ampersand or angle bracket escaped, is written back. Formatting the
-    restore would flatten is refused when the keep is recorded, and a keep
-    recorded before that refusal is refused before any request reaches the
-    library.
+    a bare ampersand or angle bracket escaped, is written back, or formatting
+    all in the closed set, written as its own copy (#1995). A link or other
+    formatting the restore would lose is refused when the keep is recorded,
+    and a keep recorded before that refusal is refused before any request
+    reaches the library.
     """
     import html
     from types import SimpleNamespace
@@ -876,8 +879,11 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
     desired = "A different description from local metadata."
     library = FieldEffectTargetCase()
     library.detail["media"]["metadata"]["description"] = stored
-    # Every pinned Audiobookshelf escapes a bare ampersand and angle bracket.
-    library.stored_description = lambda value: html.escape(value, quote=False)
+    # Every pinned Audiobookshelf escapes a bare ampersand and angle bracket,
+    # and keeps the tags of a formatted copy, whose text is already escaped.
+    library.stored_description = lambda value: (
+        value if value.startswith("<") else html.escape(value, quote=False)
+    )
     snapshot = target_snapshot({"title": "Current title", "description": stored})
     report = MetadataReport.create(
         target=TargetFacts("primary", "ebooks", "item-1", snapshot.fields),
@@ -972,8 +978,8 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
             assert library.requests == []
             assert library.detail["media"]["metadata"]["description"] == desired
             assert failure_reason("restore_unavailable") == (
-                "This description's formatting can't be restored from here. "
-                "Restore it in Audiobookshelf"
+                "This description has a link or formatting Mechanical Librarian "
+                "can't write. Restore it in Audiobookshelf"
             )
             # The refusal asks the owner to act; it is not healthy progress.
             assert [
