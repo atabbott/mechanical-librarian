@@ -13,6 +13,7 @@ import {
 } from '../fieldReasons'
 import { clearedSentence, destinationLabel } from '../labels'
 import { ChoiceEvidencePanel, DescriptionText } from './FieldDecisionChoices'
+import { FormattedDescription, visibleText } from '../descriptionFormatting'
 import type { PinControl } from '../fieldPin'
 import { PinButton } from './FieldDecisionPin'
 
@@ -60,7 +61,7 @@ export function SettledFieldContext({
 const recordedValueSentence = (field: ReviewField) =>
   isClear(field.humanDecision?.selected_value)
     ? clearedSentence(field.destination)
-    : `The recorded value remains ${decisionValue(field)}.`
+    : `The recorded value remains ${field.destination === 'description' ? visibleText(decisionValue(field)) : decisionValue(field)}.`
 
 export function ContextValue({
   field,
@@ -77,6 +78,7 @@ export function ContextValue({
   const context = choiceContext(field, null)
   const evidenceId = `context-evidence-${field.destination}`
   const valueId = `context-value-${field.destination}`
+  const earlier = field.earlierAutomaticValue ? displayValue(field.earlierAutomaticValue.value) : ''
   return (
     <section
       className={`context-value${pin ? ' has-pin' : ''}`}
@@ -96,7 +98,13 @@ export function ContextValue({
         {field.earlierAutomaticValue ? (
           <div>
             <dt>Earlier automatic choice</dt>
-            <dd>{valueText(field.destination, displayValue(field.earlierAutomaticValue.value))}</dd>
+            <dd>
+              {field.destination === 'description' ? (
+                <FormattedDescription value={earlier}>{earlier}</FormattedDescription>
+              ) : (
+                valueText(field.destination, earlier)
+              )}
+            </dd>
           </div>
         ) : null}
       </dl>

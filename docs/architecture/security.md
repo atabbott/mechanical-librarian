@@ -166,6 +166,14 @@ when the first review guide closes. Covers' walkthrough sets
 `ml_covers_intro=seen` when it closes, and its Hide sets `ml_covers_picks=hidden`;
 neither holds a credential.
 
+A description's formatting is read in the browser without handing markup
+to the page: a strict reader rebuilds a closed set of tags (bold, italic,
+underline, strikethrough, paragraphs, breaks and lists) as React elements
+with no attributes, and drops any other tag, keeping its words. A refused
+element, an event handler, a link, a comment, unbalanced or over-deep
+markup, or an over-bound value leaves the description shown as written
+([ADR-0106](decisions/0106-show-description-formatting.md)).
+
 ### Responses and caching
 
 Every response has a restrictive same-origin CSP, frame denial,

@@ -1,8 +1,14 @@
 import { queryWorkClass } from '../queryWork'
 import { KeyBadge } from './ReviewKeys'
+import {
+  FormattedDescription,
+  formattedLength,
+  readFormatting,
+  wasCut,
+} from '../descriptionFormatting'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useId, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 
 import { BuildMismatchError } from '../api/http'
 import type { ChoiceContextView, EvidenceView } from '../api/http'
@@ -10,6 +16,7 @@ import { StaleBuildRead } from '../components/StaleBuildRead'
 import type { choiceRadios } from '../choiceGroup'
 import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
 import {
+  destinationLabel,
   evidenceRoleLabel,
   fieldObservationText,
   observationText,
@@ -36,6 +43,33 @@ const sourceBasis = (
   context.matchBasis === 'title_and_author' && role !== 'local_presence'
     ? ' · same title and author'
     : ''
+// A source's value as a paragraph; a description's shows its formatting.
+// A source value over 160 characters arrives as its first 160 and `…`.
+export const ObservationValue = ({ text, description }: { text: string; description: boolean }) =>
+  description ? (
+    <FormattedDescription value={text} cut={wasCut(text, 161, 161)}>
+      <p>{text}</p>
+    </FormattedDescription>
+  ) : (
+    <p>{text}</p>
+  )
+// A description observation, which the server writes as `Description: ` and
+// the value, shows its formatting under that name; any other is a line of text.
+function EvidenceObservation({ text }: { text: string }) {
+  const prefix = `${destinationLabel('description')}: `
+  const value = text.startsWith(prefix) ? text.slice(prefix.length) : null
+  const nodes = useMemo(
+    () => (value === null ? null : readFormatting(value, wasCut(value, 161, 161))),
+    [value],
+  )
+  if (!nodes) return <p>{text}</p>
+  return (
+    <>
+      <p>{prefix.trimEnd()}</p>
+      <FormattedDescription nodes={nodes} />
+    </>
+  )
+}
 export function ChoiceEvidencePanel({
   context,
   evidenceId,
@@ -79,7 +113,7 @@ export function ChoiceEvidencePanel({
                   ? 'Offers this value'
                   : evidenceRoleLabel(row.role)}
               </span>
-              <p>{observationText(row)}</p>
+              <EvidenceObservation text={observationText(row)} />
             </li>
           ))}
         </ul>
@@ -99,10 +133,17 @@ export function ChoiceEvidencePanel({
 }
 export function DescriptionText({ value }: { value: string }) {
   const [expanded, setExpanded] = useState(false)
-  const long = value.length > 280
+  // One reading per value, shared by the length and the content.
+  const nodes = useMemo(() => readFormatting(value), [value])
+  const long = formattedLength(value, nodes) > 280
+  const limit = long && !expanded ? 240 : undefined
   return (
     <div className="description-value">
-      <p>{long && !expanded ? `${value.slice(0, 240)}…` : value}</p>
+      {nodes ? (
+        <FormattedDescription nodes={nodes} limit={limit} />
+      ) : (
+        <p>{limit === undefined ? value : `${value.slice(0, limit)}…`}</p>
+      )}
       {long ? (
         <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
           {expanded ? 'Show less description' : 'Read full description'}
@@ -167,7 +208,10 @@ export function RecordedFieldObservations({
         <ul className="evidence-values" ref={list}>
           {observations.map((item, index) => (
             <li key={`${item.source}:${item.observation}:${String(index)}`} tabIndex={-1}>
-              <p>{fieldObservationText(item, field.destination)}</p>
+              <ObservationValue
+                text={fieldObservationText(item, field.destination)}
+                description={field.destination === 'description'}
+              />
               <small>
                 {item.source} · {evidenceRoleLabel(item.role)}
               </small>

@@ -121,6 +121,15 @@ describe('the pin on a field with nothing to decide', () => {
     }
   })
 
+  it('shows a contextual description as one line of visible text', async () => {
+    const { details } = show([row('description', '<p>One <b>bold</b></p><p>Two</p>')])
+    await openPanel(details)
+    const pin = within(rowOf('Description')).getByRole('button', { name: 'Pin this value' })
+    expect(pin).toHaveAccessibleDescription('Description One bold Two')
+    expect(rowOf('Description').querySelector('small strong, small p')).toBeNull()
+    expect(rowOf('Description')).not.toHaveTextContent('<b>')
+  })
+
   it('shows no pin on a cover, a row the server offers none, a change waiting, or a held row', () => {
     show([
       row('cover', 'Cover on file', { pinControl: null }),

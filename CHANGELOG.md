@@ -16,6 +16,9 @@ brackets are GitHub issues.
   earlier choice or says turning on Automatic decides it again. Your answer
   or pin keeps Automatic off the field. That includes an answer given before
   the work was changed and changed back (#1996).
+- A description's bold, italics, paragraphs and lists now show as
+  formatting, not as tags, wherever the workspace shows a description.
+  Markup that cannot be read safely is still shown as written (#1992).
 - After you choose Resume automatic handling, a field no longer tells you
   to use Resume to release your decision, and its pin line says to choose a
   value and then pin it, since choosing alone doesn't pin (#1988).

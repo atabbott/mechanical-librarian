@@ -3,6 +3,7 @@
 // field. The server says whether a pin is accepted now; nothing here guesses.
 import { targetValueText } from './api/http'
 import type { DecisionCommand } from './api/http'
+import { visibleText } from './descriptionFormatting'
 import { keepOffered, valueText } from './fieldDecision'
 import type { ReviewField } from './fieldDecision'
 import { humanChoiceSelected } from './reviewAutomaticSelection'
@@ -81,10 +82,13 @@ export const underPin = (field: ReviewField): ReviewField =>
     ? { ...field, automaticDecision: null }
     : field
 
+// A description in a sentence reads as its visible text, not its markup.
+const pinnedText = (destination: ReviewField['destination'], text: string) =>
+  destination === 'description' ? visibleText(text) : valueText(destination, text)
 const pinnedValueSentence = (field: ReviewField) => {
   const value = field.pin?.value
   return value?.state === 'value'
-    ? `You pinned “${valueText(field.destination, targetValueText(value.state, value.value))}”.`
+    ? `You pinned “${pinnedText(field.destination, targetValueText(value.state, value.value))}”.`
     : 'You pinned this field empty.'
 }
 

@@ -1,4 +1,5 @@
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { FormattedDescription, readFormatting } from '../descriptionFormatting'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
@@ -16,6 +17,7 @@ import { BuildMismatchError, CLEARED_TEXT, displayValue, isClear } from '../api/
 import { humanReasons } from '../fieldReasons'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { railOffers } from '../reviewChoiceCounts'
+import { ObservationValue } from './FieldDecisionChoices'
 import { RecordedTime } from '../components/RecordedTime'
 import {
   clearedSentence,
@@ -108,6 +110,29 @@ const ownerLinkSentence = (
   return `${verb} ${name} ${source}, as ${ownerLinkAs[item.scope]}.`
 }
 
+// A recorded value beside its label. A description's shows its formatting, in
+// a div, since a paragraph cannot hold its paragraphs and lists.
+function HistoryValue({
+  label,
+  text,
+  description,
+}: {
+  label: string
+  text: string
+  description: boolean
+}) {
+  const nodes = description ? readFormatting(text) : null
+  return nodes ? (
+    <div className="diagnostic-value">
+      <span>{label}</span> <FormattedDescription nodes={nodes} />
+    </div>
+  ) : (
+    <p className="diagnostic-value">
+      <span>{label}</span> {text}
+    </p>
+  )
+}
+
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
   if (item.category === 'description')
     return (
@@ -126,7 +151,12 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
               : (descriptionAdviceSentences[item.state] ?? 'Advice was recorded.')}
         </p>
         {item.candidate ? (
-          <p className="description-advice-text">{item.candidate.output.description}</p>
+          <FormattedDescription
+            value={item.candidate.output.description}
+            className="description-advice-text"
+          >
+            <p className="description-advice-text">{item.candidate.output.description}</p>
+          </FormattedDescription>
         ) : item.state === 'requested' || item.state === 'running' ? null : (
           // Only once advice has stopped is "no text" news.
           <p>No description was written.</p>
@@ -164,6 +194,7 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           : item.outcome === 'keep_current'
             ? 'Automatic kept the current value.'
             : 'Automatic left this field unchanged.'
+    const description = item.destination === 'description'
     return (
       <article className="diagnostic-entry">
         <h3>{destinationLabel(item.destination)}</h3>
@@ -172,25 +203,29 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           <p className="diagnostic-note">{item.applicationReason}</p>
         ) : null}
         {isRetention(item) ? (
-          <p className="diagnostic-value">
-            <span>Kept</span> {displayRetainedHistoryValue(item)}
-          </p>
+          <HistoryValue
+            label="Kept"
+            text={displayRetainedHistoryValue(item)}
+            description={description}
+          />
         ) : valueless ? null : (
           <>
-            <p className="diagnostic-value">
-              <span>From</span>{' '}
-              {historyValue(item.destination, item.previousValue, emptyWords(item, NOT_SET))}
-            </p>
-            <p className="diagnostic-value">
-              <span>To</span>{' '}
-              {historyValue(
+            <HistoryValue
+              label="From"
+              text={historyValue(item.destination, item.previousValue, emptyWords(item, NOT_SET))}
+              description={description}
+            />
+            <HistoryValue
+              label="To"
+              text={historyValue(
                 item.destination,
                 item.selectedValue,
                 // A keep that went back to an empty field restores Not set,
                 // as its card said; only a clear reads Cleared (#1523).
                 emptyWords(item, item.outcome === 'keep_current' ? NOT_SET : CLEARED_TEXT),
               )}
-            </p>
+              description={description}
+            />
           </>
         )}
       </article>
@@ -453,7 +488,10 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                         <ul className="evidence-values">
                           {fieldObservations.map((item, index) => (
                             <li key={`${item.source}-${String(index)}-${item.observation}`}>
-                              <p>{fieldObservationText(item, field.destination)}</p>
+                              <ObservationValue
+                                text={fieldObservationText(item, field.destination)}
+                                description={field.destination === 'description'}
+                              />
                               <small>
                                 {item.source} · {evidenceRoleLabel(item.role)}
                               </small>
