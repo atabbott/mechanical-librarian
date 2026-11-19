@@ -236,6 +236,8 @@ export function FieldDecisionCanvas({
       recommendation: 'no_recommendation' as const,
       recommendationReason: '',
     }
+  // A description's card shows its formatted copy where it has one (#1995).
+  const currentShown = selected.currentFormatted ?? selected.currentValue
   const currentChoice: DirectChoice | null = keepKind
     ? {
         automatic: automaticallySelected(selected, cardProgress),
@@ -247,12 +249,12 @@ export function FieldDecisionCanvas({
         // The column's header names this card, so the card carries no label
         // of its own and starts level with the first proposed value.
         beforeChange: before,
-        evidenceName: isLongDescription(selected.destination, selected.currentValue)
+        evidenceName: isLongDescription(selected.destination, currentShown)
           ? `Evidence for ${keptName} description`
           : `Evidence for ${keptName}: ${keptValue}`,
         expanded: expandedChoices.has(`${selected.destination}:current`),
         label: '',
-        longDescription: isLongDescription(selected.destination, selected.currentValue),
+        longDescription: isLongDescription(selected.destination, currentShown),
         onChoose: () => choose(selected, 'keep_current'),
         pin: pinControl(cardPin(selected, currentCard)),
         pinned: cardPinned(selected, currentCard),
@@ -265,6 +267,7 @@ export function FieldDecisionCanvas({
         selected: choiceSelected(selected, cardProgress, 'keep_current'),
         toggle: () => toggleChoiceEvidence(`${selected.destination}:current`),
         value: keptValue,
+        formatted: selected.currentFormatted ?? null,
       }
     : null
   const proposedChoices: (DirectChoice & { id: string })[] =
@@ -276,6 +279,8 @@ export function FieldDecisionCanvas({
               ?.alternativeId ?? null,
           )
           const key = `${selected.destination}:${context?.alternativeId ?? String(index)}`
+          const formatted = selected.proposedFormatted?.[index] ?? null
+          const shown = formatted ?? displayValue(value.value)
           const card = { ...currentCard, kind: 'proposed', value } as const
           const chosen = choiceSelected(selected, cardProgress, 'accept', value)
           // The owner's recorded accept whose own write has landed ("This
@@ -293,12 +298,12 @@ export function FieldDecisionCanvas({
             current: false,
             disabled: controller.checking,
             // A proposed card is named by its value, never "Alternative N" (#1519).
-            evidenceName: isLongDescription(selected.destination, displayValue(value.value))
+            evidenceName: isLongDescription(selected.destination, shown)
               ? `Evidence for proposed description ${String(index + 1)}`
               : `Evidence for proposed value: ${valueText(selected.destination, displayValue(value.value))}`,
             expanded: expandedChoices.has(key),
             label: '',
-            longDescription: isLongDescription(selected.destination, displayValue(value.value)),
+            longDescription: isLongDescription(selected.destination, shown),
             onChoose: written ? () => undefined : () => choose(selected, 'accept', value),
             pin: pinControl(cardPin(selected, card), value),
             pinned: cardPinned(selected, card),
@@ -312,6 +317,7 @@ export function FieldDecisionCanvas({
             selected: chosen,
             toggle: () => toggleChoiceEvidence(key),
             value: valueText(selected.destination, displayValue(value.value)),
+            formatted,
           }
         })
       : []
@@ -340,6 +346,7 @@ export function FieldDecisionCanvas({
             ),
             toggle: () => undefined,
             value: selectedAdvice.selected_advice.candidate.output.description,
+            formatted: selectedAdvice.selected_advice.formatted,
           },
         ]
       : []
@@ -359,6 +366,7 @@ export function FieldDecisionCanvas({
             disabled:
               !selected.editable ||
               !selectedAdvice.current ||
+              !selectedAdvice.readable ||
               controller.recording ||
               controller.checking ||
               selectedAdvice.state === 'requested' ||
@@ -367,7 +375,7 @@ export function FieldDecisionCanvas({
             label: 'Description adviser',
             longDescription: isLongDescription('description', adviceCandidate.output.description),
             onChoose: () => {
-              if (!selectedAdvice.current || !selected.editable) return
+              if (!selectedAdvice.current || !selectedAdvice.readable || !selected.editable) return
               choose(
                 selected,
                 'accept',
@@ -389,6 +397,7 @@ export function FieldDecisionCanvas({
                   ),
             toggle: () => undefined,
             value: adviceCandidate.output.description,
+            formatted: selectedAdvice.formatted,
           },
         ]
       : []

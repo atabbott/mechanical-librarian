@@ -4179,7 +4179,12 @@ describe('Library route', () => {
     const settled = { ...title, needsAttention: false, navigationRole: 'resolved' as const }
     const pinOf = (state: 'in_force' | 'waiting' | 'changed') => ({
       state,
-      value: { destination: 'title' as const, state: 'value' as const, value: 'Old title' },
+      value: {
+        destination: 'title' as const,
+        state: 'value' as const,
+        value: 'Old title',
+        formatted: null,
+      },
     })
     const control = { pin: 'available' as const, unpin: true }
     const decided = {
@@ -14549,7 +14554,12 @@ it('offers advised text in the ordinary Description chooser with its immutable a
             needsAttention: false,
             descriptionAdvice: {
               ...advice,
-              selected_advice: { candidate, binding: advice.binding, current: true },
+              selected_advice: {
+                candidate,
+                binding: advice.binding,
+                current: true,
+                formatted: null,
+              },
               selection: {
                 decision_id: `human_decision_${'a'.repeat(64)}`,
                 candidate_id: candidate.candidate_id,
@@ -14662,6 +14672,64 @@ it('shows a formatted advised description on its card and names the card as a de
   ).toBeVisible()
 })
 
+it('shows each description’s formatted copy on its card and names it by its text', async () => {
+  // The server's own copy from a closed set of tags, written as shown (#1995).
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const proposed = field.proposedValues[0]
+  if (proposed?.kind !== 'text' || typeof proposed.value !== 'string') {
+    throw new Error('description fixture requires text')
+  }
+  const text = proposed.value
+  field.currentFormatted = `<p><b>${field.currentValue}</b></p>`
+  field.proposedFormatted = [`<p>${text}</p><ul><li><i>listed</i></li></ul>`]
+  renderRoute('/library?lens=all&preview=case-1&field=description', {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+      ...authored,
+      id: 'case-1',
+      fields: [field],
+    })),
+  })
+  const proposedOption = await screen.findByRole('radio', { name: 'Choose proposed description' })
+  const proposedContent = proposedOption
+    .closest('article')
+    ?.querySelector('.description-choice-content .description-formatted')
+  expect(proposedContent?.innerHTML).toBe(`<p>${text}</p><ul><li><em>listed</em></li></ul>`)
+  const currentOption = screen.getByRole('radio', { name: 'Choose current description' })
+  const currentContent = currentOption
+    .closest('article')
+    ?.querySelector('.description-choice-content .description-formatted')
+  expect(currentContent?.innerHTML).toBe(`<p><strong>${field.currentValue}</strong></p>`)
+  for (const element of [
+    ...(proposedContent?.querySelectorAll('*') ?? []),
+    ...(currentContent?.querySelectorAll('*') ?? []),
+  ])
+    expect(element.attributes).toHaveLength(0)
+})
+
+it('says advice it cannot read safely cannot be chosen', async () => {
+  // Text the description reader refuses is never written (#1995).
+  const { authored, field, advice } = formattedAuthored()
+  field.descriptionAdvice = { ...advice, readable: false, formatted: null }
+  renderRoute('/library?lens=all&preview=case-1&field=description', {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+      ...authored,
+      id: 'case-1',
+      fields: [field],
+    })),
+  })
+  const option = await screen.findByRole('radio', { name: 'Choose advised description' })
+  expect(option).toBeDisabled()
+  expect(
+    within(option).getByText(
+      'This advice’s formatting can’t be read safely. Ask for advice again.',
+    ),
+  ).toBeVisible()
+})
+
 it('names a formatted description in Review complete by its visible text', async () => {
   const { authored, field, advice, candidate } = formattedAuthored()
   const proposed = field.proposedValues[0]
@@ -14698,7 +14766,12 @@ it('names a formatted description in Review complete by its visible text', async
             needsAttention: false,
             descriptionAdvice: {
               ...advice,
-              selected_advice: { candidate, binding: advice.binding, current: true },
+              selected_advice: {
+                candidate,
+                binding: advice.binding,
+                current: true,
+                formatted: null,
+              },
               selection: {
                 decision_id: `human_decision_${'a'.repeat(64)}`,
                 candidate_id: candidate.candidate_id,
@@ -15102,6 +15175,7 @@ it.each(['verified', 'no_change_required'] as const)(
         candidate: advice.candidate,
         binding: advice.binding,
         current: outcome === 'no_change_required',
+        formatted: null,
       },
       selection: {
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
@@ -15159,7 +15233,12 @@ it.each([
       ...advice,
       current,
       application_outcome: outcome,
-      selected_advice: { candidate: advice.candidate, binding: advice.binding, current },
+      selected_advice: {
+        candidate: advice.candidate,
+        binding: advice.binding,
+        current,
+        formatted: null,
+      },
       selection: {
         decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
         candidate_id: advice.candidate.candidate_id,
@@ -15270,6 +15349,7 @@ it.each(['human', 'automatic_policy'] as const)(
           candidate: field.descriptionAdvice.candidate,
           binding: advice.binding,
           current: scenario.current,
+          formatted: null,
         },
         selection: {
           decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
@@ -15325,7 +15405,7 @@ it.each([true, false])(
       ...advice,
       current: true,
       application_outcome: null,
-      selected_advice: { candidate, binding: advice.binding, current: true },
+      selected_advice: { candidate, binding: advice.binding, current: true, formatted: null },
       selection: {
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
         candidate_id: candidate.candidate_id,

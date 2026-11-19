@@ -269,6 +269,7 @@ export function MetadataChoice({
   disabled,
   evidenceName,
   expanded,
+  formatted = null,
   label,
   longDescription,
   onChoose,
@@ -292,6 +293,9 @@ export function MetadataChoice({
   // The Evidence control's name when the card has no visible label (#1519).
   evidenceName?: string
   expanded: boolean
+  // A description's formatted copy, shown in place of its visible text; the
+  // card's name keeps the visible text (#1995).
+  formatted?: string | null
   label: string
   longDescription: boolean
   onChoose: () => void
@@ -346,7 +350,7 @@ export function MetadataChoice({
       {longDescription ? (
         <div className="description-choice-content">
           {label ? <small>{label}</small> : null}
-          <DescriptionText key={value} value={value} />
+          <DescriptionText key={value} value={formatted ?? value} />
         </div>
       ) : null}
       <button

@@ -676,7 +676,7 @@ describe('a pin after a value command', () => {
 
   it('says why a keep of a description with formatting is refused (#1424)', () => {
     expect(ownerRefusalCopy(new ApiError(409, 'restore_unavailable'), offered)).toBe(
-      'The earlier description has formatting, so restore it in Audiobookshelf.',
+      'The earlier description has a link or formatting Mechanical Librarian can’t write, so restore it in Audiobookshelf.',
     )
   })
 })

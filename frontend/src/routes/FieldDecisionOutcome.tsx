@@ -89,7 +89,10 @@ export function ContextValue({
           <dt>{field.pin?.state === 'in_force' ? 'Current value · Pinned' : 'Current value'}</dt>
           <dd id={valueId}>
             {field.destination === 'description' ? (
-              <DescriptionText key={field.currentValue} value={field.currentValue} />
+              <DescriptionText
+                key={field.currentValue}
+                value={field.currentFormatted ?? field.currentValue}
+              />
             ) : (
               valueText(field.destination, field.currentValue)
             )}

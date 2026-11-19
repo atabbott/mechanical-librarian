@@ -18,6 +18,9 @@ export const descriptionAdviceStatus = (advice: DescriptionAdviceView, selected 
   if (advice.state === 'interrupted') return 'Preparing advice was interrupted. Retry to ask again.'
   if (!advice.current)
     return 'This advice is out of date. Choose another value, or retry to ask for new advice.'
+  // Text the description reader refuses is never written (#1995).
+  if (!advice.readable)
+    return 'This advice’s formatting can’t be read safely. Ask for advice again.'
   return advice.candidate?.output.disposition === 'needs_review'
     ? 'The adviser was unsure of this text, so Automatic never applies it.'
     : 'Ready to choose.'
