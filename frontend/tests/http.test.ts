@@ -1094,6 +1094,13 @@ describe('ReviewApiClient', () => {
     ).toBe(shown)
   })
 
+  it('reads whether a field’s accept needs no write (ADR-0105)', async () => {
+    expect((await readCase(closedDetail())).fields[0]?.noChangeRequired).toBe(false)
+    expect(
+      (await readCase(closedDetail({ no_change_required: true }))).fields[0]?.noChangeRequired,
+    ).toBe(true)
+  })
+
   it('reads a field’s pin and pin control, and refuses an unknown pin state (#1346)', async () => {
     const pinned = targetField({ state: 'value', value: 'A Pinned Book' })
     const field = (await readCase(closedDetail())).fields[0]
@@ -1285,6 +1292,7 @@ describe('ReviewApiClient', () => {
     const retainedEvidence = field({
       decision_actions: ['keep_current', 'accept'],
       proposed_values: [{ kind: 'text', value: 'Alternative' }],
+      proposed_formatted: [null],
       choice_contexts: [
         fieldChoiceContext({ rationale: 'Current evidence.' }),
         fieldChoiceContext({
@@ -1900,8 +1908,13 @@ describe('ReviewApiClient', () => {
                 state: 'no_decision_recorded',
                 reason: 'No review decision is recorded for this work.',
                 fields: [
-                  { destination: 'title', state: 'value', value: 'Catalogue-only work' },
-                  { destination: 'subtitle', state: 'missing', value: null },
+                  {
+                    destination: 'title',
+                    state: 'value',
+                    value: 'Catalogue-only work',
+                    formatted: null,
+                  },
+                  { destination: 'subtitle', state: 'missing', value: null, formatted: null },
                 ],
               },
             }),
@@ -1969,8 +1982,18 @@ describe('ReviewApiClient', () => {
         state: 'no_decision_recorded',
         reason: 'No review decision is recorded for this work.',
         fields: [
-          { destination: 'title', state: 'value', value: 'Catalogue-only work' },
-          { destination: 'subtitle', state: 'missing', value: 'Not set in Audiobookshelf' },
+          {
+            destination: 'title',
+            state: 'value',
+            value: 'Catalogue-only work',
+            formatted: null,
+          },
+          {
+            destination: 'subtitle',
+            state: 'missing',
+            value: 'Not set in Audiobookshelf',
+            formatted: null,
+          },
         ],
       },
       valueFlags: [],
@@ -3308,7 +3331,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v11', error: { code: 'busy' } },
+          { schema_version: 'review-library-v12', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3406,9 +3429,13 @@ describe('ReviewApiClient', () => {
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v8' }),
     ).rejects.toMatchObject(refused('const@/schema_version'))
-    // v9 added each row's book link (#1477); a v8 row lacks it.
+    // v12 added a summary description's formatted copy (#1995); a v11
+    // summary lacks it.
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v11' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v12' }),
     ).resolves.toBeDefined()
   })
 

@@ -413,6 +413,8 @@ def _bindings(
             dependency(name, row["decision_id"])
         candidate("field_effect", row["plan_id"])
     elif table == "field_effect_no_changes":
+        # An owner's no-change row reads the value its accept chose.
+        dependency("human_identity", row["decision_id"])
         candidate("field_effect_no_change", row["event_id"])
     elif table == "description_advice_attempts":
         document = json.loads(row["binding_document"])

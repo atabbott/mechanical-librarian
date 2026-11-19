@@ -13,6 +13,7 @@ is already withdrawn stales through its own code instead of starting to wait.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import tempfile
@@ -52,6 +53,8 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     FieldEffectPlan,
 )
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
+from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.field_effects import CAPABILITY, Clock, _EffectEnvironment
 from tests.support.field_effects import effects as effects
 from tests.unit.test_connection_replan import _automatic_tags_lane, _sent
@@ -312,6 +315,8 @@ class _CoverLane:
     connection: str
     library: str
     plan: Callable[[], FieldEffectOperation]
+    decision: HumanDecision
+    consideration_id: str
 
     def lose_connection_after_capture(self) -> None:
         def lose(_: FieldEffectPlan) -> None:
@@ -397,11 +402,48 @@ def cover() -> Iterator[_CoverLane]:
             snapshot.connection,
             snapshot.library,
             plan,
+            setup.decision,
+            str(setup.consideration["consideration_id"]),
         )
         try:
             yield lane
         finally:
             lane.repository.close()
+
+
+def test_accepting_a_written_owner_cover_again_is_refused_as_unchanged(
+    cover: _CoverLane,
+) -> None:
+    """A cover accept of the value the case already wrote is refused, never
+    recorded with nothing to write (ADR-0105)."""
+    assert cover.application.apply(cover.plan().plan.plan_id).state == "verified"
+    first = cover.decision
+    case = ReviewCase.create_from_data(
+        json.loads(cover.repository.get_review_case(first.review_case_id))["case"]
+    )
+    again = HumanDecision.create(
+        case,
+        proposal_id=first.proposal_id,
+        target_fingerprint=first.target_fingerprint,
+        destination="cover",
+        actor="owner",
+        outcome="accept",
+        selected_value=first.selected_value,
+        idempotency_key="cover-activation-again",
+        occurred_at=first.occurred_at + 1,
+    )
+    with pytest.raises(HumanDecisionError, match="owner_value_unchanged"):
+        cover.repository.record_human_decision(
+            again,
+            cover_consideration_id=cover.consideration_id,
+            cover_confirmation={
+                "expected_selection_id": None,
+                "confirm_unverified_match": False,
+            },
+        )
+    assert cover.repository._connection.execute(
+        "SELECT COUNT(*) FROM field_effect_no_changes"
+    ).fetchone() == (0,)
 
 
 def _waiting_cover(cover: _CoverLane) -> str:

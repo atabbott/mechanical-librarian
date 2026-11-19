@@ -821,6 +821,9 @@ export interface ReviewFieldView {
   // This case's own write set the field, so what the case read before it is
   // no longer the library's value (#1523).
   writtenByCase?: boolean
+  // The owner's accept holds the value the case's latest write already put
+  // there, so it has nothing to write (ADR-0105).
+  noChangeRequired?: boolean
   // The value the case read is a description stored with formatting that a
   // restore from here would lose, so there is no way back to it (#1424).
   restoreUnavailable?: boolean
@@ -3552,6 +3555,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
     field.description_advice === null ? null : mapDescriptionAdvice(field.description_advice),
   ownerControl: field.owner_control === null ? null : mapOwnerControl(field.owner_control),
   writtenByCase: field.written_by_case,
+  noChangeRequired: field.no_change_required,
   restoreUnavailable: field.restore_unavailable,
   pin: field.pin,
   changeWritten: field.change_written,

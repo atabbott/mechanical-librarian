@@ -379,7 +379,8 @@ export function ActivityEventRow({
                   <dd>
                     {language && item.label.endsWith(' value') ? (
                       languages(item.value)
-                    ) : event.destination === 'description' && item.label.endsWith(' value') ? (
+                    ) : event.destination === 'description' &&
+                      (item.label.endsWith(' value') || item.label === 'Selected description') ? (
                       // Activity cuts a value over 512 characters to 511 or 512 ending in `…`.
                       <FormattedDescription value={item.value} cut={wasCut(item.value, 511, 512)}>
                         {item.value}

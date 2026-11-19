@@ -578,6 +578,31 @@ def test_a_no_change_decision_says_the_value_already_matched() -> None:
     assert _facts(event)["Confirmed in Audiobookshelf"] == "No change was needed"
 
 
+def test_an_owner_accept_with_nothing_to_write_says_the_value_it_kept() -> None:
+    """The owner's accept keeps the value the case's latest write holds, not
+    the value the case read (ADR-0105)."""
+    report = _titled("The Tombs of Atuan")
+    event = _project(
+        _event(
+            event_type="metadata",
+            origin="human",
+            state="no_change_required",
+            record={
+                "source_kind": "field_effect_no_change",
+                "target_fingerprint": report.target.fingerprint,
+                "kept_value": "The Farthest Shore",
+            },
+        ),
+        report,
+    )
+    assert event["change"] == "Kept The Farthest Shore"
+    assert _facts(event) == {
+        "Current value": "The Farthest Shore",
+        "Chosen by": "You",
+        "Confirmed in Audiobookshelf": "No change was needed",
+    }
+
+
 @pytest.mark.parametrize(
     ("state", "confirmation"),
     (

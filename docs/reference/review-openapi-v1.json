@@ -3898,7 +3898,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v13",
+            "const": "review-case-detail-v14",
             "title": "Schema Version",
             "type": "string"
           },
@@ -13438,6 +13438,11 @@
           },
           "needs_attention": {
             "title": "Needs Attention",
+            "type": "boolean"
+          },
+          "no_change_required": {
+            "default": false,
+            "title": "No Change Required",
             "type": "boolean"
           },
           "notices": {

@@ -16,6 +16,7 @@ import { StaleBuildRead } from '../components/StaleBuildRead'
 import type { choiceRadios } from '../choiceGroup'
 import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
 import {
+  destinationLabel,
   evidenceRoleLabel,
   fieldObservationText,
   observationText,
@@ -52,6 +53,23 @@ export const ObservationValue = ({ text, description }: { text: string; descript
   ) : (
     <p>{text}</p>
   )
+// A description observation, which the server writes as `Description: ` and
+// the value, shows its formatting under that name; any other is a line of text.
+function EvidenceObservation({ text }: { text: string }) {
+  const prefix = `${destinationLabel('description')}: `
+  const value = text.startsWith(prefix) ? text.slice(prefix.length) : null
+  const nodes = useMemo(
+    () => (value === null ? null : readFormatting(value, wasCut(value, 161, 161))),
+    [value],
+  )
+  if (!nodes) return <p>{text}</p>
+  return (
+    <>
+      <p>{prefix.trimEnd()}</p>
+      <FormattedDescription nodes={nodes} />
+    </>
+  )
+}
 export function ChoiceEvidencePanel({
   context,
   evidenceId,
@@ -95,7 +113,7 @@ export function ChoiceEvidencePanel({
                   ? 'Offers this value'
                   : evidenceRoleLabel(row.role)}
               </span>
-              <p>{observationText(row)}</p>
+              <EvidenceObservation text={observationText(row)} />
             </li>
           ))}
         </ul>

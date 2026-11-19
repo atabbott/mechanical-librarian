@@ -111,7 +111,7 @@ const notOffered = (field: ReviewField) => {
   if (field.humanDecision !== null && advice === null)
     return field.humanDecision.outcome === 'reject'
       ? null
-      : 'You chose Resume automatic handling for this field. Choose a value again to pin it.'
+      : 'You chose Resume automatic handling for this field. Choose a value again, then pin it.'
   const written =
     advice !== null ? advice.application_outcome === 'verified' : field.changeWritten === true
   return written
@@ -146,7 +146,7 @@ export const pinFoot = (
         ? field.classificationCause === 'pinned' && field.classificationReason
           ? field.classificationReason
           : 'You pinned this value.'
-        : field.humanDecision?.outcome === 'keep_current'
+        : field.humanDecision?.outcome === 'keep_current' || field.noChangeRequired === true
           ? 'You pinned this value.'
           : 'You pinned this value. The pin starts once the change is written.',
     unpin: !pinOnScreen,

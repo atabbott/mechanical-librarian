@@ -61,6 +61,11 @@ export const coverNames = (
   )
 }
 export const effectSummary = (field: ReviewField) => {
+  if (field.noChangeRequired)
+    return {
+      state: 'No change needed',
+      detail: 'Activity lists it.',
+    }
   const advice = field.destination === 'description' ? shownAdvice(field) : null
   if (advice?.selection) {
     if (advice.application_outcome === 'verified')

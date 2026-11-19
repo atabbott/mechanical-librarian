@@ -262,6 +262,7 @@ describe('Activity route', () => {
                 label: 'New value',
                 value: `<p>New <i>words</i></p><p>More ${'w'.repeat(473)} <b cla…`,
               },
+              { label: 'Selected description', value: '<p>Chosen <b>text</b></p>' },
               { label: 'Provenance', value: 'Advised · <b>Authored</b> content' },
             ],
           },
@@ -275,6 +276,7 @@ describe('Activity route', () => {
     expect(values.map((node) => node.innerHTML)).toEqual([
       '<p>Old <strong>words</strong></p>',
       `<p>New <em>words</em></p><p>More ${'w'.repeat(473)} …</p>`,
+      '<p>Chosen <strong>text</strong></p>',
     ])
   })
 

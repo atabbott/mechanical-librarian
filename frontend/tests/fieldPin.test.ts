@@ -230,6 +230,19 @@ describe('the sentence at the foot of the field', () => {
     ).toEqual({ sentence: 'You pinned this value.', unpin: false, quiet: false })
   })
 
+  it('says only that the value is pinned over an accept with nothing to write', () => {
+    expect(
+      pinFoot(
+        field({
+          pin: pinOf('waiting', 'New title'),
+          humanDecision: decided('accept', NEW),
+          noChangeRequired: true,
+        }),
+        shown,
+      ),
+    ).toEqual({ sentence: 'You pinned this value.', unpin: false, quiet: false })
+  })
+
   it('shows what was pinned, with Unpin, once the value changed', () => {
     expect(pinFoot(field({ pin: pinOf('changed') }), shown)).toEqual({
       sentence: 'You pinned “Old title”.',
@@ -306,7 +319,7 @@ describe('the sentence at the foot of the field', () => {
       })
       expect(pinFoot(resumed, shown)).toEqual({
         sentence:
-          'You chose Resume automatic handling for this field. Choose a value again to pin it.',
+          'You chose Resume automatic handling for this field. Choose a value again, then pin it.',
         unpin: false,
         quiet: true,
       })
@@ -351,11 +364,11 @@ describe('the sentence at the foot of the field', () => {
       } as NonNullable<Field['descriptionAdvice']>,
     }
     expect(pinFoot(automatic, shown).sentence).toBe(
-      'You chose Resume automatic handling for this field. Choose a value again to pin it.',
+      'You chose Resume automatic handling for this field. Choose a value again, then pin it.',
     )
     // The same choice on another field's wire is not read.
     expect(pinFoot({ ...advised, destination: 'title' }, shown).sentence).toBe(
-      'You chose Resume automatic handling for this field. Choose a value again to pin it.',
+      'You chose Resume automatic handling for this field. Choose a value again, then pin it.',
     )
   })
 
