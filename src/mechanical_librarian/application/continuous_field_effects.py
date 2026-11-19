@@ -68,9 +68,10 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.provider_recovery import RECOVERY_FAILURES
 
-ContinuousFieldActivitySchemaVersion = Literal["continuous-field-activity-v3"]
+# v4: a description fact's formatted copy (#2003).
+ContinuousFieldActivitySchemaVersion = Literal["continuous-field-activity-v4"]
 CONTINUOUS_FIELD_ACTIVITY_SCHEMA: Final[ContinuousFieldActivitySchemaVersion] = (
-    "continuous-field-activity-v3"
+    "continuous-field-activity-v4"
 )
 
 

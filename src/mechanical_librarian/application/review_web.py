@@ -174,10 +174,11 @@ HUMAN_DECISION_ACK_SCHEMA: Final[HumanDecisionAckSchemaVersion] = (
 ReviewAttentionSchemaVersion = Literal["review-attention-v1"]
 REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v1"
 # v5: a keep says which write it went back on (#1523); v6: the book link's
-# history events (#1477); v7: a link named by an identifiers file (#1478).
-ReviewCaseHistorySchemaVersion = Literal["review-case-history-v7"]
+# history events (#1477); v7: a link named by an identifiers file (#1478);
+# v8: a description value's formatted copy, and advice as it is written (#2003).
+ReviewCaseHistorySchemaVersion = Literal["review-case-history-v8"]
 REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
-    "review-case-history-v7"
+    "review-case-history-v8"
 )
 
 # One book link History event; v2: a file link's identifier, source and

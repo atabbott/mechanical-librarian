@@ -322,7 +322,7 @@ export const caseHistory = (overrides: Overrides = {}) => ({
   items: [],
   next_cursor: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-history-v7',
+  schema_version: 'review-case-history-v8',
   ...overrides,
 })
 
@@ -496,7 +496,7 @@ export const activityResponse = (overrides: Overrides = {}) => ({
   paused: false,
   prepared: { automatic: 0, human: 0, total: 0 },
   provider_recovery: [],
-  schema_version: 'continuous-field-activity-v3',
+  schema_version: 'continuous-field-activity-v4',
   suspensions: [],
   waiting: { applying: 0, awaiting_permission: 0, held_for_recovery: 0, retrying: 0, scheduled: 0 },
   ...overrides,

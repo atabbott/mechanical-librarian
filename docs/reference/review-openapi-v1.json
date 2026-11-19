@@ -2819,7 +2819,7 @@
             "type": "array"
           },
           "schema_version": {
-            "const": "continuous-field-activity-v3",
+            "const": "continuous-field-activity-v4",
             "title": "Schema Version",
             "type": "string"
           },
@@ -7998,7 +7998,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v7",
+            "const": "review-case-history-v8",
             "title": "Schema Version",
             "type": "string"
           }
