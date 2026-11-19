@@ -391,3 +391,49 @@ Proof: `test_cover_resume_shows_only_where_the_stage_would_switch_but_for_the_ow
 `tests/integration/test_cover_taste_automatic.py`;
 `test_a_cover_answer_without_an_automatic_cover_decision_sets_no_hold` in
 `tests/unit/test_owner_answer_holds.py` stays green.
+
+## Amendment 4: a held field keeps its hold after Automatic is left and turned on (2026-11-19)
+
+- Status: proposed. Only the owner's own answer makes this amendment
+  accepted. Until then, the body above and Amendments 1 to 3 stay the
+  accepted record.
+
+Leaving Automatic and turning it on again admits the same case under a new
+policy generation, and Automatic's decision of the earlier generation decides
+nothing now (ADR-0036). Any owner row on the case then refused the new
+decision, so a field the owner's answer held showed neither the hold nor
+Resume automatic handling, while the hold still kept Automatic off it. An
+answer from an earlier episode of the case read as no answer at all, so the
+field read No change, gave a reason that did not apply, and offered no way to
+release it. A field already handed back with Resume, its write not yet made,
+had nothing left to write.
+
+- **Decided again under the hold.** Where Automatic decided a field on the
+  case in an earlier generation and the field has a hold row on the case, in
+  force or released by Resume, an owner row no longer refuses Automatic's
+  decision in the new generation. A hold in force refuses its write until
+  Resume, as on a later case of the work, so the field shows the hold and
+  Resume as it did before Automatic was left; a released hold lets it plan.
+  This qualifies "Any human row still blocks automatic handling" and "An
+  earlier episode's decision still keeps a new automatic decision off that
+  field of the case" above.
+- **Unchanged elsewhere.** An owner row still refuses the decision where
+  Automatic had not decided the field on the case, so an answer given before
+  Automatic decided anything there still shows as an ordinary answer until a
+  later case (Amendment 1). A pin still refuses it (Amendment 2), and so does
+  a withdrawal, which deletes the hold row its answer set or gives the field
+  back to the work's earlier hold: a field whose latest answer is a
+  withdrawal is not decided again, so a withdrawal never re-arms automatic
+  handling.
+
+No stored document changes shape and no version moves; an existing database
+gains the decision at the case's next admission.
+
+Proof: `test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_confirmed`
+(current episode, earlier episode, released by Resume), the updated
+`test_an_owner_answer_on_an_automatic_field_outlasts_confirming_automatic` and
+`test_an_answer_with_no_earlier_automatic_decision_still_keeps_automatic_off`
+in `tests/integration/test_leaving_automatic_posture.py`; the first two fail
+before this amendment. `test_a_withdrawal_that_restores_an_earlier_hold_still_refuses_automatic`
+in `tests/unit/test_owner_answer_holds.py` keeps a withdrawal refusing where it
+gives the field back to an earlier hold.

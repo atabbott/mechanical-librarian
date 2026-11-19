@@ -17,6 +17,9 @@ brackets are GitHub issues.
   one line joined by dots. Before your change can put back a formatted
   description unless it has a link or formatting Mechanical Librarian can't
   write (#1995).
+- After you leave Automatic and turn it on again, a field your earlier
+  decision holds still says so and offers Resume automatic handling. Before,
+  it could read No change with no way to hand it back to Automatic (#1999).
 - After you leave Automatic, Withdraw works on a field you answered while
   Automatic was on, instead of being refused with a line pointing to a Resume
   the field no longer showed. A field you have answered no longer says turning
