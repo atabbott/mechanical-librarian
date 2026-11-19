@@ -303,7 +303,9 @@ export function readFormatting(value: string, cut = false): FormatNode[] | null 
       if (closed?.name !== tag.name || !stack.length) return null
       close(stack, closed)
     } else if (tag.name === 'br' || tag.name === 'hr') top().push({ kind: 'break' })
-    else if (!VOID.has(tag.name) && !tag.selfClosing) {
+    // A browser ignores `/>` on any other element: a shown one stays open, as
+    // there; another is dropped, open or not.
+    else if (!VOID.has(tag.name) && (!tag.selfClosing || Object.hasOwn(SHOWN, tag.name))) {
       if (stack.length > MAX_DEPTH) return null
       stack.push({ name: tag.name, children: [] })
     }
@@ -367,17 +369,34 @@ function normalise(nodes: readonly FormatNode[], context: 'flow' | 'inline' | 'l
   return out
 }
 
-const textLength = (nodes: readonly FormatNode[]): number =>
-  nodes.reduce(
-    (total, node) =>
-      total +
-      (node.kind === 'text'
-        ? node.text.length
-        : node.kind === 'break'
-          ? 1
-          : textLength(node.children)),
-    0,
-  )
+// A description's length as it takes room: its characters, and a line's
+// worth (about one on a phone) for each break or block that starts a line
+// after the first, so many short paragraphs still read as long.
+const LINE = 40
+interface Lines {
+  atStart: boolean
+}
+function nodeLength(node: FormatNode, lines: Lines): number {
+  if (node.kind === 'text') {
+    if (/\S/u.test(node.text)) lines.atStart = false
+    return node.text.length
+  }
+  if (node.kind === 'break') {
+    lines.atStart = true
+    return LINE
+  }
+  if (!BLOCK.has(node.tag)) return textLength(node.children, lines)
+  const start = lines.atStart ? 0 : LINE
+  lines.atStart = true
+  const inner = textLength(node.children, lines)
+  lines.atStart = false
+  return start + inner
+}
+function textLength(nodes: readonly FormatNode[], lines: Lines = { atStart: true }): number {
+  let total = 0
+  for (const node of nodes) total += nodeLength(node, lines)
+  return total
+}
 
 /** The words a reader sees, on one line, for names, sentences and single lines. */
 export const visibleText = (value: string): string => {
@@ -402,24 +421,29 @@ export const visibleText = (value: string): string => {
     .join(' ')
 }
 
-// Keep at most `limit` visible characters.
-function cutTo(nodes: readonly FormatNode[], limit: number): FormatNode[] {
+// Keep at most `limit` of a description's length, counted as `textLength` counts it.
+function cutTo(nodes: readonly FormatNode[], limit: number, lines: Lines = { atStart: true }) {
   const kept: FormatNode[] = []
   let left = limit
   for (const node of nodes) {
     if (left <= 0) break
-    if (node.kind === 'text') {
+    const length = nodeLength(node, { ...lines })
+    if (length <= left) {
+      kept.push(node)
+      nodeLength(node, lines)
+      left -= length
+    } else if (node.kind === 'text') {
       // A cut never splits a character outside the Basic Multilingual Plane.
       const end = isHighSurrogate(node.text.charCodeAt(left - 1)) ? left - 1 : left
-      kept.push(node.text.length > left ? { kind: 'text', text: node.text.slice(0, end) } : node)
-      left -= node.text.length
-    } else if (node.kind === 'break') {
-      kept.push(node)
-      left -= 1
-    } else {
-      const length = textLength(node.children)
-      kept.push({ ...node, children: length > left ? cutTo(node.children, left) : node.children })
-      left -= length
+      kept.push({ kind: 'text', text: node.text.slice(0, end) })
+      left = 0
+    } else if (node.kind === 'break') left = 0
+    else {
+      const block = BLOCK.has(node.tag)
+      const start = block && !lines.atStart ? LINE : 0
+      if (block) lines.atStart = true
+      if (left > start) kept.push({ ...node, children: cutTo(node.children, left - start, lines) })
+      left = 0
     }
   }
   return kept

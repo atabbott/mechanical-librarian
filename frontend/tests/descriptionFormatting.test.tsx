@@ -147,6 +147,22 @@ describe('description formatting', () => {
     expect(isFormatted(`<b>${'😀'.repeat(16_378)}</b>`)).toBe(false)
   })
 
+  it('counts each line a block or break starts toward its length', () => {
+    // The first line is free; each later one costs a line's worth (40).
+    expect(formattedLength('<p>abc</p>')).toBe(3)
+    expect(formattedLength('<p>a</p><p>b</p>')).toBe(42)
+    expect(formattedLength('a<br>b')).toBe(42)
+    expect(formattedLength('<ul><li>a</li><li>b</li></ul>')).toBe(42)
+    expect(formattedLength('<p>x</p>'.repeat(280))).toBeGreaterThan(280)
+    // So a cut keeps a few short paragraphs, not hundreds.
+    const { container } = render(
+      <FormattedDescription value={'<p>x</p>'.repeat(280)} limit={240}>
+        {null}
+      </FormattedDescription>,
+    )
+    expect(container.querySelectorAll('p').length).toBe(6)
+  })
+
   it('never splits a character when cutting to a limit', () => {
     expect(html('<p>ab😀c</p>', 3)).toBe('<p>ab…</p>')
   })
@@ -220,6 +236,8 @@ describe('description formatting', () => {
     ['bracket outside quotes', '2 < 3 <b>a</b>'],
     ['unbalanced quote', '<p title="a>x</p>'],
     ['quote in a tag name', '<b"x">a</b>'],
+    // A browser ignores `/>` on a shown element and leaves it open.
+    ['self-closed bold left open', '<p><b/>text</p>'],
   ])('shows %s as written', (_name, value) => {
     asWritten(value)
   })
@@ -230,6 +248,8 @@ describe('description formatting', () => {
     )
     // A longer name is not the element it starts with.
     expect(html('<a:b>x</a:b><script.x>y</script.x>')).toBe('xy')
+    // A self-closed tag outside the set is dropped like any other.
+    expect(html('<p>a<o:p/>b</p>')).toBe('<p>ab</p>')
   })
 
   it('leaves text without markup alone, including a lone angle bracket', () => {
