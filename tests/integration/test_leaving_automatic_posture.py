@@ -68,6 +68,7 @@ from mechanical_librarian.domain.cover_evidence import CoverSource
 from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectOperation,
+    field_value_version,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
@@ -1315,6 +1316,207 @@ def test_an_earlier_generation_write_settled_unwritten_lets_the_owner_answer(
         "SELECT decision_id FROM human_decisions WHERE review_case_id=?",
         (automatic.review_case_id,),
     ).fetchall() == [(owner.decision_id,)]
+
+
+def _automatic_written(
+    library: _Library, tmp_path: Path
+) -> tuple[AutomaticDecision, ContinuousGuardedApplication]:
+    """Automatic's authors decision, written and read back."""
+    root = library.root
+    automatic = library.automatic()
+    root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+    scheduler, service, target = _applier(library, tmp_path)
+    library.now[0] = 13
+    scheduler.schedule()
+    plan = _planned(library)[automatic.decision_id].plan
+    target.seed(plan)
+    assert service.apply(plan.plan_id).state == "verified"
+    return automatic, scheduler
+
+
+def _settled_without_a_write(
+    library: _Library, scheduler: ContinuousGuardedApplication, owner: HumanDecision
+) -> None:
+    """The owner's accept of the written value holds the field, never waits
+    for a write, and is marked as needing none (ADR-0105)."""
+    root = library.root
+    library.now[0] += 1
+    scheduler.schedule()
+    assert owner.decision_id not in library.pending()
+    assert owner.decision_id not in _planned(library)
+    assert root.pending_field_effect_decision_counts() == ()
+    assert root._connection.execute(
+        "SELECT origin,target_version FROM field_effect_no_changes WHERE decision_id=?",
+        (owner.decision_id,),
+    ).fetchall() == [("human", field_value_version("authors", ["Ada Example"]))]
+    (hold,) = root._connection.execute(
+        "SELECT json_extract(document,'$.decision_id') FROM "
+        "field_effect_manual_holds WHERE destination='authors' AND active=1"
+    ).fetchone()
+    assert hold == owner.decision_id
+    assert _read(library, scheduler)["fields"]["authors"]["no_change_required"] is True
+
+
+# Leaving Automatic after the write reads the work again into a new case
+# (#1986), so the old case is pressed under Automatic, running or paused.
+@pytest.mark.parametrize("posture", ["automatic", "automatic_paused"])
+def test_choosing_automatics_written_value_needs_no_write(
+    library: _Library, tmp_path: Path, posture: str
+) -> None:
+    """Pressing Automatic's card once its write landed records the owner's
+    answer with nothing to write; Activity lists it as kept (ADR-0105)."""
+    root = library.root
+    automatic, scheduler = _automatic_written(library, tmp_path)
+    if posture == "automatic_paused":
+        root.pause_automatic_safety(True, 31)
+
+    owner = _accept(library.case(), "authors", "owner-presses-automatics-card", 40)
+    root.record_human_decision(owner)
+    _settled_without_a_write(library, scheduler, owner)
+
+    activity = cast(
+        list[dict[str, Any]], _read(library, scheduler)["activity"]["events"]
+    )
+    # The owner's own row says the accept kept the written value, as History
+    # does, never a change from the value the case read.
+    (accepted,) = (event for event in activity if event["state"] == "accept")
+    assert accepted["change"] == "Kept Ada Example"
+    assert {fact["label"]: fact["value"] for fact in accepted["evidence"]} == {
+        "Previous value": "Ada Example",
+        "New value": "Ada Example",
+        "Chosen by": "You",
+    }
+    (kept,) = (event for event in activity if event["state"] == "no_change_required")
+    assert kept["change"] == "Kept Ada Example"
+    # It is the owner's choice: Activity lists it with the owner's, not
+    # Automatic's.
+    assert (kept["event_type"], kept["category"]) == ("review", "owner")
+    for event_type, listed in (("review", True), ("metadata", False)):
+        filtered = scheduler.activity(
+            search=None, event_type=event_type, range_days=30, page=1, page_size=25
+        )
+        assert (
+            kept["event_id"]
+            in {
+                event["event_id"]
+                for event in cast(list[dict[str, Any]], filtered["events"])
+            }
+        ) is listed
+    assert {fact["label"]: fact["value"] for fact in kept["evidence"]} == {
+        "Current value": "Ada Example",
+        "Chosen by": "You",
+        "Confirmed in Audiobookshelf": "No change was needed",
+    }
+    (recorded,) = (
+        entry
+        for entry in root.get_review_case_history(library.case_id(), 50)
+        if entry.get("decision_id") == owner.decision_id
+    )
+    assert recorded["previous_value"] == recorded["selected_value"]
+
+    # A replay records nothing more; a second accept of the same value is
+    # refused while the first stands, and records nothing.
+    assert json.loads(root.record_human_decision(owner))["decision_id"] == (
+        owner.decision_id
+    )
+    again = _accept(library.case(), "authors", "owner-presses-it-again", 42)
+    with pytest.raises(HumanDecisionError, match="owner_value_unchanged"):
+        root.record_human_decision(again)
+    assert root._connection.execute(
+        "SELECT COUNT(*) FROM field_effect_no_changes WHERE origin='human'"
+    ).fetchone() == (1,)
+    assert root._connection.execute(
+        "SELECT decision_id FROM human_decisions"
+    ).fetchall() == [(owner.decision_id,)]
+
+    if posture == "automatic":
+        # Returning the field to Automatic leaves its written decision
+        # settled: nothing waits and nothing is planned.
+        assert root.clear_field_effect_manual_hold(
+            library.case_id(), "authors", 43, owner.decision_id
+        )
+        library.now[0] = 44
+        scheduler.schedule()
+        assert automatic.decision_id not in library.pending()
+        assert set(_planned(library)) == {automatic.decision_id}
+
+
+def test_choosing_the_written_value_after_resume_holds_the_field_again(
+    library: _Library, tmp_path: Path
+) -> None:
+    """Resume automatic handling releases the owner's no-change answer; the
+    owner can then choose the same value again, which holds the field anew
+    with nothing to write, and pin it."""
+    root = library.root
+    _, scheduler = _automatic_written(library, tmp_path)
+    first = _accept(library.case(), "authors", "owner-presses-before-resume", 40)
+    root.record_human_decision(first)
+    assert root.clear_field_effect_manual_hold(
+        library.case_id(), "authors", 41, first.decision_id
+    )
+    resumed = _read(library, scheduler)["fields"]["authors"]
+    assert resumed["pin_control"] == {"pin": "change_waiting", "unpin": False}
+
+    again = _accept(library.case(), "authors", "owner-presses-after-resume", 42)
+    root.record_human_decision(again)
+    _settled_without_a_write(library, scheduler, again)
+    field = _read(library, scheduler)["fields"]["authors"]
+    assert field["pin_control"] == {"pin": "available", "unpin": False}
+
+
+def test_the_card_pin_on_automatics_written_value_settles(
+    library: _Library, tmp_path: Path
+) -> None:
+    """After an entry of the previous names, the card pin on Automatic's
+    written value sends accept then pin: both settle with nothing to write."""
+    root = library.root
+    _, scheduler = _automatic_written(library, tmp_path)
+    case = library.case()
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "authors"
+    )
+    entry = HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="authors",
+        actor="owner",
+        outcome="owner_entered",
+        selected_value={"kind": "list", "value": ["Current Writer"]},
+        idempotency_key="owner-enters-the-previous-names",
+        occurred_at=40,
+        previous=None,
+        written=(["Ada Example"],),
+    )
+    root.record_human_decision(entry)
+    accept = _accept(library.case(), "authors", "card-pin-accepts-first", 41)
+    root.record_human_decision(accept)
+    pin = HumanDecision.create(
+        library.case(),
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="authors",
+        actor="owner",
+        outcome="pin",
+        selected_value=None,
+        idempotency_key="card-pin-then-pins",
+        occurred_at=42,
+    )
+    root.record_human_decision(pin)
+    library.now[0] = 43
+    scheduler.schedule()
+    assert entry.decision_id not in library.pending()
+    assert entry.decision_id not in _planned(library)
+    assert accept.decision_id not in library.pending()
+    assert accept.decision_id not in _planned(library)
+    assert root.pending_field_effect_decision_counts() == ()
+    (hold,) = root._connection.execute(
+        "SELECT document FROM field_effect_manual_holds "
+        "WHERE destination='authors' AND active=1"
+    ).fetchone()
+    held = json.loads(hold)
+    assert held["decision_id"] == accept.decision_id
+    assert held["pin"] is not None
 
 
 def test_an_earlier_generation_write_once_settled_lets_the_owner_answer(

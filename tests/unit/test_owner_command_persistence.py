@@ -28,6 +28,7 @@ from mechanical_librarian.adapters.persistence.schema import _HUMAN_DECISIONS_SQ
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
     ReviewWebError,
@@ -35,7 +36,9 @@ from mechanical_librarian.application.review_web import (
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
+    FieldEffectNoChange,
     FieldEffectOperation,
+    field_value_version,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
@@ -210,6 +213,79 @@ def test_an_automatic_hold_outranks_a_written_decision(tmp_path: Path) -> None:
         )
         _refused(store, "automatic_hold", "withdraw", destination="genres")
         assert _field(store, "genres")["owner_control"]["withdraw"] == "automatic_hold"
+    finally:
+        store.close()
+
+
+# The refusal names Resume automatic handling, so the field states it only
+# while the hold stands with no Resume out; the store still refuses after.
+def test_the_hold_refusal_shows_only_until_resume_is_chosen(tmp_path: Path) -> None:
+    store = OwnerStore(tmp_path, None)
+    try:
+        report = genre_report()
+        case_id, _ = publish_genre_case(store.repository, report)
+        store.load(case_id)
+        decision = store.decide(
+            "owner_entered",
+            {"kind": "list", "value": ["Fantasy"]},
+            destination="genres",
+        )
+        assert _field(store, "genres")["owner_control"]["withdraw"] == "automatic_hold"
+        scan = store.repository.request_review_scan(
+            report.target.connection,
+            report.target.library,
+            "library-ebooks",
+            "a" * 64,
+            store.clock(),
+        )
+        at = store.clock()
+        assert store.repository.request_field_effect_manual_return(
+            case_id, "genres", decision.decision_id, scan.scan_id, at, at
+        )
+        assert _field(store, "genres")["owner_control"]["withdraw"] is None
+        assert store.repository.clear_field_effect_manual_hold(
+            case_id, "genres", store.clock(), decision.decision_id
+        )
+        assert _field(store, "genres")["owner_control"]["withdraw"] is None
+        _refused(store, "automatic_hold", "withdraw", destination="genres")
+    finally:
+        store.close()
+
+
+# With nothing to enter, a resumed entered value keeps its controls, which
+# show the recorded value, rather than losing them with the refusal. Any
+# other answer has no recorded line there, so it keeps no empty controls.
+@pytest.mark.parametrize("outcome", ["owner_entered", "accept"])
+def test_a_resumed_answer_without_entry_keeps_only_a_recorded_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    import mechanical_librarian.application.review_web as review_web
+
+    monkeypatch.setattr(review_web, "owner_entry_admitted", lambda *_: False)
+    store = OwnerStore(tmp_path, None)
+    try:
+        case_id, _ = publish_genre_case(store.repository, genre_report())
+        store.load(case_id)
+        decision = store.decide(
+            outcome, {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+        held = _field(store, "genres")["owner_control"]
+        assert cast(dict, held)["withdraw"] == "automatic_hold"
+        assert store.repository.clear_field_effect_manual_hold(
+            case_id, "genres", store.clock(), decision.decision_id
+        )
+        assert _field(store, "genres")["owner_control"] == (
+            {
+                "entry": None,
+                "subset": None,
+                "names": None,
+                "clear": False,
+                "current": None,
+                "withdraw": None,
+            }
+            if outcome == "owner_entered"
+            else None
+        )
     finally:
         store.close()
 
@@ -1159,6 +1235,8 @@ def test_a_requested_return_whose_checks_fail_can_be_requested_again(
         False,
         True,
     )
+    # The failure line names Resume, so the refusal does not say it twice.
+    assert cast(dict, field["owner_control"])["withdraw"] is None
     again, _ = _request_return(store, token)
     assert again == scan_id
     assert store.repository._connection.execute(
@@ -1896,6 +1974,9 @@ def test_accepting_the_value_the_case_wrote_is_unchanged(store: OwnerStore) -> N
     _refused(store, "owner_value_unchanged", "accept", _FANTASY, destination="genres")
     assert _pending(store) == []
     assert _hold_document(store) == hold
+    assert store.repository._connection.execute(
+        "SELECT COUNT(*) FROM field_effect_no_changes"
+    ).fetchone() == (0,)
     replay = HumanDecision.create(
         store.case,
         proposal_id=first.proposal_id,
@@ -1914,6 +1995,26 @@ def test_accepting_the_value_the_case_wrote_is_unchanged(store: OwnerStore) -> N
     assert _pending(store) == [keep.decision_id]
 
 
+def test_accepting_the_written_value_after_resume_holds_the_field_again(
+    store: OwnerStore,
+) -> None:
+    """Resume automatic handling released the owner's written answer, so it
+    no longer holds the field: choosing its value again holds the field anew
+    with nothing to write, rather than being refused as unchanged."""
+    first = store.decide("accept", _FANTASY, destination="genres")
+    store.write(first)
+    assert store.repository.clear_field_effect_manual_hold(
+        store.case.review_case_id, "genres", store.clock(), first.decision_id
+    )
+    again = store.decide("accept", _FANTASY, destination="genres")
+    assert _pending(store) == []
+    assert _hold(store) == again.decision_id
+    assert store.repository._connection.execute(
+        "SELECT decision_id,origin FROM field_effect_no_changes"
+    ).fetchall() == [(again.decision_id, "human")]
+    _refused(store, "owner_value_unchanged", "accept", _FANTASY, destination="genres")
+
+
 @pytest.mark.parametrize("later", ["keep_current", "owner_entered"])
 def test_accepting_the_written_value_replaces_a_later_unwritten_answer(
     tmp_path: Path, later: str
@@ -1921,7 +2022,8 @@ def test_accepting_the_written_value_replaces_a_later_unwritten_answer(
     """Read Drama, accept Fantasy, written, then go back to Drama, still
     unwritten. That later decision is the field's answer, so accepting
     Fantasy again records and replaces it before it writes Drama, rather
-    than being refused as unchanged (#1980)."""
+    than being refused as unchanged (#1980). Fantasy is already written, so
+    that accept holds the field with nothing to write (ADR-0105)."""
     store = OwnerStore(tmp_path, _HELD)
     try:
         store.write(store.decide("accept", _FANTASY, destination="genres"))
@@ -1932,9 +2034,108 @@ def test_accepting_the_written_value_replaces_a_later_unwritten_answer(
         )
         assert _pending(store) == [replaced.decision_id]
         again = store.decide("accept", _FANTASY, destination="genres")
-        assert _pending(store) == [again.decision_id]
+        assert _pending(store) == []
+        assert _hold(store) == again.decision_id
+        assert store.repository._connection.execute(
+            "SELECT decision_id,origin,target_version FROM field_effect_no_changes "
+            "WHERE origin='human'"
+        ).fetchall() == [
+            (again.decision_id, "human", field_value_version("genres", ["Fantasy"]))
+        ]
+        # Nothing plans the replaced answer's Drama.
+        assert not any(
+            FieldEffectOperation.from_json(document).plan.desired_value == ["Drama"]
+            for (document,) in store.repository._connection.execute(
+                "SELECT document FROM field_effects"
+            )
+        )
     finally:
         store.close()
+
+
+def _forge_owner_no_change(path: Path, **changes: object) -> None:
+    """Rewrite the owner's no-change row past its append-only trigger."""
+    connection = sqlite3.connect(path)
+    try:
+        (trigger,) = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='field_effect_no_changes_no_update'"
+        ).fetchone()
+        row = connection.execute(
+            "SELECT decision_id,review_case_id,report_id,connection_name,"
+            "library_name,work_id,destination,target_fingerprint,target_version,"
+            "occurred_at FROM field_effect_no_changes WHERE origin='human'"
+        ).fetchone()
+        fields = dict(
+            zip(
+                (
+                    "decision_id",
+                    "review_case_id",
+                    "report_id",
+                    "connection",
+                    "library",
+                    "work_id",
+                    "destination",
+                    "target_fingerprint",
+                    "target_version",
+                    "occurred_at",
+                ),
+                row,
+                strict=True,
+            )
+        )
+        forged = FieldEffectNoChange.create(**{**fields, **changes}, origin="human")
+        connection.execute("DROP TRIGGER field_effect_no_changes_no_update")
+        connection.execute(
+            "UPDATE field_effect_no_changes SET decision_id=?,target_version=?,"
+            "occurred_at=?,event_id=? WHERE decision_id=?",
+            (
+                forged.decision_id,
+                forged.target_version,
+                forged.occurred_at,
+                forged.event_id,
+                row[0],
+            ),
+        )
+        connection.execute(trigger)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("forged", [None, "target_version", "keep"])
+def test_startup_reads_an_owner_accept_recorded_with_nothing_to_write(
+    tmp_path: Path, forged: str | None
+) -> None:
+    """A database holding an owner's no-change accept opens again; a row
+    whose value or decision disagrees with that accept is refused."""
+    store = OwnerStore(tmp_path, _HELD)
+    store.write(store.decide("accept", _FANTASY, destination="genres"))
+    keep = store.decide("keep_current", destination="genres")
+    again = store.decide("accept", _FANTASY, destination="genres")
+    store.close()
+    path = tmp_path / "owner.sqlite"
+    if forged == "target_version":
+        _forge_owner_no_change(
+            path, target_version=field_value_version("genres", ["Drama"])
+        )
+    elif forged == "keep":
+        _forge_owner_no_change(
+            path, decision_id=keep.decision_id, occurred_at=keep.occurred_at
+        )
+    if forged is None:
+        reopened = open_repository(path)
+        try:
+            assert reopened._connection.execute(
+                "SELECT decision_id FROM field_effect_no_changes WHERE origin='human'"
+            ).fetchall() == [(again.decision_id,)]
+        finally:
+            reopened.close()
+    else:
+        with pytest.raises(
+            MetadataReportError, match="database is unavailable or incompatible"
+        ):
+            open_repository(path)
 
 
 _DRAMA = {"kind": "list", "value": ["Drama"]}

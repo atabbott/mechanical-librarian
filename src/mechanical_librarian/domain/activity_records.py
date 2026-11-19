@@ -772,7 +772,13 @@ def readable_activity_event(
             },
         ]
     elif source_kind == "field_effect_no_change":
-        current = _reported_value(_pinned_report(record, report), destination)
+        # An owner's accept with nothing to write keeps the value the case's
+        # latest write holds, not the value the case read.
+        current = (
+            record["kept_value"]
+            if "kept_value" in record
+            else _reported_value(_pinned_report(record, report), destination)
+        )
         change = keep_change(destination, current)
         facts = [
             {"label": "Current value", "value": value_text(destination, current)},

@@ -213,15 +213,18 @@ body is refused before parsing.
   `owner_value_invalid` for a value outside its bounds and
   `owner_value_unchanged` for the field's current value, which on the case
   that wrote the field is the written value. An accept of the value the
-  case's latest write holds is refused the same way while the owner
-  decision that made that write is still the field's answer. On that case
-  `keep_current` writes back the value the case read; where that was empty,
-  a clearable field goes back to empty and any other field is refused as
-  `owner_value_required`. Where it read a description stored with formatting
-  a restore would lose, the keep is refused with `409 restore_unavailable`,
-  and the field's `restore_unavailable` is true. Where the case's latest
-  write already holds that value, the keep is recorded as a plain keep and
-  writes nothing.
+  case's latest write holds is refused the same way while the owner decision
+  that made that write is still the field's answer and Resume automatic
+  handling has not been asked to release it. Otherwise, except for a cover,
+  it is recorded with nothing to write: it holds the field, is never
+  pending, and Activity lists it as kept. A second such accept is refused
+  the same way. On the case that wrote the field, `keep_current` writes back
+  the value the case read; where that was empty, a clearable field goes back
+  to empty and any other field is refused as `owner_value_required`. Where
+  it read a description stored with formatting a restore would lose, the
+  keep is refused with `409 restore_unavailable`, and the field's
+  `restore_unavailable` is true. Where the case's latest write already holds
+  that value, the keep is recorded as a plain keep and writes nothing.
 - "Use previous value" and the names entry's previous names are offered only
   while the field reads its latest verified write's value, and never when the
   value that write replaced was empty: emptying the field is that choice.
