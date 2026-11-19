@@ -13807,7 +13807,9 @@ def test_a_provider_description_shows_its_formatted_copy():
         expect(stored.locator("p")).to_have_text("Fish & chips.")
         expect(stored.locator("ul li")).to_have_text("Formatted.")
         _assert_own_elements(stored)
-        _owner_layout_holds(page)
+        assert page.evaluate(
+            "document.documentElement.scrollWidth <= window.innerWidth"
+        )
 
 
 def test_before_your_change_restores_a_formatted_description():
@@ -13845,7 +13847,9 @@ def test_before_your_change_restores_a_formatted_description():
         assert recorded.value.ok, recorded.value.text()
         body = json.loads(recorded.value.request.post_data or "{}")
         assert body["outcome"] == "keep_current"
-        _owner_layout_holds(page)
+        assert page.evaluate(
+            "document.documentElement.scrollWidth <= window.innerWidth"
+        )
 
 
 def test_a_work_back_at_its_earlier_title_reads_as_new():

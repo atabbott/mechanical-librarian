@@ -328,6 +328,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "destination": "genres",
                     "state": "value",
                     "value": ["Updated genre"],
+                    "formatted": None,
                 }
             if path == "/api/v1/review-preparation" and connection_state != "paused":
                 preparation = cast("dict[str, object]", payload)
@@ -360,10 +361,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         "destination": "description",
                         "state": "value",
                         "value": description,
+                        "formatted": None,
                     },
                     "proposed_values": [
                         {"kind": "synthetic", "value": description + "Alternative."}
                     ],
+                    "proposed_formatted": [None],
                     "choice_contexts": [
                         fields[0]["choice_contexts"][0],
                         fields[0]["choice_contexts"][1],
