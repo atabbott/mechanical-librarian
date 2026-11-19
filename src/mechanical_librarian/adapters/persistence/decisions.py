@@ -28,7 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from typing import Any
 
@@ -115,15 +115,22 @@ from mechanical_librarian.domain.shadow_outcome import (
 _REPLACEMENT_BLOCKING_EFFECT_SQL = (
     "(state IN ('claimed','applying','reconciling') OR (state='verified' AND ?))"
 )
-# What keeps Automatic from deciding a field on a case: an owner decision, its
-# own decision in this generation, or a pin, in force or changed (ADR-0085,
-# Amendment 2). Bound by `_automatic_mint_conflict`.
-_AUTOMATIC_MINT_CONFLICT_SQL = (
+# What the owner did that keeps Automatic from deciding a field on a case in
+# any generation: an owner decision of any episode, a withdrawal or an unpin
+# included, or a pin, in force or changed (ADR-0085, Amendment 2). Bound by
+# (case, destination, case, destination).
+_OWNER_MINT_CONFLICT_SQL = (
     "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
-    "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
-    "AND policy_generation=? "
     "UNION ALL SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
     "AND destination=? AND active=1 AND json_type(document,'$.pin')='object'"
+)
+# What keeps Automatic from deciding a field on a case: the owner's conflict
+# above, or its own decision in this generation. Bound by
+# `_automatic_mint_conflict`.
+_AUTOMATIC_MINT_CONFLICT_SQL = (
+    _OWNER_MINT_CONFLICT_SQL
+    + " UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? "
+    "AND destination=? AND policy_generation=?"
 )
 
 
@@ -275,16 +282,34 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
 
 def _automatic_mint_conflict(
     decision: AutomaticDecision,
-) -> tuple[str, str, str, str, int, str, str]:
+) -> tuple[str, str, str, str, str, str, int]:
     case, destination = decision.review_case_id, decision.destination
     return (
         case,
         destination,
         case,
         destination,
-        decision.policy_generation,
         case,
         destination,
+        decision.policy_generation,
+    )
+
+
+def owner_blocks_automatic(
+    connection: sqlite3.Connection, review_case_id: str, destinations: Iterable[str]
+) -> bool:
+    """Whether the owner keeps Automatic from deciding any of these fields of
+    the case in a later generation, by the same rows that refuse its decision.
+
+    A bundle is decided all or none, so a caller passes every field of one.
+    """
+    return any(
+        connection.execute(
+            _OWNER_MINT_CONFLICT_SQL,
+            (review_case_id, destination, review_case_id, destination),
+        ).fetchone()
+        is not None
+        for destination in destinations
     )
 
 

@@ -269,21 +269,22 @@ Load more attention moves focus to the first new row.
 A row of tabs lists the work's fields in order and stays after a decision.
 Each tab names the field's status:
 
-- Needs you means the field is in Attention, including a field where Automatic
+- Needs you means the field is in Attention, including one where Automatic
   made no choice.
 - Decided means your decision is recorded or an earlier one still holds the
   field.
 - Pinned means Audiobookshelf shows the value you pinned.
-- Automatic means Automatic decided the field. You can still change it, and it
-  is not in Attention.
+- Automatic means Automatic decided the field, outside Attention. You can
+  still change it.
 - Optional means you can choose, but the field is not counted and the canvas
   skips it when it moves on. Its one reason says why no review is needed, and
   it shows no condition asking you to choose.
 - No change means the field is there for reference. Keeping the current value
   is a choice only beside another eligible value or description advice. Each
   such field shows its value and a reason, never a selectable `Not set`. In
-  Preview, a field Automatic chose earlier reads No change, shows that choice
-  and says turning on Automatic decides it again.
+  Preview, a field Automatic chose earlier reads No change and, unless your
+  answer or pin keeps it off, shows that choice and says turning on Automatic
+  decides it.
 
 Empty fields with no proposal sit behind one `Show N more fields` tab, and
 fields with nothing to decide in one closed panel headed `No change:` and their

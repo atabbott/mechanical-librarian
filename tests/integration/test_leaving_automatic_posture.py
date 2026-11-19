@@ -89,6 +89,10 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase
+from tests.support.audiobook_reports import (
+    publish_audiobook_preview,
+    synthetic_audiobook_bibliographic_report,
+)
 from tests.support.author_evidence import author_report
 
 _PRODUCER = "f" * 64
@@ -1042,6 +1046,12 @@ def _read_fields(library: _Library) -> dict[str, dict[str, Any]]:
     }
 
 
+def _confirm_automatic(library: _Library, at: int) -> None:
+    library.root.activate_qualified_automatic(at)
+    library.now[0] = at + 1
+    library.drain()
+
+
 def test_pausing_after_leaving_automatic_lists_every_field_the_case_asks_for(
     library: _Library,
 ) -> None:
@@ -1140,6 +1150,132 @@ def test_returning_to_a_policy_decides_its_case_again_in_the_new_generation(
     case_needs, attention = _asked(library)
     assert "authors" not in case_needs
     assert case_needs == attention
+
+
+def _owner(library: _Library, outcome: str, at: int) -> HumanDecision:
+    """An owner command that carries no value, on the authors of the case."""
+    case = library.case()
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "authors"
+    )
+    return HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="authors",
+        actor="owner",
+        outcome=outcome,
+        selected_value=None,
+        idempotency_key=f"owner-command-{outcome}-{at}",
+        occurred_at=at,
+    )
+
+
+@pytest.mark.parametrize("owner", ("none", "earlier_episode", "unpinned"))
+def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
+    tmp_path: Path, owner: str
+) -> None:
+    """The work leaves its first case and comes back to it, a new episode
+    (#1358). Any owner row on the field keeps Automatic off it (ADR-0085): an
+    answer from the first episode, which words nothing now, or a pin taken
+    back in Preview. Preview shows Automatic's earlier choice, whose line
+    says turning Automatic on decides the field again, only where it does."""
+    answered = owner != "none"
+    with _prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root, held = library.root, library.held
+        assert held is not None
+        first, authors = library.case_id(), held.authors
+        if owner == "earlier_episode":
+            root.record_human_decision(
+                _accept(library.case(), "authors", "answer-first-episode", 11)
+            )
+        # The authors change in Audiobookshelf and change back, each read by
+        # a scan.
+        for value, at in ((("Someone Else",), 12), (authors, 14)):
+            held.write(TargetDestination.AUTHORS, value)
+            root.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, at)
+            library.now[0] = at + 1
+            library.drain()
+            assert (library.case_id() == first) is (value == authors)
+        library.leave_automatic()
+        assert library.case_id() == first
+        if owner == "unpinned":
+            for outcome, at in (("pin", 31), ("unpin", 32)):
+                root.record_human_decision(_owner(library, outcome, at))
+
+        preview = _read_fields(library)["authors"]
+        assert (preview["classification"], preview["human_decision"]) == (
+            "unsupported",
+            None,
+        )
+        assert preview["earlier_automatic_value"] == (
+            None if answered else {"kind": "list", "value": ["Ada Example"]}
+        )
+        _confirm_automatic(library, 40)
+        decided = _read_fields(library)["authors"]["automatic_decision"]
+        assert (decided is None) is answered
+
+
+@pytest.mark.parametrize("pinned", (None, "title", "subtitle"))
+def test_an_owner_row_on_one_field_of_a_bundle_hides_every_earlier_choice_of_it(
+    tmp_path: Path, pinned: str | None
+) -> None:
+    """Automatic decides an audiobook's split title and subtitle as one
+    bundle, all or none, so a pin on either field keeps it off both (ADR-0085,
+    Amendment 2). Neither field then shows its earlier choice."""
+    root = open_repository(tmp_path / "pair.sqlite3", cross_thread=True)
+    try:
+        report = synthetic_audiobook_bibliographic_report()
+        case_id, policy = publish_audiobook_preview(
+            root,
+            report,
+            ("title_layout", "subtitle"),
+            selected_options={
+                "title_layout": "title_and_subtitle",
+                "subtitle": "corroborated_split",
+            },
+        )
+        root.persist_shadow_outcome(case_id, 4)
+        (bundle,) = root._connection.execute(
+            "SELECT DISTINCT json_extract(document,'$.bundle_id') "
+            "FROM automatic_decisions WHERE policy_generation=2"
+        ).fetchall()
+        assert bundle[0] is not None
+        assert root.enter_shadow_preview(5, ("ebooks",)) == "preview"
+        proposal = evaluate_report(
+            report, policy.resolved_id, human_review_destinations(policy)
+        )
+        admitted = json.loads(root.admit_review_case(proposal))
+        assert admitted["review_case_id"] == case_id
+        root.persist_shadow_outcome(case_id, 6)
+        if pinned is not None:
+            case = ReviewCase.create_from_data(
+                json.loads(root.get_review_case(case_id))["case"]
+            )
+            proposal_id = next(
+                value["proposal_id"]
+                for value in case.proposals
+                if value["destination"] == pinned
+            )
+            root.record_human_decision(
+                HumanDecision.create(
+                    case,
+                    proposal_id=str(proposal_id),
+                    target_fingerprint=case.target_fingerprint,
+                    destination=pinned,
+                    actor="owner",
+                    outcome="pin",
+                    selected_value=None,
+                    idempotency_key=f"owner-command-pin-{pinned}",
+                    occurred_at=7,
+                )
+            )
+        earlier = dict(
+            root.read_current_review_case(case_id, None).earlier_automatic_values
+        )
+        assert set(earlier) == (set() if pinned else {"subtitle", "title"})
+    finally:
+        root.close()
 
 
 def test_confirming_automatic_decides_the_works_first_prepared_in_preview(
