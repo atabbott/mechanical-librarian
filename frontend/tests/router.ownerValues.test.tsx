@@ -62,6 +62,8 @@ const contextTitle: Field = {
   currentValue: 'THE SILENT ORCHARD (Disc 2)',
   currentRaw: 'THE SILENT ORCHARD (Disc 2)',
   proposedValues: [{ kind: 'text', value: 'THE SILENT ORCHARD (Disc 2)' }],
+  // The proposed value is the current one, as the server reads it.
+  preservationOnly: true,
   ownerControl: entry,
 }
 const decision = (

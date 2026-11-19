@@ -40,6 +40,7 @@ ReviewFieldClassificationCause = Literal[
     "nothing_to_decide",
     "pinned",
     "pin_changed",
+    "held_in_preview",
 ]
 _CAUSE_GUIDANCE: dict[ReviewFieldCause, str] = {
     "unsupported": "Your library service cannot change this field.",
@@ -97,6 +98,7 @@ def classify_review_field(
     single_source: bool = False,
     pin: Literal["in_force", "changed"] | None = None,
     repeated_description: bool = False,
+    held_in_preview: bool = False,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use.
 
@@ -120,11 +122,15 @@ def classify_review_field(
     unless the field is suspended (ADR-0085, Amendment 2).
     `repeated_description` says it is a description every source repeats,
     offered beside description advice (#1905).
+    `held_in_preview` says that, in Preview, an earlier answer or a taken-back
+    pin still holds the field; it changes only a field that would otherwise
+    have nothing to decide while a source offers a different value.
     """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
         for value in proposed_values
     )
+    differing = bool(proposed_values) and not preservation_only
     pinned = _pinned_classification(pin, current_value, suspended, preservation_only)
     if pinned is not None:
         return pinned
@@ -253,10 +259,43 @@ def classify_review_field(
             "inspect",
             preservation_only,
         )
+    return _unchanged_classification(
+        held_in_preview=held_in_preview,
+        owner_entry=owner_entry,
+        differing=differing,
+        preservation_only=preservation_only,
+    )
+
+
+def _unchanged_classification(
+    *,
+    held_in_preview: bool,
+    owner_entry: bool,
+    differing: bool,
+    preservation_only: bool,
+) -> ReviewFieldClassification:
+    """A field no other input decides: held in Preview, or nothing to decide.
+
+    Kept apart so `classify_review_field` stays under the code-size guide. A
+    held field needs a value a source offered, and "No source offered" is said
+    only where none did.
+    """
+    if held_in_preview and differing:
+        return ReviewFieldClassification(
+            "unsupported",
+            "Your earlier decision still holds this field, so turning on "
+            "Automatic leaves it as it is.",
+            "held_in_preview",
+            False,
+            False,
+            False,
+            "inspect",
+            preservation_only,
+        )
     return ReviewFieldClassification(
         "unsupported",
         "No source offered a different value. You can enter your own."
-        if owner_entry
+        if owner_entry and not differing
         else "Nothing to decide for this field.",
         "nothing_to_decide",
         False,

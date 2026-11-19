@@ -14,6 +14,7 @@ import {
   choiceContext,
   combinedAutomaticTags,
   fieldReason,
+  offeredAnotherValue,
   ownerContext,
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
@@ -41,19 +42,27 @@ export function SettledFieldContext({
   toggle: () => void
   pin?: PinControl | undefined
 }) {
-  // A pinned field says why it reads as it does at its foot, once.
+  // A pinned field says why it reads as it does at its foot, once. A field
+  // an earlier decision holds in Preview says so in the server's words, and
+  // "No source offered" shows only where none did.
+  const held = field.classificationCause === 'held_in_preview'
   const reasonShown = field.pin
     ? Boolean(field.earlierAutomaticValue)
-    : actionable || !ownerEntry || Boolean(field.earlierAutomaticValue)
+    : actionable ||
+      held ||
+      Boolean(field.earlierAutomaticValue) ||
+      (!ownerEntry && !offeredAnotherValue(field))
   return (
     <>
       {reasonShown ? (
         <p className={actionable ? 'decision-recorded' : 'decision-context'}>
           {actionable
             ? `${fieldReason(field)}${field.humanDecision || field.automaticDecision ? ` ${recordedValueSentence(field)}` : ''}`
-            : field.earlierAutomaticValue
-              ? 'Automatic chose a value before you entered Preview mode. Automatic doesn’t write in Preview, and turning it on decides this field again.'
-              : 'No source offered a different value.'}
+            : held
+              ? fieldReason(field)
+              : field.earlierAutomaticValue
+                ? 'Automatic chose a value before you entered Preview mode. Automatic doesn’t write in Preview, and turning it on decides this field again.'
+                : 'No source offered a different value.'}
         </p>
       ) : null}
       {!actionable || field.pin ? (

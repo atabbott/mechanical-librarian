@@ -198,7 +198,7 @@ export const activity = (
 ): ActivityView => {
   const { events = [], ...rest } = value
   return {
-    schema_version: 'continuous-field-activity-v4',
+    schema_version: 'continuous-field-activity-v5',
     backup_ready: null,
     owner_action_required: 0,
     paused: false,

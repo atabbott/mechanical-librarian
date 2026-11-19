@@ -376,6 +376,7 @@ def test_owner_guidance_is_distinct_for_each_typed_unavailable_cause(
             "human_recorded",
             "human_decided",
         ),
+        ({"held_in_preview": True}, "unsupported", "held_in_preview"),
     ),
     ids=(
         "suspended-without-cause",
@@ -385,6 +386,7 @@ def test_owner_guidance_is_distinct_for_each_typed_unavailable_cause(
         "human-override-blocked",
         "ignored-cause",
         "human-over-safety",
+        "held-in-preview",
     ),
 )
 def test_the_code_names_the_branch_that_chose_the_sentence(
@@ -403,7 +405,111 @@ def test_the_code_list_holds_every_input_cause() -> None:
     assert set(get_args(ReviewFieldCause)) <= set(
         get_args(ReviewFieldClassificationCause)
     )
-    assert len(set(get_args(ReviewFieldClassificationCause))) == 13
+    assert len(set(get_args(ReviewFieldClassificationCause))) == 14
+
+
+_HELD = (
+    "Your earlier decision still holds this field, so turning on Automatic "
+    "leaves it as it is."
+)
+
+
+def test_a_field_held_in_preview_says_the_earlier_decision_holds_it() -> None:
+    value = classify_review_field(
+        **_BASE_INPUTS,
+        current_value="Title",
+        proposed_values=("Other",),
+        held_in_preview=True,
+    )
+
+    assert (
+        value.state,
+        value.cause,
+        value.reason,
+        value.needs_attention,
+        value.editable,
+        value.recorded,
+        value.navigation_role,
+    ) == ("unsupported", "held_in_preview", _HELD, False, False, False, "inspect")
+
+
+@pytest.mark.parametrize(
+    "proposed", (("Title",), ()), ids=("preservation-only", "no-proposal")
+)
+def test_held_in_preview_needs_a_value_a_source_offered(
+    proposed: tuple[object, ...],
+) -> None:
+    value = classify_review_field(
+        **_BASE_INPUTS,
+        current_value="Title",
+        proposed_values=proposed,
+        held_in_preview=True,
+    )
+
+    assert value.cause == "nothing_to_decide"
+    assert value.reason == "Nothing to decide for this field."
+
+
+@pytest.mark.parametrize(
+    ("higher", "state", "cause"),
+    (
+        ({"attention_candidate": True}, "needs_attention", "review_needed"),
+        ({"owner_choosable": True}, "owner_choosable", "owner_choosable"),
+        ({"has_human_decision": True}, "human_recorded", "human_decided"),
+        ({"automatic_outcome": "candidate"}, "automatic_recorded", "automatic_decided"),
+        ({"automatic_outcome": "abstention"}, "manual_fallback", "automatic_abstained"),
+        (
+            {"suspended": True, "cause": "external_field_failure"},
+            "unsupported",
+            "external_field_failure",
+        ),
+        ({"cause": "unsupported"}, "unsupported", "unsupported"),
+    ),
+    ids=(
+        "attention",
+        "owner-choosable",
+        "human",
+        "automatic",
+        "abstention",
+        "suspended",
+        "unsupported",
+    ),
+)
+def test_every_other_input_decides_before_held_in_preview(
+    higher: dict[str, object], state: str, cause: str
+) -> None:
+    """Held is what is left in Preview, so it never changes Needs you or Optional."""
+    inputs = {**_BASE_INPUTS, **higher}
+    plain = classify_review_field(
+        **inputs, current_value="Title", proposed_values=("Other",)
+    )
+    held = classify_review_field(
+        **inputs,
+        current_value="Title",
+        proposed_values=("Other",),
+        held_in_preview=True,
+    )
+
+    assert (held.state, held.cause) == (state, cause)
+    assert held == plain
+
+
+def test_nothing_to_decide_never_says_no_source_offered_one_when_one_did() -> None:
+    offered, repeated = (
+        classify_review_field(
+            **_BASE_INPUTS,
+            current_value="Title",
+            proposed_values=proposed,
+            owner_entry=True,
+        )
+        for proposed in (("Other",), ("Title",))
+    )
+
+    assert offered.cause == repeated.cause == "nothing_to_decide"
+    assert offered.reason == "Nothing to decide for this field."
+    assert repeated.reason == (
+        "No source offered a different value. You can enter your own."
+    )
 
 
 @pytest.mark.parametrize(

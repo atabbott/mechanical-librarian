@@ -27,8 +27,8 @@ items, and titles and authors never decide identity.
 
 A case holds the current metadata and cover, and says when either is missing
 or not loaded. It holds the field proposals, the cover and series choices and
-references to their evidence. It holds the rule-based recommendation,
-what your policy does with each field, and your current decision. Identical
+references to their evidence. It holds the rule-based recommendation and
+your decision. Identical
 proposed values become one choice that keeps every source and
 disagreement. Evidence alone never adds a row to Attention. A field that needs
 you never holds back a field that is ready on the same item. Rejected
@@ -281,10 +281,10 @@ Each tab names the field's status:
   it shows no condition asking you to choose.
 - No change means the field is there for reference. Keeping the current value
   is a choice only beside another eligible value or description advice. Each
-  such field shows its value and a reason, never a selectable `Not set`. In
-  Preview, a field Automatic chose earlier reads No change. It shows that
-  choice and says turning on Automatic decides it, unless your answer or pin
-  keeps Automatic off.
+  such field shows its value, never a selectable `Not set`. In Preview, a
+  field Automatic chose earlier reads No change, shows that choice and says
+  turning on Automatic decides it, unless your answer or pin holds it. A field
+  your answer or taken-back pin holds reads Decided beside another offered value.
 
 Empty fields with no proposal sit behind one `Show N more fields` tab, and
 fields with nothing to decide in one closed panel headed `No change:` and their
@@ -488,7 +488,7 @@ A replacement stays listed only while Mechanical Librarian keeps a copy of the
 old cover. Keep keeps the current cover, releases that copy and marks the row
 Kept. Others opens the comparison. Both need another cover to choose from.
 
-Once a replaced cover's work is prepared again, its row also offers Put back,
+Once a replaced cover's work is prepared again, its row offers Put back,
 and the comparison names the old cover Replaced cover; an unreadable one shows
 "Image unavailable" there and under Before. Put back records choosing
 the old cover and uploads it from the kept copy. The row reads Put back while

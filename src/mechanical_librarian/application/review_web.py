@@ -156,9 +156,10 @@ from mechanical_librarian.domain.value_flags import value_flags
 # v13: a field says whether its owner accept needs no write (ADR-0105);
 # v14: a description's current and proposed values carry their formatted
 # copies (#1995).
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v14"]
+# v15: a field an earlier decision holds in Preview says so (ADR-0085).
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v15"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v14"
+    "review-case-detail-v15"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
@@ -404,6 +405,9 @@ class CurrentReviewCaseSnapshot:
     # Whether that check gave up: its work is neither queued, delayed nor
     # running, as Policy's count of works that could not be checked reads it.
     check_given_up: bool = False
+    # Whether the library is in Preview, so a held field says turning on
+    # Automatic leaves it as it is.
+    preview: bool = False
 
 
 # A row's current link and the `owner_link` facts its report records (#1477).
@@ -1572,6 +1576,14 @@ def _classify_field(
         single_source=single_source,
         pin=pin,
         repeated_description=repeated,
+        # In Preview, an answer or a taken-back pin still holds the field, so
+        # turning on Automatic leaves it as it is. A pin offers Unpin and a
+        # requested return is already on its way, so neither reads as held.
+        held_in_preview=snapshot.preview
+        and destination != "cover"
+        and destination in snapshot.held_destinations
+        and destination not in snapshot.return_requested_destinations
+        and not any(row[0] == destination for row in snapshot.pins),
     )
 
 

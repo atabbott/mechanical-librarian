@@ -1187,7 +1187,7 @@
   "recording_admission_basis": null,
   "recording_identity_basis": null,
   "review_case_id": "review_case_1d07d7806d84f4be9d0497544935d2b73ef55acbc75c3d3e16c7444fbbc444ca",
-  "schema_version": "review-case-detail-v14",
+  "schema_version": "review-case-detail-v15",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",

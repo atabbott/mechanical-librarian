@@ -67,6 +67,7 @@ from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.cover_evidence import CoverSource
 from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
+    FieldEffectNoChange,
     FieldEffectOperation,
     field_value_version,
 )
@@ -89,6 +90,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase
+from mechanical_librarian.interfaces.web.app import _ActivityResponse
 from tests.support.audiobook_reports import (
     publish_audiobook_preview,
     synthetic_audiobook_bibliographic_report,
@@ -1074,6 +1076,8 @@ def test_the_case_and_activity_read_after_leaving_automatic(
         assert fields["authors"]["automatic_decision"] is None
         assert fields["authors"]["classification"] != "automatic_recorded"
         assert fields["authors"]["needs_attention"] is False
+        # A source offers other authors, so the field never says none did.
+        assert fields["authors"]["classification_reason"] == _NOTHING_TO_DECIDE
         # Only Preview shows what Automatic chose before (#1575): after Turn
         # on Automatic the field is about to be decided again.
         assert fields["authors"]["earlier_automatic_value"] == (
@@ -1114,6 +1118,223 @@ def test_the_case_and_activity_read_after_leaving_automatic(
     } == {destination for _, destination in library.attention()}
     (configured,) = cast(list[dict[str, Any]], read["activity"]["configured_libraries"])
     assert configured["prepared"]["automatic"] == 1
+
+
+def _note(
+    library: _Library, scheduler: ContinuousGuardedApplication, event_id: str
+) -> str | None:
+    """The note Activity gives one row, read as the review API serves it."""
+    activity = _read(library, scheduler)["activity"]
+    _ActivityResponse.model_validate(activity)
+    (event,) = (
+        event
+        for event in cast(list[dict[str, Any]], activity["events"])
+        if event["event_id"] == event_id
+    )
+    return cast(str | None, event["note"])
+
+
+@pytest.mark.parametrize(
+    "variant", ("answer", "pin", "written"), ids=("answer", "pin", "written")
+)
+def test_activity_notes_an_automatic_choice_a_hold_keeps_unwritten(
+    library: _Library, tmp_path: Path, variant: str
+) -> None:
+    """Automatic's choice on a field an owner answer holds reads Held by you
+    while Automatic is on and the hold keeps it unwritten; a pinned hold,
+    a choice already written, an earlier generation's choice and a released
+    hold read no note, nor does a Resume on its way; checks that end with
+    failures bring it back (ADR-0085, #1755)."""
+    root = library.root
+    automatic = library.automatic()
+    case_id = library.case_id()
+    if variant == "written":
+        _, scheduler = _automatic_written(library, tmp_path)
+    else:
+        scheduler, _, _ = _applier(library, tmp_path)
+    assert _note(library, scheduler, automatic.decision_id) is None
+    owner = _accept(library.case(), "authors", "held-for-the-note", 14)
+    root.record_human_decision(owner)
+    if variant == "pin":
+        # A pinned hold offers Unpin, not Resume.
+        root.record_human_decision(_owner(library, "pin", 15))
+    if variant != "answer":
+        assert _note(library, scheduler, automatic.decision_id) is None
+        return
+    assert _note(library, scheduler, automatic.decision_id) == "held"
+
+    library.leave_automatic()
+    assert _note(library, scheduler, automatic.decision_id) is None
+
+    _confirm_automatic(library, 40)
+    again = library.automatic(3)
+    assert _note(library, scheduler, again.decision_id) == "held"
+    assert _note(library, scheduler, automatic.decision_id) is None
+
+    # A requested Resume is on its way, so the note goes; checks that end
+    # with failures keep the hold and ask for Resume again, so it is back.
+    scan = root.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 41)
+    assert root.request_field_effect_manual_return(
+        case_id, "authors", owner.decision_id, scan.scan_id, 41, 41
+    )
+    assert _note(library, scheduler, again.decision_id) is None
+    with root._connection:
+        root._connection.execute(
+            "UPDATE review_preparation_scans SET state='completed_with_failures' "
+            "WHERE scan_id=?",
+            (scan.scan_id,),
+        )
+    assert _read_fields(library)["authors"]["manual_return_failed"] is True
+    assert _note(library, scheduler, again.decision_id) == "held"
+
+    assert root.clear_field_effect_manual_hold(
+        case_id, "authors", 42, owner.decision_id
+    )
+    assert _note(library, scheduler, again.decision_id) is None
+
+
+def test_activity_gives_no_held_note_to_a_choice_with_nothing_to_write(
+    library: _Library, tmp_path: Path
+) -> None:
+    """A choice recorded as needing no change has no write waiting for
+    Resume, so a later hold gives it no note (ADR-0085)."""
+    root = library.root
+    automatic = library.automatic()
+    case = library.case()
+    scheduler, _, _ = _applier(library, tmp_path)
+    root.record_human_decision(
+        _accept(case, "authors", "held-for-the-no-change-note", 14)
+    )
+    assert _note(library, scheduler, automatic.decision_id) == "held"
+    record = FieldEffectNoChange.create(
+        decision_id=automatic.decision_id,
+        review_case_id=automatic.review_case_id,
+        report_id=automatic.report_id,
+        connection=str(case.target["connection"]),
+        library=str(case.target["library"]),
+        work_id=str(case.target["item"]),
+        destination="authors",
+        target_fingerprint=automatic.target_fingerprint,
+        target_version="0" * 64,
+        occurred_at=15,
+        origin="automatic_policy",
+    )
+    with root._connection:
+        root._connection.execute(
+            "INSERT INTO field_effect_no_changes(decision_id,review_case_id,"
+            "report_id,connection_name,library_name,work_id,destination,"
+            "target_fingerprint,target_version,origin,occurred_at,event_id) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                record.decision_id,
+                record.review_case_id,
+                record.report_id,
+                record.connection,
+                record.library,
+                record.work_id,
+                record.destination,
+                record.target_fingerprint,
+                record.target_version,
+                record.origin,
+                record.occurred_at,
+                record.event_id,
+            ),
+        )
+    assert _note(library, scheduler, automatic.decision_id) is None
+
+
+@pytest.mark.parametrize("held", ["title", "subtitle"])
+def test_a_hold_on_one_field_of_a_bundle_notes_both_choices(
+    tmp_path: Path, held: str
+) -> None:
+    """Automatic writes an audiobook's split title and subtitle together, so
+    an answer holding either keeps both choices unwritten until Resume, and
+    Activity notes both (ADR-0085)."""
+    root = open_repository(tmp_path / "pair.sqlite3", cross_thread=True)
+    try:
+        case_id, _ = publish_audiobook_preview(
+            root,
+            synthetic_audiobook_bibliographic_report(),
+            ("title_layout", "subtitle"),
+            selected_options={
+                "title_layout": "title_and_subtitle",
+                "subtitle": "corroborated_split",
+            },
+        )
+        root.persist_shadow_outcome(case_id, 4)
+        pair = [
+            str(row[0])
+            for row in root._connection.execute(
+                "SELECT decision_id FROM automatic_decisions WHERE "
+                "review_case_id=? AND destination IN ('title','subtitle') "
+                "AND policy_generation=2",
+                (case_id,),
+            )
+        ]
+        assert len(pair) == 2
+        assert (
+            root._field_effect_activity._activity_page_notes_once([], [], [], pair)
+            == {}
+        )
+        case = ReviewCase.create_from_data(
+            json.loads(root.get_review_case(case_id))["case"]
+        )
+        root.record_human_decision(_accept(case, held, f"held-for-the-{held}-pair", 7))
+        assert root._connection.execute(
+            "SELECT destination FROM field_effect_manual_holds "
+            "WHERE review_case_id=? AND active=1",
+            (case_id,),
+        ).fetchall() == [(held,)]
+        assert root._field_effect_activity._activity_page_notes_once(
+            [], [], [], pair
+        ) == dict.fromkeys(pair, "held")
+    finally:
+        root.close()
+
+
+def test_an_automatic_description_a_carried_hold_keeps_reads_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Automatic description advice admitted beside a hold carried from the
+    work's earlier case waits for Resume like any automatic choice, so
+    Activity notes it (ADR-0085)."""
+    from tests.support.description_advice import (
+        _prepared,
+        qualify_description_advice,
+    )
+
+    qualify_description_advice(monkeypatch)
+    repository, store, binding, original, _ = _prepared(tmp_path)
+    try:
+        store.admit(original.candidate_id, binding, "automatic_policy", "e" * 64, 11)
+        (decision_id,) = repository._connection.execute(
+            "SELECT decision_id FROM current_description_decisions "
+            "WHERE review_case_id=?",
+            (binding.review_case_id,),
+        ).fetchone()
+        assert decision_id.startswith("automatic_decision_")
+        notes = repository._field_effect_activity._activity_page_notes_once
+        assert notes([], [], [], [decision_id]) == {}
+        # The row a later case of the work carries: no answer on this case.
+        with repository._connection:
+            repository._connection.execute(
+                "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+                "active,updated_at,document) VALUES(?,'description',1,12,?)",
+                (
+                    binding.review_case_id,
+                    json.dumps(
+                        {
+                            "decision_id": "human_decision_" + "1" * 64,
+                            "pending_return": None,
+                            "pin": None,
+                            "updated_at": 12,
+                        }
+                    ),
+                ),
+            )
+        assert notes([], [], [], [decision_id]) == {decision_id: "held"}
+    finally:
+        repository.close()
 
 
 def _asked(library: _Library) -> tuple[set[str], set[str]]:
@@ -1256,8 +1477,17 @@ def _owner(library: _Library, outcome: str, at: int) -> HumanDecision:
     )
 
 
+_HELD = (
+    "Your earlier decision still holds this field, so turning on Automatic "
+    "leaves it as it is."
+)
+_NOTHING_TO_DECIDE = "Nothing to decide for this field."
+
+
 @pytest.mark.parametrize(
-    "owner", ("none", "earlier_episode", "earlier_episode_resumed", "unpinned")
+    "owner",
+    ("none", "earlier_episode", "earlier_episode_resumed", "unpinned"),
+    ids=("none", "earlier_episode", "earlier_episode_resumed", "unpinned"),
 )
 def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
     tmp_path: Path, owner: str
@@ -1302,6 +1532,18 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
         )
         shown = preview["earlier_automatic_value"]
         held_on = owner in {"earlier_episode", "unpinned"}
+        # The hold that keeps Automatic off says so, without Resume: nothing
+        # of Automatic's is held yet in Preview.
+        assert (
+            preview["classification_cause"],
+            preview["classification_reason"],
+            preview["manual_hold"],
+            preview["needs_attention"],
+        ) == (
+            ("held_in_preview", _HELD, False, False)
+            if held_on
+            else ("nothing_to_decide", _NOTHING_TO_DECIDE, False, False)
+        )
         assert shown == (
             None if held_on else {"kind": "list", "value": ["Ada Example"]}
         )
@@ -1311,6 +1553,51 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
         assert decided is not None
         assert field["manual_hold"] is held_on
         assert (decided["decision_id"] in library.pending()) is (shown is not None)
+
+
+def test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided(
+    preview_library: _Library,
+) -> None:
+    """A pin taken back in Preview leaves its hold, so the field reads held.
+    Turning on Automatic then leaves it as it is: with no earlier automatic
+    decision on the case, Automatic records none under the hold (ADR-0085)."""
+    library = preview_library
+    before = _read_fields(library)["authors"]["current"]
+    for outcome, at in (("pin", 11), ("unpin", 12)):
+        library.root.record_human_decision(_owner(library, outcome, at))
+    preview = _read_fields(library)["authors"]
+    assert (
+        preview["classification_cause"],
+        preview["classification_reason"],
+        preview["manual_hold"],
+        preview["needs_attention"],
+    ) == ("held_in_preview", _HELD, False, False)
+
+    _confirm_automatic(library, 40)
+
+    assert ("authors", library.generation()) not in library.decisions()
+    field = _read_fields(library)["authors"]
+    assert (
+        field["classification_cause"],
+        field["classification_reason"],
+        field["manual_hold"],
+    ) == ("nothing_to_decide", _NOTHING_TO_DECIDE, False)
+    assert field["current"] == before
+
+
+def test_preview_reasons_say_nothing_to_decide_where_a_source_offers_another_value(
+    preview_library: _Library,
+) -> None:
+    """A field no one holds that a source offers another value for never says
+    no source offered one."""
+    authors = _read_fields(preview_library)["authors"]
+    assert (authors["classification_cause"], authors["classification_reason"]) == (
+        "nothing_to_decide",
+        _NOTHING_TO_DECIDE,
+    )
+    assert authors["preservation_only"] is False
+    assert [value["value"] for value in authors["proposed_values"]] == [["Ada Example"]]
+    assert authors["current"]["value"] == ["Current Writer"]
 
 
 @pytest.mark.parametrize("pinned", (None, "title", "subtitle"))

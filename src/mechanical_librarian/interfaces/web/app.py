@@ -2468,11 +2468,14 @@ class _ActivityEvent(_ClosedModel):
     # write waiting for its work's Book matching check (#1355). A choice Book
     # matching asked again that was already written and verified reads
     # `asked_again_matching_written`, since Audiobookshelf keeps its value.
+    # An automatic choice an owner hold keeps unwritten until Resume reads
+    # `held` (ADR-0085).
     note: (
         Literal[
             "asked_again",
             "asked_again_matching",
             "asked_again_matching_written",
+            "held",
             "held_back",
             "waiting_for_check",
         ]

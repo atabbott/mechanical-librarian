@@ -17268,6 +17268,100 @@ def test_current_covers_saves_never_with_its_own_button() -> None:
             browser.close()
 
 
+@pytest.mark.parametrize(
+    "field_name", ["genres", "language"], ids=["genres", "language"]
+)
+def test_a_pin_taken_back_in_preview_reads_decided_with_its_hold_line(field_name: str):
+    """A pin taken back in Preview keeps its hold, so the real wire carries
+    the held cause: the tab reads Decided and the line says turning on
+    Automatic leaves the field as it is, with no Resume and no claim that no
+    source offered a value (ADR-0085)."""
+    fixture: dict[str, Any] = (
+        {
+            "genre_fixture": ("Fantasy",),
+            "genre_current": None,
+            "genre_destination": "automatic",
+        }
+        if field_name == "genres"
+        else {"language_fixture": ("English", "en", "UND")}
+    )
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(
+            viewport={"width": 1440, "height": 900}, reduced_motion="reduce"
+        )
+        page = context.new_page()
+        apps: list[Any] = []
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "owner.sqlite",
+                hash_path=hash_path,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                on_app=apps.append,
+                **fixture,
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            # Leave Automatic and admit the same case again, as preparation
+            # does (#1568). The server's own repository binds the file.
+            repository = apps[0].state.review_application._state_owner
+            library = json.loads(repository.get_review_case_report(case_id))["target"][
+                "library"
+            ]
+            assert repository.enter_shadow_preview(1_100, (library,)) == "preview"
+            case = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(case_id))["case"]
+            )
+            proposal = ProposalSet.from_json(
+                repository.get_proposal(case.proposal_set_id)
+            )
+            admitted = json.loads(repository.admit_review_case(proposal))
+            assert (admitted["status"], admitted["review_case_id"]) == (
+                "admitted",
+                case_id,
+            )
+            repository.persist_shadow_outcome(case_id, 1_101)
+            field = f"{origin}/library?lens=all&preview={case_id}&field={field_name}"
+            page.goto(field)
+            canvas = page.locator(".decision-canvas")
+            for name in ("Pin this value", "Unpin"):
+                with page.expect_response(
+                    lambda response: response.url.endswith("/decisions")
+                ) as answered:
+                    canvas.get_by_role("button", name=name, exact=True).click()
+                assert answered.value.status == 200
+            page.goto(field)
+            rail = page.get_by_role("navigation", name="Review fields")
+            expect(
+                rail.get_by_role("button", name=re.compile(rf"^{field_name}", re.I))
+            ).to_have_accessible_name(re.compile(r"Decided$"))
+            expect(
+                canvas.get_by_text(
+                    "Your earlier decision still holds this field, so turning on "
+                    "Automatic leaves it as it is.",
+                    exact=True,
+                )
+            ).to_be_visible()
+            expect(
+                canvas.get_by_role("button", name="Resume automatic handling")
+            ).to_have_count(0)
+            # The other fields' No change rows keep their own line.
+            expect(
+                canvas.get_by_text("No source offered a different value.", exact=True)
+            ).to_have_count(0)
+        browser.close()
+
+
 def test_withdrawing_an_answer_given_before_leaving_automatic():
     """The answer's field offers Withdraw once Automatic is left, and the store
     accepts it: the earlier generation's decision holds nothing (ADR-0036).
@@ -17347,4 +17441,6 @@ def test_withdrawing_an_answer_given_before_leaving_automatic():
             page.goto(field)
             expect(canvas.get_by_text("Choose genres", exact=True)).to_be_visible()
             expect(canvas.get_by_text("turning it on decides")).to_have_count(0)
+            # Withdraw deletes the hold, so nothing says one holds the field.
+            expect(canvas.get_by_text("still holds this field")).to_have_count(0)
         browser.close()

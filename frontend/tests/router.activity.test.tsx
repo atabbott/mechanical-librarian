@@ -200,6 +200,37 @@ describe('Activity route', () => {
     ).toBeVisible()
   })
 
+  it('notes an automatic choice a hold keeps unwritten as held by you', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(
+      activity({
+        events: [
+          {
+            event_id: 'automatic-held-by-you',
+            event_type: 'metadata',
+            category: 'automatic',
+            origin: 'automatic_policy',
+            state: 'recorded',
+            note: 'held',
+            work_label: 'Held Work',
+          },
+        ],
+      }),
+    )
+    renderRoute('/activity', http)
+    const held = (await screen.findByText('Held Work')).closest('article')
+    if (!held) throw new Error('Expected the Held Work row')
+    expect(within(held).getByText('Recorded')).toBeVisible()
+    expect(within(held).getByText('Held by you')).toBeVisible()
+    await user.click(within(held).getByRole('button', { name: /held by you/u }))
+    expect(
+      within(held).getByText(
+        'Your earlier decision holds this field, so this is not written until you choose Resume automatic handling.',
+      ),
+    ).toBeVisible()
+  })
+
   it('retains authored preparation provenance without offering another choice interface', async () => {
     const user = userEvent.setup()
     const http = createHttp()
