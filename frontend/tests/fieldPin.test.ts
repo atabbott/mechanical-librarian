@@ -230,6 +230,19 @@ describe('the sentence at the foot of the field', () => {
     ).toEqual({ sentence: 'You pinned this value.', unpin: false, quiet: false })
   })
 
+  it('says only that the value is pinned over an accept with nothing to write', () => {
+    expect(
+      pinFoot(
+        field({
+          pin: pinOf('waiting', 'New title'),
+          humanDecision: decided('accept', NEW),
+          noChangeRequired: true,
+        }),
+        shown,
+      ),
+    ).toEqual({ sentence: 'You pinned this value.', unpin: false, quiet: false })
+  })
+
   it('shows what was pinned, with Unpin, once the value changed', () => {
     expect(pinFoot(field({ pin: pinOf('changed') }), shown)).toEqual({
       sentence: 'You pinned “Old title”.',

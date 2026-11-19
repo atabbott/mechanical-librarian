@@ -401,6 +401,9 @@ def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
         decision.review_case_id
     )
     assert no_change["change"] == "Kept Secret History"
+    # An automatic no-change row stays Automatic's, where an owner's is listed
+    # with the owner's choices.
+    assert (no_change["event_type"], no_change["category"]) == ("metadata", "automatic")
 
     waiting = _ledger(effects, search="Waiting to retry")
     assert [(event["state"], event["destination"]) for event in waiting] == [

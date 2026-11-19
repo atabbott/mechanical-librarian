@@ -152,11 +152,10 @@ from mechanical_librarian.domain.shadow_outcome import (
 from mechanical_librarian.domain.validation import owner_password
 from mechanical_librarian.domain.value_flags import value_flags
 
-# v12: a field says whether the description its case wrote over can be
-# restored from here (#1424).
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v12"]
+# v13: a field says whether its owner accept needs no write (ADR-0105).
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v13"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v12"
+    "review-case-detail-v13"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
@@ -379,6 +378,9 @@ class CurrentReviewCaseSnapshot:
     pins: tuple[tuple[str, bool, str], ...] = ()
     # Destinations whose change waits to be written, so a pin is refused.
     change_waiting_destinations: tuple[str, ...] = ()
+    # Owner accepts recorded with nothing to write: the case's latest write
+    # already holds their value (ADR-0105).
+    no_change_decisions: tuple[str, ...] = ()
     # Destinations whose change is still to be written; a refused pin on any
     # other waits only for the next scan to read the written value (#1984).
     write_waiting_destinations: tuple[str, ...] = ()
@@ -2133,6 +2135,8 @@ class InspectCurrentReviewCase:
             and description_unrestorable(case),
             "pin": pin,
             "pin_control": pin_control,
+            "no_change_required": decision is not None
+            and decision.decision_id in snapshot.no_change_decisions,
             # A refused pin waits only for the next scan to read the written
             # value back: the field's change is written (#1984).
             "change_written": destination in snapshot.change_waiting_destinations

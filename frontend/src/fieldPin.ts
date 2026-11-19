@@ -142,7 +142,7 @@ export const pinFoot = (
         ? field.classificationCause === 'pinned' && field.classificationReason
           ? field.classificationReason
           : 'You pinned this value.'
-        : field.humanDecision?.outcome === 'keep_current'
+        : field.humanDecision?.outcome === 'keep_current' || field.noChangeRequired === true
           ? 'You pinned this value.'
           : 'You pinned this value. The pin starts once the change is written.',
     unpin: !pinOnScreen,

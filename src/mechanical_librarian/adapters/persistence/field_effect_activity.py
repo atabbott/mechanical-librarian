@@ -1069,12 +1069,14 @@ def _cover_selection_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> st
 def _field_effect_no_change_arm(
     scope: _ActivityArmScope, scalar: dict[str, str]
 ) -> str:
-    """Every decision that needed no write."""
+    """Every decision that needed no write; an owner's is the owner's own
+    choice, listed with the owner's (ADR-0105)."""
     return f"""
             SELECT no_change.event_id, no_change.connection_name, no_change.destination,
                    no_change.library_name, no_change.occurred_at, no_change.origin,
                    no_change.report_id, 'no_change_required', no_change.work_id, '{{}}',
-                   'metadata', {scalar["title"]},
+                   CASE no_change.origin WHEN 'human' THEN 'review' ELSE 'metadata' END,
+                   {scalar["title"]},
                    NULL, 'field_effect_no_change', NULL, no_change.review_case_id,
                    NULL, no_change.decision_id, NULL, NULL, 1, 0, 0
               FROM field_effect_no_changes no_change
@@ -1939,25 +1941,29 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 predecessor = authored_predecessor
         return predecessor
 
-    def _recorded_follows(self, decision: HumanDecision) -> str | None:
+    def _recorded_follows(self, decision: HumanDecision) -> tuple[str | None, bool]:
         """The decision whose write an owner decision follows, frozen with it
         when the store records it (#1523, #1973): its predecessor's, on
-        every outcome. The record holds the write lock, so this is exactly
-        the write that landed last in its episode before it, which History's
-        From reads and a keep goes back on.
+        every outcome, and whether the decision has nothing to write. The
+        record holds the write lock, so this is exactly the write that landed
+        last in its episode before it, which History's From reads and a keep
+        goes back on.
 
         A keep whose predecessor already holds the value the case read names
         none: going back would change nothing, so it is a plain keep, as owner
         entry calls an entry of the written value unchanged. An accept of the
-        value that write holds, while the owner decision that made it is
-        still the field's answer, is refused as `owner_value_unchanged`
-        before anything is recorded, since planning would write nothing and
-        the accept would wait for ever. `field_value_version` normalises both
+        value that write holds, while the owner decision that made it, or an
+        accept of that value with nothing to write, is still the field's
+        answer, is refused as `owner_value_unchanged` before anything is
+        recorded. Any other such accept, except of a cover, is the owner's
+        answer with nothing to write: planning would write nothing, so the
+        store records it as settled. `field_value_version` normalises both
         values as planning does, so they are equal exactly when planning
         would write nothing."""
         predecessor = self._human_predecessor(decision)
         if predecessor is None:
-            return None
+            return None, False
+        nothing_to_write = False
         if decision.outcome in {"accept", "keep_current"}:
             written = field_value_version(
                 decision.destination,
@@ -1971,8 +1977,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     project_decision_value(
                         decision.destination, decision.selected_value
                     ),
-                ) and self._written_answer_stands(decision, predecessor[0]):
-                    raise HumanDecisionError("owner_value_unchanged")
+                ):
+                    if self._written_answer_stands(decision, predecessor[0], written):
+                        raise HumanDecisionError("owner_value_unchanged")
+                    nothing_to_write = decision.destination != "cover"
             elif written == field_value_version(
                 decision.destination,
                 self._case_target_pre_value(
@@ -1980,26 +1988,52 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     decision.destination,
                 ),
             ):
-                return None
-        return FieldEffectOperation.from_json(predecessor[0]).plan.authority.decision_id
+                return None, False
+        return (
+            FieldEffectOperation.from_json(predecessor[0]).plan.authority.decision_id,
+            nothing_to_write,
+        )
 
-    def _written_answer_stands(self, decision: HumanDecision, write: str) -> bool:
-        """Whether the write is the owner's own answer that still stands: its
-        decision is the field's latest owner decision in the case's episode,
-        pins and unpins aside (ADR-0085, Amendment 2).
+    def _written_answer_stands(
+        self, decision: HumanDecision, write: str, written: str
+    ) -> bool:
+        """Whether the owner's answer that holds the written value still
+        stands: the field's latest owner decision in the case's episode, pins
+        and unpins aside (ADR-0085, Amendment 2), is the write's own decision
+        or an accept of that value recorded with nothing to write, and its
+        own hold still holds the field.
 
         A later owner decision still unwritten (a keep, an entry, a clear) is
         the field's answer instead, and an accept recorded now replaces it;
-        an automatic write is no owner answer (#1980)."""
+        an automatic write is no owner answer (#1980). An answer whose hold
+        Resume automatic handling released, or asked to release, no longer
+        holds the field, so choosing its value again holds it anew, as
+        `field_change_waiting_sql` reads the same hold for a pin."""
         standing = self._connection.execute(
-            "SELECT decision_id FROM human_decisions WHERE review_case_id=? "
+            "SELECT decision_id,EXISTS(SELECT 1 FROM field_effect_no_changes "
+            "no_change WHERE no_change.decision_id=human_decisions.decision_id "
+            "AND no_change.origin='human' AND no_change.target_version=?),"
+            "EXISTS(SELECT 1 FROM field_effect_manual_holds hold "
+            "WHERE hold.review_case_id=human_decisions.review_case_id "
+            "AND hold.destination=human_decisions.destination AND hold.active=1 "
+            "AND json_extract(hold.document,'$.pending_return') IS NULL "
+            "AND json_extract(hold.document,'$.decision_id')=human_decisions.decision_id) "
+            "FROM human_decisions WHERE review_case_id=? "
             "AND destination=? AND outcome NOT IN ('pin','unpin') AND "
             + _episode_decision_sql("human_decisions")
             + " ORDER BY ordinal DESC LIMIT 1",
-            (decision.review_case_id, decision.destination),
+            (written, decision.review_case_id, decision.destination),
         ).fetchone()
-        return standing is not None and standing[0] == (
-            FieldEffectOperation.from_json(write).plan.authority.decision_id
+        return (
+            standing is not None
+            # A cover answer often holds nothing (it holds only over an
+            # automatic cover decision), so a cover reads as on #1981.
+            and (standing[2] == 1 or decision.destination == "cover")
+            and (
+                standing[1] == 1
+                or standing[0]
+                == FieldEffectOperation.from_json(write).plan.authority.decision_id
+            )
         )
 
     def _followed_write(
@@ -3800,6 +3834,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
             (row.source_identity,),
         ).fetchone()[0]
+        owner = self._connection.execute(
+            "SELECT selected_value_document FROM human_decisions WHERE decision_id=?",
+            (row.source_identity,),
+        ).fetchone()
+        if owner is not None:
+            durable["kept_value"] = project_decision_value(
+                record.destination, json.loads(owner[0])
+            )
         return _finished_activity_event(row, durable)
 
     def _project_description_preparation(
@@ -3931,6 +3973,22 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             and decision.decision_id in dependencies.replaced
         ):
             durable["pre_value"] = dependencies.replaced[decision.decision_id]
+        elif (
+            decision.outcome == "accept"
+            and self._connection.execute(
+                "SELECT 1 FROM field_effect_no_changes WHERE decision_id=? "
+                "AND origin='human'",
+                (decision.decision_id,),
+            ).fetchone()
+            is not None
+        ):
+            # An accept of the value the case's latest write holds replaced
+            # that value with itself, as History's From reads it (ADR-0105).
+            # Its no-change row commits with the decision and its event, so
+            # this row never reads without it.
+            durable["pre_value"] = project_decision_value(
+                decision.destination, decision.selected_value
+            )
         if decision.outcome == "keep_current":
             planned = dependencies.went_back.get(decision.decision_id)
             if planned is None:
