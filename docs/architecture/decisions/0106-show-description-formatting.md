@@ -3,7 +3,7 @@
 - Status: proposed
 - Date: 2026-11-18
 - Owners: project maintainers
-- Issues: #TBD
+- Issues: #1992
 - Amends: ADR-0043 (hostile metadata is rendered as text)
 - Supersedes: none
 - Superseded by: none
