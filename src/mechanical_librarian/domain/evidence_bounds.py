@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 
 MAX_CODE_LENGTH = 64
@@ -166,6 +167,26 @@ def validate_formatted_description(value: object, label: str, maximum: int) -> s
     if bare == text or "<" in bare or ">" in bare:
         raise EvidenceValueError(f"{label} is not a formatted copy")
     return text
+
+
+_FORMATTED_BLOCK_PATTERN = re.compile(r"</?(?:p|br|ul|ol|li)>")
+_FORMATTED_INLINE_PATTERN = re.compile(r"</?(?:b|strong|i|em|del)>")
+
+
+def formatted_description_text(copy: str) -> str:
+    """The visible text an admitted formatted copy reads as (#1995, ADR-0107).
+
+    The provider renderer's own rule for a copy's bare tags: each block tag
+    ends a line, an inline tag shows nothing, character references decode,
+    and each line's words join with " • ". A holder admits a copy only when
+    this equals the visible text it keeps beside it.
+    """
+    lines = html.unescape(
+        _FORMATTED_INLINE_PATTERN.sub("", _FORMATTED_BLOCK_PATTERN.sub("\n", copy))
+    )
+    return " • ".join(
+        " ".join(line.split()) for line in lines.splitlines() if line.split()
+    )
 
 
 def _validate_projection_safety(text: str, label: str, *, markup: bool = False) -> str:

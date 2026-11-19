@@ -68,6 +68,7 @@ from mechanical_librarian.domain.epub_inspection import (
 )
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
+    formatted_description_text,
     validate_formatted_description,
     validate_incumbent_description,
     validate_projection_text,
@@ -502,7 +503,7 @@ class TargetField:
         ):
             raise ReportValueError("target field is invalid")
         if self.formatted is not None:
-            _formatted_text(self.formatted, "target formatted description")
+            _formatted_text(self.formatted, "target formatted description", self.value)
         if self.state is not TargetFieldState.VALUE:
             if self.value is not None:
                 raise ReportValueError("nonvalue target field has a value")
@@ -1882,7 +1883,9 @@ class ProviderClaim:
                 or self.state is not FieldState.VALID
             ):
                 raise ReportValueError("provider claim formatting is invalid")
-            _formatted_text(self.formatted, "provider formatted description")
+            _formatted_text(
+                self.formatted, "provider formatted description", self.value
+            )
         if type(self.kind) is not ClaimKind:
             raise ReportValueError("provider claim is invalid")
         if (
@@ -9665,11 +9668,14 @@ def _projection_text(value: object, label: str, maximum: int) -> None:
         raise ReportValueError(f"{label} is invalid") from error
 
 
-def _formatted_text(value: object, label: str) -> None:
+def _formatted_text(value: object, label: str, text: object) -> None:
+    """Admit a formatted copy only beside the visible text it reads as."""
     try:
-        validate_formatted_description(value, label, MAX_DESCRIPTION_CHARACTERS)
+        copy = validate_formatted_description(value, label, MAX_DESCRIPTION_CHARACTERS)
     except EvidenceValueError as error:
         raise ReportValueError(f"{label} is invalid") from error
+    if formatted_description_text(copy) != text:
+        raise ReportValueError(f"{label} is invalid")
 
 
 def _sentinel_state(value: str) -> FieldState | None:

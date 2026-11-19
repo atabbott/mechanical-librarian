@@ -10,6 +10,7 @@ from typing import Final, Literal, Self
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
+    formatted_description_text,
     validate_formatted_description,
 )
 from mechanical_librarian.domain.metadata_report import MAX_DESCRIPTION_CHARACTERS
@@ -568,11 +569,13 @@ class FieldEffectPlan:
                 raise FieldEffectError("invalid_value")
             validate_effect_value(destination, desired_form)
             try:
-                validate_formatted_description(
+                copy = validate_formatted_description(
                     desired_form, "desired form", MAX_DESCRIPTION_CHARACTERS
                 )
             except EvidenceValueError as error:
                 raise FieldEffectError("invalid_value") from error
+            if formatted_description_text(copy) != desired:
+                raise FieldEffectError("invalid_value")
         if (
             _HEX.fullmatch(target_fingerprint) is None
             or target_fingerprint != authority.target_fingerprint

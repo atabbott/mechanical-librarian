@@ -22,6 +22,7 @@ from mechanical_librarian.adapters.providers.visible_text import (
 from mechanical_librarian.domain.description_formatting import chosen_formatted
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
+    formatted_description_text,
     validate_formatted_description,
 )
 from mechanical_librarian.domain.metadata_report import MAX_DESCRIPTION_CHARACTERS
@@ -108,8 +109,10 @@ def _assert_copy_invariants(value: str) -> None:
     if copy is None:
         return
     assert type(plain) is str
-    # It shows exactly the visible text, which stays the only value compared.
+    # It shows exactly the visible text, which stays the only value compared,
+    # and the domain reads it the same way when a holder admits it.
     assert visible_description(copy) == plain
+    assert formatted_description_text(copy) == plain
     # It reads as itself again, also in each form the service stores it in.
     for form in _service_forms(copy):
         assert read_description(form)[:3] == (plain, True, copy)
@@ -272,3 +275,44 @@ def test_an_alternative_carries_a_copy_only_when_its_claims_agree(
     copies: tuple[str | None, ...], chosen: str | None
 ) -> None:
     assert chosen_formatted(copies) == chosen
+
+
+def test_a_copy_beside_other_words_is_refused_where_it_is_held() -> None:
+    # A copy is admitted only beside the visible text it reads as, so a
+    # stored report or plan holding another description's copy is refused
+    # when it is read, not later at a write (#1995).
+    from mechanical_librarian.domain.metadata_report import (
+        ClaimKind,
+        ClaimScope,
+        FieldState,
+        ProviderClaim,
+        ReportValueError,
+        TargetDestination,
+        TargetField,
+        TargetFieldState,
+    )
+
+    def target(formatted: str) -> TargetField:
+        return TargetField(
+            TargetDestination.DESCRIPTION,
+            TargetFieldState.VALUE,
+            "Expected • words & more",
+            formatted=formatted,
+        )
+
+    def claim(formatted: str) -> ProviderClaim:
+        return ProviderClaim(
+            "provider_" + "0" * 64,
+            ClaimKind.DESCRIPTION,
+            "Expected • words & more",
+            FieldState.VALID,
+            ClaimScope.WORK,
+            "not_applicable",
+            formatted=formatted,
+        )
+
+    for holder in (target, claim):
+        assert holder("<p>Expected</p><p><b>words</b> &amp; more</p>")
+        for other in ("<p>Other</p>", "<p>Expected words &amp; more</p>"):
+            with pytest.raises(ReportValueError):
+                holder(other)
