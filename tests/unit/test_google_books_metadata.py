@@ -1924,7 +1924,11 @@ def test_rejection_provenance_preserves_safe_sibling_bytes(key: str) -> None:
             if claim.kind is kind:
                 assert claim.reference != old["reference"]
             continue
-        assert claim.to_data() == old
+        data = claim.to_data()
+        # The formatted copy joined description claims after v46 (#1995).
+        if claim.kind is ClaimKind.DESCRIPTION:
+            assert data.pop("formatted") is None
+        assert data == old
 
 
 def test_shared_google_burst_stops_later_lanes_and_work_until_expiry() -> None:

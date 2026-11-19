@@ -15,6 +15,7 @@ from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
 )
+from mechanical_librarian.adapters.providers.visible_text import read_description
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
 )
@@ -294,6 +295,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             candidate = DescriptionAdviceCandidate.from_json(row[0])
             if not self._candidate_is_current(candidate, expected_binding):
                 raise ValueError("description candidate request mismatch")
+            if advised_description(candidate.output.description) is None:
+                # Text the reader refuses is never written (#1995, D3).
+                raise ValueError("description advice unreadable")
             case_id = expected_binding.review_case_id
             # An owner decision or a pin keeps automatic advice out
             # (ADR-0085, Amendment 2).
@@ -450,7 +454,14 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         )
 
     @local_operation
-    def authority_value(self, decision: AuthoredDescriptionDecision) -> object:
+    def authority_value(
+        self, decision: AuthoredDescriptionDecision
+    ) -> tuple[object, str | None]:
+        """The advised value a decision writes, and its formatted copy.
+
+        The adviser's text is read as any description is: its visible text is
+        the value, and markup it keeps is written as the copy (#1995).
+        """
         from mechanical_librarian.domain.field_effect import FieldEffectError
 
         if type(
@@ -501,7 +512,10 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 != description_qualification_manifest(self.current_settings().cleanup())
             ):
                 raise FieldEffectError("authority_binding")
-        return {"kind": "text", "value": candidate.output.description}
+        advised = advised_description(candidate.output.description)
+        if advised is None:
+            raise FieldEffectError("authority_binding")
+        return {"kind": "text", "value": advised[0]}, advised[1]
 
     @local_operation
     def begin_attempt(
@@ -844,7 +858,13 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 "current": self._candidate_is_current(
                     selected_candidate, selection.binding
                 ),
+                "formatted": _advised_form(selected_candidate),
             }
+        advised = (
+            None
+            if candidate is None
+            else advised_description(candidate.output.description)
+        )
         application_outcome = None
         if selection is not None:
             applied = self._connection.execute(
@@ -868,10 +888,27 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             "model": row[3],
             "attempt_id": row[4],
             "candidate": None if candidate is None else candidate.model_dump(),
+            # How the advice shows and is written (#1995): its formatted copy,
+            # and whether the reader refused it, so it can't be chosen.
+            "formatted": None if advised is None else advised[1],
+            "readable": candidate is None or advised is not None,
             "binding": DescriptionAdviceBinding.model_validate_json(
                 row[6]
             ).model_dump(),
         }
+
+
+def advised_description(text: str) -> tuple[str, str | None] | None:
+    """An adviser's text as it is written: its visible text and formatted
+    copy, or `None` where the description reader refuses it (#1995, D3).
+    """
+    shown, _, formatted, _ = read_description(text)
+    return (shown, formatted) if type(shown) is str else None
+
+
+def _advised_form(candidate: DescriptionAdviceCandidate) -> str | None:
+    advised = advised_description(candidate.output.description)
+    return None if advised is None else advised[1]
 
 
 def request_description_preparation(

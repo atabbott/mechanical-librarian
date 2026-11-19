@@ -8,10 +8,16 @@ import re
 from dataclasses import dataclass, replace
 from typing import Final, Literal, Self
 
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_formatted_description,
+)
+from mechanical_librarian.domain.metadata_report import MAX_DESCRIPTION_CHARACTERS
 from mechanical_librarian.domain.validation import matching
 
 FIELD_EFFECT_CONSENT_SCHEMA: Final = "field-effect-consent-v2"
-FIELD_EFFECT_PLAN_SCHEMA: Final = "field-effect-plan-v1"
+# v2: a description plan carries the formatted copy it writes (#1995).
+FIELD_EFFECT_PLAN_SCHEMA: Final = "field-effect-plan-v2"
 FIELD_EFFECT_OPERATION_SCHEMA: Final = "field-effect-operation-v1"
 FIELD_EFFECT_EVENT_SCHEMA: Final = "field-effect-event-v1"
 
@@ -513,6 +519,10 @@ class FieldEffectPlan:
     idempotency_key: str
     created_at: int
     subtitle_companion: SubtitleCompanion | None = None
+    # What a description write sends in place of its visible text: the
+    # formatted copy of exactly `desired_value` (#1995, ADR-0107). Every
+    # comparison still reads `desired_value`.
+    desired_form: str | None = None
 
     @classmethod
     def create(
@@ -532,6 +542,7 @@ class FieldEffectPlan:
         capability_digest: str,
         created_at: int,
         subtitle_companion: SubtitleCompanion | None = None,
+        desired_form: str | None = None,
     ) -> Self:
         for value in (connection, library):
             if type(value) is not str or _IDENTITY.fullmatch(value) is None:
@@ -550,6 +561,16 @@ class FieldEffectPlan:
         )
         if pre_value is not None:
             validate_effect_value(destination, pre_value)
+        if desired_form is not None:
+            if destination != "description" or desired is None:
+                raise FieldEffectError("invalid_value")
+            validate_effect_value(destination, desired_form)
+            try:
+                validate_formatted_description(
+                    desired_form, "desired form", MAX_DESCRIPTION_CHARACTERS
+                )
+            except EvidenceValueError as error:
+                raise FieldEffectError("invalid_value") from error
         if (
             _HEX.fullmatch(target_fingerprint) is None
             or target_fingerprint != authority.target_fingerprint
@@ -617,6 +638,8 @@ class FieldEffectPlan:
         }
         if subtitle_companion is not None:
             core["subtitle_companion"] = subtitle_companion.to_data()
+        if destination == "description":
+            core["desired_form"] = desired_form
         if len(canonical_json(core).encode()) > 120_000:
             raise FieldEffectError("plan_too_large")
         identity = _digest(core)
@@ -637,6 +660,7 @@ class FieldEffectPlan:
             "effect_" + identity,
             created_at,
             subtitle_companion,
+            desired_form,
         )
 
     def subtitle_plan(self) -> FieldEffectPlan | None:
@@ -685,6 +709,11 @@ class FieldEffectPlan:
             "capability_digest": self.capability_digest,
             "idempotency_key": self.idempotency_key,
             "created_at": self.created_at,
+            **(
+                {"desired_form": self.desired_form}
+                if self.destination == "description"
+                else {}
+            ),
         }
 
     def to_json(self) -> str:
@@ -717,6 +746,8 @@ class FieldEffectPlan:
             )
             if paired:
                 keys.add("subtitle_companion")
+            if type(raw) is dict and raw.get("destination") == "description":
+                keys.add("desired_form")
             if (
                 type(raw) is not dict
                 or set(raw) != keys
@@ -772,6 +803,7 @@ class FieldEffectPlan:
                 )
                 if paired
                 else None,
+                desired_form=raw.get("desired_form"),
             )
             if (
                 value.plan_id != raw["plan_id"]

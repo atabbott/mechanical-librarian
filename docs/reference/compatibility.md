@@ -88,12 +88,12 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `metadata-report-v82` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
+| `metadata-report-v83` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
 | `fixed-conservative-v48` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |
 | `metadata-policy-profile-v3` | A library's metadata policy profile |
-| `review-case-v2` | A review case built from a proposal set ([Review cases](../operations/review-case.md)) |
+| `review-case-v3` | A review case built from a proposal set ([Review cases](../operations/review-case.md)) |
 | `level-proposal-set-v2` | The proposal set a wider Book matching level derives beside the live one, with its lineage ([Book matching levels](../operations/metadata-report.md#book-matching-levels-for-other-fields)) |
 | `review-case-level-offer-v2` | The manual fields of one case a wider Book matching level substitutes, with their alternatives and lineage |
 | `bibliographic-relationships-v1` | The allowed title, subtitle and series combinations inside a proposal set and review case |
@@ -122,7 +122,7 @@ refused.
 | `cover-taste-verdict-v1` | One admitted taste judge verdict: the comparison's own chosen cover reference or none, the decision, a confidence and rule numbers, bound to the profile version, packet and model. Nothing shows it yet |
 | `field-effect-consent-state-v2` | A library consent and its basis: the owner's grant or the policy activation that carried it |
 | `field-effect-consent-envelope-v1` | The consent envelope whose identity digests the destination set |
-| `field-effect-plan-v1`, `field-effect-operation-v1`, `field-effect-event-v1` | Guarded write plans, operations and their append-only audit events |
+| `field-effect-plan-v2`, `field-effect-operation-v1`, `field-effect-event-v1` | Guarded write plans, operations and their append-only audit events |
 
 ### Other stores and tools
 
@@ -145,7 +145,7 @@ exact schemas of their own and no separate version string.
 
 The owner API is served under `/api/v1`, and each response names its version
 in `schema_version`. The main ones are `review-session-v1`,
-`review-library-v11`, `review-preparation-v2`, `review-case-detail-v12`,
+`review-library-v12`, `review-preparation-v2`, `review-case-detail-v13`,
 `review-case-evidence-v6`, `review-report-detail-v7`, `review-case-history-v7`,
 `review-attention-v1` and `continuous-field-activity-v3`. The generated
 [OpenAPI document](review-openapi-v1.json) pins each of them except

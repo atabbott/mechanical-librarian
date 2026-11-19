@@ -20,7 +20,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
 )
 from mechanical_librarian.adapters.providers.visible_text import (
     DESCRIPTION_OVERSIZED,
-    visible_description,
+    _rendering,
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
@@ -1401,14 +1401,16 @@ def test_a_stored_description_is_bounded_before_the_renderer_reads_it() -> None:
     bounded = "<b>" + "x" * (MAX_DESCRIPTION_CHARACTERS - 7) + "</b>"
     oversized = "<b>" + "x" * (MAX_DESCRIPTION_CHARACTERS - 6) + "</b>"
     with patch(
-        "mechanical_librarian.adapters.providers.visible_text.visible_description",
-        wraps=visible_description,
+        "mechanical_librarian.adapters.providers.visible_text._rendering",
+        wraps=_rendering,
     ) as renderer:
         assert visible_stored_description(bounded) == "x" * (
             MAX_DESCRIPTION_CHARACTERS - 7
         )
         assert visible_stored_description(oversized) is DESCRIPTION_OVERSIZED
-    assert renderer.call_count == 1
+    # Only the bounded value, and its formatted copy read back (#1995), reach
+    # the renderer; the oversized one never does.
+    assert [call.args[0] for call in renderer.call_args_list] == [bounded, bounded]
     states = {
         value: next(
             (field.state, field.value)

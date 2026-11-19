@@ -35,6 +35,7 @@ from mechanical_librarian.adapters.providers.sdk import (
     run_owner_search,
 )
 from mechanical_librarian.adapters.providers.visible_text import (
+    formatted_claim,
     projected_description,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -784,12 +785,13 @@ def _candidate(
     description = info.get("description")
     # Hostile markup is unprojectable rather than an apparent absence, and a
     # value that is not text stays what it is for the field to judge (#1424).
-    projected, description_transformed = (
+    projected, description_transformed, formatted = (
         projected_description(description)
         if type(description) is str
-        else (description, False)
+        else (description, False, None)
     )
     add(ClaimKind.DESCRIPTION, projected, ClaimScope.WORK)
+    claims[-1] = formatted_claim(claims[-1], projected, formatted)
     add(ClaimKind.LANGUAGE, info.get("language"), ClaimScope.EDITION)
 
     evidence = [

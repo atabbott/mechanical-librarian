@@ -610,6 +610,14 @@ class _TargetField(_ClosedModel):
         "value", "missing", "null", "empty", "unloaded", "malformed", "oversized"
     ]
     value: str | bool | list[str] | list[_SeriesValue] | None
+    # A description's formatted copy, which its card shows (#1995).
+    formatted: Annotated[str, Field(max_length=16_384)] | None = None
+
+    @model_validator(mode="after")
+    def formatted_description(self) -> _TargetField:
+        if self.formatted is not None and self.destination != "description":
+            raise ValueError("only a description carries a formatted copy")
+        return self
 
 
 class _ProposedValue(_ClosedModel):
@@ -959,6 +967,8 @@ class _SelectedDescriptionAdvice(_ClosedModel):
     candidate: _DescriptionCandidateCopy
     binding: DescriptionAdviceBinding
     current: bool
+    # The advice's formatted copy, as it is shown and written (#1995).
+    formatted: Annotated[str, Field(max_length=16_384)] | None
 
 
 class _DescriptionAdviceResponse(_ClosedModel):
@@ -973,6 +983,10 @@ class _DescriptionAdviceResponse(_ClosedModel):
     selection: _DescriptionDecisionCopy | None
     selected_advice: _SelectedDescriptionAdvice | None
     application_outcome: Literal["verified", "no_change_required"] | None
+    # The candidate's formatted copy, and whether its text can be written at
+    # all: text the description reader refuses can't be chosen (#1995).
+    formatted: Annotated[str, Field(max_length=16_384)] | None
+    readable: bool
 
     @model_validator(mode="after")
     def coherent_advice(self) -> _DescriptionAdviceResponse:
@@ -1125,6 +1139,8 @@ class _ReviewField(_ClosedModel):
     change_written: bool
     pin_control: _PinControl | None
     proposed_values: list[_ProposedValue]
+    # Each proposed description's formatted copy, beside its value (#1995).
+    proposed_formatted: list[Annotated[str, Field(max_length=16_384)] | None]
     choice_contexts: list["_FieldChoiceContext"]
     provenance: list[str]
     preservation_only: bool

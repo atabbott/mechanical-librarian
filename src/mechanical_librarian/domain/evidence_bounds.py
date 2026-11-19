@@ -148,6 +148,26 @@ def validate_incumbent_description(value: object, label: str, maximum: int) -> s
     return value
 
 
+# The tags a formatted description copy is written with (ADR-0107), each
+# bare: a copy never carries an attribute.
+_FORMATTED_TAG_PATTERN = re.compile(r"</?(?:p|br|ul|ol|li|b|strong|i|em|del)>")
+
+
+def validate_formatted_description(value: object, label: str, maximum: int) -> str:
+    """Admit one formatted copy of a description (#1995, ADR-0107).
+
+    It passes the incumbent description checks, which also read it with its
+    tags removed, carries at least one tag, and every tag it carries is a
+    bare tag of the closed set: no other `<` or `>` is left once they are
+    removed, since the copy's text is escaped.
+    """
+    text = validate_incumbent_description(value, label, maximum)
+    bare = _FORMATTED_TAG_PATTERN.sub("", text)
+    if bare == text or "<" in bare or ">" in bare:
+        raise EvidenceValueError(f"{label} is not a formatted copy")
+    return text
+
+
 def _validate_projection_safety(text: str, label: str, *, markup: bool = False) -> str:
     lowered = text.casefold()
     # Each pattern below can match only text holding the literal its guard

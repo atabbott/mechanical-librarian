@@ -75,6 +75,7 @@ def _plan(
     desired_value: object,
     target_version: str | None = None,
     envelope_identity: str = "a" * 64,
+    desired_form: str | None = None,
 ) -> FieldEffectPlan:
     authority = EffectAuthority(
         "human_decision_" + "a" * 64,
@@ -111,6 +112,7 @@ def _plan(
         consent=consent,
         capability_digest="e" * 64,
         created_at=1,
+        desired_form=desired_form,
     )
 
 
@@ -1169,13 +1171,16 @@ def _guarded(case: _Case, name: str):
     return service, repository
 
 
-def _description_plan(case: _Case, repository, desired: str) -> FieldEffectPlan:
+def _description_plan(
+    case: _Case, repository, desired: str, form: str | None = None
+) -> FieldEffectPlan:
     case.detail["media"]["metadata"]["description"] = "Earlier description."
     plan = _plan(
         "description",
         "Earlier description.",
         desired,
         envelope_identity=repository.field_effect_consent_envelope_identity("books"),
+        desired_form=form,
     )
     repository.record_field_effect(FieldEffectOperation(plan, updated_at=1))
     return plan
@@ -1210,6 +1215,102 @@ def test_a_description_resolves_as_the_service_stored_it(
         ("verified", None) if outcome == "verified" else ("stale", "third_value")
     )
     assert [request.method for request in case.requests].count("PATCH") == 1
+    repository.close()
+
+
+_FORMATTED = (
+    "<p>A <b>bold</b> one.</p><p>Two &amp; three</p><ul><li>a</li><li>b</li></ul>"
+)
+_PLAIN = "A bold one. • Two & three • a • b"
+
+
+@pytest.mark.parametrize(
+    ("stored", "outcome"),
+    (
+        (_FORMATTED, ("verified", None)),
+        # The service may store a break or a paragraph boundary its own way.
+        (_FORMATTED.replace("</p><p>", "<br />"), ("verified", None)),
+        # A copy that lost its list shows other words: a third value.
+        ("<p>A <b>bold</b> one.</p><p>Two &amp; three</p>", ("stale", "third_value")),
+    ),
+    ids=("as_sent", "break", "list_dropped"),
+)
+def test_a_formatted_description_is_written_as_its_copy(
+    case: _Case, stored: str, outcome: tuple[str, str | None]
+) -> None:
+    # The body is the copy; every comparison reads the visible text (#1995).
+    case.stored_description = lambda _sent: stored
+    service, repository = _guarded(case, "formatted-" + str(len(stored)))
+    plan = _description_plan(case, repository, _PLAIN, _FORMATTED)
+    applied = service.apply(plan.plan_id)
+    if applied.state == "reconciling":
+        applied = service.reconcile(plan.plan_id)
+    assert [
+        json.loads(request.content)
+        for request in case.requests
+        if request.method == "PATCH"
+    ] == [{"metadata": {"description": _FORMATTED}}]
+    assert (applied.state, applied.failure) == outcome
+    repository.close()
+
+
+def test_a_description_plan_carries_its_form_in_its_identity() -> None:
+    # The copy a description writes is part of the plan it was consented as
+    # (#1995); the visible text stays the plan's value.
+    plain = _plan("description", "Earlier description.", _PLAIN)
+    formatted = _plan(
+        "description", "Earlier description.", _PLAIN, desired_form=_FORMATTED
+    )
+    assert plain.to_data()["desired_form"] is None
+    assert formatted.to_data()["desired_form"] == _FORMATTED
+    assert formatted.desired_value == _PLAIN
+    assert formatted.plan_id != plain.plan_id
+    assert FieldEffectPlan.from_data(formatted.to_data()) == formatted
+    assert FieldEffectPlan.from_data(plain.to_data()) == plain
+    assert "desired_form" not in _plan("title", "Before", "After").to_data()
+    missing = formatted.to_data()
+    missing.pop("desired_form")
+    for invalid in (
+        lambda: _plan("title", "Before", "After", desired_form="<p>After</p>"),
+        lambda: _plan(
+            "description", "Earlier.", _PLAIN, desired_form='<p class="x">A</p>'
+        ),
+        lambda: _plan("description", "Earlier.", _PLAIN, desired_form="no tags"),
+        lambda: FieldEffectPlan.from_data(missing),
+    ):
+        with pytest.raises(FieldEffectError):
+            invalid()
+
+
+@pytest.mark.parametrize(
+    "form",
+    (
+        # Another description's copy.
+        "<p>Other <b>words</b>.</p>",
+        # The right words, but not Mechanical Librarian's own serialisation.
+        "<p>A  <b>bold</b> one.</p><p>Two &amp; three</p><ul><li>a</li><li>b</li></ul>",
+        "<p>A <strong>bold</strong> one.<p>Two &amp; three</p></p><ul><li>a</li><li>b</li></ul>",
+    ),
+    ids=("other_words", "not_canonical", "nested"),
+)
+def test_a_form_that_is_not_its_text_s_copy_is_never_sent(
+    case: _Case, form: str
+) -> None:
+    # The write seam checks the copy again: a failure sends nothing, suspends
+    # nothing, and says the change was not sent (#1995, A5).
+    from mechanical_librarian.domain.readable_activity import failure_reason
+
+    service, repository = _guarded(case, "tampered-" + str(len(form)))
+    plan = _description_plan(case, repository, _PLAIN, form)
+    refused = service.apply(plan.plan_id)
+    assert (refused.state, refused.failure) == ("stale", "not_sent")
+    assert [request.method for request in case.requests].count("PATCH") == 0
+    assert case.detail["media"]["metadata"]["description"] == "Earlier description."
+    assert (
+        repository.field_effect_capability_suspension(plan.connection, "description")
+        is None
+    )
+    assert failure_reason("not_sent") == "This change was not sent to Audiobookshelf"
     repository.close()
 
 

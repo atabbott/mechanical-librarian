@@ -28,6 +28,7 @@ class _AuthorityFields(TypedDict):
     dependency_digests: tuple[str, ...]
     paired_bundle_id: str | None
     paired_decision_id: str | None
+    decision_form: str | None
 
 
 class _AuthorityRepository(Protocol):
