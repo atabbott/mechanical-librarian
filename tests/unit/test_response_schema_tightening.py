@@ -539,6 +539,16 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         for name in ("packages", "reports", "works")
         for keyword, bound in (("minimum", 0), ("maximum", 9_007_199_254_740_991))
     ),
+    # A description's formatted copy fits the description bound (#1995).
+    *(
+        ("S100", component, pointer, "maxLength", 16_384)
+        for component, pointer in (
+            ("_TargetField", "/properties/formatted/anyOf/0"),
+            ("_ReviewField", "/properties/proposed_formatted/items/anyOf/0"),
+            ("_DescriptionAdviceResponse", "/properties/formatted/anyOf/0"),
+            ("_SelectedDescriptionAdvice", "/properties/formatted/anyOf/0"),
+        )
+    ),
 )
 
 
@@ -754,3 +764,14 @@ def test_each_owner_refuses_a_value_outside_its_keyword(
         )
     first = refused.value.errors()[0]
     assert (first["type"], first["loc"][0]) == (error, field)
+
+
+def test_only_a_description_carries_a_formatted_copy() -> None:
+    from mechanical_librarian.interfaces.web.app import _TargetField
+
+    described = {"destination": "description", "state": "value", "value": "Words."}
+    assert _TargetField.model_validate(described | {"formatted": "<p>Words.</p>"})
+    with pytest.raises(ValidationError):
+        _TargetField.model_validate(
+            described | {"destination": "title", "formatted": "<p>Words.</p>"}
+        )

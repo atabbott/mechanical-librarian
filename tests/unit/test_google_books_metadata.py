@@ -351,6 +351,10 @@ def test_html_description_is_rendered_and_bound_to_versioned_evidence() -> None:
     assert "One & two • Three • 2 < 3" == next(
         c.value for c in candidate.claims if c.kind is ClaimKind.DESCRIPTION
     )
+    # The same reading's formatted copy: ours, from the closed set (#1995).
+    assert "<p>One &amp; <em>two</em></p><br>Three<br>2 &lt; 3" == next(
+        c.formatted for c in candidate.claims if c.kind is ClaimKind.DESCRIPTION
+    )
     assert (
         ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
         "google-books-html-visible-text-v1",
