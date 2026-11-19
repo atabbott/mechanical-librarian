@@ -11,11 +11,15 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from scripts.qualify_audiobookshelf_field_effect import DESCRIPTION_LANDINGS
+from scripts.qualify_audiobookshelf_field_effect import (
+    DESCRIPTION_LANDINGS,
+    FORMATTED_DESCRIPTION_LANDINGS,
+)
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
     AudiobookshelfItemReader,
     _raw_cover_authority,
+    stored_description_reading,
     visible_stored_description,
 )
 from mechanical_librarian.adapters.providers.visible_text import (
@@ -1395,6 +1399,21 @@ def test_each_observed_landing_reads_as_the_value_sent_unless_the_service_droppe
     assert (visible_stored_description(stored) == visible_stored_description(sent)) is (
         outcome == "verified"
     )
+
+
+@pytest.mark.parametrize(
+    ("case", "visible", "copy", "stored", "outcome"),
+    FORMATTED_DESCRIPTION_LANDINGS,
+    ids=[row[0] for row in FORMATTED_DESCRIPTION_LANDINGS],
+)
+def test_each_formatted_landing_is_our_own_copy_and_reads_back_as_its_text(
+    case: str, visible: str, copy: str, stored: str, outcome: str
+) -> None:
+    # The form sent is the copy its own visible text reads as, so the write
+    # seam sends it, and every pinned service's stored form reads as that same
+    # visible text exactly when the write verifies (#1995).
+    assert stored_description_reading(copy) == (visible, copy, True)
+    assert (stored_description_reading(stored)[0] == visible) is (outcome == "verified")
 
 
 def test_a_stored_description_is_bounded_before_the_renderer_reads_it() -> None:

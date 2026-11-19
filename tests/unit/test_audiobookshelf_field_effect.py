@@ -10,7 +10,10 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from scripts.qualify_audiobookshelf_field_effect import DESCRIPTION_LANDINGS
+from scripts.qualify_audiobookshelf_field_effect import (
+    DESCRIPTION_LANDINGS,
+    FORMATTED_DESCRIPTION_LANDINGS,
+)
 
 from mechanical_librarian.adapters.cover_artifacts import (
     CoverDecodeRejected,
@@ -1210,6 +1213,37 @@ def test_a_description_resolves_as_the_service_stored_it(
     else:
         assert applied.state == "reconciling"
         applied = service.reconcile(plan.plan_id)
+    assert case.detail["media"]["metadata"]["description"] == stored
+    assert (applied.state, applied.failure) == (
+        ("verified", None) if outcome == "verified" else ("stale", "third_value")
+    )
+    assert [request.method for request in case.requests].count("PATCH") == 1
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    ("name", "visible", "copy", "stored", "outcome"),
+    FORMATTED_DESCRIPTION_LANDINGS,
+    ids=[row[0] for row in FORMATTED_DESCRIPTION_LANDINGS],
+)
+def test_a_formatted_landing_resolves_as_the_service_stored_it(
+    case: _Case, name: str, visible: str, copy: str, stored: str, outcome: str
+) -> None:
+    # Each formatted copy the qualifier writes, against the form every pinned
+    # service keeps for it: the copy is sent, and the visible text is compared.
+    sent: list[str] = []
+
+    def keep(value: str) -> str:
+        sent.append(value)
+        return stored
+
+    case.stored_description = keep
+    service, repository = _guarded(case, name)
+    plan = _description_plan(case, repository, visible, copy)
+    applied = service.apply(plan.plan_id)
+    if applied.state == "reconciling":
+        applied = service.reconcile(plan.plan_id)
+    assert sent == [copy]
     assert case.detail["media"]["metadata"]["description"] == stored
     assert (applied.state, applied.failure) == (
         ("verified", None) if outcome == "verified" else ("stale", "third_value")
