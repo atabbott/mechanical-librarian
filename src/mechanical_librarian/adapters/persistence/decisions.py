@@ -1448,8 +1448,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
             (decision.review_case_id, decision.destination),
         ).fetchone():
             raise HumanDecisionError("pinned")
+        # Only the active generation's automatic decision holds the field, as
+        # the case page reads it: one from an earlier generation holds
+        # nothing, and no Resume shows to release it (ADR-0036).
         if self._connection.execute(
-            "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+            "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
+            "AND " + _active_generation_automatic_sql("automatic_decisions"),
             (decision.review_case_id, decision.destination),
         ).fetchone():
             raise HumanDecisionError("automatic_hold")

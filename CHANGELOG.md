@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- After you leave Automatic, Withdraw works on a field you answered while
+  Automatic was on. Before, it was offered and then refused with a line
+  pointing to Resume automatic handling, which the field no longer showed.
+  Such a field also stops saying that turning Automatic on decides it again,
+  since Automatic stays off a field you have answered (#ISSUE).
 - After you choose Resume automatic handling, a field no longer tells you
   to use Resume to release your decision, and its pin line says to choose a
   value and then pin it, since choosing alone doesn't pin (#1988).
