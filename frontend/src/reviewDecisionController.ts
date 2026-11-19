@@ -445,7 +445,14 @@ export const useReviewDecisionController = ({
         refreshAggregatesInBackground()
         return
       }
-      const settledInPlace = ownerOutcomes[command.outcome]
+      // A withdrawn field that nothing asks about again, one Automatic
+      // handles, is not said to need a decision.
+      const settledInPlace =
+        command.outcome === 'withdraw' &&
+        refreshed.fields.find((item) => item.destination === command.destination)
+          ?.needsAttention === false
+          ? 'Withdrawn.'
+          : ownerOutcomes[command.outcome]
       // A clear's recorded line says it once, beside its pin (#1523).
       announce(
         reviewCaseId,
