@@ -271,7 +271,7 @@ Each tab names the field's status:
 
 - Needs you means the field is in Attention, including one where Automatic
   made no choice.
-- Decided means your decision is recorded or an earlier one still holds the
+- Decided means your decision is recorded or an earlier one holds the
   field.
 - Pinned means Audiobookshelf shows the value you pinned.
 - Automatic means Automatic decided the field. You can still change it, and it
