@@ -29,10 +29,11 @@ shows bold.
    element, an event-handler attribute, a link, a comment, declaration or
    processing instruction, an unterminated tag or quote, markup that does not
    close as it opens, nesting deeper than 32 elements, no words, or more than
-   16,384 characters. Audiobookshelf keeps links, so dropping one would hide
+   16,384 code points. Audiobookshelf keeps links, so dropping one would hide
    from the owner a link they would be choosing to write.
 3. Character references in formatted text are decoded once, from the HTML 4
-   named set and numeric references. A reference to a code point the server
+   named set and numeric references, without a semicolon where a browser
+   reads one that way. A reference to a code point the server
    refuses in a value stays as written, and an escaped tag stays text.
 4. No description markup is handed to a browser parser: no `innerHTML`,
    `dangerouslySetInnerHTML` or `DOMParser`. Text cannot name an element or
@@ -63,8 +64,9 @@ shows bold.
   paragraph joins. Showing their formatting would mean keeping markup in
   stored reports.
 - Activity's change line is composed on the server and cut short, so it
-  stays text. Activity's values, cut at 512 characters, are read with a
-  trailing incomplete tag dropped and open elements closed.
+  stays text. An Activity value or source value at the length its cut leaves
+  and ending in `…` is read with a trailing incomplete tag dropped and open
+  elements closed.
 
 ## Alternatives considered
 

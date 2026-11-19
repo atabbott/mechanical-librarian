@@ -1,6 +1,11 @@
 import { queryWorkClass } from '../queryWork'
 import { KeyBadge } from './ReviewKeys'
-import { FormattedDescription, formattedLength, readFormatting } from '../descriptionFormatting'
+import {
+  FormattedDescription,
+  formattedLength,
+  readFormatting,
+  wasCut,
+} from '../descriptionFormatting'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useId, useMemo, useRef, useState } from 'react'
@@ -38,9 +43,10 @@ const sourceBasis = (
     ? ' · same title and author'
     : ''
 // A source's value as a paragraph; a description's shows its formatting.
+// A source value over 160 characters arrives as its first 160 and `…`.
 export const ObservationValue = ({ text, description }: { text: string; description: boolean }) =>
   description ? (
-    <FormattedDescription value={text}>
+    <FormattedDescription value={text} cut={wasCut(text, 161, 161)}>
       <p>{text}</p>
     </FormattedDescription>
   ) : (

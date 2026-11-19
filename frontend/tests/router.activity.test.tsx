@@ -257,8 +257,11 @@ describe('Activity route', () => {
             change_detail: 'Description changed',
             evidence: [
               { label: 'Previous value', value: '<p>Old <b>words</b></p>' },
-              // Activity cuts a long value at 512 characters, mid-tag here.
-              { label: 'New value', value: '<p>New <i>words</i></p><p>More <b cla…' },
+              // Activity cuts a long value to 512 characters, mid-tag here.
+              {
+                label: 'New value',
+                value: `<p>New <i>words</i></p><p>More ${'w'.repeat(473)} <b cla…`,
+              },
               { label: 'Provenance', value: 'Advised · <b>Authored</b> content' },
             ],
           },
@@ -271,7 +274,7 @@ describe('Activity route', () => {
     const values = [...document.querySelectorAll('dd .description-formatted')]
     expect(values.map((node) => node.innerHTML)).toEqual([
       '<p>Old <strong>words</strong></p>',
-      '<p>New <em>words</em></p><p>More …</p>',
+      `<p>New <em>words</em></p><p>More ${'w'.repeat(473)} …</p>`,
     ])
   })
 

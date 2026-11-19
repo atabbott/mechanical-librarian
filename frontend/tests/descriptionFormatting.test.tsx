@@ -10,6 +10,7 @@ import {
   isFormatted,
   readFormatting,
   visibleText,
+  wasCut,
 } from '../src/descriptionFormatting'
 
 // The formatted content inside its own block, or the value as written.
@@ -138,6 +139,18 @@ describe('description formatting', () => {
     expect(formattedLength(value)).toBe(value.length)
   })
 
+  it('counts the description bound in code points, as the server does', () => {
+    // 16,383 code points, each emoji two UTF-16 units: inside the bound.
+    const inside = `<b>${'😀'.repeat(16_376)}</b>`
+    expect(inside.length).toBeGreaterThan(16_384)
+    expect(isFormatted(inside)).toBe(true)
+    expect(isFormatted(`<b>${'😀'.repeat(16_378)}</b>`)).toBe(false)
+  })
+
+  it('never splits a character when cutting to a limit', () => {
+    expect(html('<p>ab😀c</p>', 3)).toBe('<p>ab…</p>')
+  })
+
   it('decodes character references once inside formatted text', () => {
     expect(html('<b>Fish &amp; chips &lt;b&gt;</b>')).toBe(
       '<strong>Fish &amp; chips &lt;b&gt;</strong>',
@@ -176,6 +189,15 @@ describe('description formatting', () => {
     expect(visibleText('<p>a&nbsp;b &unknown; &AMP;</p>')).toBe('a b &unknown; &AMP;')
   })
 
+  it('decodes references without a semicolon as a browser does', () => {
+    expect(visibleText('<p>Fish &amp chips &#169 &#xA9 &copy2024</p>')).toBe(
+      'Fish & chips © © ©2024',
+    )
+    // Only a legacy name reads without its semicolon, the longest the word starts with.
+    expect(visibleText('<p>&notit; &mdash &apos &hearts x</p>')).toBe('¬it; &mdash &apos &hearts x')
+    expect(visibleText('<p>AT&T &#1 &#x202E</p>')).toBe('AT&T &#1 &#x202E')
+  })
+
   it('leaves an escaped tag as text', () => {
     expect(isFormatted('&lt;b&gt;bold&lt;/b&gt;')).toBe(false)
     expect(html('<p>&lt;script&gt;x&lt;/script&gt;</p>')).toBe(
@@ -197,8 +219,17 @@ describe('description formatting', () => {
     ['unterminated tag', '<b>a</b><i'],
     ['bracket outside quotes', '2 < 3 <b>a</b>'],
     ['unbalanced quote', '<p title="a>x</p>'],
+    ['quote in a tag name', '<b"x">a</b>'],
   ])('shows %s as written', (_name, value) => {
     asWritten(value)
+  })
+
+  it('reads a namespaced or dotted tag name whole and keeps its words', () => {
+    expect(html('<p>Text<o:p></o:p></p><x.y>more</x.y><my_tag>end</my_tag>')).toBe(
+      '<p>Text</p>moreend',
+    )
+    // A longer name is not the element it starts with.
+    expect(html('<a:b>x</a:b><script.x>y</script.x>')).toBe('xy')
   })
 
   it('leaves text without markup alone, including a lone angle bracket', () => {
@@ -224,6 +255,18 @@ describe('description formatting', () => {
     // Only a value Activity cut is read leniently.
     asWritten('<p>One <b>bold')
     expect(isFormatted('<p>One <b>bold…')).toBe(false)
+  })
+
+  it('knows a cut value by the length a cut leaves, not by its ellipsis alone', () => {
+    const activity = (words: number) => `<p><b>${'w'.repeat(words)}…`
+    expect(wasCut(activity(504), 511, 512)).toBe(true)
+    expect(wasCut(activity(505), 511, 512)).toBe(true)
+    expect(wasCut('<b>unfinished…', 511, 512)).toBe(false)
+    expect(wasCut(activity(503), 511, 512)).toBe(false)
+    expect(wasCut(`<p>${'w'.repeat(505)}x`, 511, 512)).toBe(false)
+    // A source value: its first 160 code points and `…`, counted in code points.
+    expect(wasCut(`<p>${'😀'.repeat(157)}…`, 161, 161)).toBe(true)
+    expect(wasCut(`<p>${'w'.repeat(156)}…`, 161, 161)).toBe(false)
   })
 
   it('still refuses a cut value holding a refused element', () => {

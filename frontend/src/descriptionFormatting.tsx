@@ -80,11 +80,16 @@ const MAX_DEPTH = 32
 const STARTS_TAG = /<[A-Za-z/!?]/u
 // Sticky patterns, each read at one index of a bounded tag: none overlaps
 // another, so reading a tag is linear in its length.
-const NAME = /[A-Za-z][A-Za-z0-9-]*/uy
+// A tag name runs as HTML's does, to a space, `/` or `>`; a quote, `=`, `<`
+// or backtick in one refuses the tag, as no description needs one.
+const NAME = /[A-Za-z][^\s"'>/=<`]*/uy
 const SPACE = /\s*/uy
 const ATTRIBUTE_NAME = /[^\s"'>/=]+/uy
 const UNQUOTED_VALUE = /[^\s"'=<>`]+/uy
-const REFERENCE = /&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,7});/gu
+// A reference, its semicolon optional as a browser reads it.
+const REFERENCE = /&(?:#([0-9]+)|#[xX]([0-9a-fA-F]+)|([A-Za-z][A-Za-z0-9]*))(;?)/gu
+// The longest name a browser reads without its semicolon (`middot`, `frac34`).
+const LEGACY_NAME_LONGEST = 6
 const BIDI_CONTROLS = new Set([
   0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
 ])
@@ -101,17 +106,60 @@ const refusedCodePoint = (code: number) =>
   code > 0x10ffff ||
   BIDI_CONTROLS.has(code)
 
+// A no-break space reads as the space it shows, as on the server.
+const character = (code: number) => (code === 0xa0 ? ' ' : String.fromCodePoint(code))
+// The names a browser reads without a semicolon: Latin-1 and the four markup
+// characters, the names of HTML 3.2.
+const legacy = (name: string, code: number) => code <= 0xff && name !== 'apos'
+
 const decode = (text: string) =>
-  text.replace(REFERENCE, (whole, ref: string) => {
-    const code = ref.startsWith('#')
-      ? ref[1] === 'x' || ref[1] === 'X'
-        ? parseInt(ref.slice(2), 16)
-        : Number(ref.slice(1))
-      : NAMED_REFERENCES.get(ref)
-    if (code === undefined || refusedCodePoint(code)) return whole
-    // A no-break space reads as the space it shows, as on the server.
-    return code === 0xa0 ? ' ' : String.fromCodePoint(code)
-  })
+  text.replace(
+    REFERENCE,
+    (whole, decimal?: string, hex?: string, name?: string, semicolon?: string) => {
+      if (name === undefined) {
+        const code = decimal === undefined ? parseInt(hex ?? '', 16) : Number(decimal)
+        return refusedCodePoint(code) ? whole : character(code)
+      }
+      const named = semicolon ? NAMED_REFERENCES.get(name) : undefined
+      if (named !== undefined) return refusedCodePoint(named) ? whole : character(named)
+      // Otherwise the longest legacy name the word starts with, the rest kept
+      // as written (`&copy2024` reads `©2024`, `&notit;` reads `¬it;`).
+      for (let length = Math.min(name.length, LEGACY_NAME_LONGEST); length > 1; length -= 1) {
+        const prefix = name.slice(0, length)
+        const code = NAMED_REFERENCES.get(prefix)
+        if (code !== undefined && legacy(prefix, code))
+          return character(code) + whole.slice(length + 1)
+      }
+      return whole
+    },
+  )
+
+// HTML lowers only ASCII letters in a tag name: `\u212A` (Kelvin) is not `k`.
+const asciiLower = (name: string) => name.replace(/[A-Z]/gu, (letter) => letter.toLowerCase())
+const isHighSurrogate = (unit: number) => unit >= 0xd800 && unit <= 0xdbff
+const isLowSurrogate = (unit: number) => unit >= 0xdc00 && unit <= 0xdfff
+
+/** A value's length in code points, as the server and the schema count it. */
+export function codePointLength(value: string) {
+  let length = value.length
+  for (let at = 0; at < value.length - 1; at += 1)
+    if (isHighSurrogate(value.charCodeAt(at)) && isLowSurrogate(value.charCodeAt(at + 1))) {
+      length -= 1
+      at += 1
+    }
+  return length
+}
+
+/**
+ * Whether a value was cut short by a server bound: it ends in `…` and its
+ * length in code points is one a cut leaves, between `shortest` and `longest`.
+ * A shorter value ending in `…` is one written that way.
+ */
+export const wasCut = (value: string, shortest: number, longest: number) => {
+  if (!value.endsWith('…')) return false
+  const length = codePointLength(value)
+  return length >= shortest && length <= longest
+}
 
 const skipSpace = (body: string, at: number) => {
   SPACE.lastIndex = at
@@ -136,7 +184,7 @@ function readTag(body: string): Tag | 'text' | null {
   const closing = body.startsWith('/')
   const nameEnd = sticky(NAME, body, closing ? 1 : 0)
   if (nameEnd < 0) return closing ? null : 'text'
-  const name = body.slice(closing ? 1 : 0, nameEnd).toLowerCase()
+  const name = asciiLower(body.slice(closing ? 1 : 0, nameEnd))
   let at = skipSpace(body, nameEnd)
   if (closing) return at === body.length ? { closing, name, selfClosing: false } : null
   if (at === nameEnd && at < body.length && body[at] !== '/') return null
@@ -188,12 +236,18 @@ const close = (stack: Open[], closed: Open) => {
  * markup, a refused element or a link, an event handler, a comment or
  * declaration, markup that does not close as it opens, nesting deeper than 32
  * elements, a value over the description bound, or one that shows no words.
- * With `cut`, a value ending in `…` (cut short by Activity) drops a trailing
- * incomplete tag and closes what is still open; every refusal still applies to
- * what remains.
+ * With `cut`, for a value a server bound cut short (see `wasCut`), a trailing
+ * incomplete tag is dropped and what is still open is closed; every refusal
+ * still applies to what remains.
  */
 export function readFormatting(value: string, cut = false): FormatNode[] | null {
-  if (value.length > MAX_DESCRIPTION_CHARACTERS || !STARTS_TAG.test(value)) return null
+  if (!STARTS_TAG.test(value)) return null
+  // The bound counts code points; only a value over it in UTF-16 units can be.
+  if (
+    value.length > MAX_DESCRIPTION_CHARACTERS &&
+    codePointLength(value) > MAX_DESCRIPTION_CHARACTERS
+  )
+    return null
   const tolerant = cut && value.endsWith('…')
   let source = tolerant ? value.slice(0, -1) : value
   const root: FormatNode[] = []
@@ -228,7 +282,9 @@ export function readFormatting(value: string, cut = false): FormatNode[] | null 
       if (!tolerant || !STARTS_TAG.test(source.slice(start, start + 2))) return null
       // A cut tag is dropped only when it can't be the start of a link or a
       // refused element; otherwise the value is shown as written.
-      const partial = /^<\/?([A-Za-z0-9]*)/u.exec(source.slice(start))?.[1]?.toLowerCase() ?? ''
+      const partial = asciiLower(
+        /^<\/?([A-Za-z][^\s"'>/=<`]*)?/u.exec(source.slice(start))?.[1] ?? '',
+      )
       if (['a', ...REFUSED].some((name) => name.startsWith(partial))) return null
       source = source.slice(0, start)
       break
@@ -353,7 +409,9 @@ function cutTo(nodes: readonly FormatNode[], limit: number): FormatNode[] {
   for (const node of nodes) {
     if (left <= 0) break
     if (node.kind === 'text') {
-      kept.push(node.text.length > left ? { kind: 'text', text: node.text.slice(0, left) } : node)
+      // A cut never splits a character outside the Basic Multilingual Plane.
+      const end = isHighSurrogate(node.text.charCodeAt(left - 1)) ? left - 1 : left
+      kept.push(node.text.length > left ? { kind: 'text', text: node.text.slice(0, end) } : node)
       left -= node.text.length
     } else if (node.kind === 'break') {
       kept.push(node)

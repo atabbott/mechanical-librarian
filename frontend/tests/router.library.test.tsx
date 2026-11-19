@@ -17895,6 +17895,32 @@ describe('a focused field decision (#1519)', () => {
     expect(region).not.toHaveTextContent('<b>')
   })
 
+  it('reads a source description cut at 160 characters, and only one cut there', async () => {
+    const cut = `<p>${'w'.repeat(149)} <b>bold…`
+    const short = '<p>An <b>unfinished…'
+    open(focused({ destination: 'description', currentValue: 'Existing description.' }), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => ({
+        items: [cut, short].map((text) => ({
+          destinations: ['description'],
+          language: null,
+          observation: `Description: ${text}`,
+          role: 'external_observation' as const,
+          source: 'Open Library',
+        })),
+        missingLineageCount: 0,
+        sourceLedger: [],
+      })),
+    })
+    const region = await screen.findByRole('region', { name: 'Other source values' })
+    const values = region.querySelectorAll('.evidence-values > li')
+    expect(values[0]?.querySelector('.description-formatted')?.innerHTML).toBe(
+      `<p>${'w'.repeat(149)} <strong>bold…</strong></p>`,
+    )
+    // A short value ending in `…` was written that way: its open markup shows as written.
+    expect(values[1]?.querySelector('.description-formatted')).toBeNull()
+    expect(values[1]).toHaveTextContent(short)
+  })
+
   it('keeps markup in another field’s Other source values as text', async () => {
     open(focused(), {
       getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => ({
