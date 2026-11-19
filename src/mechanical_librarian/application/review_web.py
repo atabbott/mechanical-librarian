@@ -2086,7 +2086,9 @@ class InspectCurrentReviewCase:
             "automatic_withheld_reason": None,
             "automatic_withheld_condition": None,
             # Shown only on a field that reads No change with no decision of
-            # its own; the earlier choice decides nothing now (#1575).
+            # its own; the earlier choice decides nothing now (#1575). Its
+            # line says turning Automatic on decides the field again, so the
+            # store leaves out one the owner keeps Automatic off (#1996).
             "earlier_automatic_value": (
                 dict(snapshot.earlier_automatic_values).get(destination)
                 if automatic_decision is None

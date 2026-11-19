@@ -116,11 +116,29 @@ _REPLACEMENT_BLOCKING_EFFECT_SQL = (
     "(state IN ('claimed','applying','reconciling') OR (state='verified' AND ?))"
 )
 # What the owner did that keeps Automatic from deciding a field on a case in
-# any generation: an owner decision of any episode, a withdrawal or an unpin
-# included, or a pin, in force or changed (ADR-0085, Amendment 2). Bound by
-# (case, destination, case, destination).
+# a generation: an owner decision of any episode, a withdrawal or an unpin
+# included, or a pin, in force or changed (ADR-0085, Amendment 2). An owner
+# decision does not where Automatic decided the field on the case in an
+# earlier generation and the field has a hold row, in force or released by
+# Resume: Automatic decides it again, a hold in force refuses the write until
+# Resume and a released one lets it plan, so leaving Automatic and turning it
+# on again leaves the field as it was (ADR-0085, Amendment 4). A withdrawal
+# still refuses: it deletes the row its answer set, and where it gives the
+# field back to the work's earlier hold, the field's latest answer is the
+# withdrawal, which the exemption leaves out. Bound by (case, destination,
+# case, destination, case, destination, generation, case, destination, case,
+# destination).
 _OWNER_MINT_CONFLICT_SQL = (
     "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
+    "AND NOT (EXISTS (SELECT 1 FROM field_effect_manual_holds held "
+    "WHERE held.review_case_id=? AND held.destination=?) "
+    "AND EXISTS (SELECT 1 FROM automatic_decisions earlier "
+    "WHERE earlier.review_case_id=? AND earlier.destination=? "
+    "AND earlier.policy_generation<?) "
+    "AND COALESCE((SELECT latest.outcome FROM human_decisions latest "
+    "WHERE latest.review_case_id=? AND latest.destination=? "
+    "AND latest.outcome NOT IN ('pin','unpin') "
+    "ORDER BY latest.ordinal DESC LIMIT 1),'')<>'withdraw') "
     "UNION ALL SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
     "AND destination=? AND active=1 AND json_type(document,'$.pin')='object'"
 )
@@ -280,10 +298,10 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
     )
 
 
-def _automatic_mint_conflict(
-    decision: AutomaticDecision,
-) -> tuple[str, str, str, str, str, str, int]:
-    case, destination = decision.review_case_id, decision.destination
+def _owner_mint_conflict(
+    review_case_id: str, destination: str, generation: int
+) -> tuple[str, str, str, str, str, str, int, str, str, str, str]:
+    case = review_case_id
     return (
         case,
         destination,
@@ -291,22 +309,49 @@ def _automatic_mint_conflict(
         destination,
         case,
         destination,
+        generation,
+        case,
+        destination,
+        case,
+        destination,
+    )
+
+
+def _automatic_mint_conflict(
+    decision: AutomaticDecision,
+) -> tuple[str, str, str, str, str, str, int, str, str, str, str, str, str, int]:
+    return (
+        *_owner_mint_conflict(
+            decision.review_case_id, decision.destination, decision.policy_generation
+        ),
+        decision.review_case_id,
+        decision.destination,
         decision.policy_generation,
     )
 
 
-def owner_blocks_automatic(
-    connection: sqlite3.Connection, review_case_id: str, destinations: Iterable[str]
+def owner_keeps_automatic_off(
+    connection: sqlite3.Connection,
+    review_case_id: str,
+    destinations: Iterable[str],
+    generation: int,
 ) -> bool:
-    """Whether the owner keeps Automatic from deciding any of these fields of
-    the case in a later generation, by the same rows that refuse its decision.
-
-    A bundle is decided all or none, so a caller passes every field of one.
+    """Whether the owner keeps Automatic off any of these fields of the case
+    once it decides in `generation`: by the same rows that refuse its
+    decision, or by a hold in force, which refuses the write of a decision it
+    records under the hold until Resume (ADR-0085, Amendment 4). A bundle is
+    decided all or none, so a caller passes every field of one.
     """
     return any(
         connection.execute(
             _OWNER_MINT_CONFLICT_SQL,
-            (review_case_id, destination, review_case_id, destination),
+            _owner_mint_conflict(review_case_id, destination, generation),
+        ).fetchone()
+        is not None
+        or connection.execute(
+            "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
+            "AND destination=? AND active=1",
+            (review_case_id, destination),
         ).fetchone()
         is not None
         for destination in destinations
@@ -1190,7 +1235,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         still in force, speaks for the field again, as it did before that
         answer. A hold this answer did not set stays. A released row goes,
         so the case reads as never held (a withdrawal is only accepted on a
-        case with no automatic decision). A pin on the restored hold is
+        case with no automatic decision of the active generation). A pin on the restored hold is
         compared again with this case's value (ADR-0085, Amendment 2).
 
         Runs inside `record_human_decision`'s transaction.
@@ -1473,8 +1518,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
             (decision.review_case_id, decision.destination),
         ).fetchone():
             raise HumanDecisionError("pinned")
+        # Only the active generation's automatic decision holds the field, as
+        # the case page reads it: one from an earlier generation holds
+        # nothing, and no Resume shows to release it (ADR-0036).
         if self._connection.execute(
-            "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+            "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
+            "AND " + _active_generation_automatic_sql("automatic_decisions"),
             (decision.review_case_id, decision.destination),
         ).fetchone():
             raise HumanDecisionError("automatic_hold")

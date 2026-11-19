@@ -38,7 +38,7 @@ from mechanical_librarian.adapters.persistence.decisions import (
     _automatic_decision_documents,
     field_change_waiting_sql,
     field_write_waiting_sql,
-    owner_blocks_automatic,
+    owner_keeps_automatic_off,
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
@@ -625,9 +625,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         fails closed. The second maps a destination to the value its latest
         earlier-generation candidate chose; one that no longer binds is left
         out, so the case reads as it would without it (#1575). So is one the
-        owner keeps Automatic from deciding again, on its field or another of
-        its bundle, by the rows that refuse that decision: the page says
-        turning Automatic on decides the field again.
+        owner keeps Automatic off, on its field or another of its bundle, by
+        the rows that refuse its decision or a hold that refuses its write:
+        the page says turning Automatic on decides the field again.
         """
         decisions = tuple(
             AutomaticDecision.from_json(document)
@@ -695,13 +695,15 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 )
         return tuple(values), tuple(
             (destination, value)
-            for destination, (_, value, bundle) in sorted(earlier.items())
-            if not owner_blocks_automatic(
+            for destination, (generation, value, bundle) in sorted(earlier.items())
+            if not owner_keeps_automatic_off(
                 self._connection,
                 case.review_case_id,
                 {destination}
                 if bundle is None
                 else self._automatic_bundle_destinations(case.review_case_id, bundle),
+                # Automatic decides again only in a later generation.
+                generation + 1,
             )
         )
 
