@@ -228,7 +228,9 @@ body is refused before parsing.
 - A pin is refused with `409 pin_change_waiting` while a change to the field
   that is not the owner's standing answer waits to be written or was written
   and not yet read back by a scan, or while the owner's choice of the advised
-  description stands, and
+  description stands; the field's `change_written` is true while the refusal
+  waits only for that scan, because nothing of the change is still to be
+  written. A pin is refused with
   `409 already_pinned` when the field is already pinned at this value; an
   unpin is refused with `409 not_pinned`, and a withdrawal with `409 pinned`
   while the field is pinned.
