@@ -103,7 +103,7 @@ from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
 )
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.setup_state import (
     SETUP_STATE_SCHEMA,
@@ -17114,3 +17114,85 @@ def test_current_covers_saves_never_with_its_own_button() -> None:
                 )
                 assert overflow <= 0, overflow
             browser.close()
+
+
+def test_withdrawing_an_answer_given_before_leaving_automatic():
+    """The answer's field offers Withdraw once Automatic is left, and the store
+    accepts it: the earlier generation's decision holds nothing (ADR-0036).
+    Nothing asks about the field afterwards, so its notice says only that the
+    answer was withdrawn."""
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(
+            viewport={"width": 1440, "height": 900}, reduced_motion="reduce"
+        )
+        page = context.new_page()
+        apps: list[Any] = []
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "owner.sqlite",
+                hash_path=hash_path,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                genre_fixture=("Fantasy",),
+                genre_current=None,
+                genre_destination="automatic",
+                on_app=apps.append,
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            field = f"{origin}/library?lens=all&preview={case_id}&field=genres"
+            page.goto(field)
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ) as answered:
+                page.get_by_role("radio", name="Choose proposed value: Fantasy").click()
+            assert answered.value.status == 200
+            # Leave Automatic, and admit the same case again under the new
+            # generation as preparation does (#1568).
+            # The server's own repository: a second one cannot bind the file.
+            repository = apps[0].state.review_application._state_owner
+            library = json.loads(repository.get_review_case_report(case_id))["target"][
+                "library"
+            ]
+            assert repository.enter_shadow_preview(1_100, (library,)) == "preview"
+            case = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(case_id))["case"]
+            )
+            proposal = ProposalSet.from_json(
+                repository.get_proposal(case.proposal_set_id)
+            )
+            admitted = json.loads(repository.admit_review_case(proposal))
+            assert (admitted["status"], admitted["review_case_id"]) == (
+                "admitted",
+                case_id,
+            )
+            repository.persist_shadow_outcome(case_id, 1_101)
+            page.goto(field)
+            canvas = page.locator(".decision-canvas")
+            expect(
+                canvas.get_by_role("button", name="Resume automatic handling")
+            ).to_have_count(0)
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ) as withdrawn:
+                canvas.get_by_role("button", name="Withdraw", exact=True).click()
+            assert withdrawn.value.status == 200
+            expect(page.get_by_text("Withdrawn.", exact=True)).to_be_focused()
+            expect(page.get_by_text("needs a decision again")).to_have_count(0)
+            assert "genres" not in _attention_destinations(page, case_id)
+            # Automatic stays off the answered field, so Preview doesn't say
+            # turning it on decides the field again.
+            page.goto(field)
+            expect(canvas.get_by_text("Choose genres", exact=True)).to_be_visible()
+            expect(canvas.get_by_text("turning it on decides")).to_have_count(0)
+        browser.close()
