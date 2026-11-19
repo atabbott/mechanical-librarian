@@ -16,7 +16,7 @@ import {
   effectSummary,
   isLongDescription,
   keepCard,
-  noWayBack,
+  noWayBackSentence,
   recordedSelected,
   valueText,
 } from '../fieldDecision'
@@ -30,7 +30,7 @@ import {
   questionReason,
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
-import { destinationIsPlural, destinationLabel, destinationPhrase } from '../labels'
+import { destinationLabel } from '../labels'
 import type { useReviewDecisionController } from '../reviewDecisionController'
 import { AutomaticHandlingPanel } from './AutomaticHandling'
 import { MetadataChoice, RecordedFieldObservations } from './FieldDecisionChoices'
@@ -214,6 +214,11 @@ export function FieldDecisionCanvas({
   // each position come from a single list (#1290).
   type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
   const keepKind = keepCard(selected)
+  // A refused keep already says the same sentence under the choices.
+  const wayBackSentence =
+    choiceFailure && choiceStatus.text === noWayBackSentence(selected)
+      ? null
+      : noWayBackSentence(selected)
   // On the case that wrote the field the card holds what the case read before
   // its write, and never calls it current (#1523).
   const before = keepKind === 'before'
@@ -441,11 +446,13 @@ export function FieldDecisionCanvas({
               : destinationLabel(selected.destination)}
           </h3>
           {selectedActionable ? (
-            // One line under the question: this field's own reason (#1519).
+            // One line under the question: this field's own reason (#1519),
+            // and why a field this case wrote has no way back (#1523, #1424).
             <p
               className={selected.automaticWithheldReason ? 'automatic-withheld-reason' : undefined}
             >
               {questionReason(selected, mediaKind)}
+              {wayBackSentence ? ` ${wayBackSentence}` : ''}
             </p>
           ) : selectedRevisitable ? (
             // A pin in force is said once, at the foot of the field.
@@ -455,9 +462,8 @@ export function FieldDecisionCanvas({
                 : selected.humanDecision === null && selected.manualHold
                   ? 'Your earlier decision still holds this field. '
                   : 'The recorded outcome is marked below. '}
-              {noWayBack(selected)
-                ? `The ${destinationPhrase(selected.destination)} ${destinationIsPlural(selected.destination) ? 'were' : 'was'} empty before your change, and ${destinationIsPlural(selected.destination) ? 'they' : 'it'} can’t be emptied.${anotherOffered ? ' ' : ''}`
-                : ''}
+              {wayBackSentence ?? ''}
+              {wayBackSentence && anotherOffered ? ' ' : ''}
               {anotherOffered ? 'You can choose another value.' : ''}
             </p>
           ) : selectedOptional ? (

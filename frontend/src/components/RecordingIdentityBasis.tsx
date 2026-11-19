@@ -3,7 +3,7 @@ import type {
   RecordingIdentityBasisView,
   TargetDestination,
 } from '../api/http'
-import { candidateReference, destinationPhrase } from '../labels'
+import { candidateReference, destinationPhrase, listPhrase } from '../labels'
 
 // The fields book-level evidence can decide, in the order the note names them.
 // Narrators come from an audio edition, not the book, so they have a sentence
@@ -54,8 +54,8 @@ function admissionSentence(value: RecordingAdmissionBasisView) {
         <>
           Mechanical Librarian found the matched recording by searching with the title and{' '}
           {authors.length > 1 ? 'authors' : 'author'} of the EPUB in this folder, “{title}” by{' '}
-          <bdi>{new Intl.ListFormat('en', { type: 'conjunction' }).format(authors)}</bdi>, because
-          this audiobook’s own title or author is missing or incomplete. {runningTime}
+          <bdi>{listPhrase(authors)}</bdi>, because this audiobook’s own title or author is missing
+          or incomplete. {runningTime}
         </>
       )
     }
@@ -92,7 +92,7 @@ export function RecordingIdentityBasis({
     const fieldCount = named.length + (narrators ? 1 : 0)
     const sentences = [
       named.length
-        ? `Book-level evidence supports ${new Intl.ListFormat('en', { type: 'conjunction' }).format(named.map((field) => (field === 'genres' ? 'genre' : destinationPhrase(field))))} choices.`
+        ? `Book-level evidence supports ${listPhrase(named.map((field) => (field === 'genres' ? 'genre' : destinationPhrase(field))))} choices.`
         : narrators
           ? ''
           : 'Book-level evidence is recorded for this work.',

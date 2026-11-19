@@ -345,18 +345,18 @@ unwritten decision, keeps focus on the field
 ([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
 [ADR-0105](../architecture/decisions/0105-going-back-after-a-write.md)).
 
-A recorded field keeps its choices, and a new choice adds a decision. You
-cannot replace a decision while its write is in progress, or once a cover write
-is verified. You can replace a verified field write that can be reversed.
+A recorded field keeps its choices, and a new choice adds a decision, except
+while its write is in progress or once a cover write is verified.
 
 Library has no Undo or bulk decisions. To go back, choose the earlier
 value. While a field reads its written value, Change offers what it
 replaced ("Use previous value", "Use previous names", genres marked Previous);
 if it was empty, clearing goes back. Elsewhere the card Before your change
-writes it back, then reads Keep current value. A written work keeps its case
-for 30 days with nothing to decide, outside Attention unless a pin changed. A
-work returning to earlier content reads as new, and its earlier decisions are
-history.
+writes it back, then reads Keep current value. A description stored with
+formatting has no such card: restore it in Audiobookshelf. A written work
+keeps its case for 30 days with nothing to decide, outside Attention unless a
+pin changed. A work returning to earlier content reads as new, and its
+earlier decisions are history.
 
 ### Pinning a value
 

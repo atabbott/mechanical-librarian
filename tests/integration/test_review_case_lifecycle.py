@@ -30,6 +30,7 @@ from mechanical_librarian.domain.field_effect import (
 from mechanical_librarian.domain.human_decision import (
     COVER_SELECTION_AUTHORITY_SCHEMA,
     HumanDecision,
+    HumanDecisionError,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -842,13 +843,15 @@ def test_multiline_incumbent_description_persists_and_applies(
     ids=("plain", "entity", "formatted", "escaped_tag", "double", "handler"),
 )
 def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
-    tmp_path: Path, stored: str, restorable: bool
+    tmp_path: Path, stored: str, restorable: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Keeping the current description after a verified write restores it (#1424).
 
     Only text that the library stores exactly as written, or with nothing but
     a bare ampersand or angle bracket escaped, is written back. Formatting the
-    restore would flatten is refused before any request reaches the library.
+    restore would flatten is refused when the keep is recorded, and a keep
+    recorded before that refusal is refused before any request reaches the
+    library.
     """
     import html
     from types import SimpleNamespace
@@ -859,6 +862,7 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
     from mechanical_librarian.adapters.field_effect_runtime import (
         PersistedEffectConsent,
     )
+    from mechanical_librarian.adapters.persistence import decisions
     from mechanical_librarian.domain.readable_activity import failure_reason
     from tests.support.audiobookshelf_targets import (
         FieldEffectTargetCase,
@@ -937,19 +941,29 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
         assert applied(accept).state == "verified"
         assert library.detail["media"]["metadata"]["description"] == desired
         library.requests.clear()
-        restored = applied(
-            HumanDecision.create(
-                case,
-                proposal_id=accept.proposal_id,
-                target_fingerprint=case.target_fingerprint,
-                destination="description",
-                actor="owner",
-                outcome="keep_current",
-                selected_value=None,
-                idempotency_key="restore-keep-current-0001",
-                occurred_at=1_000,
-            )
+        keep = HumanDecision.create(
+            case,
+            proposal_id=accept.proposal_id,
+            target_fingerprint=case.target_fingerprint,
+            destination="description",
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key="restore-keep-current-0001",
+            occurred_at=1_000,
         )
+        if not restorable:
+            recorded = "SELECT count(*) FROM human_decisions"
+            before = repository._connection.execute(recorded).fetchone()
+            with pytest.raises(HumanDecisionError) as refusal:
+                repository.record_human_decision(keep)
+            assert refusal.value.code == "restore_unavailable"
+            assert repository._connection.execute(recorded).fetchone() == before
+            # A keep recorded before the store refused one still never writes.
+            monkeypatch.setattr(
+                decisions, "description_unrestorable", lambda _case: False
+            )
+        restored = applied(keep)
         if not restorable:
             assert (restored.state, restored.failure) == (
                 "stale",

@@ -49,6 +49,8 @@
           "withdraw": null
         },
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [
           {
             "kind": "list",
@@ -170,6 +172,8 @@
         "notices": ["competing_evidence"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [
           {
             "kind": "text",
@@ -287,6 +291,8 @@
           "names": null
         },
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -393,6 +399,8 @@
         "notices": ["no_supported_evidence"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -465,6 +473,8 @@
           "withdraw": null
         },
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -571,6 +581,8 @@
         "notices": ["no_supported_evidence"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -632,6 +644,8 @@
         "notices": ["no_supported_evidence"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -693,6 +707,8 @@
         "notices": ["no_supported_evidence"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -754,6 +770,8 @@
         "notices": ["no_supported_evidence"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -815,6 +833,8 @@
         "notices": ["no_supported_evidence"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -876,6 +896,8 @@
         "notices": ["identifier_applicability_unresolved"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -937,6 +959,8 @@
         "notices": ["no_supported_evidence"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -998,6 +1022,8 @@
         "notices": ["no_supported_evidence"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1059,6 +1085,8 @@
         "notices": ["no_supported_evidence"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1120,6 +1148,8 @@
         "notices": ["no_supported_evidence"],
         "owner_control": null,
         "written_by_case": false,
+        "restore_unavailable": false,
+        "change_written": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1151,7 +1181,7 @@
     ],
     "media_health": [],
     "review_case_id": "review_case_a441009f289e33ef0de0eafd434ac2e62fc000afc53dbfe71b5e7df98203c283",
-    "schema_version": "review-case-detail-v11",
+    "schema_version": "review-case-detail-v12",
     "target": {
       "authors": ["Example Author"],
       "connection": "primary",

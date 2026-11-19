@@ -1118,7 +1118,11 @@ class _ReviewField(_ClosedModel):
     owner_control: _OwnerControl | None
     # The case wrote this field itself (#1523).
     written_by_case: bool
+    # The value the case read is a description a restore can't write (#1424).
+    restore_unavailable: bool
     pin: _FieldPin | None
+    # A refused pin waits only for the next scan: the change is written (#1984).
+    change_written: bool
     pin_control: _PinControl | None
     proposed_values: list[_ProposedValue]
     choice_contexts: list["_FieldChoiceContext"]
@@ -6712,6 +6716,9 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "offer_changed": 409,
             # The book link changed since the case's report (#1477 Q6).
             "link_changed": 409,
+            # A keep of a description whose formatting can't be written back
+            # (#1424).
+            "restore_unavailable": 409,
         }.get(error.code, 503)
         reason = getattr(error, "reason", None)
         raise HTTPException(
