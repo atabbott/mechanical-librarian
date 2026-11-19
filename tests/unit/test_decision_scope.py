@@ -511,7 +511,7 @@ def test_each_row_projects_its_case_once_for_all_its_decisions(
     # it rather than projecting again per decision.
     assert library == {"_browse_decision_documents": decided}
     # One for the decisions' scope, one for the fields the detail shows.
-    assert detail == {"get_review_case_decisions": 1, "_read": 1}
+    assert detail == {"get_review_case_decisions": 1, "_read_cited": 1}
 
 
 def test_a_scope_for_another_case_is_set_aside_and_the_case_projected(
