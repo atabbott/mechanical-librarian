@@ -799,6 +799,7 @@ _PARAGRAPHS_COPY = (
 # Mechanical Librarian writes (#1995): the plan's visible text is its desired
 # value and its own formatted copy is the form sent. The final row writes an
 # earlier copy back over a different stored description, as a restore does.
+# The service stores a line break as `<br />`, which reads as the same text.
 FORMATTED_DESCRIPTION_LANDINGS: tuple[tuple[str, str, str, str, str], ...] = (
     (
         "formatted_paragraphs",
@@ -811,7 +812,7 @@ FORMATTED_DESCRIPTION_LANDINGS: tuple[tuple[str, str, str, str, str], ...] = (
         "formatted_line_break",
         "First qualification line. \u2022 Second qualification line.",
         "<p>First qualification line.<br>Second qualification line.</p>",
-        "<p>First qualification line.<br>Second qualification line.</p>",
+        "<p>First qualification line.<br />Second qualification line.</p>",
         "verified",
     ),
     (
@@ -871,7 +872,7 @@ FORMATTED_DESCRIPTION_LANDINGS: tuple[tuple[str, str, str, str, str], ...] = (
         "<ul><li><strong>Strong</strong> item.</li>"
         "<li><em>Emphasised <del>struck</del></em> item.</li></ul>"
         "<ol><li>Numbered.</li></ol><p>Closing &amp; done.</p>",
-        "<p>Opening <b>bold <i>and italic</i></b> text.<br>Next line.</p>"
+        "<p>Opening <b>bold <i>and italic</i></b> text.<br />Next line.</p>"
         "<ul><li><strong>Strong</strong> item.</li>"
         "<li><em>Emphasised <del>struck</del></em> item.</li></ul>"
         "<ol><li>Numbered.</li></ol><p>Closing &amp; done.</p>",
