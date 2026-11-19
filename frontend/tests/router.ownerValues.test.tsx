@@ -323,9 +323,21 @@ describe('owner-entered values', () => {
     fields = [{ ...contextTitle, needsAttention: false }]
     await user.click(within(panel).getByRole('button', { name: 'Withdraw' }))
     expect(sent(http)[0]).toMatchObject({ outcome: 'withdraw', selectedValue: null })
-    const outcome = await screen.findByText('Withdrawn. This field needs a decision again.')
+    const outcome = await screen.findByText('Withdrawn.')
     expect(outcome).toBeVisible()
     // It stands where Withdraw was, as a recorded value does (#1365).
+    await waitFor(() => expect(outcome).toHaveFocus())
+  })
+
+  it('V6 says a withdrawn field needs a decision only when it asks again', async () => {
+    const user = userEvent.setup()
+    let fields: readonly Field[] = [enteredTitle]
+    const http = owner(() => fields)
+    const panel = await open(http)
+    // Back in Needs you, as an Ask me field is once its answer is withdrawn.
+    fields = [{ ...contextTitle, needsAttention: true }]
+    await user.click(within(panel).getByRole('button', { name: 'Withdraw' }))
+    const outcome = await screen.findByText('Withdrawn. This field needs a decision again.')
     await waitFor(() => expect(outcome).toHaveFocus())
   })
 
@@ -339,9 +351,7 @@ describe('owner-entered values', () => {
     expect(column?.style.minHeight).toBe('')
     fields = [{ ...contextTitle, needsAttention: false }, subtitle]
     await user.click(within(panel).getByRole('button', { name: 'Withdraw' }))
-    await waitFor(() =>
-      expect(screen.getByText('Withdrawn. This field needs a decision again.')).toHaveFocus(),
-    )
+    await waitFor(() => expect(screen.getByText('Withdrawn.')).toHaveFocus())
     // The column keeps the height it had when Withdraw was pressed.
     expect(column?.style.minHeight).toMatch(/^\d+(\.\d+)?px$/u)
     const rail = screen.getByRole('navigation', { name: 'Review fields' })
@@ -379,9 +389,7 @@ describe('owner-entered values', () => {
         }),
       )
       const outcome = await screen.findByText(
-        command === 'withdraw'
-          ? 'Withdrawn. This field needs a decision again.'
-          : 'You entered “The Silent Orchard”.',
+        command === 'withdraw' ? 'Withdrawn.' : 'You entered “The Silent Orchard”.',
       )
       await waitFor(() => expect(outcome).toHaveFocus())
       failing = true
@@ -435,9 +443,7 @@ describe('owner-entered values', () => {
       } else {
         fields = [{ ...contextTitle, needsAttention: false }]
         await user.click(within(panel).getByRole('button', { name: 'Withdraw' }))
-        expect(
-          await screen.findByText('Withdrawn. This field needs a decision again.'),
-        ).toBeVisible()
+        expect(await screen.findByText('Withdrawn.')).toBeVisible()
       }
       // The Library result read after the command no longer lists the work;
       // its case read still names it (#1365).
@@ -446,9 +452,7 @@ describe('owner-entered values', () => {
       expect(screen.getByRole('region', { name: 'Your value for Title' })).toBeVisible()
       expect(screen.queryByText(/not in the current list of works/u)).toBeNull()
       if (outcome === 'withdrawn')
-        await waitFor(() =>
-          expect(screen.getByText('Withdrawn. This field needs a decision again.')).toHaveFocus(),
-        )
+        await waitFor(() => expect(screen.getByText('Withdrawn.')).toHaveFocus())
     },
   )
 
