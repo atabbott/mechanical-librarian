@@ -543,6 +543,7 @@ def _server(
     genre_destination: str = "automatic",
     genre_current: tuple[str, ...] | None = None,
     genre_others: str = "ask",
+    genre_preview: bool = False,
     owner_write: bool = False,
     owner_recur: bool = False,
     owner_library_change: bool = False,
@@ -1219,7 +1220,7 @@ def _server(
 
         report = genre_report(genres=genre_fixture, current=genre_current)
         case_id, proposal_set = publish_genre_case(
-            repository, report, genre_destination, genre_others
+            repository, report, genre_destination, genre_others, preview=genre_preview
         )
         if owner_write:
             case_id, report = _seed_owner_write(
@@ -12601,7 +12602,13 @@ def test_generated_authors_fixture_reaches_library_choice_and_evidence(
                         has_text="Authors"
                     )
                     expect(row).to_contain_text("Current Writer")
-                    expect(row).to_contain_text("No source offered a different value.")
+                    # Its setting leaves it as it is, though a source offers
+                    # Ada Example under Ask me.
+                    expect(row).to_contain_text("Set to Ignore in Policy.")
+                    expect(row).not_to_contain_text("No source offered")
+                    expect(row.get_by_role("link", name="Policy")).to_have_attribute(
+                        "href", "/policy?section=identity"
+                    )
                     context.close()
                     browser.close()
                     return
@@ -17114,6 +17121,69 @@ def test_current_covers_saves_never_with_its_own_button() -> None:
                 )
                 assert overflow <= 0, overflow
             browser.close()
+
+
+def test_a_pin_taken_back_in_preview_shows_the_hold_once_automatic_is_on():
+    """A work first prepared in Preview: the owner pins Genres and takes the
+    pin back before Automatic decided anything on the case. Once Automatic is
+    on it decides the field under the hold the unpin left, so the field shows
+    that hold and Resume automatic handling on this case (ADR-0085, Amendment
+    6). Before, it read No change with no sentence and no Resume."""
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(
+            viewport={"width": 1440, "height": 900}, reduced_motion="reduce"
+        )
+        page = context.new_page()
+        apps: list[Any] = []
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "owner.sqlite",
+                hash_path=hash_path,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                genre_fixture=("Fantasy",),
+                genre_current=None,
+                genre_destination="automatic",
+                genre_preview=True,
+                on_app=apps.append,
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            field = f"{origin}/library?lens=all&preview={case_id}&field=genres"
+            page.goto(field)
+            canvas = page.locator(".decision-canvas")
+            for name in ("Pin this value", "Unpin"):
+                with page.expect_response(
+                    lambda response: response.url.endswith("/decisions")
+                ) as pressed:
+                    canvas.get_by_role("button", name=name).click()
+                assert pressed.value.status == 200
+            # The server's own repository: a second one cannot bind the file.
+            repository = apps[0].state.review_application._state_owner
+            repository.activate_qualified_automatic(1_200)
+            repository.reconcile_case_level(case_id, 1_201)
+            repository.persist_shadow_outcome(case_id, 1_201)
+            page.goto(field)
+            expect(
+                canvas.get_by_text("Your earlier decision still holds this field.")
+            ).to_be_visible()
+            expect(
+                canvas.get_by_role("radio", name="Choose proposed value: Fantasy")
+            ).to_be_visible()
+            expect(
+                page.get_by_role("button", name="Resume automatic handling")
+            ).to_be_visible()
+        browser.close()
 
 
 def test_withdrawing_an_answer_given_before_leaving_automatic():

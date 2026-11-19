@@ -849,6 +849,45 @@ def test_an_answer_with_no_earlier_automatic_decision_still_keeps_automatic_off(
     assert _read_fields(library)["authors"]["manual_hold"] is False
 
 
+@pytest.mark.parametrize("unpinned", [True, False], ids=["unpinned", "pinned"])
+def test_a_pin_taken_back_before_automatic_decided_shows_the_hold_once_it_is_on(
+    preview_library: _Library, unpinned: bool
+) -> None:
+    """A pin taken back in Preview, before Automatic decided anything on the
+    case, leaves a hold Automatic decides under once it is on: the field shows
+    the hold and Resume on that case, and Resume plans the decision (ADR-0085,
+    Amendment 6). Before, the unpin refused the decision, so the field read No
+    change with no hold and no Resume until a later case. A pin still in force
+    keeps Automatic off it (Amendment 2)."""
+    library = preview_library
+    root = library.root
+    pin = _owner(library, "pin", 11)
+    root.record_human_decision(pin)
+    if unpinned:
+        root.record_human_decision(_owner(library, "unpin", 12))
+    _confirm_automatic(library, 40)
+
+    field = _read_fields(library)["authors"]
+    if not unpinned:
+        assert ("authors", library.generation()) not in library.decisions()
+        assert field["manual_hold"] is False
+        assert field["classification_cause"] == "pinned"
+        return
+    decided = library.automatic(library.generation())
+    assert decided.review_case_id == library.case_id()
+    assert decided.decision_id not in library.pending()
+    assert field["manual_hold"] is True
+    assert (field["classification"], field["classification_cause"]) == (
+        "human_recorded",
+        "human_decided",
+    )
+    assert root.clear_field_effect_manual_hold(
+        library.case_id(), "authors", 42, pin.decision_id
+    )
+    assert decided.decision_id in library.pending()
+    assert _read_fields(library)["authors"]["manual_hold"] is False
+
+
 def test_an_owner_plan_waits_while_its_case_is_retired_for_reconciliation(
     library: _Library, tmp_path: Path
 ) -> None:

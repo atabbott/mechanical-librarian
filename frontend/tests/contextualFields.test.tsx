@@ -1,3 +1,11 @@
+import {
+  Outlet,
+  RouterProvider,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from '@tanstack/react-router'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
@@ -276,5 +284,44 @@ describe('the pin on a field with nothing to decide', () => {
     const status = within(rowOf('Language')).getByRole('status')
     expect(status).toHaveTextContent(text)
     await waitFor(() => expect(status).toHaveFocus())
+  })
+})
+
+describe('a field set to Ignore', () => {
+  it('says its setting leaves it as it is and links Policy, whatever its sources offer', async () => {
+    // A router with only the route the link names.
+    const root = createRootRoute({ component: () => <Outlet /> })
+    const fields = [row('authors', 'Current Writer', { notices: ['policy_ignored'] }), publisher]
+    const router = createRouter({
+      routeTree: root.addChildren([
+        createRoute({
+          getParentRoute: () => root,
+          path: '/library',
+          component: () => (
+            <ContextualFields fields={fields} controller={quiet} choose={vi.fn()} notice={null} />
+          ),
+        }),
+        createRoute({
+          getParentRoute: () => root,
+          path: '/policy',
+          component: () => <h1>Policy</h1>,
+        }),
+      ]),
+      history: createMemoryHistory({ initialEntries: ['/library'] }),
+    })
+    render(<RouterProvider router={router} />)
+    const details = await waitFor(() => {
+      const found = document.querySelector('details')
+      if (!found) throw new Error('the panel is missing')
+      return found
+    })
+    await openPanel(details)
+    expect(rowOf('Authors')).toHaveTextContent('Current WriterSet to Ignore in Policy.')
+    expect(rowOf('Authors')).not.toHaveTextContent('No source offered a different value.')
+    expect(rowOf('Publisher')).toHaveTextContent('No source offered a different value.')
+    const link = within(rowOf('Authors')).getByRole('link', { name: 'Policy' })
+    expect(link).toHaveAttribute('href', '/policy?section=identity')
+    await userEvent.click(link)
+    expect(await screen.findByRole('heading', { name: 'Policy' })).toBeInTheDocument()
   })
 })

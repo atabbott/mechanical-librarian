@@ -2,6 +2,7 @@
 // change, waiting or unavailable, which opens to say why for each. A field
 // with nothing to decide is pinned and unpinned from its row and stays in it
 // (#1346). Moved out of the Library route under the route-size rule (#1903).
+import { Link } from '@tanstack/react-router'
 import { useEffect, useId, useRef, useState } from 'react'
 
 import { StatusPill } from '../components/StatusPill'
@@ -16,6 +17,21 @@ import { PinButton } from './FieldDecisionPin'
 
 // What a press is doing or did: announced in the row, never printed under it.
 const QUIET = new Set(['Pinning…', 'Unpinning…', 'Pinned.', 'Unpinned.'])
+
+// Why an unchanged row is unchanged: a field set to Ignore is left as it is by
+// its setting, whatever its sources offer; any other had no other value offered.
+const unchangedReason = (field: ReviewField) =>
+  field.notices.includes('policy_ignored') ? (
+    <>
+      Set to Ignore in{' '}
+      <Link to="/policy" search={{ section: 'identity' }}>
+        Policy
+      </Link>
+      .
+    </>
+  ) : (
+    'No source offered a different value.'
+  )
 
 const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
   `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting' : 'unavailable'}`
@@ -153,7 +169,7 @@ export function ContextualFields({
                     ? 'You pinned this value.'
                     : 'You pinned this field empty.'
                   : kind === 'unchanged'
-                    ? 'No source offered a different value.'
+                    ? unchangedReason(field)
                     : fieldReason(field)}
               </small>
               {/* Each is mounted empty before it speaks, so what a press did is announced. */}
