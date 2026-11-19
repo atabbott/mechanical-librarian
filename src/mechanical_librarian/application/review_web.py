@@ -1680,6 +1680,19 @@ class InspectCurrentReviewCase:
     def _read(
         self, review_case_id: str, history_limit: int | None = None
     ) -> tuple[dict[str, object], MetadataReport, CurrentReviewCaseSnapshot]:
+        detail, report, snapshot, _ = self._read_cited(review_case_id, history_limit)
+        return detail, report, snapshot
+
+    def _read_cited(
+        self, review_case_id: str, history_limit: int | None = None
+    ) -> tuple[
+        dict[str, object],
+        MetadataReport,
+        CurrentReviewCaseSnapshot,
+        dict[str, tuple[str, ...]],
+    ]:
+        """The case detail, with each automatic source outcome's citations
+        as it read them, so History never parses them again (#2003)."""
         try:
             snapshot = self._repository.read_current_review_case(
                 review_case_id, history_limit
@@ -1853,6 +1866,7 @@ class InspectCurrentReviewCase:
             },
             report,
             snapshot,
+            automatic_sources,
         )
 
     def _field(
@@ -2377,14 +2391,7 @@ class InspectCurrentReviewCase:
         }
 
     def history(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
-        _detail, report, snapshot = self._read(review_case_id, limit)
-        try:
-            citations = _automatic_citations(snapshot, review_case_id)
-        except ReviewWebError:
-            raise
-        except Exception as error:
-            # The same snapshot detail reads; one it can't read is unavailable.
-            raise ReviewWebError("unavailable") from error
+        _detail, report, snapshot, citations = self._read_cited(review_case_id, limit)
         case = ReviewCase.create_from_data(json.loads(snapshot.case_document)["case"])
         target_fields = canonical_target_fields(report.target.fields)
         automatic_values: dict[

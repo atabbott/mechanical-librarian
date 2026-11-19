@@ -34,7 +34,7 @@ from typing import Any
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.description_advice import (
-    advised_description,
+    _advised_reading,
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
@@ -2227,14 +2227,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
 def _advice_reading(
     candidate: DescriptionAdviceCandidate | None,
 ) -> dict[str, object]:
-    """A History advice item's candidate, and its text as it is written: its
-    formatted copy and visible text, both null where the reader refuses it,
-    so the adviser's own markup is never shown as markup (#2003)."""
-    advised = (
-        None if candidate is None else advised_description(candidate.output.description)
-    )
-    return {
-        "candidate": None if candidate is None else candidate.model_dump(),
-        "formatted": None if advised is None else advised[1],
-        "visible_text": None if advised is None else advised[0],
-    }
+    """A History advice item's candidate, and its text as it is written,
+    never the adviser's own markup (#2003)."""
+    if candidate is None:
+        return {"candidate": None, "formatted": None, "visible_text": None}
+    return {"candidate": candidate.model_dump(), **_advised_reading(candidate)}
