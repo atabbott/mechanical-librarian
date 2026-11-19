@@ -404,25 +404,31 @@ nothing now (ADR-0036). Any owner row on the case then refused the new
 decision, so a field the owner's answer held showed neither the hold nor
 Resume automatic handling, while the hold still kept Automatic off it. An
 answer from an earlier episode of the case read as no answer at all, so the
-field read No change with no reason and no way to release it.
+field read No change, gave a reason that did not apply, and offered no way to
+release it. A field already handed back with Resume, its write not yet made,
+had nothing left to write.
 
 - **Decided again under the hold.** Where Automatic decided a field on the
-  case in an earlier generation and an active hold holds the field, an owner
-  row no longer refuses Automatic's decision in the new generation. The hold
-  refuses its write until Resume, as on a later case of the work, so the
-  field shows the hold and Resume as it did before Automatic was left.
+  case in an earlier generation and the field has a hold row on the case, in
+  force or released by Resume, an owner row no longer refuses Automatic's
+  decision in the new generation. A hold in force refuses its write until
+  Resume, as on a later case of the work, so the field shows the hold and
+  Resume as it did before Automatic was left; a released hold lets it plan.
+  This qualifies "Any human row still blocks automatic handling" and "An
+  earlier episode's decision still keeps a new automatic decision off that
+  field of the case" above.
 - **Unchanged elsewhere.** An owner row still refuses the decision where
   Automatic had not decided the field on the case, so an answer given before
   Automatic decided anything there still shows as an ordinary answer until a
   later case (Amendment 1). A pin still refuses it (Amendment 2), and so does
-  a withdrawal that leaves no hold: a withdrawal never re-arms automatic
-  handling.
+  a withdrawal, which deletes the hold row its answer set: a withdrawal
+  never re-arms automatic handling.
 
 No stored document changes shape and no version moves; an existing database
 gains the decision at the case's next admission.
 
 Proof: `test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_confirmed`
-(current and earlier episode), the updated
+(current episode, earlier episode, released by Resume), the updated
 `test_an_owner_answer_on_an_automatic_field_outlasts_confirming_automatic` and
 `test_an_answer_with_no_earlier_automatic_decision_still_keeps_automatic_off`
 in `tests/integration/test_leaving_automatic_posture.py`; the first two fail

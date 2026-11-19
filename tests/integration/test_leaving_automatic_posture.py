@@ -761,7 +761,11 @@ def test_an_owner_answer_on_an_automatic_field_outlasts_confirming_automatic(
     assert service.apply(plan.plan_id).state == "verified"
 
 
-@pytest.mark.parametrize("episode", ["current", "earlier"], ids=["current", "earlier"])
+@pytest.mark.parametrize(
+    "episode",
+    ["current", "earlier", "released"],
+    ids=["current", "earlier", "released"],
+)
 def test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_confirmed(
     library: _Library, episode: str
 ) -> None:
@@ -771,7 +775,9 @@ def test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_conf
     `earlier` is an answer from an earlier episode of the case (a work whose
     content went away and came back, #1358), which the case reads as no
     answer: before this fix the field then read No change, with no hold and
-    no Resume, while the answer still kept Automatic off it.
+    no Resume, while the answer still kept Automatic off it. `released` is an
+    answer whose hold Resume already released before leaving: Automatic's
+    decision was waiting to be written, and it still is after confirming.
     """
     library.automatic()
     owner = _accept(library.case(), "authors", "held-before-leaving", 11)
@@ -789,6 +795,11 @@ def test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_conf
         library.root._connection.commit()
     before = _read_fields(library)["authors"]
     assert before["manual_hold"] is True
+    if episode == "released":
+        assert library.root.clear_field_effect_manual_hold(
+            case_id, "authors", 12, owner.decision_id
+        )
+        assert library.automatic().decision_id in library.pending()
 
     library.leave_automatic()
     library.root.activate_qualified_automatic(40)
@@ -799,6 +810,10 @@ def test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_conf
     assert library.decisions() == [("authors", 2), ("authors", 3)]
     again = library.automatic(3)
     assert again.review_case_id == case_id
+    if episode == "released":
+        assert again.decision_id in library.pending()
+        assert _read_fields(library)["authors"]["manual_hold"] is False
+        return
     assert again.decision_id not in library.pending()
     field = _read_fields(library)["authors"]
     assert field["manual_hold"] is True
