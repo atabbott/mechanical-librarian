@@ -217,8 +217,9 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           <HistoryValue
             label="Kept"
             text={displayRetainedHistoryValue(item)}
-            // Kept shows the value it names, with that value's copy.
-            formatted={item.selectedValue ? selectedFormatted : previousFormatted}
+            // The library keeps the value it had, with its own copy: a
+            // choice that differs only in formatting is never written.
+            formatted={previousFormatted}
           />
         ) : valueless ? null : (
           <>

@@ -1921,6 +1921,17 @@ it("shows a description's formatting in History", async () => {
         previousFormatted: '<p>Kept <b>before</b></p>',
         selectedFormatted: '<p>Kept <em>here</em></p>',
       },
+      // Automatic's choice that differs only in formatting is never written:
+      // Kept shows the plain description the library keeps.
+      {
+        category: 'automatic' as const,
+        occurredAt: 1786000000,
+        destination: 'description' as const,
+        outcome: 'candidate',
+        previousValue: { kind: 'text', value: 'Same words kept' },
+        selectedValue: { kind: 'text', value: 'Same words kept' },
+        selectedFormatted: '<p>Same <b>words</b> kept</p>',
+      },
       // A visible text holding literal markup, with no copy, is text.
       {
         category: 'owner' as const,
@@ -1949,8 +1960,8 @@ it("shows a description's formatting in History", async () => {
     '<p>Advised <strong>text</strong> under link</p>',
     'Before <em>this</em><br>line',
     '<ul><li>After</li></ul>',
-    // Kept pairs the copy with the value it shows: the selected one.
-    '<p>Kept <em>here</em></p>',
+    // Kept shows the copy the library keeps, never the unwritten choice's.
+    '<p>Kept <strong>before</strong></p>',
   ])
   expect(formatted[0]).toHaveClass('description-advice-text')
   for (const node of formatted.slice(1)) {
@@ -1964,7 +1975,7 @@ it("shows a description's formatting in History", async () => {
   expect(screen.getByText('Plain <u>advice</u>').tagName).toBe('P')
   expect(screen.getByText('<p>An unclosed <b>story').tagName).toBe('P')
   // A value with no copy, and every other field, stays text.
-  for (const words of ['Literal <b>tags</b> stay', 'A <b>title</b>']) {
+  for (const words of ['Same words kept', 'Literal <b>tags</b> stay', 'A <b>title</b>']) {
     const value = [...document.querySelectorAll('.diagnostic-value')].find((node) =>
       node.textContent.includes(words),
     )
