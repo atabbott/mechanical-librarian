@@ -117,9 +117,18 @@ _REPLACEMENT_BLOCKING_EFFECT_SQL = (
 )
 # What keeps Automatic from deciding a field on a case: an owner decision, its
 # own decision in this generation, or a pin, in force or changed (ADR-0085,
-# Amendment 2). Bound by `_automatic_mint_conflict`.
+# Amendment 2). An owner decision does not where Automatic decided the field on
+# the case in an earlier generation and an active hold holds it: Automatic
+# decides it again under the hold, which refuses the write until Resume, so
+# leaving Automatic and turning it on again keeps the hold and Resume the field
+# showed (ADR-0085, Amendment 4). Bound by `_automatic_mint_conflict`.
 _AUTOMATIC_MINT_CONFLICT_SQL = (
     "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
+    "AND NOT (EXISTS (SELECT 1 FROM field_effect_manual_holds held "
+    "WHERE held.review_case_id=? AND held.destination=? AND held.active=1) "
+    "AND EXISTS (SELECT 1 FROM automatic_decisions earlier "
+    "WHERE earlier.review_case_id=? AND earlier.destination=? "
+    "AND earlier.policy_generation<?)) "
     "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
     "AND policy_generation=? "
     "UNION ALL SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
@@ -275,11 +284,16 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
 
 def _automatic_mint_conflict(
     decision: AutomaticDecision,
-) -> tuple[str, str, str, str, int, str, str]:
+) -> tuple[str, str, str, str, str, str, int, str, str, int, str, str]:
     case, destination = decision.review_case_id, decision.destination
     return (
         case,
         destination,
+        case,
+        destination,
+        case,
+        destination,
+        decision.policy_generation,
         case,
         destination,
         decision.policy_generation,

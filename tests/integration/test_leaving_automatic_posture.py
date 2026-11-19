@@ -724,7 +724,12 @@ def test_owner_answers_from_before_leaving_automatic_are_kept(
 def test_an_owner_answer_on_an_automatic_field_outlasts_confirming_automatic(
     library: _Library, tmp_path: Path
 ) -> None:
-    """An owner decision blocks a fresh automatic decision in any generation."""
+    """The owner's answer outlasts confirming Automatic and still writes.
+
+    Automatic decides the field again in the new generation, as on a later
+    case of the work, and the answer's hold keeps that decision unwritten,
+    so the field shows the hold and Resume as it did before leaving.
+    """
     automatic = library.automatic()
     owner = _accept(library.case(), "authors", "override-before-leaving", 11)
     library.root.record_human_decision(owner)
@@ -740,11 +745,13 @@ def test_an_owner_answer_on_an_automatic_field_outlasts_confirming_automatic(
     library.now[0] = 41
     library.drain()
 
-    assert library.decisions() == [("authors", 2)]
+    assert library.decisions() == [("authors", 2), ("authors", 3)]
     assert automatic.decision_id not in library.pending()
+    assert library.automatic(3).decision_id not in library.pending()
     field = _read_fields(library)["authors"]
     assert field["human_decision"]["decision_id"] == owner.decision_id
     assert field["classification"] == "human_recorded"
+    assert field["manual_hold"] is True
     assert owner.decision_id in library.pending()
     scheduler, service, target = _applier(library, tmp_path)
     library.now[0] = 42
@@ -752,6 +759,75 @@ def test_an_owner_answer_on_an_automatic_field_outlasts_confirming_automatic(
     plan = _planned(library)[owner.decision_id].plan
     target.seed(plan)
     assert service.apply(plan.plan_id).state == "verified"
+
+
+@pytest.mark.parametrize("episode", ["current", "earlier"], ids=["current", "earlier"])
+def test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_confirmed(
+    library: _Library, episode: str
+) -> None:
+    """Leaving Automatic and confirming it again keeps the field's hold and
+    Resume, and Resume still hands the field back to Automatic.
+
+    `earlier` is an answer from an earlier episode of the case (a work whose
+    content went away and came back, #1358), which the case reads as no
+    answer: before this fix the field then read No change, with no hold and
+    no Resume, while the answer still kept Automatic off it.
+    """
+    library.automatic()
+    owner = _accept(library.case(), "authors", "held-before-leaving", 11)
+    library.root.record_human_decision(owner)
+    case_id = library.case_id()
+    if episode == "earlier":
+        # The work returned to this content: a new episode starts after the
+        # answer, as admission records it (#1358).
+        library.root._connection.execute(
+            "INSERT INTO review_case_episodes(review_case_id,decision_floor,"
+            "event_floor) VALUES(?,(SELECT MAX(ordinal) FROM human_decisions "
+            "WHERE review_case_id=?),0)",
+            (case_id, case_id),
+        )
+        library.root._connection.commit()
+    before = _read_fields(library)["authors"]
+    assert before["manual_hold"] is True
+
+    library.leave_automatic()
+    library.root.activate_qualified_automatic(40)
+    library.now[0] = 41
+    library.drain()
+
+    assert library.case_id() == case_id
+    assert library.decisions() == [("authors", 2), ("authors", 3)]
+    again = library.automatic(3)
+    assert again.review_case_id == case_id
+    assert again.decision_id not in library.pending()
+    field = _read_fields(library)["authors"]
+    assert field["manual_hold"] is True
+    assert field["classification"] == "human_recorded"
+    assert field["classification_cause"] == "human_decided"
+    assert (field["human_decision"] is None) is (episode == "earlier")
+
+    assert library.root.clear_field_effect_manual_hold(
+        case_id, "authors", 42, owner.decision_id
+    )
+    assert again.decision_id in library.pending()
+    assert _read_fields(library)["authors"]["manual_hold"] is False
+
+
+def test_an_answer_with_no_earlier_automatic_decision_still_keeps_automatic_off(
+    preview_library: _Library,
+) -> None:
+    """Only a field Automatic had decided on the case is decided again under
+    its hold. An answer given in Preview, before Automatic decided anything on
+    the case, still keeps Automatic from recording a decision there (ADR-0085,
+    Amendment 1: it shows as an ordinary answer until a later case)."""
+    library = preview_library
+    owner = _accept(library.case(), "authors", "answered-in-preview", 11)
+    library.root.record_human_decision(owner)
+    library.root.activate_qualified_automatic(40)
+    library.now[0] = 41
+    library.drain()
+    assert ("authors", library.generation()) not in library.decisions()
+    assert _read_fields(library)["authors"]["manual_hold"] is False
 
 
 def test_an_owner_plan_waits_while_its_case_is_retired_for_reconciliation(
