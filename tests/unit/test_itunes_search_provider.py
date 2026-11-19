@@ -15,6 +15,7 @@ from mechanical_librarian.adapters.providers.itunes_search_metadata import (
     ITunesSearchMetadataProvider,
     ITunesSearchPacer,
 )
+from mechanical_librarian.adapters.providers.visible_text import read_description
 from mechanical_librarian.application.metadata_report import (
     CoverRedirects,
     MetadataDiscoveryPlan,
@@ -281,6 +282,9 @@ def test_the_stores_html_description_becomes_visible_plain_text() -> None:
     assert "<" in stated
     assert description.value is not None
     assert "<" not in description.value and ">" not in description.value
+    # It also carries its formatted copy from the same reading (#1995).
+    assert description.formatted is not None
+    assert description.formatted == read_description(stated)[2]
     assert stated.count("<br />") and " • " in description.value
     assert ("html-visible-text-v1",) == tuple(
         value.value

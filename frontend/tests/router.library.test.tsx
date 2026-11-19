@@ -4179,7 +4179,12 @@ describe('Library route', () => {
     const settled = { ...title, needsAttention: false, navigationRole: 'resolved' as const }
     const pinOf = (state: 'in_force' | 'waiting' | 'changed') => ({
       state,
-      value: { destination: 'title' as const, state: 'value' as const, value: 'Old title' },
+      value: {
+        destination: 'title' as const,
+        state: 'value' as const,
+        value: 'Old title',
+        formatted: null,
+      },
     })
     const control = { pin: 'available' as const, unpin: true }
     const decided = {
@@ -13014,6 +13019,112 @@ describe('Library route', () => {
     })
   })
 
+  describe('a field an earlier decision holds in Preview', () => {
+    const HELD =
+      'Your earlier decision still holds this field, so turning on Automatic leaves it as it is.'
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const unchanged = (
+      destination: 'genres' | 'language' | 'title',
+      overrides: Partial<CaseDetailView['fields'][number]> = {},
+    ) => ({
+      ...titleField,
+      classification: 'unsupported' as const,
+      classificationCause: 'nothing_to_decide' as const,
+      classificationReason: 'Nothing to decide for this field.',
+      decisionActions: [],
+      destination,
+      editable: false,
+      humanDecision: null,
+      automaticDecision: null,
+      manualHold: false,
+      needsAttention: false,
+      navigationRole: 'inspect' as const,
+      preservationOnly: false,
+      proposalId: `proposal-${destination}`,
+      targetFingerprint: `fingerprint-${destination}`,
+      ...overrides,
+    })
+    const held = (
+      destination: 'genres' | 'language',
+      overrides: Partial<CaseDetailView['fields'][number]> = {},
+    ) =>
+      unchanged(destination, {
+        classificationCause: 'held_in_preview',
+        classificationReason: HELD,
+        currentValue: 'Not set',
+        proposedValues: [
+          destination === 'genres'
+            ? { kind: 'list', value: ['Fantasy'] }
+            : { kind: 'text', value: 'English' },
+        ],
+        ...overrides,
+      })
+    const genresControl = {
+      entry: null,
+      subset: {
+        maxItems: 32,
+        options: [{ value: 'Fantasy', current: false, proposed: true, previous: false }],
+      },
+      names: null,
+      clear: false,
+      current: [],
+      withdraw: null,
+    }
+    const open = async (field: string, fields: CaseDetailView['fields'][number][]) => {
+      renderRoute(`/library?lens=all&preview=case-1&field=${field}`, {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields,
+        })),
+      })
+      return await screen.findByRole('navigation', { name: 'Review fields' })
+    }
+
+    it.each([
+      ['genres', /^Genres/u, { ownerControl: genresControl }],
+      ['language', /^Language/u, {}],
+    ] as const)(
+      'reads Decided on %s and says the hold keeps Automatic off, with no Resume',
+      async (destination, tab, overrides) => {
+        const rail = await open(destination, [
+          held(destination, overrides),
+          unchanged('title', { proposedValues: [] }),
+        ])
+        expect(within(rail).getByRole('button', { name: tab })).toHaveTextContent('Decided')
+        expect(screen.getByText(HELD)).toBeVisible()
+        expect(screen.queryByRole('button', { name: 'Resume automatic handling' })).toBeNull()
+        expect(screen.queryByText('No source offered a different value.')).toBeNull()
+      },
+    )
+
+    it('still offers the pin and the owner entry on a held field', async () => {
+      await open('genres', [
+        held('genres', {
+          ownerControl: genresControl,
+          pinControl: { pin: 'available', unpin: false },
+        }),
+        unchanged('title', { proposedValues: [] }),
+      ])
+      expect(screen.getByRole('button', { name: 'Pin this value' })).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Choose genres' })).toBeVisible()
+    })
+
+    it('says nothing of an unheld field a source offers another value for', async () => {
+      await open('language', [
+        unchanged('language', {
+          currentValue: 'Not set',
+          proposedValues: [{ kind: 'text', value: 'English' }],
+        }),
+        unchanged('title', { proposedValues: [] }),
+      ])
+      expect(screen.getByLabelText('Language current value')).toBeVisible()
+      expect(document.querySelector('.decision-context')).toBeNull()
+      expect(screen.queryByText('No source offered a different value.')).toBeNull()
+    })
+  })
+
   describe('the fields with nothing to decide (#1514)', () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
@@ -14549,7 +14660,13 @@ it('offers advised text in the ordinary Description chooser with its immutable a
             needsAttention: false,
             descriptionAdvice: {
               ...advice,
-              selected_advice: { candidate, binding: advice.binding, current: true },
+              selected_advice: {
+                candidate,
+                binding: advice.binding,
+                current: true,
+                formatted: null,
+                visible_text: advice.visible_text,
+              },
               selection: {
                 decision_id: `human_decision_${'a'.repeat(64)}`,
                 candidate_id: candidate.candidate_id,
@@ -14623,6 +14740,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
 
 // Adviser text with formatting, read into elements from a closed set (ADR-0106).
 const formattedAdvice = '<p>An <b>authored</b> line.</p><ul><li>One</li><li><i>Two</i></li></ul>'
+const formattedVisible = 'An authored line. • One • Two'
 const formattedAuthored = () => {
   const authored = readCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')
@@ -14633,7 +14751,13 @@ const formattedAuthored = () => {
     ...advice.candidate,
     output: { ...advice.candidate.output, description: formattedAdvice },
   }
-  field.descriptionAdvice = { ...advice, candidate }
+  // The server reads the advice as it writes it: its copy and visible text.
+  field.descriptionAdvice = {
+    ...advice,
+    candidate,
+    formatted: formattedAdvice,
+    visible_text: formattedVisible,
+  }
   return { authored, field, advice: field.descriptionAdvice, candidate }
 }
 
@@ -14659,6 +14783,95 @@ it('shows a formatted advised description on its card and names the card as a de
   // The short cards keep their values as names.
   expect(
     screen.getByRole('radio', { name: 'Choose current value: Existing description.' }),
+  ).toBeVisible()
+})
+
+it('shows each description’s formatted copy on its card and names it by its text', async () => {
+  // The server's own copy from a closed set of tags, written as shown (#1995).
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const proposed = field.proposedValues[0]
+  if (proposed?.kind !== 'text' || typeof proposed.value !== 'string') {
+    throw new Error('description fixture requires text')
+  }
+  const text = proposed.value
+  field.currentFormatted = `<p><b>${field.currentValue}</b></p>`
+  field.proposedFormatted = [`<p>${text}</p><ul><li><i>listed</i></li></ul>`]
+  renderRoute('/library?lens=all&preview=case-1&field=description', {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+      ...authored,
+      id: 'case-1',
+      fields: [field],
+    })),
+  })
+  const proposedOption = await screen.findByRole('radio', { name: 'Choose proposed description' })
+  const proposedContent = proposedOption
+    .closest('article')
+    ?.querySelector('.description-choice-content .description-formatted')
+  expect(proposedContent?.innerHTML).toBe(`<p>${text}</p><ul><li><em>listed</em></li></ul>`)
+  const currentOption = screen.getByRole('radio', { name: 'Choose current description' })
+  const currentContent = currentOption
+    .closest('article')
+    ?.querySelector('.description-choice-content .description-formatted')
+  expect(currentContent?.innerHTML).toBe(`<p><strong>${field.currentValue}</strong></p>`)
+  for (const element of [
+    ...(proposedContent?.querySelectorAll('*') ?? []),
+    ...(currentContent?.querySelectorAll('*') ?? []),
+  ])
+    expect(element.attributes).toHaveLength(0)
+})
+
+it('shows advice with no formatted copy as the visible text that is written', async () => {
+  // A link is dropped when written, so the card shows the text, never the link (#1995).
+  const { authored, field, advice, candidate } = formattedAuthored()
+  const tail = ' More words.'.repeat(30)
+  field.descriptionAdvice = {
+    ...advice,
+    candidate: {
+      ...candidate,
+      output: {
+        ...candidate.output,
+        description: `See <a href="https://example.org/">this</a>.${tail}`,
+      },
+    },
+    formatted: null,
+    visible_text: `See this.${tail}`,
+  }
+  renderRoute('/library?lens=all&preview=case-1&field=description', {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+      ...authored,
+      id: 'case-1',
+      fields: [field],
+    })),
+  })
+  const option = await screen.findByRole('radio', { name: 'Choose advised description' })
+  const content = option.closest('article')?.querySelector('.description-choice-content')
+  expect(content?.querySelector('a')).toBeNull()
+  expect(content).toHaveTextContent('See this. More words.')
+  expect(content).not.toHaveTextContent('<a')
+})
+
+it('says advice it cannot read safely cannot be chosen', async () => {
+  // Text the description reader refuses is never written (#1995).
+  const { authored, field, advice } = formattedAuthored()
+  field.descriptionAdvice = { ...advice, readable: false, formatted: null, visible_text: null }
+  renderRoute('/library?lens=all&preview=case-1&field=description', {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+      ...authored,
+      id: 'case-1',
+      fields: [field],
+    })),
+  })
+  const option = await screen.findByRole('radio', { name: 'Choose advised description' })
+  expect(option).toBeDisabled()
+  expect(
+    within(option).getByText(
+      'This advice’s formatting can’t be read safely. Retry description advice.',
+    ),
   ).toBeVisible()
 })
 
@@ -14698,7 +14911,13 @@ it('names a formatted description in Review complete by its visible text', async
             needsAttention: false,
             descriptionAdvice: {
               ...advice,
-              selected_advice: { candidate, binding: advice.binding, current: true },
+              selected_advice: {
+                candidate,
+                binding: advice.binding,
+                current: true,
+                formatted: null,
+                visible_text: formattedVisible,
+              },
               selection: {
                 decision_id: `human_decision_${'a'.repeat(64)}`,
                 candidate_id: candidate.candidate_id,
@@ -14726,9 +14945,9 @@ it('names a formatted description in Review complete by its visible text', async
   const completed = screen.getByRole('button', {
     name: (name) =>
       name.replace(/\s+/gu, ' ') ===
-      'Description · Adviser’s description chosenAn authored line. One Two',
+      'Description · Adviser’s description chosenAn authored line. • One • Two',
   })
-  expect(completed.querySelector('strong')?.textContent).toBe('An authored line. One Two')
+  expect(completed.querySelector('strong')?.textContent).toBe('An authored line. • One • Two')
   expect(completed).not.toHaveTextContent('<')
 })
 
@@ -14745,6 +14964,10 @@ it('renders hostile multiline advice as text and refuses stale selection while o
       ...advice.candidate,
       output: { description: '<img src=x onerror=alert(1)>\nSecond line', disposition: 'ready' },
     },
+    // The reader refuses this text, so the server sends no reading of it.
+    formatted: null,
+    visible_text: null,
+    readable: false,
   }
   renderRoute('/library?lens=all&preview=case-1&field=description', {
     ...createHttp(),
@@ -15102,6 +15325,8 @@ it.each(['verified', 'no_change_required'] as const)(
         candidate: advice.candidate,
         binding: advice.binding,
         current: outcome === 'no_change_required',
+        formatted: null,
+        visible_text: advice.visible_text,
       },
       selection: {
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
@@ -15159,7 +15384,13 @@ it.each([
       ...advice,
       current,
       application_outcome: outcome,
-      selected_advice: { candidate: advice.candidate, binding: advice.binding, current },
+      selected_advice: {
+        candidate: advice.candidate,
+        binding: advice.binding,
+        current,
+        formatted: null,
+        visible_text: advice.visible_text,
+      },
       selection: {
         decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
         candidate_id: advice.candidate.candidate_id,
@@ -15270,6 +15501,8 @@ it.each(['human', 'automatic_policy'] as const)(
           candidate: field.descriptionAdvice.candidate,
           binding: advice.binding,
           current: scenario.current,
+          formatted: null,
+          visible_text: advice.visible_text,
         },
         selection: {
           decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
@@ -15325,7 +15558,13 @@ it.each([true, false])(
       ...advice,
       current: true,
       application_outcome: null,
-      selected_advice: { candidate, binding: advice.binding, current: true },
+      selected_advice: {
+        candidate,
+        binding: advice.binding,
+        current: true,
+        formatted: formattedAdvice,
+        visible_text: formattedVisible,
+      },
       selection: {
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
         candidate_id: candidate.candidate_id,

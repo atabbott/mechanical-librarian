@@ -1,5 +1,5 @@
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
-import { FormattedDescription, readFormatting } from '../descriptionFormatting'
+import { FormattedDescription } from '../descriptionFormatting'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
@@ -110,21 +110,24 @@ const ownerLinkSentence = (
   return `${verb} ${name} ${source}, as ${ownerLinkAs[item.scope]}.`
 }
 
-// A recorded value beside its label. A description's shows its formatting, in
-// a div, since a paragraph cannot hold its paragraphs and lists.
+// A recorded value beside its label. A description value with a formatted
+// copy shows the copy, in a div, since a paragraph cannot hold its paragraphs
+// and lists; any other value is text, whatever it holds (#2003).
 function HistoryValue({
   label,
   text,
-  description,
+  formatted,
 }: {
   label: string
   text: string
-  description: boolean
+  formatted: string | null
 }) {
-  const nodes = description ? readFormatting(text) : null
-  return nodes ? (
+  return formatted ? (
     <div className="diagnostic-value">
-      <span>{label}</span> <FormattedDescription nodes={nodes} />
+      <span>{label}</span>{' '}
+      <FormattedDescription value={formatted}>
+        <p>{text}</p>
+      </FormattedDescription>
     </div>
   ) : (
     <p className="diagnostic-value">
@@ -151,12 +154,19 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
               : (descriptionAdviceSentences[item.state] ?? 'Advice was recorded.')}
         </p>
         {item.candidate ? (
-          <FormattedDescription
-            value={item.candidate.output.description}
-            className="description-advice-text"
-          >
-            <p className="description-advice-text">{item.candidate.output.description}</p>
-          </FormattedDescription>
+          // The advice as it is written, never the adviser's own markup: its
+          // copy, else its visible text, else, unreadable, its text as written.
+          item.formatted ? (
+            <FormattedDescription value={item.formatted} className="description-advice-text">
+              <p className="description-advice-text">
+                {item.visibleText ?? item.candidate.output.description}
+              </p>
+            </FormattedDescription>
+          ) : (
+            <p className="description-advice-text">
+              {item.visibleText ?? item.candidate.output.description}
+            </p>
+          )
         ) : item.state === 'requested' || item.state === 'running' ? null : (
           // Only once advice has stopped is "no text" news.
           <p>No description was written.</p>
@@ -194,7 +204,8 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           : item.outcome === 'keep_current'
             ? 'Automatic kept the current value.'
             : 'Automatic left this field unchanged.'
-    const description = item.destination === 'description'
+    const previousFormatted = item.previousFormatted ?? null
+    const selectedFormatted = item.selectedFormatted ?? null
     return (
       <article className="diagnostic-entry">
         <h3>{destinationLabel(item.destination)}</h3>
@@ -206,14 +217,16 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           <HistoryValue
             label="Kept"
             text={displayRetainedHistoryValue(item)}
-            description={description}
+            // The library keeps the value it had, with its own copy: a
+            // choice that differs only in formatting is never written.
+            formatted={previousFormatted}
           />
         ) : valueless ? null : (
           <>
             <HistoryValue
               label="From"
               text={historyValue(item.destination, item.previousValue, emptyWords(item, NOT_SET))}
-              description={description}
+              formatted={previousFormatted}
             />
             <HistoryValue
               label="To"
@@ -224,7 +237,7 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
                 // as its card said; only a clear reads Cleared (#1523).
                 emptyWords(item, item.outcome === 'keep_current' ? NOT_SET : CLEARED_TEXT),
               )}
-              description={description}
+              formatted={selectedFormatted}
             />
           </>
         )}

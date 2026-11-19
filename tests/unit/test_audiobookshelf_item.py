@@ -11,16 +11,20 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from scripts.qualify_audiobookshelf_field_effect import DESCRIPTION_LANDINGS
+from scripts.qualify_audiobookshelf_field_effect import (
+    DESCRIPTION_LANDINGS,
+    FORMATTED_DESCRIPTION_LANDINGS,
+)
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
     AudiobookshelfItemReader,
     _raw_cover_authority,
+    stored_description_reading,
     visible_stored_description,
 )
 from mechanical_librarian.adapters.providers.visible_text import (
     DESCRIPTION_OVERSIZED,
-    visible_description,
+    _rendering,
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
@@ -1397,18 +1401,35 @@ def test_each_observed_landing_reads_as_the_value_sent_unless_the_service_droppe
     )
 
 
+@pytest.mark.parametrize(
+    ("case", "visible", "copy", "stored", "outcome"),
+    FORMATTED_DESCRIPTION_LANDINGS,
+    ids=[row[0] for row in FORMATTED_DESCRIPTION_LANDINGS],
+)
+def test_each_formatted_landing_is_our_own_copy_and_reads_back_as_its_text(
+    case: str, visible: str, copy: str, stored: str, outcome: str
+) -> None:
+    # The form sent is the copy its own visible text reads as, so the write
+    # seam sends it, and every pinned service's stored form reads as that same
+    # visible text exactly when the write verifies (#1995).
+    assert stored_description_reading(copy) == (visible, copy, True)
+    assert (stored_description_reading(stored)[0] == visible) is (outcome == "verified")
+
+
 def test_a_stored_description_is_bounded_before_the_renderer_reads_it() -> None:
     bounded = "<b>" + "x" * (MAX_DESCRIPTION_CHARACTERS - 7) + "</b>"
     oversized = "<b>" + "x" * (MAX_DESCRIPTION_CHARACTERS - 6) + "</b>"
     with patch(
-        "mechanical_librarian.adapters.providers.visible_text.visible_description",
-        wraps=visible_description,
+        "mechanical_librarian.adapters.providers.visible_text._rendering",
+        wraps=_rendering,
     ) as renderer:
         assert visible_stored_description(bounded) == "x" * (
             MAX_DESCRIPTION_CHARACTERS - 7
         )
         assert visible_stored_description(oversized) is DESCRIPTION_OVERSIZED
-    assert renderer.call_count == 1
+    # Only the bounded value, and its formatted copy read back (#1995), reach
+    # the renderer; the oversized one never does.
+    assert [call.args[0] for call in renderer.call_args_list] == [bounded, bounded]
     states = {
         value: next(
             (field.state, field.value)

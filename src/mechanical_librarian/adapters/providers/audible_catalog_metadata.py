@@ -42,6 +42,7 @@ from mechanical_librarian.adapters.providers.sdk import (
 )
 from mechanical_librarian.adapters.providers.visible_text import (
     HTML_VISIBLE_TEXT_VERSION,
+    formatted_claim,
     projected_description,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -1060,10 +1061,11 @@ def _candidate(
     for series, sequence in _series(product.get("series"), schema_rejections):
         add(ClaimKind.SERIES, series)
         add(ClaimKind.SERIES_SEQUENCE, sequence)
-    description, description_transformed = projected_description(
+    description, description_transformed, formatted = projected_description(
         product.get("short_description"), product.get("publisher_summary")
     )
     add(ClaimKind.DESCRIPTION, description)
+    claims[-1] = formatted_claim(claims[-1], description, formatted)
     add(ClaimKind.LANGUAGE, product.get("language"))
     add(ClaimKind.PUBLISHER, product.get("publisher_name"))
     add(ClaimKind.PUBLICATION_DATE, product.get("release_date"))

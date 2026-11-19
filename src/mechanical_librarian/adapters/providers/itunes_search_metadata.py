@@ -42,6 +42,7 @@ from mechanical_librarian.adapters.providers.sdk import (
 )
 from mechanical_librarian.adapters.providers.visible_text import (
     HTML_VISIBLE_TEXT_VERSION,
+    formatted_claim,
     projected_description,
 )
 from mechanical_librarian.application.failure_diagnostics import (
@@ -685,8 +686,11 @@ def _candidate(
     add(ClaimKind.TITLE, result.get("collectionName"))
     artist = result.get("artistName")
     add(ClaimKind.CREATOR, artist if type(artist) is str else None, role="author")
-    description, transformed = projected_description(result.get("description"))
+    description, transformed, formatted = projected_description(
+        result.get("description")
+    )
     add(ClaimKind.DESCRIPTION, description)
+    claims[-1] = formatted_claim(claims[-1], description, formatted)
 
     evidence = [
         ProviderEvidence(

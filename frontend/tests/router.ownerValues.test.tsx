@@ -62,6 +62,8 @@ const contextTitle: Field = {
   currentValue: 'THE SILENT ORCHARD (Disc 2)',
   currentRaw: 'THE SILENT ORCHARD (Disc 2)',
   proposedValues: [{ kind: 'text', value: 'THE SILENT ORCHARD (Disc 2)' }],
+  // The proposed value is the current one, as the server reads it.
+  preservationOnly: true,
   ownerControl: entry,
 }
 const decision = (
@@ -1046,7 +1048,7 @@ describe('a pin on each value', () => {
   const NEW = { kind: 'text', value: 'New title' } as const
   const pinOf = (state: NonNullable<Field['pin']>['state'], value: string): Field['pin'] => ({
     state,
-    value: { destination: 'title', state: 'value', value },
+    value: { destination: 'title', state: 'value', value, formatted: null },
   })
   const offered: Field = { ...base, pinControl: { pin: 'available', unpin: false } }
   const inForce: Field = {
@@ -1706,7 +1708,12 @@ describe('a pin in the No change panel', () => {
             classificationReason: PINNED,
             pin: {
               state: 'in_force',
-              value: { destination: 'publisher', state: 'value', value: 'Example House' },
+              value: {
+                destination: 'publisher',
+                state: 'value',
+                value: 'Example House',
+                formatted: null,
+              },
             },
             pinControl: { pin: 'available', unpin: true },
           }

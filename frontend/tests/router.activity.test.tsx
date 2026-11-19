@@ -200,6 +200,37 @@ describe('Activity route', () => {
     ).toBeVisible()
   })
 
+  it('notes an automatic choice a hold keeps unwritten as held by you', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(
+      activity({
+        events: [
+          {
+            event_id: 'automatic-held-by-you',
+            event_type: 'metadata',
+            category: 'automatic',
+            origin: 'automatic_policy',
+            state: 'recorded',
+            note: 'held',
+            work_label: 'Held Work',
+          },
+        ],
+      }),
+    )
+    renderRoute('/activity', http)
+    const held = (await screen.findByText('Held Work')).closest('article')
+    if (!held) throw new Error('Expected the Held Work row')
+    expect(within(held).getByText('Recorded')).toBeVisible()
+    expect(within(held).getByText('Held by you')).toBeVisible()
+    await user.click(within(held).getByRole('button', { name: /held by you/u }))
+    expect(
+      within(held).getByText(
+        'Your earlier decision holds this field, so this is not written until you choose Resume automatic handling.',
+      ),
+    ).toBeVisible()
+  })
+
   it('retains authored preparation provenance without offering another choice interface', async () => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -256,13 +287,24 @@ describe('Activity route', () => {
             change: 'Description changed',
             change_detail: 'Description changed',
             evidence: [
-              { label: 'Previous value', value: '<p>Old <b>words</b></p>' },
-              // Activity cuts a long value to 512 characters, mid-tag here.
+              {
+                label: 'Previous value',
+                value: 'Old words',
+                formatted: '<p>Old <b>words</b></p>',
+              },
+              // The server cuts a long copy as a copy, well nested (#2003).
               {
                 label: 'New value',
-                value: `<p>New <i>words</i></p><p>More ${'w'.repeat(473)} <b cla…`,
+                value: `New words • More ${'w'.repeat(473)} …`,
+                formatted: `<p>New <i>words</i></p><p>More ${'w'.repeat(473)} …</p>`,
               },
-              { label: 'Selected description', value: '<p>Chosen <b>text</b></p>' },
+              {
+                label: 'Selected description',
+                value: 'Chosen text',
+                formatted: '<p>Chosen <b>text</b></p>',
+              },
+              // A visible text holding literal markup, with no copy, is text.
+              { label: 'Current value', value: 'Literal <b>tags</b> stay' },
               { label: 'Provenance', value: 'Advised · <b>Authored</b> content' },
             ],
           },
@@ -278,6 +320,8 @@ describe('Activity route', () => {
       `<p>New <em>words</em></p><p>More ${'w'.repeat(473)} …</p>`,
       '<p>Chosen <strong>text</strong></p>',
     ])
+    expect(screen.getByText('Literal <b>tags</b> stay').tagName).toBe('DD')
+    expect(document.querySelectorAll('dd strong')).toHaveLength(2)
   })
 
   it('leaves other evidence labels as text', async () => {

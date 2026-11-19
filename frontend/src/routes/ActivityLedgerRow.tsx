@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { FormattedDescription, wasCut } from '../descriptionFormatting'
+import { FormattedDescription } from '../descriptionFormatting'
 import { Fragment, useRef, useState, type ReactNode } from 'react'
 import { BuildMismatchError } from '../api/http'
 import type { ActivityEventView, ActivityTransitionView } from '../api/http'
@@ -379,10 +379,10 @@ export function ActivityEventRow({
                   <dd>
                     {language && item.label.endsWith(' value') ? (
                       languages(item.value)
-                    ) : event.destination === 'description' &&
-                      (item.label.endsWith(' value') || item.label === 'Selected description') ? (
-                      // Activity cuts a value over 512 characters to 511 or 512 ending in `…`.
-                      <FormattedDescription value={item.value} cut={wasCut(item.value, 511, 512)}>
+                    ) : event.destination === 'description' && item.formatted ? (
+                      // A description value's own copy, cut well nested by
+                      // the server; a value without one is text (#2003).
+                      <FormattedDescription value={item.formatted}>
                         {item.value}
                       </FormattedDescription>
                     ) : (

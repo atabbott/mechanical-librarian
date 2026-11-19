@@ -2190,3 +2190,46 @@ def test_an_undecodable_retained_original_is_offered_back_by_its_digest(
     assert alternative.correlations == (
         "correlation_" + hashlib.sha256(b"cover:retained").hexdigest(),
     )
+
+
+@pytest.mark.parametrize(
+    ("current", "offered"),
+    (
+        ("<p>Same words.</p>", "<p><b>Same words.</b></p>"),
+        (None, "<p><b>Same words.</b></p>"),
+        ("<p>Same words.</p>", None),
+    ),
+    ids=("different-copies", "copy-only-offered", "copy-only-stored"),
+)
+def test_formatting_alone_is_never_a_change(
+    current: str | None, offered: str | None
+) -> None:
+    # The visible text is the only value compared (#1995, ADR-0107): a
+    # description whose words match is kept, whatever either side's copy.
+    field = TargetField(
+        TargetDestination.DESCRIPTION,
+        TargetFieldState.VALUE,
+        "Same words.",
+        formatted=current,
+    )
+    claim = replace(
+        _claim(
+            "catalogue",
+            "edition-1",
+            ClaimKind.DESCRIPTION,
+            "Same words.",
+            scope=ClaimScope.WORK,
+        ),
+        formatted=offered,
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(description=field),
+                providers=(_provider("catalogue", "edition-1", (claim,)),),
+            )
+        ),
+        TargetDestination.DESCRIPTION,
+    )
+    assert ProposalOutcome.KEEP == result.outcome
+    assert result.selected_alternative_id is None

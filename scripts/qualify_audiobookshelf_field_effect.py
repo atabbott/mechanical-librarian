@@ -791,6 +791,102 @@ DESCRIPTION_LANDINGS: tuple[tuple[str, str, str, str], ...] = (
     ("quotes", "She said \"yes\" and 'no'.", "She said \"yes\" and 'no'.", "verified"),
 )
 
+_PARAGRAPHS_COPY = (
+    "<p>First qualification paragraph.</p><p>Second qualification paragraph.</p>"
+)
+
+# What every pinned Audiobookshelf stores for each formatted description that
+# Mechanical Librarian writes (#1995): the plan's visible text is its desired
+# value and its own formatted copy is the form sent. The final row writes an
+# earlier copy back over a different stored description, as a restore does.
+# The service stores a line break as `<br />`, which reads as the same text.
+FORMATTED_DESCRIPTION_LANDINGS: tuple[tuple[str, str, str, str, str], ...] = (
+    (
+        "formatted_paragraphs",
+        "First qualification paragraph. \u2022 Second qualification paragraph.",
+        _PARAGRAPHS_COPY,
+        _PARAGRAPHS_COPY,
+        "verified",
+    ),
+    (
+        "formatted_line_break",
+        "First qualification line. \u2022 Second qualification line.",
+        "<p>First qualification line.<br>Second qualification line.</p>",
+        "<p>First qualification line.<br />Second qualification line.</p>",
+        "verified",
+    ),
+    (
+        "formatted_unordered_list",
+        "Qualification items: \u2022 First item. \u2022 Second item.",
+        "<p>Qualification items:</p><ul><li>First item.</li><li>Second item.</li></ul>",
+        "<p>Qualification items:</p><ul><li>First item.</li><li>Second item.</li></ul>",
+        "verified",
+    ),
+    (
+        "formatted_ordered_list",
+        "Qualification steps: \u2022 First step. \u2022 Second step.",
+        "<p>Qualification steps:</p><ol><li>First step.</li><li>Second step.</li></ol>",
+        "<p>Qualification steps:</p><ol><li>First step.</li><li>Second step.</li></ol>",
+        "verified",
+    ),
+    (
+        "formatted_bold",
+        "A bold qualification claim.",
+        "<p>A <b>bold</b> qualification claim.</p>",
+        "<p>A <b>bold</b> qualification claim.</p>",
+        "verified",
+    ),
+    (
+        "formatted_strong",
+        "A strong qualification claim.",
+        "<p>A <strong>strong</strong> qualification claim.</p>",
+        "<p>A <strong>strong</strong> qualification claim.</p>",
+        "verified",
+    ),
+    (
+        "formatted_italic",
+        "An italic qualification claim.",
+        "<p>An <i>italic</i> qualification claim.</p>",
+        "<p>An <i>italic</i> qualification claim.</p>",
+        "verified",
+    ),
+    (
+        "formatted_emphasis",
+        "An emphasised qualification claim.",
+        "<p>An <em>emphasised</em> qualification claim.</p>",
+        "<p>An <em>emphasised</em> qualification claim.</p>",
+        "verified",
+    ),
+    (
+        "formatted_deleted",
+        "A struck qualification claim.",
+        "<p>A <del>struck</del> qualification claim.</p>",
+        "<p>A <del>struck</del> qualification claim.</p>",
+        "verified",
+    ),
+    (
+        "formatted_nested_mix",
+        "Opening bold and italic text. \u2022 Next line. \u2022 Strong item. \u2022 "
+        "Emphasised struck item. \u2022 Numbered. \u2022 Closing & done.",
+        "<p>Opening <b>bold <i>and italic</i></b> text.<br>Next line.</p>"
+        "<ul><li><strong>Strong</strong> item.</li>"
+        "<li><em>Emphasised <del>struck</del></em> item.</li></ul>"
+        "<ol><li>Numbered.</li></ol><p>Closing &amp; done.</p>",
+        "<p>Opening <b>bold <i>and italic</i></b> text.<br />Next line.</p>"
+        "<ul><li><strong>Strong</strong> item.</li>"
+        "<li><em>Emphasised <del>struck</del></em> item.</li></ul>"
+        "<ol><li>Numbered.</li></ol><p>Closing &amp; done.</p>",
+        "verified",
+    ),
+    (
+        "formatted_restore",
+        "First qualification paragraph. \u2022 Second qualification paragraph.",
+        _PARAGRAPHS_COPY,
+        _PARAGRAPHS_COPY,
+        "verified",
+    ),
+)
+
 
 def _description_landings(
     open_service,
@@ -809,7 +905,14 @@ def _description_landings(
     item, and the outcome is what the guarded path records for it (#1424).
     """
     rows: list[dict[str, object]] = []
-    for case, sent, stored, expected in DESCRIPTION_LANDINGS:
+    landings: tuple[tuple[str, str, str | None, str, str], ...] = (
+        *(
+            (case, sent, None, stored, expected)
+            for case, sent, stored, expected in DESCRIPTION_LANDINGS
+        ),
+        *FORMATTED_DESCRIPTION_LANDINGS,
+    )
+    for case, sent, form, stored, expected in landings:
         service, repository = open_service(case)
         try:
             placeholder = type(
@@ -829,6 +932,7 @@ def _description_landings(
                 destination="description",
                 value=before.value,
                 desired=sent,
+                form=form,
                 observation=before,
                 capabilities=capabilities,
                 clock=clock(),
@@ -1158,6 +1262,7 @@ def _plan(
     capabilities,
     clock: int,
     origin: str = "human",
+    form: str | None = None,
 ) -> FieldEffectPlan:
     decision = hashlib.sha256(destination.encode("ascii")).hexdigest()
     authority = EffectAuthority(
@@ -1185,6 +1290,7 @@ def _plan(
             destination=destination,
             pre_value=value,
             desired_value=desired,
+            desired_form=form,
             target_fingerprint="c" * 64,
             target_version=observation.version,
             dependency_digests=("d" * 64,),
@@ -1200,6 +1306,7 @@ def _plan(
             destination=destination,
             pre_value=value,
             desired_value=desired,
+            desired_form=form,
             target_fingerprint="c" * 64,
             target_version=observation.version,
             dependency_digests=("d" * 64,),

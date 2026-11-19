@@ -29,7 +29,7 @@ from mechanical_librarian.adapters.providers.visible_text import (
     DESCRIPTION_OVERSIZED,
     carries_markup,
     decoded_description,
-    shown_description,
+    read_description,
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
@@ -89,8 +89,19 @@ def visible_stored_description(value: str) -> object:
     anything reads it, one that reading refuses, or that is markup only once
     decoded, is `None`, and one that shows no text is returned as stored.
     """
-    shown, rendered = shown_description(value)
-    return None if rendered and not carries_markup(value) else shown
+    return stored_description_reading(value)[0]
+
+
+def stored_description_reading(value: str) -> tuple[object, str | None, bool]:
+    """`visible_stored_description`, its formatted copy, and whether the copy
+    keeps every piece of the stored markup (#1995, ADR-0107).
+
+    A restore writes that copy back, so only a lossless one is restorable.
+    """
+    shown, rendered, formatted, lossless = read_description(value)
+    if rendered and not carries_markup(value):
+        return None, None, False
+    return shown, formatted, lossless
 
 
 class AudiobookshelfItemReader:
@@ -479,7 +490,11 @@ def _target_field(
                 return TargetField(destination, TargetFieldState.OVERSIZED)
             return TargetField(destination, TargetFieldState.VALUE, value)
         if destination is TargetDestination.DESCRIPTION:
-            visible = visible_stored_description(raw) if type(raw) is str else raw
+            visible, formatted, lossless = (
+                stored_description_reading(raw)
+                if type(raw) is str
+                else (raw, None, False)
+            )
             if visible is DESCRIPTION_OVERSIZED:
                 # Checked as stored, so an oversized value carrying forbidden
                 # text stays malformed rather than merely oversized.
@@ -497,15 +512,20 @@ def _target_field(
             )
             # Writing the admitted text back reproduces the stored form only
             # where Audiobookshelf stores that text itself or with just `&`,
-            # `<` and `>` escaped; anything else is formatting a restore from
-            # here would lose (#1424).
+            # `<` and `>` escaped (#1424), or where the stored markup is all
+            # in the closed set its copy is written with (#1995); anything
+            # else is formatting a restore from here would lose.
             return TargetField(
                 destination,
                 TargetFieldState.VALUE,
                 value,
                 restorable=raw in {value, html.escape(value, quote=False)}
                 and not carries_markup(value)
-                and decoded_description(value) == value,
+                and decoded_description(value) == value
+                or visible is not None
+                and formatted is not None
+                and lossless,
+                formatted=None if visible is None else formatted,
             )
         if destination in {
             TargetDestination.AUTHORS,
@@ -738,4 +758,8 @@ def _reject_number(_: str) -> float:
     raise MetadataReportError("target response is invalid")
 
 
-__all__ = ["AudiobookshelfItemReader", "visible_stored_description"]
+__all__ = [
+    "AudiobookshelfItemReader",
+    "stored_description_reading",
+    "visible_stored_description",
+]

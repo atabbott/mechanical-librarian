@@ -206,11 +206,11 @@
       "category": "automatic",
       "change": "Kept Existing description.",
       "change_detail": "Kept Description as Existing description.",
-      "change_id": "automatic_decision_d662b8974078b1b0f1e9a94a072a1061416c5e6161f8d7189dc4f45e8341598a",
-      "check_group": "report_1f426e077f28151b7ef5e6d73a7808689b87451bfb7502a8c7588566e5b23b8b",
+      "change_id": "automatic_decision_a165d6b909f7f930645a7022a379d88436362fffa961a9c6605c1e99f1bc16e7",
+      "check_group": "report_38667f621b787c5a9ce40e7398acbbb1689a30eee22a44acfe47cfe12a66ff4b",
       "destination": "description",
       "diagnostic": null,
-      "event_id": "automatic_decision_d662b8974078b1b0f1e9a94a072a1061416c5e6161f8d7189dc4f45e8341598a",
+      "event_id": "automatic_decision_a165d6b909f7f930645a7022a379d88436362fffa961a9c6605c1e99f1bc16e7",
       "event_type": "metadata",
       "evidence": [
         {
@@ -397,7 +397,7 @@
     "total": 0
   },
   "provider_recovery": [],
-  "schema_version": "continuous-field-activity-v3",
+  "schema_version": "continuous-field-activity-v5",
   "suspensions": [],
   "waiting": {
     "applying": 0,

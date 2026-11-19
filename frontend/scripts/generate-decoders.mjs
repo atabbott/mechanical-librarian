@@ -9,6 +9,13 @@
 const RESPONSE_OMISSIONS = [
   ['LibrarySettings', 'display_name'],
   ['LibrarySettings', 'languages'],
+  ['_ActivityEvidence', 'formatted'],
+  ['_HistoryAutomaticItem', 'previous_formatted'],
+  ['_HistoryAutomaticItem', 'selected_formatted'],
+  ['_HistoryDecisionItem', 'previous_formatted'],
+  ['_HistoryDecisionItem', 'selected_formatted'],
+  ['_HistoryDescriptionItem', 'formatted'],
+  ['_HistoryDescriptionItem', 'visible_text'],
 ]
 
 const KNOWN = new Set([

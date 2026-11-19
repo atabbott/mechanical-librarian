@@ -2447,8 +2447,34 @@ def _owner_link_view(query: dict[str, list[str]]) -> dict[str, object]:
     }
 
 
+_TARGET_FIELD_KEYS = frozenset({"destination", "state", "value"})
+
+
+def with_formatted_copies(payload: object) -> object:
+    """Give every target field the `formatted` copy and every review field the
+    `proposed_formatted` list the server always sends (#1995): null here,
+    since no cohort description carries a copy."""
+    if isinstance(payload, dict):
+        if set(payload) == _TARGET_FIELD_KEYS:
+            payload["formatted"] = None
+        if "proposed_values" in payload and "proposed_formatted" not in payload:
+            payload["proposed_formatted"] = [None] * len(
+                cast("list[object]", payload["proposed_values"])
+            )
+        for item in payload.values():
+            with_formatted_copies(item)
+    elif isinstance(payload, list):
+        for item in payload:
+            with_formatted_copies(item)
+    return payload
+
+
 def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     """Return a fresh response for one synthetic API target or absolute URL."""
+    return with_formatted_copies(_rich_payload(target, review_case_id=review_case_id))
+
+
+def _rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     parsed = urlsplit(target)
     path = parsed.path
     query = parse_qs(parsed.query)

@@ -75,6 +75,7 @@ export const noteLabel: Record<ActivityNote, string> = {
   asked_again: 'Asked again',
   asked_again_matching: 'Asked again',
   asked_again_matching_written: 'Asked again',
+  held: 'Held by you',
   held_back: 'Held back',
   waiting_for_check: 'Waiting for check',
 }
@@ -86,6 +87,7 @@ export const noteSentence: Record<ActivityNote, string> = {
   // The server names a choice it had already written and verified (#1355).
   asked_again_matching_written:
     'Book matching changed what this field offers, so this choice no longer counts and the field is asking you again. Audiobookshelf keeps the value already written.',
+  held: 'Your earlier decision holds this field, so this is not written until you choose Resume automatic handling.',
   held_back: 'Automatic is off, so this is not written until you turn it on again.',
   waiting_for_check:
     'Book matching changed, so this change waits until this work is checked again.',

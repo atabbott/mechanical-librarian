@@ -33,6 +33,7 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.cover_automatic_decision import (
     SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
 )
+from mechanical_librarian.domain.metadata_report import REPORT_SCHEMA
 from mechanical_librarian.domain.owner_link import (
     OwnerLinkAction,
     OwnerLinkScope,
@@ -756,6 +757,12 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
         schema,
         "_REVIEW_TRANSITIONS_SQL",
         WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL,
+    )
+    # Its reports CHECK named report v82, before the formatted copy (#1995).
+    monkeypatch.setattr(
+        schema,
+        "_REPORTS_SQL",
+        schema._REPORTS_SQL.replace(f"'{REPORT_SCHEMA}'", "'metadata-report-v82'"),
     )
     open_repository(path).close()
     monkeypatch.undo()

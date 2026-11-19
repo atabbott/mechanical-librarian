@@ -270,7 +270,9 @@ export function WorkSummary({ work }: { work: LibraryWorkView }) {
               <dt>{destinationLabel(field.destination)}</dt>
               <dd>
                 {field.state === 'value' && field.destination === 'description' ? (
-                  <FormattedDescription value={field.value}>{field.value}</FormattedDescription>
+                  <FormattedDescription value={field.formatted ?? field.value}>
+                    {field.value}
+                  </FormattedDescription>
                 ) : field.state === 'value' ? (
                   valueText(field.destination, field.value)
                 ) : (

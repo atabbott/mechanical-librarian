@@ -1874,32 +1874,41 @@ it("shows a description's formatting in History", async () => {
   const candidate = authored.fields.find((field) => field.destination === 'description')
     ?.descriptionAdvice?.candidate
   if (!candidate) throw new Error('description fixture requires its candidate')
+  const advice = (description: string, rest: { formatted?: string; visibleText?: string }) => ({
+    category: 'description' as const,
+    occurredAt: 1786000000,
+    outcome: 'description_advice_recorded',
+    state: 'succeeded' as const,
+    engine: candidate.engine,
+    model: candidate.model,
+    candidate: { ...candidate, output: { ...candidate.output, description } },
+    selected: false,
+    chosenBy: null,
+    ...rest,
+  })
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
   http.getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
     items: [
-      {
-        category: 'description' as const,
-        occurredAt: 1786000000,
-        outcome: 'description_advice_recorded',
-        state: 'succeeded' as const,
-        engine: candidate.engine,
-        model: candidate.model,
-        candidate: {
-          ...candidate,
-          output: { ...candidate.output, description: '<p>Advised <b>text</b></p>' },
-        },
-        selected: false,
-        chosenBy: null,
-      },
+      // The advice shows its own copy, never the adviser's markup (#2003).
+      advice('<p>Advised <b>text</b> <u>under</u> &nbsp;<a href="x">link</a></p>', {
+        formatted: '<p>Advised <b>text</b> under link</p>',
+        visibleText: 'Advised text under link',
+      }),
+      // Readable advice without a copy shows its visible text, as text.
+      advice('Plain <u>advice</u>', { visibleText: 'Plain <u>advice</u>' }),
+      // Unreadable advice shows its text as written, as text.
+      advice('<p>An unclosed <b>story', {}),
       {
         category: 'owner' as const,
         occurredAt: 1786000000,
         applicationReason: null,
         destination: 'description' as const,
         outcome: 'accept',
-        previousValue: { kind: 'text', value: 'Before <i>this</i><br>line' },
-        selectedValue: { kind: 'text', value: '<ul><li>After</li></ul>' },
+        previousValue: { kind: 'text', value: 'Before this • line' },
+        selectedValue: { kind: 'text', value: 'After' },
+        previousFormatted: 'Before <i>this</i><br>line',
+        selectedFormatted: '<ul><li>After</li></ul>',
       },
       {
         category: 'owner' as const,
@@ -1907,8 +1916,31 @@ it("shows a description's formatting in History", async () => {
         applicationReason: null,
         destination: 'description' as const,
         outcome: 'keep_current',
-        previousValue: { kind: 'text', value: '<p>Kept <u>here</u></p>' },
-        selectedValue: { kind: 'text', value: '<p>Kept <u>here</u></p>' },
+        previousValue: { kind: 'text', value: 'Kept here' },
+        selectedValue: { kind: 'text', value: 'Kept here' },
+        previousFormatted: '<p>Kept <b>before</b></p>',
+        selectedFormatted: '<p>Kept <em>here</em></p>',
+      },
+      // Automatic's choice that differs only in formatting is never written:
+      // Kept shows the plain description the library keeps.
+      {
+        category: 'automatic' as const,
+        occurredAt: 1786000000,
+        destination: 'description' as const,
+        outcome: 'candidate',
+        previousValue: { kind: 'text', value: 'Same words kept' },
+        selectedValue: { kind: 'text', value: 'Same words kept' },
+        selectedFormatted: '<p>Same <b>words</b> kept</p>',
+      },
+      // A visible text holding literal markup, with no copy, is text.
+      {
+        category: 'owner' as const,
+        occurredAt: 1786000000,
+        applicationReason: null,
+        destination: 'description' as const,
+        outcome: 'reject',
+        previousValue: { kind: 'text', value: 'Literal <b>tags</b> stay' },
+        selectedValue: null,
       },
       {
         category: 'owner' as const,
@@ -1922,25 +1954,34 @@ it("shows a description's formatting in History", async () => {
     ],
   }))
   renderRoute('/review/case-1?field=description&subview=history', http)
-  expect(await screen.findByText('Advice was written.', { exact: false })).toBeVisible()
+  expect(await screen.findAllByText('Advice was written.', { exact: false })).toHaveLength(3)
   const formatted = [...document.querySelectorAll('.diagnostic-entry .description-formatted')]
   expect(formatted.map((node) => node.innerHTML)).toEqual([
-    '<p>Advised <strong>text</strong></p>',
+    '<p>Advised <strong>text</strong> under link</p>',
     'Before <em>this</em><br>line',
     '<ul><li>After</li></ul>',
-    '<p>Kept <u>here</u></p>',
+    // Kept shows the copy the library keeps, never the unwritten choice's.
+    '<p>Kept <strong>before</strong></p>',
   ])
   expect(formatted[0]).toHaveClass('description-advice-text')
   for (const node of formatted.slice(1)) {
     expect(node.parentElement?.tagName).toBe('DIV')
     expect(node.parentElement).toHaveClass('diagnostic-value')
   }
-  // Every other field stays text.
-  const title = [...document.querySelectorAll('.diagnostic-value')].find((node) =>
-    node.textContent.includes('A <b>title</b>'),
-  )
-  expect(title?.tagName).toBe('P')
-  expect(title?.querySelector('strong')).toBeNull()
+  // The adviser's own markup is never shown or rendered.
+  const entries = document.querySelector('.diagnostic-entry')?.parentElement
+  expect(entries?.querySelector('u, a')).toBeNull()
+  expect(entries?.textContent).not.toContain('&nbsp;')
+  expect(screen.getByText('Plain <u>advice</u>').tagName).toBe('P')
+  expect(screen.getByText('<p>An unclosed <b>story').tagName).toBe('P')
+  // A value with no copy, and every other field, stays text.
+  for (const words of ['Same words kept', 'Literal <b>tags</b> stay', 'A <b>title</b>']) {
+    const value = [...document.querySelectorAll('.diagnostic-value')].find((node) =>
+      node.textContent.includes(words),
+    )
+    expect(value?.tagName).toBe('P')
+    expect(value?.querySelector('strong')).toBeNull()
+  }
 })
 
 it('retains unconfirmed incumbent evidence in actual mapped owner history', async () => {

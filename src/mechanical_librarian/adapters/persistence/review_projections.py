@@ -387,42 +387,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         (review_case_id,),
                     )
                 ),
-                # The pinned value is the chosen value where the hold's
-                # decision chose one, and otherwise the value of that
-                # decision's case; a hold breaking that reads no pin. The
-                # chosen value is parsed here, not extracted in SQL, which
-                # would read a JSON boolean as an integer.
-                pins=tuple(
-                    (
-                        row[0],
-                        row[1] == 1,
-                        _canonical_json(
-                            {
-                                "destination": row[0],
-                                "state": "value",
-                                "value": json.loads(row[3])["value"],
-                            }
-                        )
-                        if row[2] in {"accept", "owner_entered"}
-                        else row[4],
-                    )
-                    for row in self._connection.execute(
-                        "SELECT hold.destination,"
-                        "json_extract(hold.document,'$.pin.in_force'),"
-                        "human.outcome,human.selected_value_document,target.value "
-                        "FROM field_effect_manual_holds hold JOIN human_decisions human "
-                        "ON human.decision_id=json_extract(hold.document,'$.decision_id') "
-                        "AND human.outcome IN ('pin','keep_current','accept','owner_entered') "
-                        "JOIN review_cases review "
-                        "ON review.review_case_id=human.review_case_id,"
-                        "json_each(review.document,'$.target.fields') target "
-                        "WHERE hold.review_case_id=? AND hold.active=1 "
-                        "AND json_type(hold.document,'$.pin')='object' "
-                        "AND json_extract(target.value,'$.destination')=hold.destination "
-                        "ORDER BY hold.destination",
-                        (review_case_id,),
-                    )
-                ),
+                pins=self._pins(review_case_id),
                 change_waiting_destinations=tuple(
                     row[0]
                     for row in self._connection.execute(
@@ -483,8 +448,53 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     },
                 ),
                 written_values=tuple(written.items()),
+                preview=self._connection.execute(
+                    "SELECT posture FROM metadata_policy_state WHERE singleton=1"
+                ).fetchone()
+                == ("preview",),
             )
         return snapshot
+
+    def _pins(self, review_case_id: str) -> tuple[tuple[str, bool, str], ...]:
+        """Each pin on the case's active holds (ADR-0085, Amendment 2).
+
+        The pinned value is the chosen value where the hold's decision chose
+        one, and otherwise the value of that decision's case; a hold breaking
+        that reads no pin. The chosen value is parsed here, not extracted in
+        SQL, which would read a JSON boolean as an integer. Kept apart so
+        `read_current_review_case` stays under the code-size guide.
+        """
+        return tuple(
+            (
+                row[0],
+                row[1] == 1,
+                _canonical_json(
+                    {
+                        "destination": row[0],
+                        "state": "value",
+                        "value": json.loads(row[3])["value"],
+                    }
+                )
+                if row[2] in {"accept", "owner_entered"}
+                else row[4],
+            )
+            for row in self._connection.execute(
+                "SELECT hold.destination,"
+                "json_extract(hold.document,'$.pin.in_force'),"
+                "human.outcome,human.selected_value_document,target.value "
+                "FROM field_effect_manual_holds hold JOIN human_decisions human "
+                "ON human.decision_id=json_extract(hold.document,'$.decision_id') "
+                "AND human.outcome IN ('pin','keep_current','accept','owner_entered') "
+                "JOIN review_cases review "
+                "ON review.review_case_id=human.review_case_id,"
+                "json_each(review.document,'$.target.fields') target "
+                "WHERE hold.review_case_id=? AND hold.active=1 "
+                "AND json_type(hold.document,'$.pin')='object' "
+                "AND json_extract(target.value,'$.destination')=hold.destination "
+                "ORDER BY hold.destination",
+                (review_case_id,),
+            )
+        )
 
     def _return_destinations(
         self, review_case_id: str, *, failed: bool

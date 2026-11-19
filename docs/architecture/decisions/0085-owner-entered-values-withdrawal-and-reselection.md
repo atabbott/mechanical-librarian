@@ -438,6 +438,46 @@ before this amendment. `test_a_withdrawal_that_restores_an_earlier_hold_still_re
 in `tests/unit/test_owner_answer_holds.py` keeps a withdrawal refusing where it
 gives the field back to an earlier hold.
 
+## Amendment 5: a held field says so in Preview (2026-11-19)
+
+- Status: proposed. Only the owner's own answer makes this amendment
+  accepted. Until then, the body above and Amendments 1 to 4 stay the
+  accepted record.
+
+In Preview, a field whose answer or taken-back pin still holds it read No
+change with no line, or with "No source offered a different value." while a
+source offered one. Turning on Automatic then left it as it was, and nothing
+said why.
+
+- **Held in Preview.** In Preview, a field other than the cover with an
+  active hold, no pin and no requested return, which a source offers a
+  different value for and which nothing else decides, reads with the cause
+  `held_in_preview`: its tab reads Decided and its line says the earlier
+  decision holds the field, so turning on Automatic leaves it as it is. This
+  qualifies Amendment 1's "Resume shows only where it can act" and Amendment
+  2's "open to be asked where none does": the field shows that it is held,
+  but `manual_hold` stays false, so Resume automatic handling is still
+  neither shown nor accepted. Needs you and Optional decide first, as in
+  Automatic.
+- **Unchanged elsewhere.** Outside Preview nothing changes: in Automatic the
+  hold shows with Resume where Automatic decided the field, and otherwise the
+  field reads No change.
+- **Activity.** An automatic choice that an active hold without a pin or a
+  requested return keeps unwritten reads "Held by you" while Automatic is on.
+  That includes an automatic description, and both halves of a split title and
+  subtitle when either is held, since the pair is written together. A choice
+  with nothing left to write, or whose write was stopped for the owner, reads
+  no note.
+
+No stored document changes shape; `review-case-detail-v15` and
+`continuous-field-activity-v5` carry the new cause and note. No clean rebuild.
+
+Proof: `test_preview_shows_an_earlier_choice_only_where_automatic_decides_again`
+and `test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided` in
+`tests/integration/test_leaving_automatic_posture.py`, and
+`test_a_pin_taken_back_in_preview_reads_decided_with_its_hold_line` in
+`tests/browser/test_review_browser.py`; each fails before this amendment.
+
 ## Amendment 6: a pin taken back leaves a hold Automatic decides under (2026-11-19)
 
 - Status: proposed. Only the owner's own answer makes this amendment
@@ -457,9 +497,12 @@ owner could not see the hold or release it until a later case of the work.
   or released by Resume, those rows no longer refuse Automatic's decision. A
   hold in force refuses its write until Resume, so the field shows the hold
   and Resume on this case as on a later case of the work; a released hold lets
-  it plan. This qualifies Amendment 2's "open to be asked where none does"
-  for a field Automatic decides, and Amendment 4's "A pin still refuses it"
-  for a pin taken back.
+  it plan. Activity notes the held choice "Held by you", as Amendment 5
+  describes. This qualifies Amendment 2's "open to be asked where none does"
+  for a field Automatic decides, Amendment 4's "A pin still refuses it" for a
+  pin taken back, and Amendment 5's "otherwise the field reads No change" for
+  such a field. Preview is unchanged: the field still reads held there, and
+  turning on Automatic leaves its value as it is.
 - **Unchanged elsewhere.** A pin in force or changed still refuses the
   decision (Amendment 2). An answer still refuses it where Automatic had not
   decided the field on the case, so it shows as the owner's answer until a
@@ -470,7 +513,9 @@ gains the decision at the case's next admission.
 
 Proof: `test_a_pin_taken_back_before_automatic_decided_shows_the_hold_once_it_is_on`
 in `tests/integration/test_leaving_automatic_posture.py` (unpinned fails before
-this amendment; pinned keeps a pin in force refusing),
+this amendment; pinned keeps a pin in force refusing; it also checks the
+Activity note), `test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided`
+in the same file (now decided under the hold once Automatic is on),
 `test_a_title_pin_taken_back_in_preview_holds_the_whole_bundle` in the same
 file (an audiobook's title and subtitle are decided as one bundle under the
 title's hold), and

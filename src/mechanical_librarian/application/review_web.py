@@ -60,6 +60,7 @@ from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceBinding,
 )
+from mechanical_librarian.domain.description_formatting import alternative_formatted
 from mechanical_librarian.domain.field_effect import (
     CLEARABLE_DESTINATIONS,
     decision_value_kind,
@@ -152,10 +153,13 @@ from mechanical_librarian.domain.shadow_outcome import (
 from mechanical_librarian.domain.validation import owner_password
 from mechanical_librarian.domain.value_flags import value_flags
 
-# v13: a field says whether its owner accept needs no write (ADR-0105).
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v13"]
+# v13: a field says whether its owner accept needs no write (ADR-0105);
+# v14: a description's current and proposed values carry their formatted
+# copies (#1995).
+# v15: a field an earlier decision holds in Preview says so (ADR-0085).
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v15"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v13"
+    "review-case-detail-v15"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
@@ -171,10 +175,11 @@ HUMAN_DECISION_ACK_SCHEMA: Final[HumanDecisionAckSchemaVersion] = (
 ReviewAttentionSchemaVersion = Literal["review-attention-v1"]
 REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v1"
 # v5: a keep says which write it went back on (#1523); v6: the book link's
-# history events (#1477); v7: a link named by an identifiers file (#1478).
-ReviewCaseHistorySchemaVersion = Literal["review-case-history-v7"]
+# history events (#1477); v7: a link named by an identifiers file (#1478);
+# v8: a description value's formatted copy, and advice as it is written (#2003).
+ReviewCaseHistorySchemaVersion = Literal["review-case-history-v8"]
 REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
-    "review-case-history-v7"
+    "review-case-history-v8"
 )
 
 # One book link History event; v2: a file link's identifier, source and
@@ -184,9 +189,10 @@ OWNER_LINK_HISTORY_EVENT_SCHEMA: Final[OwnerLinkHistoryEventSchemaVersion] = (
     "owner-link-history-event-v2"
 )
 
-# v10: a row's link says how it was made, and a file link names no source (#1478).
-ReviewLibrarySchemaVersion = Literal["review-library-v11"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v11"
+# v10: a row's link says how it was made, and a file link names no source (#1478);
+# v12: a current description carries its formatted copy (#1995).
+ReviewLibrarySchemaVersion = Literal["review-library-v12"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v12"
 
 ReviewReportDetailSchemaVersion = Literal["review-report-detail-v7"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
@@ -399,6 +405,9 @@ class CurrentReviewCaseSnapshot:
     # Whether that check gave up: its work is neither queued, delayed nor
     # running, as Policy's count of works that could not be checked reads it.
     check_given_up: bool = False
+    # Whether the library is in Preview, so a held field says turning on
+    # Automatic leaves it as it is.
+    preview: bool = False
 
 
 # A row's current link and the `owner_link` facts its report records (#1477).
@@ -1292,6 +1301,24 @@ class _ReviewCaseReadContext:
     ask_destinations: frozenset[str]
 
 
+def _automatic_citations(
+    snapshot: CurrentReviewCaseSnapshot, review_case_id: str
+) -> dict[str, tuple[str, ...]]:
+    """Each automatic source outcome's citations, one set per outcome id."""
+    citations: dict[str, tuple[str, ...]] = {}
+    for document in snapshot.automatic_source_outcome_documents:
+        outcome_set = ShadowOutcomeSet.from_json(document)
+        if outcome_set.review_case_id != review_case_id:
+            raise ReviewWebError("unavailable")
+        for outcome in outcome_set.outcomes:
+            if (
+                citations.setdefault(outcome.outcome_id, outcome.citation_ids)
+                != outcome.citation_ids
+            ):
+                raise ReviewWebError("unavailable")
+    return citations
+
+
 def _automatic_field_decision(
     context: _ReviewCaseReadContext,
     destination: str,
@@ -1549,6 +1576,14 @@ def _classify_field(
         single_source=single_source,
         pin=pin,
         repeated_description=repeated,
+        # In Preview, an answer or a taken-back pin still holds the field, so
+        # turning on Automatic leaves it as it is. A pin offers Unpin and a
+        # requested return is already on its way, so neither reads as held.
+        held_in_preview=snapshot.preview
+        and destination != "cover"
+        and destination in snapshot.held_destinations
+        and destination not in snapshot.return_requested_destinations
+        and not any(row[0] == destination for row in snapshot.pins),
     )
 
 
@@ -1658,6 +1693,19 @@ class InspectCurrentReviewCase:
     def _read(
         self, review_case_id: str, history_limit: int | None = None
     ) -> tuple[dict[str, object], MetadataReport, CurrentReviewCaseSnapshot]:
+        detail, report, snapshot, _ = self._read_cited(review_case_id, history_limit)
+        return detail, report, snapshot
+
+    def _read_cited(
+        self, review_case_id: str, history_limit: int | None = None
+    ) -> tuple[
+        dict[str, object],
+        MetadataReport,
+        CurrentReviewCaseSnapshot,
+        dict[str, tuple[str, ...]],
+    ]:
+        """The case detail, with each automatic source outcome's citations
+        as it read them, so History never parses them again (#2003)."""
         try:
             snapshot = self._repository.read_current_review_case(
                 review_case_id, history_limit
@@ -1676,17 +1724,7 @@ class InspectCurrentReviewCase:
             decisions: dict[str, HumanDecision] = {}
             automatic: dict[str, dict[str, object]] = {}
             automatic_source_outcome_ids: dict[str, str] = {}
-            automatic_sources: dict[str, tuple[str, ...]] = {}
-            for document in snapshot.automatic_source_outcome_documents:
-                outcome_set = ShadowOutcomeSet.from_json(document)
-                if outcome_set.review_case_id != review_case_id:
-                    raise ReviewWebError("unavailable")
-                for outcome in outcome_set.outcomes:
-                    previous = automatic_sources.setdefault(
-                        outcome.outcome_id, outcome.citation_ids
-                    )
-                    if previous != outcome.citation_ids:
-                        raise ReviewWebError("unavailable")
+            automatic_sources = _automatic_citations(snapshot, review_case_id)
             # Declared once: the parse loop below binds a decision, while the
             # per-field projection later looks one up and may find none.
             decision: HumanDecision | None
@@ -1841,6 +1879,7 @@ class InspectCurrentReviewCase:
             },
             report,
             snapshot,
+            automatic_sources,
         )
 
     def _field(
@@ -2118,6 +2157,18 @@ class InspectCurrentReviewCase:
             "proposed_values": [
                 alternative["value"] for alternative in eligible_alternatives
             ],
+            # Each proposed description's formatted copy, beside its value
+            # (#1995, ADR-0107); every other field's are null.
+            "proposed_formatted": [
+                alternative_formatted(
+                    report,
+                    alternative["evidence_references"],
+                    alternative["value"].get("value"),
+                )
+                if destination == "description"
+                else None
+                for alternative in eligible_alternatives
+            ],
             "choice_contexts": choice_contexts,
             "provenance": references,
             "corroboration_sources": _corroboration_source_labels(
@@ -2353,11 +2404,17 @@ class InspectCurrentReviewCase:
         }
 
     def history(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
-        _detail, report, snapshot = self._read(review_case_id, limit)
+        _detail, report, snapshot, citations = self._read_cited(review_case_id, limit)
         case = ReviewCase.create_from_data(json.loads(snapshot.case_document)["case"])
         target_fields = canonical_target_fields(report.target.fields)
         automatic_values: dict[
-            str, tuple[dict[str, object] | None, dict[str, object] | None]
+            str,
+            tuple[
+                dict[str, object] | None,
+                dict[str, object] | None,
+                str | None,
+                str | None,
+            ],
         ] = {}
         decisions: dict[str, dict[str, object]] = {}
         for document in snapshot.decision_documents:
@@ -2417,7 +2474,23 @@ class InspectCurrentReviewCase:
                 )
                 if historical_decision.outcome == "candidate" and selected is None:
                     continue
-                automatic_values[decision_id] = (previous, selected)
+                # Each description value's own copy: the report's, or the one
+                # the decision's own citations agree on (#2003).
+                previous_formatted = current.get("formatted") if previous else None
+                automatic_values[decision_id] = (
+                    previous,
+                    selected,
+                    cast("str | None", previous_formatted),
+                    alternative_formatted(
+                        report,
+                        citations.get(historical_decision.source_outcome_id, ()),
+                        selected.get("value"),
+                    )
+                    if historical_decision.outcome == "candidate" and selected
+                    else cast("str | None", previous_formatted)
+                    if selected
+                    else None,
+                )
                 continue
             try:
                 decision = HumanDecision.from_json(document)
@@ -2453,10 +2526,17 @@ class InspectCurrentReviewCase:
                     == decisions.get(decision_id, {}).get("destination")
                     else None
                 )
-                item["previous_value"], item["selected_value"] = joined or (
+                previous, selected, previous_formatted, selected_formatted = joined or (
+                    None,
+                    None,
                     None,
                     None,
                 )
+                item["previous_value"], item["selected_value"] = previous, selected
+                if previous_formatted is not None:
+                    item["previous_formatted"] = previous_formatted
+                if selected_formatted is not None:
+                    item["selected_formatted"] = selected_formatted
             history_items.append(item)
         cover_history = []
         for raw in snapshot.cover_history:
@@ -3488,7 +3568,8 @@ def _presented_field(field: TargetField) -> dict[str, object]:
     """One current field as review shows it, without the store's restore flag.
 
     Whether a description can be written back is decided where a restore is
-    planned (#1424); the owner reads the value, not that flag.
+    planned (#1424); the owner reads the value, not that flag. A description
+    keeps its formatted copy, which its card shows (#1995).
     """
     data = field.to_data()
     data.pop("restorable", None)

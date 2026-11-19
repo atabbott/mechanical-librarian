@@ -302,11 +302,50 @@ def test_automatic_admission_refuses_rewrite_below_description_floor(
     advice = store.read(binding.review_case_id)
     assert advice["candidate"]["candidate_id"] == candidate.candidate_id
     assert advice["selection"] is None
+    # The card shows what is written: the copy, else the visible text.
+    marked = description.startswith("<")
+    assert (advice["formatted"], advice["visible_text"]) == (
+        ("<p>A story.</p>", "A story.") if marked else (None, description)
+    )
     decision = store.admit(candidate.candidate_id, binding, "human", "b" * 64, 12)
     assert decision.origin == "human"
-    assert PersistedFieldEffectAuthority(repository).resolve(
-        decision
-    ).decision_value == {"kind": "text", "value": description}
+    selected = store.read(binding.review_case_id)["selected_advice"]
+    assert (selected["formatted"], selected["visible_text"]) == (
+        advice["formatted"],
+        advice["visible_text"],
+    )
+    # The advice is read as any description is: markup is written as its
+    # formatted copy beside the visible text (#1995).
+    snapshot = PersistedFieldEffectAuthority(repository).resolve(decision)
+    assert (snapshot.decision_value, snapshot.decision_form) == (
+        ({"kind": "text", "value": "A story."}, "<p>A story.</p>")
+        if description.startswith("<")
+        else ({"kind": "text", "value": description}, None)
+    )
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "description", ["<p>An unclosed story.", "<b>A <i>crossed</b> story.</i>"]
+)
+def test_advice_the_reader_refuses_cannot_be_chosen(
+    tmp_path: Path, description: str
+) -> None:
+    # Text the description reader refuses is never written (#1995, D3).
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, description=description
+    )
+    advice = store.read(binding.review_case_id)
+    assert (advice["readable"], advice["formatted"], advice["visible_text"]) == (
+        False,
+        None,
+        None,
+    )
+    with pytest.raises(ValueError, match="description advice unreadable"):
+        store.admit(candidate.candidate_id, binding, "human", "b" * 64, 12)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_decisions"
+    ).fetchone() == (0,)
     repository.close()
 
 
@@ -3510,4 +3549,106 @@ def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
     assert PersistedFieldEffectAuthority(repository).resolve(decision).decision_value
     assert automatic_counted() >= 1
     assert store.read(binding.review_case_id)["current"] is True
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    ("current", "advised"),
+    (
+        ("Authored synthetic description.", "<p>Authored synthetic description.</p>"),
+        (
+            "Fish & chips for the earlier text.",
+            "Fish &amp; chips for the earlier text.",
+        ),
+    ),
+    ids=("markup", "character-reference"),
+)
+def test_advice_that_reads_as_the_current_text_records_no_change_that_reopens(
+    tmp_path: Path, current: str, advised: str
+) -> None:
+    """Advice whose visible text is what the library holds records no change,
+    and startup validation reads it by the same reading (#1995)."""
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        _validate_field_effect_state,
+    )
+    from tests.support.automatic_no_change import _automatic_no_change_inputs
+    from tests.support.owner_values import rewritten
+
+    report, *_ = _automatic_no_change_inputs("description_preserved")
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path,
+        automatic=False,
+        description=advised,
+        report_override=rewritten(report, description=current),
+    )
+    try:
+        assert candidate.output.description == advised
+        decision = store.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
+        assert repository.record_current_field_effect_no_change(decision, 12)
+        _validate_field_effect_state(repository._connection)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (1,)
+    finally:
+        repository.close()
+
+
+def test_history_and_activity_show_chosen_advice_as_it_is_written(
+    tmp_path: Path,
+) -> None:
+    """History's advice items and Activity's selected description read as
+    the text that is written, never the adviser's own markup (#2003)."""
+    from mechanical_librarian.adapters.persistence.description_advice import (
+        advised_description,
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from mechanical_librarian.domain.activity_records import readable_activity_event
+
+    raw = '<p>Advised <u>words</u> &nbsp;<a href="x">and</a> <strong>bold</strong>.</p>'
+    advised = advised_description(raw)
+    assert advised is not None
+    plain, copy = advised
+    assert copy is not None and "<strong>" in copy and "<u>" not in copy
+    repository, store, binding, candidate, _ = _prepared(tmp_path, description=raw)
+    store.admit(candidate.candidate_id, binding, "human", "b" * 64, 12)
+    items = InspectCurrentReviewCase(repository).history(binding.review_case_id)[
+        "items"
+    ]
+    for kind in ("description_advice_recorded", "description_selected"):
+        item = next(item for item in items if item["kind"] == kind)
+        assert (item["formatted"], item["visible_text"]) == (copy, plain)
+        # The adviser's own text stays recorded as it was, and is not shown.
+        assert item["candidate"]["output"]["description"] == raw
+    page = repository.field_effect_activity_page(
+        search=None, event_type="all", occurred_after=0, page=1, page_size=25
+    )
+    selected = next(
+        event
+        for event in page["events"]
+        if event["record"]["source_kind"] == "description_decision"
+    )
+    assert selected["record"]["selected_value"] == {"kind": "text", "value": plain}
+    assert selected["record"]["selected_form"] == copy
+    readable_activity_event(selected, None)
+    (fact,) = (
+        fact for fact in selected["evidence"] if fact["label"] == "Selected description"
+    )
+    assert fact == {"label": "Selected description", "value": plain, "formatted": copy}
+    repository.close()
+
+
+def test_history_shows_unreadable_advice_with_no_copy(tmp_path: Path) -> None:
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    repository, _store, binding, _candidate, _ = _prepared(
+        tmp_path, description="<p>An unclosed story."
+    )
+    item = next(
+        item
+        for item in InspectCurrentReviewCase(repository).history(
+            binding.review_case_id
+        )["items"]
+        if item["kind"] == "description_advice_recorded"
+    )
+    assert (item["formatted"], item["visible_text"]) == (None, None)
     repository.close()
