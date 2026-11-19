@@ -671,15 +671,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         except (KeyError, FieldEffectError) as error:
             raise MetadataReportError("review case snapshot is unavailable") from error
         earlier: dict[str, tuple[int, dict[str, object], str | None]] = {}
-        bundles: dict[str, set[str]] = {}
         for document in earlier_documents:
             try:
                 decision = AutomaticDecision.from_json(document)
-            except (KeyError, ValueError, FieldEffectError):
-                continue
-            if decision.bundle_id is not None:
-                bundles.setdefault(decision.bundle_id, set()).add(decision.destination)
-            try:
                 value = _automatic_decision_value(
                     decision,
                     case,
@@ -705,9 +699,25 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             if not owner_blocks_automatic(
                 self._connection,
                 case.review_case_id,
-                {destination} if bundle is None else bundles[bundle],
+                {destination}
+                if bundle is None
+                else self._automatic_bundle_destinations(case.review_case_id, bundle),
             )
         )
+
+    def _automatic_bundle_destinations(
+        self, review_case_id: str, bundle_id: str
+    ) -> set[str]:
+        """Every field of one automatic bundle on the case, whatever each
+        member decided, as the mint drops the bundle all or none."""
+        return {
+            str(destination)
+            for (destination,) in self._connection.execute(
+                "SELECT destination FROM automatic_decisions WHERE review_case_id=? "
+                "AND json_extract(document,'$.bundle_id')=?",
+                (review_case_id, bundle_id),
+            )
+        }
 
     def _cover_taste_verdict(
         self, review_case_id: str

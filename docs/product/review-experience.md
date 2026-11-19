@@ -27,7 +27,7 @@ items, and titles and authors never decide identity.
 
 A case holds the current metadata and cover, and says when either is missing
 or not loaded. It holds the field proposals, the cover and series choices and
-references to their evidence. It also holds the rule-based recommendation,
+references to their evidence. It holds the rule-based recommendation,
 what your policy does with each field, and your current decision. Identical
 proposed values become one choice that keeps every source and
 disagreement. Evidence alone never adds a row to Attention. A field that needs
@@ -44,7 +44,7 @@ write with its check. A recommendation alone never decides a field or allows a
 write. An Automatic decision needs its own qualification, tied to the exact
 case and policy version
 ([ADR-0036](../architecture/decisions/0036-qualified-decision-only-automatic-policy.md)).
-Every write, yours or automatic, also needs write permission, unchanged
+Every write, yours or automatic, needs write permission, unchanged
 evidence and library values and a consistent database, and is read back
 ([ADR-0037](../architecture/decisions/0037-origin-neutral-guarded-field-effects.md)).
 
@@ -173,7 +173,7 @@ These controls retry different things:
 A failure before a report has no automatic retry
 ([provider recovery](../operations/provider-recovery.md)).
 
-The background-work control also marks lookups waiting to retry: its popover
+The background-work control marks lookups waiting to retry: its popover
 lists each source and library with the reason, the number waiting and the next
 automatic retry, offers Retry now, and says what it did. Library and Settings show a notice only when lookups will not be retried
 unless the owner acts, or a source's lookups have waited 24 hours. A
@@ -274,17 +274,17 @@ Each tab names the field's status:
 - Decided means your decision is recorded or an earlier one still holds the
   field.
 - Pinned means Audiobookshelf shows the value you pinned.
-- Automatic means Automatic decided the field, outside Attention. You can
-  still change it.
+- Automatic means Automatic decided the field. You can still change it, and it
+  is not in Attention.
 - Optional means you can choose, but the field is not counted and the canvas
   skips it when it moves on. Its one reason says why no review is needed, and
   it shows no condition asking you to choose.
 - No change means the field is there for reference. Keeping the current value
   is a choice only beside another eligible value or description advice. Each
   such field shows its value and a reason, never a selectable `Not set`. In
-  Preview, a field Automatic chose earlier reads No change and, unless your
-  answer or pin keeps it off, shows that choice and says turning on Automatic
-  decides it.
+  Preview, a field Automatic chose earlier reads No change. It shows that
+  choice and says turning on Automatic decides it, unless your answer or pin
+  keeps Automatic off.
 
 Empty fields with no proposal sit behind one `Show N more fields` tab, and
 fields with nothing to decide in one closed panel headed `No change:` and their
@@ -381,7 +381,7 @@ Optional. Tag and ASIN fills never enter Attention on their own. A narrator fill
 enters it only when Authors and narrators is set to Ask me.
 
 When the evidence supports only the book, Recording match says the exact
-recording is not known. It also says your choices apply only to the fields
+recording is not known. It says your choices apply only to the fields
 offered, and that this evidence cannot set recording identifiers or make
 automatic changes. The canvas then offers choices only for series, title,
 description, genre, publication date, cover and an empty Narrators field, never

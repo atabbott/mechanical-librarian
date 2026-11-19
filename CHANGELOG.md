@@ -13,10 +13,9 @@ brackets are GitHub issues.
 ## 0.39.0 — Owner trust (in progress)
 
 - In Preview, a field you answered or pinned no longer shows Automatic's
-  earlier choice or says turning on Automatic decides it again, which it
-  doesn't: an answer or pin keeps Automatic off the field, also one given
-  before the work changed and came back, or one on a field Automatic decides
-  together with it (#1996).
+  earlier choice or says turning on Automatic decides it again. Your answer
+  or pin keeps Automatic off the field. That includes an answer given before
+  the work was changed and changed back (#1996).
 - After you choose Resume automatic handling, a field no longer tells you
   to use Resume to release your decision, and its pin line says to choose a
   value and then pin it, since choosing alone doesn't pin (#1988).
