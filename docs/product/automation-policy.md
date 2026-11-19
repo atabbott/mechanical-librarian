@@ -75,14 +75,16 @@ as one), description advice adds nothing, Book matching does not ask it again
 and the field's hold blocks every write. If a later read shows another
 value, the field returns to Attention with the pinned value beside it, and
 Automatic still decides nothing; pinning the new value or Unpin settles it.
-Unpin removes the pin but keeps the hold, so Automatic stays off until Resume
-automatic handling. Choosing another value ends the pin. A field has no pin
+Unpin removes the pin but keeps the hold, so Automatic writes nothing for the
+field until Resume automatic handling. Where the field is Automatic and you
+only pinned it, Automatic still decides it on that work, so Resume shows
+there. Choosing another value ends the pin. A field has no pin
 while a change that is not your own standing answer waits to be written, after
 Resume automatic handling until you choose again, on a description while your
 choice of the adviser's text stands, where the library's value could not be
 read, and on covers
 ([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
-Amendment 2).
+Amendments 2 and 6).
 
 ### Built-in policy
 

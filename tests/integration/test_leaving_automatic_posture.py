@@ -851,6 +851,116 @@ def test_an_answer_with_no_earlier_automatic_decision_still_keeps_automatic_off(
     assert _read_fields(library)["authors"]["manual_hold"] is False
 
 
+@pytest.mark.parametrize("unpinned", [True, False], ids=["unpinned", "pinned"])
+def test_a_pin_taken_back_before_automatic_decided_shows_the_hold_once_it_is_on(
+    preview_library: _Library, tmp_path: Path, unpinned: bool
+) -> None:
+    """A pin taken back in Preview, before Automatic decided anything on the
+    case, leaves a hold Automatic decides under once it is on: the field shows
+    the hold and Resume on that case, and Resume plans the decision (ADR-0085,
+    Amendment 6). Before, the unpin refused the decision, so the field read No
+    change with no hold and no Resume until a later case. Activity notes the
+    held choice. A pin still in force keeps Automatic off it (Amendment 2)."""
+    library = preview_library
+    root = library.root
+    pin = _owner(library, "pin", 11)
+    root.record_human_decision(pin)
+    if unpinned:
+        root.record_human_decision(_owner(library, "unpin", 12))
+    _confirm_automatic(library, 40)
+
+    field = _read_fields(library)["authors"]
+    if not unpinned:
+        assert ("authors", library.generation()) not in library.decisions()
+        assert field["manual_hold"] is False
+        assert field["classification_cause"] == "pinned"
+        return
+    decided = library.automatic(library.generation())
+    assert decided.review_case_id == library.case_id()
+    assert decided.decision_id not in library.pending()
+    assert field["manual_hold"] is True
+    assert (field["classification"], field["classification_cause"]) == (
+        "human_recorded",
+        "human_decided",
+    )
+    scheduler, _, _ = _applier(library, tmp_path)
+    assert _note(library, scheduler, decided.decision_id) == "held"
+    assert root.clear_field_effect_manual_hold(
+        library.case_id(), "authors", 42, pin.decision_id
+    )
+    assert decided.decision_id in library.pending()
+    assert _read_fields(library)["authors"]["manual_hold"] is False
+    assert _note(library, scheduler, decided.decision_id) is None
+
+
+def test_a_title_pin_taken_back_in_preview_holds_the_whole_bundle(
+    tmp_path: Path,
+) -> None:
+    """An audiobook's split title and subtitle are decided as one bundle. A
+    pin on the title taken back in Preview leaves a hold Automatic decides the
+    bundle under once it is on: the title shows the hold, and Resume on it
+    lets the bundle plan (ADR-0085, Amendment 6)."""
+    root = open_repository(tmp_path / "pair.sqlite3", cross_thread=True)
+    try:
+        report = synthetic_audiobook_bibliographic_report()
+        case_id, _policy = publish_audiobook_preview(
+            root,
+            report,
+            ("title_layout", "subtitle"),
+            selected_options={
+                "title_layout": "title_and_subtitle",
+                "subtitle": "corroborated_split",
+            },
+            preview=True,
+        )
+        root.persist_shadow_outcome(case_id, 4)
+        case = ReviewCase.create_from_data(
+            json.loads(root.get_review_case(case_id))["case"]
+        )
+        proposal_id = next(
+            value["proposal_id"]
+            for value in case.proposals
+            if value["destination"] == "title"
+        )
+        pin, unpin = (
+            HumanDecision.create(
+                case,
+                proposal_id=str(proposal_id),
+                target_fingerprint=case.target_fingerprint,
+                destination="title",
+                actor="owner",
+                outcome=outcome,
+                selected_value=None,
+                idempotency_key=f"owner-command-{outcome}-title",
+                occurred_at=at,
+            )
+            for outcome, at in (("pin", 7), ("unpin", 8))
+        )
+        root.record_human_decision(pin)
+        root.record_human_decision(unpin)
+        root.activate_qualified_automatic(40)
+        root.reconcile_case_level(case_id, 41)
+        root.persist_shadow_outcome(case_id, 41)
+
+        bundles = root._connection.execute(
+            "SELECT destination,json_extract(document,'$.bundle_id') "
+            "FROM automatic_decisions ORDER BY destination"
+        ).fetchall()
+        assert [row[0] for row in bundles] == ["subtitle", "title"]
+        assert bundles[0][1] is not None and bundles[0][1] == bundles[1][1]
+        detail = InspectCurrentReviewCase(root).run(case_id)
+        fields = {str(field["destination"]): field for field in detail["fields"]}
+        assert fields["title"]["manual_hold"] is True
+        assert root.clear_field_effect_manual_hold(
+            case_id, "title", 50, pin.decision_id
+        )
+        detail = InspectCurrentReviewCase(root).run(case_id)
+        fields = {str(field["destination"]): field for field in detail["fields"]}
+        assert fields["title"]["manual_hold"] is False
+    finally:
+        root.close()
+
+
 def test_an_owner_plan_waits_while_its_case_is_retired_for_reconciliation(
     library: _Library, tmp_path: Path
 ) -> None:
@@ -1559,8 +1669,9 @@ def test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided(
     preview_library: _Library,
 ) -> None:
     """A pin taken back in Preview leaves its hold, so the field reads held.
-    Turning on Automatic then leaves it as it is: with no earlier automatic
-    decision on the case, Automatic records none under the hold (ADR-0085)."""
+    Turning on Automatic then leaves its value as it is: Automatic decides the
+    field under the hold and writes nothing until Resume (ADR-0085,
+    Amendments 5 and 6)."""
     library = preview_library
     before = _read_fields(library)["authors"]["current"]
     for outcome, at in (("pin", 11), ("unpin", 12)):
@@ -1575,13 +1686,12 @@ def test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided(
 
     _confirm_automatic(library, 40)
 
-    assert ("authors", library.generation()) not in library.decisions()
+    assert ("authors", library.generation()) in library.decisions()
     field = _read_fields(library)["authors"]
-    assert (
-        field["classification_cause"],
-        field["classification_reason"],
-        field["manual_hold"],
-    ) == ("nothing_to_decide", _NOTHING_TO_DECIDE, False)
+    assert (field["classification_cause"], field["manual_hold"]) == (
+        "human_decided",
+        True,
+    )
     assert field["current"] == before
 
 

@@ -477,3 +477,47 @@ and `test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided` in
 `tests/integration/test_leaving_automatic_posture.py`, and
 `test_a_pin_taken_back_in_preview_reads_decided_with_its_hold_line` in
 `tests/browser/test_review_browser.py`; each fails before this amendment.
+
+## Amendment 6: a pin taken back leaves a hold Automatic decides under (2026-11-19)
+
+- Status: proposed. Only the owner's own answer makes this amendment
+  accepted. Until then, the body above and the earlier amendments stay the
+  accepted record.
+
+Amendment 2 keeps the hold after Unpin, so Automatic stays off the field until
+Resume automatic handling. Where the owner pinned a field and took the pin back
+before Automatic had decided it on the case, as on a work first prepared in
+Preview, the pin and unpin rows refused Automatic's decision once it was on.
+With no decision to hold, the field read No change with no reason that
+applied and offered no Resume, while the hold still kept Automatic off it. The
+owner could not see the hold or release it until a later case of the work.
+
+- **Decided under the hold.** Where every owner row of the field on the case
+  is a `pin` or an `unpin` and the field has a hold row on the case, in force
+  or released by Resume, those rows no longer refuse Automatic's decision. A
+  hold in force refuses its write until Resume, so the field shows the hold
+  and Resume on this case as on a later case of the work; a released hold lets
+  it plan. Activity notes the held choice "Held by you", as Amendment 5
+  describes. This qualifies Amendment 2's "open to be asked where none does"
+  for a field Automatic decides, Amendment 4's "A pin still refuses it" for a
+  pin taken back, and Amendment 5's "otherwise the field reads No change" for
+  such a field. Preview is unchanged: the field still reads held there, and
+  turning on Automatic leaves its value as it is.
+- **Unchanged elsewhere.** A pin in force or changed still refuses the
+  decision (Amendment 2). An answer still refuses it where Automatic had not
+  decided the field on the case, so it shows as the owner's answer until a
+  later case (Amendment 1), and a withdrawal still refuses it (Amendment 4).
+
+No stored document changes shape and no version moves; an existing database
+gains the decision at the case's next admission.
+
+Proof: `test_a_pin_taken_back_before_automatic_decided_shows_the_hold_once_it_is_on`
+in `tests/integration/test_leaving_automatic_posture.py` (unpinned fails before
+this amendment; pinned keeps a pin in force refusing; it also checks the
+Activity note), `test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided`
+in the same file (now decided under the hold once Automatic is on),
+`test_a_title_pin_taken_back_in_preview_holds_the_whole_bundle` in the same
+file (an audiobook's title and subtitle are decided as one bundle under the
+title's hold), and
+`test_a_pin_taken_back_in_preview_shows_the_hold_once_automatic_is_on` in
+`tests/browser/test_review_browser.py`.

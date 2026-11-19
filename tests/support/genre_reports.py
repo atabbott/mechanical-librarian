@@ -152,11 +152,14 @@ def publish_genre_case(
     others: str = "ask",
     tags_option: str | None = None,
     category: str = "genres",
+    preview: bool = False,
 ):
     """Publish an actual policy, proposal, review case and persisted outcome.
 
     ``tags_option`` replaces the default tags option (off) when given.
-    ``category`` is the policy category ``destination`` governs.
+    ``category`` is the policy category ``destination`` governs. With
+    ``preview`` the owner stays in Preview, so the work is first prepared
+    there and Automatic decides nothing until it is turned on.
     """
     destinations = {
         name: "unsupported" if name == "explicit" else others
@@ -177,7 +180,7 @@ def publish_genre_case(
         2,
         expected_active_generation=1,
     )
-    if destination == "automatic":
+    if destination == "automatic" and not preview:
         repository.activate_qualified_automatic(3)
     proposal = evaluate_report(
         report, resolved.resolved_id, human_review_destinations(resolved)

@@ -122,23 +122,27 @@ _REPLACEMENT_BLOCKING_EFFECT_SQL = (
 # What the owner did that keeps Automatic from deciding a field on a case in
 # a generation: an owner decision of any episode, a withdrawal or an unpin
 # included, or a pin, in force or changed (ADR-0085, Amendment 2). An owner
-# decision does not where Automatic decided the field on the case in an
-# earlier generation and the field has a hold row, in force or released by
-# Resume: Automatic decides it again, a hold in force refuses the write until
-# Resume and a released one lets it plan, so leaving Automatic and turning it
-# on again leaves the field as it was (ADR-0085, Amendment 4). A withdrawal
+# decision does not where the field has a hold row, in force or released by
+# Resume, and either Automatic decided the field on the case in an earlier
+# generation (ADR-0085, Amendment 4) or the owner only pinned it and took the
+# pin back (Amendment 6): Automatic decides it, a hold in force refuses the
+# write until Resume and a released one lets it plan, so the field shows the
+# hold and Resume on this case as on a later one. A pin in force or changed
+# still refuses, and so does an answer on a field Automatic had not decided
+# on the case, which shows as the owner's answer (Amendment 1). A withdrawal
 # still refuses: it deletes the row its answer set, and where it gives the
 # field back to the work's earlier hold, the field's latest answer is the
-# withdrawal, which the exemption leaves out. Bound by (case, destination,
-# case, destination, case, destination, generation, case, destination, case,
-# destination).
+# withdrawal, which the exemption leaves out. Bound by `_owner_mint_conflict`.
 _OWNER_MINT_CONFLICT_SQL = (
     "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
     "AND NOT (EXISTS (SELECT 1 FROM field_effect_manual_holds held "
     "WHERE held.review_case_id=? AND held.destination=?) "
-    "AND EXISTS (SELECT 1 FROM automatic_decisions earlier "
+    "AND (EXISTS (SELECT 1 FROM automatic_decisions earlier "
     "WHERE earlier.review_case_id=? AND earlier.destination=? "
     "AND earlier.policy_generation<?) "
+    "OR NOT EXISTS (SELECT 1 FROM human_decisions answer "
+    "WHERE answer.review_case_id=? AND answer.destination=? "
+    "AND answer.outcome NOT IN ('pin','unpin'))) "
     "AND COALESCE((SELECT latest.outcome FROM human_decisions latest "
     "WHERE latest.review_case_id=? AND latest.destination=? "
     "AND latest.outcome NOT IN ('pin','unpin') "
@@ -304,7 +308,7 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
 
 def _owner_mint_conflict(
     review_case_id: str, destination: str, generation: int
-) -> tuple[str, str, str, str, str, str, int, str, str, str, str]:
+) -> tuple[str, str, str, str, str, str, int, str, str, str, str, str, str]:
     case = review_case_id
     return (
         case,
@@ -318,12 +322,16 @@ def _owner_mint_conflict(
         destination,
         case,
         destination,
+        case,
+        destination,
     )
 
 
 def _automatic_mint_conflict(
     decision: AutomaticDecision,
-) -> tuple[str, str, str, str, str, str, int, str, str, str, str, str, str, int]:
+) -> tuple[
+    str, str, str, str, str, str, int, str, str, str, str, str, str, str, str, int
+]:
     return (
         *_owner_mint_conflict(
             decision.review_case_id, decision.destination, decision.policy_generation
