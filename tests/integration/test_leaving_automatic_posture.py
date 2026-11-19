@@ -1142,7 +1142,8 @@ def test_activity_notes_an_automatic_choice_a_hold_keeps_unwritten(
     """Automatic's choice on a field an owner answer holds reads Held by you
     while Automatic is on and the hold keeps it unwritten; a pinned hold,
     a choice already written, an earlier generation's choice and a released
-    hold read no note (ADR-0085)."""
+    hold read no note, nor does a Resume on its way; checks that end with
+    failures bring it back (ADR-0085, #1755)."""
     root = library.root
     automatic = library.automatic()
     case_id = library.case_id()
@@ -1168,6 +1169,22 @@ def test_activity_notes_an_automatic_choice_a_hold_keeps_unwritten(
     again = library.automatic(3)
     assert _note(library, scheduler, again.decision_id) == "held"
     assert _note(library, scheduler, automatic.decision_id) is None
+
+    # A requested Resume is on its way, so the note goes; checks that end
+    # with failures keep the hold and ask for Resume again, so it is back.
+    scan = root.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 41)
+    assert root.request_field_effect_manual_return(
+        case_id, "authors", owner.decision_id, scan.scan_id, 41, 41
+    )
+    assert _note(library, scheduler, again.decision_id) is None
+    with root._connection:
+        root._connection.execute(
+            "UPDATE review_preparation_scans SET state='completed_with_failures' "
+            "WHERE scan_id=?",
+            (scan.scan_id,),
+        )
+    assert _read_fields(library)["authors"]["manual_return_failed"] is True
+    assert _note(library, scheduler, again.decision_id) == "held"
 
     assert root.clear_field_effect_manual_hold(
         case_id, "authors", 42, owner.decision_id

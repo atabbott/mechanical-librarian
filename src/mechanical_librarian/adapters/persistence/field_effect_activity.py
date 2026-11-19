@@ -4722,9 +4722,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if automatic:
             # An automatic choice that an owner hold keeps unwritten until
             # Resume: a pinned hold offers Unpin instead, a requested return
-            # is already on its way, and a keep or ignore has nothing to
-            # write. Leaving Automatic always starts a new generation, so an
-            # active-generation row means Automatic is on (ADR-0085).
+            # is already on its way (one whose checks ended with failures
+            # keeps the hold and asks for Resume again, #1755), and a keep or
+            # ignore has nothing to write. Leaving Automatic always starts a
+            # new generation, so an active-generation row means Automatic is
+            # on (ADR-0085).
             rows = self._connection.execute(
                 "SELECT automatic.decision_id FROM automatic_decisions automatic "
                 "JOIN current_review_packages current "
@@ -4737,8 +4739,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + ") AND json_extract(automatic.document,'$.outcome')='candidate' AND "
                 + _active_generation_automatic_sql("automatic")
                 + " AND COALESCE(json_type(hold.document,'$.pin'),'null')<>'object' "
-                "AND COALESCE(json_type(hold.document,'$.pending_return'),'null')"
-                "<>'object' AND NOT EXISTS (SELECT 1 FROM field_effects effect "
+                "AND (COALESCE(json_type(hold.document,'$.pending_return'),'null')"
+                "<>'object' OR EXISTS (SELECT 1 FROM review_preparation_scans scan "
+                "WHERE scan.scan_id=json_extract(hold.document,'$.pending_return.scan_id') "
+                "AND scan.state='completed_with_failures')) "
+                "AND NOT EXISTS (SELECT 1 FROM field_effects effect "
                 "WHERE effect.decision_id=automatic.decision_id AND effect.state IN "
                 "('claimed','applying','reconciling','verified'))",
                 list(automatic),
