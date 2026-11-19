@@ -1758,7 +1758,20 @@ def test_an_answer_beside_an_earlier_generation_decision_can_be_withdrawn(
             _accept(library.case(), "authors", "answer-in-preview-mode", 31)
         )
     if answered.endswith("confirmed"):
+        # Confirming decides the held field again under its hold, so the
+        # field reads as before leaving: the hold, Resume, and the refusal
+        # (ADR-0085, Amendment 4).
         _confirm_automatic(library, 40)
+        assert library.decisions() == [("authors", 2), ("authors", 3)]
+        field = _read_fields(library)["authors"]
+        assert (field["manual_hold"], field["owner_control"]["withdraw"]) == (
+            True,
+            "automatic_hold",
+        )
+        with pytest.raises(HumanDecisionError) as refused:
+            root.record_human_decision(_withdraw(library, "withdraw-confirmed", 41))
+        assert refused.value.code == "automatic_hold"
+        return
     assert library.decisions() == [("authors", 2)]
     field = _read_fields(library)["authors"]
     assert (field["manual_hold"], field["owner_control"]["withdraw"]) == (
