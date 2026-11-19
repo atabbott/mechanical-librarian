@@ -2445,6 +2445,18 @@
       "_ActivityEvidence": {
         "additionalProperties": false,
         "properties": {
+          "formatted": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formatted"
+          },
           "label": {
             "maxLength": 64,
             "title": "Label",
@@ -2807,7 +2819,7 @@
             "type": "array"
           },
           "schema_version": {
-            "const": "continuous-field-activity-v3",
+            "const": "continuous-field-activity-v4",
             "title": "Schema Version",
             "type": "string"
           },
@@ -7257,6 +7269,18 @@
             "title": "Outcome",
             "type": "string"
           },
+          "previous_formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Formatted"
+          },
           "previous_value": {
             "anyOf": [
               {
@@ -7275,6 +7299,18 @@
             "const": "automatic-decision-history-event-v1",
             "title": "Schema Version",
             "type": "string"
+          },
+          "selected_formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Formatted"
           },
           "selected_value": {
             "anyOf": [
@@ -7462,6 +7498,18 @@
             "title": "Outcome",
             "type": "string"
           },
+          "previous_formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Formatted"
+          },
           "previous_value": {
             "anyOf": [
               {
@@ -7480,6 +7528,18 @@
             "const": "human-decision-event-v1",
             "title": "Schema Version",
             "type": "string"
+          },
+          "selected_formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Formatted"
           },
           "selected_value": {
             "anyOf": [
@@ -7544,6 +7604,18 @@
             "title": "Engine",
             "type": "string"
           },
+          "formatted": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formatted"
+          },
           "kind": {
             "enum": [
               "description_advice_recorded",
@@ -7593,6 +7665,18 @@
             ],
             "title": "State",
             "type": "string"
+          },
+          "visible_text": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Visible Text"
           }
         },
         "required": [
@@ -7914,7 +7998,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v7",
+            "const": "review-case-history-v8",
             "title": "Schema Version",
             "type": "string"
           }

@@ -4696,3 +4696,41 @@ def test_a_description_card_carries_its_formatted_copy(tmp_path: Path) -> None:
     finally:
         next(context, None)
         store.close()
+
+
+def test_history_carries_each_description_values_copy(tmp_path: Path) -> None:
+    """An accepted formatted description's History item carries the copy of
+    each value beside it, through the response model (#2003)."""
+    from tests.support.genre_reports import (
+        OFFERED_DESCRIPTION_COPY,
+        STORED_DESCRIPTION_COPY,
+        formatted_description_report,
+    )
+    from tests.support.owner_values import OwnerStore
+
+    store = OwnerStore(tmp_path, formatted_description_report())
+    store.decide(
+        "accept",
+        {"kind": "text", "value": "A qualified description."},
+        destination="description",
+    )
+    context = review_web_context(lambda *_: cast(Any, store.repository))
+    web = next(context)
+    try:
+        web.login()
+        response = web.client.get(
+            f"/api/v1/review-cases/{store.case.review_case_id}/history"
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["schema_version"] == REVIEW_CASE_HISTORY_SCHEMA
+        (item,) = (
+            item for item in body["items"] if item["kind"] == "human_decision_recorded"
+        )
+        assert (item["previous_formatted"], item["selected_formatted"]) == (
+            STORED_DESCRIPTION_COPY,
+            OFFERED_DESCRIPTION_COPY,
+        )
+    finally:
+        next(context, None)
+        store.close()

@@ -2010,3 +2010,57 @@ def test_a_waiting_write_whose_authority_is_withdrawn_reads_as_stopped(
         "Nothing was sent to Audiobookshelf"
     )
     assert effects.target.read(planned.plan).value == "Paper Moons: Larkspur"
+
+
+def test_an_automatic_description_shows_its_own_citations_copy(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    """An automatic candidate shows the copy its own outcome's citations
+    agree on, in Activity and History alike (#2003)."""
+    from dataclasses import replace
+
+    from tests.support.genre_reports import OFFERED_DESCRIPTION_COPY
+
+    candidate = _target_work_candidate("catalogue", "edition-1", "work-1")
+    candidate = replace(
+        candidate,
+        claims=tuple(
+            replace(claim, formatted=OFFERED_DESCRIPTION_COPY)
+            if claim.kind is ClaimKind.DESCRIPTION
+            else claim
+            for claim in candidate.claims
+        ),
+    )
+    report = _target_work_report((("catalogue", "hardcover", (candidate,), True),))
+    decision = next(
+        value
+        for value in _automatic_decisions(
+            effects, report, "description_fill", "safe_plain_text", qualified=True
+        )
+        if value.destination == "description" and value.outcome == "candidate"
+    )
+    activity = next(
+        event for event in _ledger(effects) if event["event_id"] == decision.decision_id
+    )
+    facts = {fact["label"]: fact for fact in activity["evidence"]}
+    assert facts["New value"] == {
+        "label": "New value",
+        "value": "A qualified description.",
+        "formatted": OFFERED_DESCRIPTION_COPY,
+    }
+    assert "formatted" not in facts["Previous value"]
+    assert "<" not in str(activity["change"])
+    _ActivityEvent.model_validate(activity)
+    (item,) = (
+        item
+        for item in InspectCurrentReviewCase(effects.repository).history(
+            decision.review_case_id
+        )["items"]
+        if item.get("decision_id") == decision.decision_id
+    )
+    assert item["selected_value"] == {
+        "kind": "text",
+        "value": "A qualified description.",
+    }
+    assert item["selected_formatted"] == OFFERED_DESCRIPTION_COPY
+    assert "previous_formatted" not in item

@@ -1006,6 +1006,10 @@ export type HistoryItemView = (
       model: string
       engine: string
       candidate: DescriptionCandidateDto | null
+      // The advice as it is written: its formatted copy and visible text,
+      // both null where it can't be read (#2003).
+      formatted?: string | null
+      visibleText?: string | null
       selected: boolean
       // Who chose the advice. Read only on a choice; null when the event
       // carries no decision.
@@ -1021,6 +1025,9 @@ export type HistoryItemView = (
       outcome: DecisionOutcome
       previousValue: HistoryValueView | null
       selectedValue: HistoryValueView | null
+      // Each description value's formatted copy (#2003).
+      previousFormatted?: string | null
+      selectedFormatted?: string | null
     }
   | {
       category: 'automatic'
@@ -1028,6 +1035,8 @@ export type HistoryItemView = (
       outcome: AutomaticOutcome
       previousValue: HistoryValueView | null
       selectedValue: HistoryValueView | null
+      previousFormatted?: string | null
+      selectedFormatted?: string | null
     }
   | {
       category: 'preview'
@@ -3675,6 +3684,34 @@ const mapCoverHistoryItem = (
   }
 }
 
+// A copy stands beside a description value only (ADR-0091, #2003); a value
+// without one is left without the key.
+const mapHistoryFormatted = (item: {
+  readonly destination: string
+  readonly previous_value: { readonly value: unknown } | null
+  readonly selected_value: { readonly value: unknown } | null
+  readonly previous_formatted?: string | null
+  readonly selected_formatted?: string | null
+}): { previousFormatted?: string; selectedFormatted?: string } => {
+  const pairs = [
+    [item.previous_formatted ?? null, item.previous_value],
+    [item.selected_formatted ?? null, item.selected_value],
+  ] as const
+  if (
+    pairs.some(
+      ([formatted, value]) =>
+        formatted !== null &&
+        (item.destination !== 'description' || value === null || value.value === null),
+    )
+  )
+    throw new ApiError(502, 'invalid_history_formatted')
+  const [[previousFormatted], [selectedFormatted]] = pairs
+  return {
+    ...(previousFormatted === null ? {} : { previousFormatted }),
+    ...(selectedFormatted === null ? {} : { selectedFormatted }),
+  }
+}
+
 const mapHistoryItem = (item: HistoryDto['items'][number], index: number): HistoryItemView => {
   if ('checkpoint' in item)
     return { category: 'transition', occurredAt: null, outcome: item.kind, reason: item.reason }
@@ -3692,6 +3729,8 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
       model: item.model,
       engine: item.engine,
       candidate: item.candidate === null ? null : mapDescriptionCandidate(item.candidate),
+      ...(item.formatted == null ? {} : { formatted: item.formatted }),
+      ...(item.visible_text == null ? {} : { visibleText: item.visible_text }),
       selected: item.kind === 'description_selected',
       chosenBy:
         item.decision === null ? null : item.decision.origin === 'human' ? 'owner' : 'automatic',
@@ -3707,6 +3746,7 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
       destination: item.destination,
       previousValue: item.previous_value,
       selectedValue: item.selected_value,
+      ...mapHistoryFormatted(item),
     }
   if (item.schema_version === 'automatic-decision-history-event-v1')
     return {
@@ -3716,6 +3756,7 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
       destination: item.destination,
       previousValue: item.previous_value,
       selectedValue: item.selected_value,
+      ...mapHistoryFormatted(item),
     }
   if (item.schema_version === 'matching-changed-history-event-v1')
     return { category: 'matching_changed', occurredAt, destination: item.destination }

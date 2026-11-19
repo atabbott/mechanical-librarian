@@ -47,6 +47,15 @@ const settings = closed(
   },
   ['name'],
 )
+// It names a description's optional formatted copies too (#2003), so every
+// synthetic document reaches one of each.
+const copy = { anyOf: [{ type: 'string' }, { type: 'null' }] }
+const copies = {
+  _ActivityEvidence: closed({ formatted: copy }, []),
+  _HistoryAutomaticItem: closed({ previous_formatted: copy, selected_formatted: copy }, []),
+  _HistoryDecisionItem: closed({ previous_formatted: copy, selected_formatted: copy }, []),
+  _HistoryDescriptionItem: closed({ formatted: copy, visible_text: copy }, []),
+}
 const synthetic = (schemas: Record<string, unknown>, paths: Record<string, unknown> = {}) => ({
   openapi: '3.1.0',
   info: { title: 'synthetic', version: '1' },
@@ -54,9 +63,19 @@ const synthetic = (schemas: Record<string, unknown>, paths: Record<string, unkno
     '/settings': {
       get: { operationId: 'settings', responses: { '200': json(ref('LibrarySettings')) } },
     },
+    '/copies': {
+      get: { operationId: 'copies', responses: { '200': json(ref('Copies')) } },
+    },
     ...paths,
   },
-  components: { schemas: { LibrarySettings: settings, ...schemas } },
+  components: {
+    schemas: {
+      LibrarySettings: settings,
+      ...copies,
+      Copies: closed(Object.fromEntries(Object.keys(copies).map((name) => [name, ref(name)]))),
+      ...schemas,
+    },
+  },
 })
 
 const generate = (doc: unknown) => {

@@ -33,6 +33,9 @@ from dataclasses import replace
 from typing import Any
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+from mechanical_librarian.adapters.persistence.description_advice import (
+    _advised_reading,
+)
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
     case_level_unreconciled,
@@ -82,6 +85,7 @@ from mechanical_librarian.domain.description_advice import (
 )
 from mechanical_librarian.domain.field_effect import (
     CLEARABLE_DESTINATIONS,
+    FieldEffectError,
     FieldEffectNoChange,
     FieldEffectOperation,
     decision_value_kind,
@@ -431,6 +435,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         written_field_values: Callable[[str], tuple[tuple[str, object], ...]],
         recorded_follows: Callable[[HumanDecision], tuple[str | None, bool]],
         followed_write: Callable[[HumanDecision], sqlite3.Row | tuple[str, ...] | None],
+        description_form: Callable[[HumanDecision, ReviewCase, object], str | None],
     ) -> None:
         super().__init__(connection, binding)
         self._requeue_title_projections = requeue_title_projections
@@ -447,6 +452,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self._written_field_values = written_field_values
         self._recorded_follows = recorded_follows
         self._followed_write = followed_write
+        self._description_form = description_form
 
     def _record_automatic_outcomes(
         self, outcome: ShadowOutcomeSet, occurred_at: int
@@ -2058,6 +2064,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         if type(target) is not dict:
             raise MetadataReportError("review history is invalid")
         previous = target.get("value") if target.get("state") == "value" else None
+        previous_formatted = target.get("formatted")
         # Every decision follows the write frozen with it when it was
         # recorded, the one that landed last in its episode before it: never
         # one read again from episode floors that later returns move, nor
@@ -2071,6 +2078,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 and plan.subtitle_companion is not None
                 else plan.desired_value
             )
+            previous_formatted = plan.desired_form
         kind = decision_value_kind(decision.destination)
         value["previous_value"] = (
             {"kind": kind, "value": previous} if previous is not None else None
@@ -2082,7 +2090,30 @@ class SQLiteDecisionRepository(ConnectionScoped):
             if decision.outcome == "keep_current" and target.get("state") == "value"
             else None
         )
+        if decision.destination == "description":
+            # Each value's own copy, as it was read, written or chosen (#2003).
+            if previous is not None and type(previous_formatted) is str:
+                value["previous_formatted"] = previous_formatted
+            selected_formatted = (
+                self._chosen_form(decision, case)
+                if decision.outcome == "accept"
+                else target.get("formatted")
+                if value["selected_value"] is not None
+                else None
+            )
+            if type(selected_formatted) is str:
+                value["selected_formatted"] = selected_formatted
         return (row[6], int(decision_row[0]), row[0], value)
+
+    def _chosen_form(self, decision: HumanDecision, case: ReviewCase) -> str | None:
+        """The copy an accepted description writes, as its plan binds it; a
+        binding that can't be read leaves it plain (#2003)."""
+        try:
+            return self._description_form(decision, case, decision.selected_value)
+        except FieldEffectError as error:
+            if error.code != "authority_binding":
+                raise
+            return None
 
     def _description_advice_history(
         self, review_case_id: str, limit: int
@@ -2113,11 +2144,13 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         "state": state,
                         "engine": engine,
                         "model": model,
-                        "candidate": None
-                        if candidate_document is None
-                        else DescriptionAdviceCandidate.from_json(
-                            candidate_document
-                        ).model_dump(),
+                        **_advice_reading(
+                            None
+                            if candidate_document is None
+                            else DescriptionAdviceCandidate.from_json(
+                                candidate_document
+                            )
+                        ),
                         "decision": None,
                     },
                 )
@@ -2145,7 +2178,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         "state": "succeeded" if selected_current else "superseded",
                         "engine": candidate.engine,
                         "model": candidate.model,
-                        "candidate": candidate.model_dump(),
+                        **_advice_reading(candidate),
                         "decision": authored.model_dump(),
                     },
                 )
@@ -2183,9 +2216,19 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         "state": state,
                         "engine": candidate.engine,
                         "model": candidate.model,
-                        "candidate": candidate.model_dump(),
+                        **_advice_reading(candidate),
                         "decision": authored.model_dump(),
                     },
                 )
             )
         return events
+
+
+def _advice_reading(
+    candidate: DescriptionAdviceCandidate | None,
+) -> dict[str, object]:
+    """A History advice item's candidate, and its text as it is written,
+    never the adviser's own markup (#2003)."""
+    if candidate is None:
+        return {"candidate": None, "formatted": None, "visible_text": None}
+    return {"candidate": candidate.model_dump(), **_advised_reading(candidate)}

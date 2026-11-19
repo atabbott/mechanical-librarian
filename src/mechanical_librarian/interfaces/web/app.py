@@ -1372,6 +1372,23 @@ class _HistoryTransitionItem(_ClosedModel):
     transition_id: str = Field(max_length=128)
 
 
+_HistoryFormatted = Annotated[str, Field(max_length=16_384)]
+
+
+def _history_formatted(
+    item: _HistoryDecisionItem | _HistoryAutomaticItem,
+) -> None:
+    """A History copy belongs to a description value it stands beside."""
+    for formatted, value in (
+        (item.previous_formatted, item.previous_value),
+        (item.selected_formatted, item.selected_value),
+    ):
+        if formatted is not None and (
+            item.destination != "description" or value is None or value.value is None
+        ):
+            raise ValueError("only a description value carries a formatted copy")
+
+
 class _HistoryDecisionItem(_ClosedModel):
     actor: Literal["owner"]
     application: Literal["apply", "recorded_only"] | None
@@ -1386,6 +1403,19 @@ class _HistoryDecisionItem(_ClosedModel):
     review_case_id: str
     schema_version: HumanDecisionEventSchemaVersion
     selected_value: _OwnerValue | None
+    # Each description value's formatted copy, shown in its place, and left
+    # out where a value has none, so the browser reads it as optional (#2003).
+    previous_formatted: _HistoryFormatted | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    selected_formatted: _HistoryFormatted | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def formatted_values(self) -> _HistoryDecisionItem:
+        _history_formatted(self)
+        return self
 
 
 class _HistoryPreviewItem(_ClosedModel):
@@ -1421,6 +1451,17 @@ class _HistoryAutomaticItem(_ClosedModel):
     review_case_id: str
     schema_version: Literal["automatic-decision-history-event-v1"]
     selected_value: _ProposedValue | None
+    previous_formatted: _HistoryFormatted | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    selected_formatted: _HistoryFormatted | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def formatted_values(self) -> _HistoryAutomaticItem:
+        _history_formatted(self)
+        return self
 
 
 class _HistoryMatchingChangedItem(_ClosedModel):
@@ -1481,6 +1522,14 @@ class _HistoryDescriptionItem(_ClosedModel):
     model: str = Field(max_length=256)
     candidate: _DescriptionCandidateCopy | None
     decision: _DescriptionDecisionCopy | None
+    # The advice as it is written: its formatted copy and visible text, never
+    # the adviser's own markup (#2003); both left out where it can't be read.
+    formatted: _HistoryFormatted | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    visible_text: _HistoryFormatted | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 _OwnerLinkProvider = Literal[
@@ -2362,6 +2411,11 @@ class _ActivityCapability(_ClosedModel):
 class _ActivityEvidence(_ClosedModel):
     label: str = Field(max_length=64)
     value: str = Field(max_length=512)
+    # A description value's formatted copy, cut well nested to the same
+    # bound, shown in place of the text; left out where there is none (#2003).
+    formatted: str | None = Field(
+        default=None, max_length=512, exclude_if=lambda value: value is None
+    )
 
 
 class _ActivityPolicyChange(_ClosedModel):
@@ -2430,6 +2484,14 @@ class _ActivityEvent(_ClosedModel):
     transition_id: str | None = Field(default=None, max_length=128)
     work_label: str = Field(default="Recorded work", max_length=512)
     work_id: str = Field(max_length=512)
+
+    @model_validator(mode="after")
+    def formatted_evidence(self) -> _ActivityEvent:
+        if self.destination != "description" and any(
+            fact.formatted is not None for fact in self.evidence
+        ):
+            raise ValueError("only a description fact carries a formatted copy")
+        return self
 
 
 class _ActivityTransition(_ClosedModel):

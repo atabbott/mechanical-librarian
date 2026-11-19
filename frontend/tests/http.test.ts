@@ -1461,6 +1461,33 @@ describe('ReviewApiClient', () => {
       await expect(readEvidence(invalid)).rejects.toThrow(ApiError)
   })
 
+  it("maps a description value's copy beside it, and refuses one anywhere else", async () => {
+    const described = historyDecisionItem({
+      destination: 'description',
+      previous_value: { kind: 'text', value: 'Old words' },
+      selected_value: { kind: 'text', value: 'New words' },
+      previous_formatted: '<p>Old <b>words</b></p>',
+      selected_formatted: '<p>New <em>words</em></p>',
+    })
+    const [item] = (await readHistory(caseHistory({ items: [described] }))).items
+    expect(item).toMatchObject({
+      category: 'owner',
+      previousFormatted: '<p>Old <b>words</b></p>',
+      selectedFormatted: '<p>New <em>words</em></p>',
+    })
+    // A copy is optional: an item without one reads as before (#2003).
+    const [plain] = (await readHistory(caseHistory({ items: [historyDecisionItem()] }))).items
+    expect(plain).not.toHaveProperty('previousFormatted')
+    for (const invalid of [
+      { ...described, destination: 'title' },
+      { ...described, previous_value: null },
+      { ...described, selected_value: { kind: 'empty', value: null } },
+    ])
+      await expect(readHistory(caseHistory({ items: [invalid] }))).rejects.toMatchObject({
+        code: 'invalid_history_formatted',
+      })
+  })
+
   it('maps history without exposing retained identities and rejects malformed values', async () => {
     const items = [
       historyDecisionItem({

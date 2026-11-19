@@ -775,3 +775,102 @@ def test_only_a_description_carries_a_formatted_copy() -> None:
         _TargetField.model_validate(
             described | {"destination": "title", "formatted": "<p>Words.</p>"}
         )
+
+
+def _history_decision(**overrides: object) -> dict[str, object]:
+    item: dict[str, object] = {
+        "actor": "owner",
+        "application": "apply",
+        "decision_id": "decision",
+        "destination": "description",
+        "event_id": "event",
+        "kind": "human_decision_recorded",
+        "occurred_at": 1,
+        "outcome": "accept",
+        "previous_value": {"kind": "text", "value": "Before."},
+        "review_case_id": "case",
+        "schema_version": "human-decision-event-v1",
+        "selected_value": {"kind": "text", "value": "Words."},
+    }
+    return item | overrides
+
+
+def test_history_carries_a_copy_only_beside_a_description_value() -> None:
+    """History's copies are optional, set only on a description item beside
+    the value they belong to (#2003)."""
+    from mechanical_librarian.interfaces.web.app import (
+        _HistoryAutomaticItem,
+        _HistoryDecisionItem,
+        _HistoryDescriptionItem,
+    )
+
+    # A hand-built item with no copy keys stays valid.
+    assert (
+        _HistoryDecisionItem.model_validate(_history_decision()).selected_formatted
+        is None
+    )
+    copies = {
+        "previous_formatted": "<p>Before.</p>",
+        "selected_formatted": "<p>Words.</p>",
+    }
+    assert _HistoryDecisionItem.model_validate(_history_decision(**copies))
+    for refused in (
+        _history_decision(destination="title", **copies),
+        _history_decision(previous_value=None, previous_formatted="<p>Before.</p>"),
+        _history_decision(
+            selected_value={"kind": "empty", "value": None},
+            selected_formatted="<p>Words.</p>",
+        ),
+        _history_decision(selected_formatted="x" * 16_385),
+    ):
+        with pytest.raises(ValidationError):
+            _HistoryDecisionItem.model_validate(refused)
+    automatic = {
+        key: _history_decision()[key]
+        for key in (
+            "decision_id",
+            "destination",
+            "occurred_at",
+            "previous_value",
+            "review_case_id",
+            "selected_value",
+        )
+    } | {
+        "kind": "automatic_decision_recorded",
+        "origin": "automatic_policy",
+        "outcome": "candidate",
+        "schema_version": "automatic-decision-history-event-v1",
+    }
+    assert _HistoryAutomaticItem.model_validate(automatic | copies)
+    with pytest.raises(ValidationError):
+        _HistoryAutomaticItem.model_validate(
+            automatic | copies | {"destination": "title"}
+        )
+    assert {"formatted", "visible_text"} <= set(_HistoryDescriptionItem.model_fields)
+    assert not _HistoryDescriptionItem.model_fields["formatted"].is_required()
+
+
+def test_activity_carries_a_bounded_copy_only_on_a_description() -> None:
+    from mechanical_librarian.interfaces.web.app import (
+        _ActivityEvent,
+        _ActivityEvidence,
+    )
+
+    event = {
+        "destination": "description",
+        "library": "books",
+        "origin": "human",
+        "state": "verified",
+        "work_id": "work",
+        "evidence": [
+            {"label": "New value", "value": "Words.", "formatted": "<p>Words.</p>"}
+        ],
+    }
+    assert _ActivityEvent.model_validate(event)
+    assert _ActivityEvidence.model_validate({"label": "New value", "value": "Words."})
+    with pytest.raises(ValidationError):
+        _ActivityEvent.model_validate(event | {"destination": "title"})
+    with pytest.raises(ValidationError):
+        _ActivityEvidence.model_validate(
+            {"label": "New value", "value": "Words.", "formatted": "x" * 513}
+        )

@@ -243,6 +243,57 @@ def formatted_description_text(copy: str) -> str:
     )
 
 
+# What ends a cut copy's text.
+_ELLIPSIS_TEXT = "…"
+
+
+def cut_formatted_description(copy: str, limit: int) -> str:
+    """An admitted copy cut to `limit` characters, still well nested (#2003).
+
+    A copy that fits is returned whole. Otherwise whole tags only are kept,
+    text is never cut inside a character reference, an element that shows no
+    text yet is dropped, and `…` ends the text inside the last element left
+    open, never directly in a list, before every open element closes.
+    """
+    if len(copy) <= limit:
+        return copy
+    out = ""
+    # Each open element, where its tag starts in `out`, and whether it shows.
+    stack: list[tuple[str, int, bool]] = []
+
+    def room() -> int:
+        closers = sum(len(name) + 3 for name, _, _ in stack)
+        return limit - len(_ELLIPSIS_TEXT) - closers - len(out)
+
+    for match in _FORMATTED_TOKEN_PATTERN.finditer(copy):
+        closing, name, token = match.group(1), match.group(2), match.group(0)
+        if closing:
+            out += token
+            stack.pop()
+            continue
+        if name is not None:
+            if len(token) + (0 if name == "br" else len(name) + 3) > room():
+                break
+            if name != "br":
+                stack.append((name, len(out), False))
+            out += token
+            continue
+        kept = token[: max(room(), 0)]
+        if kept != token and "&" in kept and ";" not in kept[kept.rfind("&") :]:
+            kept = kept[: kept.rfind("&")]
+        out += kept
+        if kept.strip():
+            stack = [(tag, start, True) for tag, start, _ in stack]
+        if kept != token:
+            break
+    # Drop elements that show nothing, and never end directly in a list.
+    while stack and (not stack[-1][2] or stack[-1][0] in {"ul", "ol"}):
+        name, start, shown = stack.pop()
+        out = out[:start] if not shown else out + f"</{name}>"
+    out = out.rstrip() + _ELLIPSIS_TEXT
+    return out + "".join(f"</{name}>" for name, _, _ in reversed(stack))
+
+
 def _validate_projection_safety(text: str, label: str, *, markup: bool = False) -> str:
     lowered = text.casefold()
     # Each pattern below can match only text holding the literal its guard
