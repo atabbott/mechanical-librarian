@@ -14,7 +14,7 @@ brackets are GitHub issues.
 
 - After you leave Automatic and turn it on again, a field your earlier
   decision holds still says so and offers Resume automatic handling. Before,
-  it could read No change with no way to hand it back to Automatic (#ISSUE).
+  it could read No change with no way to hand it back to Automatic (#1999).
 - A description's bold, italics, paragraphs and lists now show as
   formatting, not as tags, wherever the workspace shows a description.
   Markup that cannot be read safely is still shown as written (#1992).
