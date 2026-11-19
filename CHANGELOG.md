@@ -12,6 +12,9 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- After you choose Resume automatic handling, a field no longer tells you
+  to use Resume to release your decision, and its pin line says to choose a
+  value and then pin it, since choosing alone doesn't pin (#1988).
 - After a write over a description stored with formatting, the field no
   longer offers Before your change, which was recorded and then never
   written. It says to restore the earlier description in Audiobookshelf. The

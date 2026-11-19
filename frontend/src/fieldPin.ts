@@ -107,7 +107,7 @@ const notOffered = (field: ReviewField) => {
   if (field.humanDecision !== null && advice === null)
     return field.humanDecision.outcome === 'reject'
       ? null
-      : 'You chose Resume automatic handling for this field. Choose a value again to pin it.'
+      : 'You chose Resume automatic handling for this field. Choose a value again, then pin it.'
   const written =
     advice !== null ? advice.application_outcome === 'verified' : field.changeWritten === true
   return written

@@ -299,7 +299,7 @@ describe('the sentence at the foot of the field', () => {
       })
       expect(pinFoot(resumed, shown)).toEqual({
         sentence:
-          'You chose Resume automatic handling for this field. Choose a value again to pin it.',
+          'You chose Resume automatic handling for this field. Choose a value again, then pin it.',
         unpin: false,
         quiet: true,
       })
@@ -344,11 +344,11 @@ describe('the sentence at the foot of the field', () => {
       } as NonNullable<Field['descriptionAdvice']>,
     }
     expect(pinFoot(automatic, shown).sentence).toBe(
-      'You chose Resume automatic handling for this field. Choose a value again to pin it.',
+      'You chose Resume automatic handling for this field. Choose a value again, then pin it.',
     )
     // The same choice on another field's wire is not read.
     expect(pinFoot({ ...advised, destination: 'title' }, shown).sentence).toBe(
-      'You chose Resume automatic handling for this field. Choose a value again to pin it.',
+      'You chose Resume automatic handling for this field. Choose a value again, then pin it.',
     )
   })
 

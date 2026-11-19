@@ -3620,21 +3620,35 @@ def _owner_control(
             ],
         }
     # An answer cannot be withdrawn while its field is pinned (ADR-0085,
-    # Amendment 2).
+    # Amendment 2). Beside an automatic decision the store refuses a withdraw
+    # whatever the hold's state, but the refusal names Resume automatic
+    # handling, so it shows only while the hold stands and no Resume was asked
+    # of it. Once Resume is requested, failed (whose own line names Resume) or
+    # done, the field offers no withdraw at all, and still shows the owner's
+    # recorded value with its controls.
     withdraw = None
+    resumed = False
     if (
         decision is not None
         and decision.outcome != "reject"
         and destination not in UNREVERSIBLE_DESTINATIONS
         and all(row[0] != destination for row in snapshot.pins)
     ):
-        withdraw = (
-            "automatic_hold"
-            if automatic
-            else dict(snapshot.decision_effect_states).get(destination, "available")
-        )
+        if not automatic:
+            withdraw = dict(snapshot.decision_effect_states).get(
+                destination, "available"
+            )
+        elif (
+            destination in snapshot.held_destinations
+            and destination not in snapshot.return_requested_destinations
+            and destination not in snapshot.return_failed_destinations
+        ):
+            withdraw = "automatic_hold"
+        else:
+            # Only an entered value has a recorded line to keep showing.
+            resumed = decision.outcome == "owner_entered"
     entered = (entry, subset, names) != (None, None, None)
-    if not entered and withdraw is None:
+    if not entered and withdraw is None and not resumed:
         return None
     return {
         "entry": entry,

@@ -217,6 +217,79 @@ def test_an_automatic_hold_outranks_a_written_decision(tmp_path: Path) -> None:
         store.close()
 
 
+# The refusal names Resume automatic handling, so the field states it only
+# while the hold stands with no Resume out; the store still refuses after.
+def test_the_hold_refusal_shows_only_until_resume_is_chosen(tmp_path: Path) -> None:
+    store = OwnerStore(tmp_path, None)
+    try:
+        report = genre_report()
+        case_id, _ = publish_genre_case(store.repository, report)
+        store.load(case_id)
+        decision = store.decide(
+            "owner_entered",
+            {"kind": "list", "value": ["Fantasy"]},
+            destination="genres",
+        )
+        assert _field(store, "genres")["owner_control"]["withdraw"] == "automatic_hold"
+        scan = store.repository.request_review_scan(
+            report.target.connection,
+            report.target.library,
+            "library-ebooks",
+            "a" * 64,
+            store.clock(),
+        )
+        at = store.clock()
+        assert store.repository.request_field_effect_manual_return(
+            case_id, "genres", decision.decision_id, scan.scan_id, at, at
+        )
+        assert _field(store, "genres")["owner_control"]["withdraw"] is None
+        assert store.repository.clear_field_effect_manual_hold(
+            case_id, "genres", store.clock(), decision.decision_id
+        )
+        assert _field(store, "genres")["owner_control"]["withdraw"] is None
+        _refused(store, "automatic_hold", "withdraw", destination="genres")
+    finally:
+        store.close()
+
+
+# With nothing to enter, a resumed entered value keeps its controls, which
+# show the recorded value, rather than losing them with the refusal. Any
+# other answer has no recorded line there, so it keeps no empty controls.
+@pytest.mark.parametrize("outcome", ["owner_entered", "accept"])
+def test_a_resumed_answer_without_entry_keeps_only_a_recorded_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    import mechanical_librarian.application.review_web as review_web
+
+    monkeypatch.setattr(review_web, "owner_entry_admitted", lambda *_: False)
+    store = OwnerStore(tmp_path, None)
+    try:
+        case_id, _ = publish_genre_case(store.repository, genre_report())
+        store.load(case_id)
+        decision = store.decide(
+            outcome, {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+        held = _field(store, "genres")["owner_control"]
+        assert cast(dict, held)["withdraw"] == "automatic_hold"
+        assert store.repository.clear_field_effect_manual_hold(
+            case_id, "genres", store.clock(), decision.decision_id
+        )
+        assert _field(store, "genres")["owner_control"] == (
+            {
+                "entry": None,
+                "subset": None,
+                "names": None,
+                "clear": False,
+                "current": None,
+                "withdraw": None,
+            }
+            if outcome == "owner_entered"
+            else None
+        )
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize("destination", ["cover", "description"])
 def test_withdraw_is_unsupported_for_cover_and_description(
     store: OwnerStore, destination: str
@@ -1162,6 +1235,8 @@ def test_a_requested_return_whose_checks_fail_can_be_requested_again(
         False,
         True,
     )
+    # The failure line names Resume, so the refusal does not say it twice.
+    assert cast(dict, field["owner_control"])["withdraw"] is None
     again, _ = _request_return(store, token)
     assert again == scan_id
     assert store.repository._connection.execute(
