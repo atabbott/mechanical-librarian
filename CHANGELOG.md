@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- **Clean rebuild required.** A chosen description is written to
+  Audiobookshelf with its paragraphs, bold, italics and lists instead of as
+  one line joined by dots. Before your change can put back a formatted
+  description unless it has a link or formatting Mechanical Librarian can't
+  write (#1995).
 - A description's bold, italics, paragraphs and lists now show as
   formatting, not as tags, wherever the workspace shows a description.
   Markup that cannot be read safely is still shown as written (#1992).

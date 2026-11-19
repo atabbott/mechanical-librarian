@@ -217,8 +217,9 @@ body is refused before parsing.
   decision that made that write is still the field's answer. On that case
   `keep_current` writes back the value the case read; where that was empty,
   a clearable field goes back to empty and any other field is refused as
-  `owner_value_required`. Where it read a description stored with formatting
-  a restore would lose, the keep is refused with `409 restore_unavailable`,
+  `owner_value_required`. Where it read a description with formatting that
+  can't be written, such as a link, the keep is refused with
+  `409 restore_unavailable`,
   and the field's `restore_unavailable` is true. Where the case's latest
   write already holds that value, the keep is recorded as a plain keep and
   writes nothing.

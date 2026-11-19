@@ -352,8 +352,9 @@ Library has no Undo or bulk decisions. To go back, choose the earlier
 value. While a field reads its written value, Change offers what it
 replaced ("Use previous value", "Use previous names", genres marked Previous);
 if it was empty, clearing goes back. Elsewhere the card Before your change
-writes it back, then reads Keep current value. A description stored with
-formatting has no such card: restore it in Audiobookshelf. A written work
+writes it back, then reads Keep current value. A description with a link or
+formatting Mechanical Librarian can't write has no such card: restore it in
+Audiobookshelf. A written work
 keeps its case for 30 days with nothing to decide, outside Attention unless a
 pin changed. A work returning to earlier content reads as new, and its
 earlier decisions are history.
@@ -380,9 +381,8 @@ Optional. Tag and ASIN fills never enter Attention on their own. A narrator fill
 enters it only when Authors and narrators is set to Ask me.
 
 When the evidence supports only the book, Recording match says the exact
-recording is not known. It also says your choices apply only to the fields
-offered, and that this evidence cannot set recording identifiers or make
-automatic changes. The canvas then offers choices only for series, title,
+recording is not known. It also says this evidence cannot set recording
+identifiers or make automatic changes. The canvas then offers choices only for series, title,
 description, genre, publication date, cover and an empty Narrators field, never
 subtitle. When the book is the first in its series and shares the series' title,
 the canvas keeps the title and offers the series name and position separately.
@@ -656,6 +656,6 @@ time still ahead is never relative.
 - Signed-in responses are private, and shared caches never store them.
 - A strict content-security policy and React's text rendering stop
   metadata, source content and URLs from becoming markup; descriptions
-  show bold, italics, paragraphs and lists.
+  keep bold, italics, paragraphs and lists when shown and written.
 - Review endpoints never expose library paths, raw source responses or
   copyrighted content.
