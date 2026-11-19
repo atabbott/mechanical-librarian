@@ -1094,6 +1094,13 @@ describe('ReviewApiClient', () => {
     ).toBe(shown)
   })
 
+  it('reads whether a field’s accept needs no write (ADR-0105)', async () => {
+    expect((await readCase(closedDetail())).fields[0]?.noChangeRequired).toBe(false)
+    expect(
+      (await readCase(closedDetail({ no_change_required: true }))).fields[0]?.noChangeRequired,
+    ).toBe(true)
+  })
+
   it('reads a field’s pin and pin control, and refuses an unknown pin state (#1346)', async () => {
     const pinned = targetField({ state: 'value', value: 'A Pinned Book' })
     const field = (await readCase(closedDetail())).fields[0]
