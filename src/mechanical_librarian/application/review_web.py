@@ -60,6 +60,7 @@ from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceBinding,
 )
+from mechanical_librarian.domain.description_formatting import alternative_formatted
 from mechanical_librarian.domain.field_effect import (
     CLEARABLE_DESTINATIONS,
     decision_value_kind,
@@ -152,10 +153,12 @@ from mechanical_librarian.domain.shadow_outcome import (
 from mechanical_librarian.domain.validation import owner_password
 from mechanical_librarian.domain.value_flags import value_flags
 
-# v13: a field says whether its owner accept needs no write (ADR-0105).
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v13"]
+# v13: a field says whether its owner accept needs no write (ADR-0105);
+# v14: a description's current and proposed values carry their formatted
+# copies (#1995).
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v14"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v13"
+    "review-case-detail-v14"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
@@ -184,9 +187,10 @@ OWNER_LINK_HISTORY_EVENT_SCHEMA: Final[OwnerLinkHistoryEventSchemaVersion] = (
     "owner-link-history-event-v2"
 )
 
-# v10: a row's link says how it was made, and a file link names no source (#1478).
-ReviewLibrarySchemaVersion = Literal["review-library-v11"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v11"
+# v10: a row's link says how it was made, and a file link names no source (#1478);
+# v12: a current description carries its formatted copy (#1995).
+ReviewLibrarySchemaVersion = Literal["review-library-v12"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v12"
 
 ReviewReportDetailSchemaVersion = Literal["review-report-detail-v7"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
@@ -2118,6 +2122,18 @@ class InspectCurrentReviewCase:
             "proposed_values": [
                 alternative["value"] for alternative in eligible_alternatives
             ],
+            # Each proposed description's formatted copy, beside its value
+            # (#1995, ADR-0107); every other field's are null.
+            "proposed_formatted": [
+                alternative_formatted(
+                    report,
+                    alternative["evidence_references"],
+                    alternative["value"].get("value"),
+                )
+                if destination == "description"
+                else None
+                for alternative in eligible_alternatives
+            ],
             "choice_contexts": choice_contexts,
             "provenance": references,
             "corroboration_sources": _corroboration_source_labels(
@@ -3488,7 +3504,8 @@ def _presented_field(field: TargetField) -> dict[str, object]:
     """One current field as review shows it, without the store's restore flag.
 
     Whether a description can be written back is decided where a restore is
-    planned (#1424); the owner reads the value, not that flag.
+    planned (#1424); the owner reads the value, not that flag. A description
+    keeps its formatted copy, which its card shows (#1995).
     """
     data = field.to_data()
     data.pop("restorable", None)

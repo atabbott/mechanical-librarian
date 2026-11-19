@@ -302,11 +302,50 @@ def test_automatic_admission_refuses_rewrite_below_description_floor(
     advice = store.read(binding.review_case_id)
     assert advice["candidate"]["candidate_id"] == candidate.candidate_id
     assert advice["selection"] is None
+    # The card shows what is written: the copy, else the visible text.
+    marked = description.startswith("<")
+    assert (advice["formatted"], advice["visible_text"]) == (
+        ("<p>A story.</p>", "A story.") if marked else (None, description)
+    )
     decision = store.admit(candidate.candidate_id, binding, "human", "b" * 64, 12)
     assert decision.origin == "human"
-    assert PersistedFieldEffectAuthority(repository).resolve(
-        decision
-    ).decision_value == {"kind": "text", "value": description}
+    selected = store.read(binding.review_case_id)["selected_advice"]
+    assert (selected["formatted"], selected["visible_text"]) == (
+        advice["formatted"],
+        advice["visible_text"],
+    )
+    # The advice is read as any description is: markup is written as its
+    # formatted copy beside the visible text (#1995).
+    snapshot = PersistedFieldEffectAuthority(repository).resolve(decision)
+    assert (snapshot.decision_value, snapshot.decision_form) == (
+        ({"kind": "text", "value": "A story."}, "<p>A story.</p>")
+        if description.startswith("<")
+        else ({"kind": "text", "value": description}, None)
+    )
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "description", ["<p>An unclosed story.", "<b>A <i>crossed</b> story.</i>"]
+)
+def test_advice_the_reader_refuses_cannot_be_chosen(
+    tmp_path: Path, description: str
+) -> None:
+    # Text the description reader refuses is never written (#1995, D3).
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, description=description
+    )
+    advice = store.read(binding.review_case_id)
+    assert (advice["readable"], advice["formatted"], advice["visible_text"]) == (
+        False,
+        None,
+        None,
+    )
+    with pytest.raises(ValueError, match="description advice unreadable"):
+        store.admit(candidate.candidate_id, binding, "human", "b" * 64, 12)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_decisions"
+    ).fetchone() == (0,)
     repository.close()
 
 
@@ -3511,3 +3550,44 @@ def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
     assert automatic_counted() >= 1
     assert store.read(binding.review_case_id)["current"] is True
     repository.close()
+
+
+@pytest.mark.parametrize(
+    ("current", "advised"),
+    (
+        ("Authored synthetic description.", "<p>Authored synthetic description.</p>"),
+        (
+            "Fish & chips for the earlier text.",
+            "Fish &amp; chips for the earlier text.",
+        ),
+    ),
+    ids=("markup", "character-reference"),
+)
+def test_advice_that_reads_as_the_current_text_records_no_change_that_reopens(
+    tmp_path: Path, current: str, advised: str
+) -> None:
+    """Advice whose visible text is what the library holds records no change,
+    and startup validation reads it by the same reading (#1995)."""
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        _validate_field_effect_state,
+    )
+    from tests.support.automatic_no_change import _automatic_no_change_inputs
+    from tests.support.owner_values import rewritten
+
+    report, *_ = _automatic_no_change_inputs("description_preserved")
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path,
+        automatic=False,
+        description=advised,
+        report_override=rewritten(report, description=current),
+    )
+    try:
+        assert candidate.output.description == advised
+        decision = store.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
+        assert repository.record_current_field_effect_no_change(decision, 12)
+        _validate_field_effect_state(repository._connection)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (1,)
+    finally:
+        repository.close()

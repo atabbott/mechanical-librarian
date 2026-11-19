@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- **Clean rebuild required.** A chosen description is written to
+  Audiobookshelf with its paragraphs, bold, italics and lists instead of as
+  one line joined by dots. Before your change can put back a formatted
+  description unless it has a link or formatting Mechanical Librarian can't
+  write (#1995).
 - In Preview, a field your answer, hold or pin keeps Automatic off no longer
   shows Automatic's earlier choice or says turning on Automatic decides it
   again. That includes an answer given before the work was changed and

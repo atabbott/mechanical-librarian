@@ -82,8 +82,12 @@ all feed the target fingerprint and the final currentness check.
 - A description is admitted as Audiobookshelf shows it. Markup is rendered,
   with paragraphs and lines joined by ` • `; plain text keeps its exact text,
   with character references decoded. Text that is markup only once decoded, or
-  would decode again, is kept as stored. `restorable` records whether writing
-  it back would store it unchanged.
+  would decode again, is kept as stored. Rendered markup, here and in
+  provider claims, keeps `formatted`: Mechanical Librarian's own copy from a
+  closed set of tags, or `null`
+  ([ADR-0107](../architecture/decisions/0107-write-description-formatting.md)).
+  `restorable` records whether writing its text, or that copy, back would
+  lose nothing.
 - Tags come from `media.tags`, falling back to metadata tags only when that
   field is absent.
 - The selected file resolves to an opaque identity, so reordering the file

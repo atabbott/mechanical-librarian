@@ -94,6 +94,57 @@ def genre_report(
     )
 
 
+# A description stored with formatting the closed set writes back, and a
+# provider description offered with its own copy (#1995).
+STORED_DESCRIPTION = "Fish & chips. • Formatted."
+STORED_DESCRIPTION_COPY = "<p>Fish &amp; chips.</p><ul><li>Formatted.</li></ul>"
+OFFERED_DESCRIPTION_COPY = "<p><b>A qualified</b> description.</p>"
+
+
+def formatted_description_report() -> MetadataReport:
+    """The genre work whose description is stored formatted and whose
+    provider offers a formatted description (#1995)."""
+    base = genre_report()
+    providers = tuple(
+        replace(
+            provider,
+            candidates=tuple(
+                replace(
+                    candidate,
+                    claims=tuple(
+                        replace(claim, formatted=OFFERED_DESCRIPTION_COPY)
+                        if claim.kind is ClaimKind.DESCRIPTION
+                        else claim
+                        for claim in candidate.claims
+                    ),
+                )
+                for candidate in provider.candidates
+            ),
+        )
+        for provider in base.providers
+    )
+    fields = tuple(
+        TargetField(
+            TargetDestination.DESCRIPTION,
+            TargetFieldState.VALUE,
+            STORED_DESCRIPTION,
+            True,
+            STORED_DESCRIPTION_COPY,
+        )
+        if field.destination is TargetDestination.DESCRIPTION
+        else field
+        for field in base.target.fields
+    )
+    target = base.target
+    return MetadataReport.create(
+        target=TargetFacts(target.connection, target.library, target.item, fields),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=providers,
+    )
+
+
 def publish_genre_case(
     repository: Any,
     report: MetadataReport,

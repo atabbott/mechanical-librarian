@@ -131,10 +131,11 @@ export function ChoiceEvidencePanel({
     </section>
   )
 }
-export function DescriptionText({ value }: { value: string }) {
+export function DescriptionText({ value, plain = false }: { value: string; plain?: boolean }) {
   const [expanded, setExpanded] = useState(false)
-  // One reading per value, shared by the length and the content.
-  const nodes = useMemo(() => readFormatting(value), [value])
+  // One reading per value, shared by the length and the content. Text that is
+  // already visible text reads as itself, never as markup (#1995).
+  const nodes = useMemo(() => (plain ? null : readFormatting(value)), [value, plain])
   const long = formattedLength(value, nodes) > 280
   const limit = long && !expanded ? 240 : undefined
   return (
@@ -287,6 +288,8 @@ export function MetadataChoice({
   disabled,
   evidenceName,
   expanded,
+  formatted = null,
+  plainText = false,
   label,
   longDescription,
   onChoose,
@@ -310,6 +313,11 @@ export function MetadataChoice({
   // The Evidence control's name when the card has no visible label (#1519).
   evidenceName?: string
   expanded: boolean
+  // A description's formatted copy, shown in place of its visible text; the
+  // card's name keeps the visible text (#1995).
+  formatted?: string | null
+  // The value is the visible text the server read, shown as text (#1995).
+  plainText?: boolean
   label: string
   longDescription: boolean
   onChoose: () => void
@@ -364,7 +372,11 @@ export function MetadataChoice({
       {longDescription ? (
         <div className="description-choice-content">
           {label ? <small>{label}</small> : null}
-          <DescriptionText key={value} value={value} />
+          <DescriptionText
+            key={value}
+            value={formatted ?? value}
+            plain={formatted === null && plainText}
+          />
         </div>
       ) : null}
       <button

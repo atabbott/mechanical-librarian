@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 
 MAX_CODE_LENGTH = 64
@@ -146,6 +147,100 @@ def validate_incumbent_description(value: object, label: str, maximum: int) -> s
         value.replace("\u2028", "\n").strip(" \t\r\n"), label, markup=True
     )
     return value
+
+
+# The tags a formatted description copy is written with (ADR-0107), each
+# bare: a copy never carries an attribute.
+_FORMATTED_TAG_PATTERN = re.compile(r"</?(?:p|br|ul|ol|li|b|strong|i|em|del)>")
+
+
+def validate_formatted_description(value: object, label: str, maximum: int) -> str:
+    """Admit one formatted copy of a description (#1995, ADR-0107).
+
+    It passes the incumbent description checks, which also read it with its
+    tags removed, carries at least one tag, and every tag it carries is a
+    bare tag of the closed set: no other `<` or `>` is left once they are
+    removed, since the copy's text is escaped.
+    """
+    text = validate_incumbent_description(value, label, maximum)
+    bare = _FORMATTED_TAG_PATTERN.sub("", text)
+    if bare == text or "<" in bare or ">" in bare or not _well_nested(text):
+        raise EvidenceValueError(f"{label} is not a formatted copy")
+    return text
+
+
+# A copy is never nested deeper than this, and markup nested deeper has none.
+MAX_FORMATTED_DEPTH = 32
+_FORMATTED_TOKEN_PATTERN = re.compile(r"<(/?)(p|br|ul|ol|li|b|strong|i|em|del)>|[^<]+")
+_FORMATTED_INLINE = frozenset({"b", "strong", "i", "em", "del"})
+# What each place in a copy may open: a list holds only items, a paragraph
+# or inline element only inline elements, and the top level or an item any
+# paragraph, list or inline element.
+_FORMATTED_OPENS = {
+    "flow": _FORMATTED_INLINE | {"p", "ul", "ol"},
+    "inline": _FORMATTED_INLINE,
+    "list": frozenset({"li"}),
+}
+
+
+def _formatted_context(tag: str | None) -> str:
+    if tag in {"ul", "ol"}:
+        return "list"
+    return "flow" if tag in {None, "li"} else "inline"
+
+
+def _well_nested(copy: str) -> bool:
+    """Whether a copy of bare tags nests as the serialiser writes one.
+
+    Every element closes in order and shows some text, a line break is never
+    closed and never sits directly in a list, a list holds no text, and no
+    element is nested deeper than the copy's bound.
+    """
+    # Each open element, and whether any text inside it shows yet.
+    stack: list[str] = []
+    shown: list[bool] = []
+    for match in _FORMATTED_TOKEN_PATTERN.finditer(copy):
+        closing, name = match.group(1), match.group(2)
+        context = _formatted_context(stack[-1] if stack else None)
+        if name is None:
+            if context == "list":
+                return False
+            if match.group(0).strip():
+                shown = [True] * len(stack)
+        elif name == "br":
+            if closing or context == "list":
+                return False
+        elif closing:
+            if not stack or stack[-1] != name or not shown[-1]:
+                return False
+            stack.pop()
+            shown.pop()
+        elif name in _FORMATTED_OPENS[context] and len(stack) < MAX_FORMATTED_DEPTH:
+            stack.append(name)
+            shown.append(False)
+        else:
+            return False
+    return not stack
+
+
+_FORMATTED_BLOCK_PATTERN = re.compile(r"</?(?:p|br|ul|ol|li)>")
+_FORMATTED_INLINE_PATTERN = re.compile(r"</?(?:b|strong|i|em|del)>")
+
+
+def formatted_description_text(copy: str) -> str:
+    """The visible text an admitted formatted copy reads as (#1995, ADR-0107).
+
+    The provider renderer's own rule for a copy's bare tags: each block tag
+    ends a line, an inline tag shows nothing, character references decode,
+    and each line's words join with " • ". A holder admits a copy only when
+    this equals the visible text it keeps beside it.
+    """
+    lines = html.unescape(
+        _FORMATTED_INLINE_PATTERN.sub("", _FORMATTED_BLOCK_PATTERN.sub("\n", copy))
+    )
+    return " • ".join(
+        " ".join(line.split()) for line in lines.splitlines() if line.split()
+    )
 
 
 def _validate_projection_safety(text: str, label: str, *, markup: bool = False) -> str:

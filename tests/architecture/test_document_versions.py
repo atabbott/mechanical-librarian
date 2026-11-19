@@ -56,7 +56,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "REVIEWER_COST_EVIDENCE_SCHEMA",
         "reviewer-cost-evidence-v2",
     ),
-    ("mechanical_librarian.domain.review_case", "REVIEW_CASE_SCHEMA", "review-case-v2"),
+    ("mechanical_librarian.domain.review_case", "REVIEW_CASE_SCHEMA", "review-case-v3"),
     (
         "mechanical_librarian.domain.review_case",
         "LEVEL_OFFER_SCHEMA",
@@ -115,7 +115,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_DETAIL_SCHEMA",
-        "review-case-detail-v13",
+        "review-case-detail-v14",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -155,7 +155,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_LIBRARY_SCHEMA",
-        "review-library-v11",
+        "review-library-v12",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -244,9 +244,14 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "field-effect-consent-v2",
     ),
     (
+        "mechanical_librarian.domain.field_effect",
+        "FIELD_EFFECT_PLAN_SCHEMA",
+        "field-effect-plan-v2",
+    ),
+    (
         "mechanical_librarian.domain.metadata_report",
         "REPORT_SCHEMA",
-        "metadata-report-v82",
+        "metadata-report-v83",
     ),
     (
         "mechanical_librarian.domain.metadata_report",

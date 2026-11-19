@@ -18,6 +18,7 @@ from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
     AudibleCatalogPacer,
 )
 from mechanical_librarian.adapters.providers.retry_safety import ProviderRequestPacer
+from mechanical_librarian.adapters.providers.visible_text import read_description
 from mechanical_librarian.application import metadata_report as m
 from mechanical_librarian.application.metadata_report import (
     CoverRedirects,
@@ -573,6 +574,9 @@ def test_a_markup_summary_projects_as_visible_plain_text() -> None:
     assert FieldState.VALID is description.state
     assert description.value is not None
     assert "<" not in description.value and ">" not in description.value
+    # It also carries its formatted copy from the same reading (#1995).
+    assert description.formatted is not None
+    assert description.formatted == read_description(stated)[2]
     assert ("html-visible-text-v1",) == tuple(
         value.value
         for value in _evidence(

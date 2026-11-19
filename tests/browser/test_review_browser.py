@@ -544,6 +544,9 @@ def _server(
     genre_current: tuple[str, ...] | None = None,
     genre_others: str = "ask",
     owner_write: bool = False,
+    # The genre work's description stored formatted, with a provider copy
+    # offered, and with it written over by the case (#1995).
+    formatted_description: Literal["offered", "written"] | None = None,
     owner_recur: bool = False,
     owner_library_change: bool = False,
     owner_readback: list[Callable[..., str]] | None = None,
@@ -1215,12 +1218,22 @@ def _server(
         )
         repository.persist_shadow_outcome(case_id, 4)
     elif genre_fixture is not None:
-        from tests.support.genre_reports import genre_report, publish_genre_case
+        from tests.support.genre_reports import (
+            formatted_description_report,
+            genre_report,
+            publish_genre_case,
+        )
 
-        report = genre_report(genres=genre_fixture, current=genre_current)
+        report = (
+            formatted_description_report()
+            if formatted_description is not None
+            else genre_report(genres=genre_fixture, current=genre_current)
+        )
         case_id, proposal_set = publish_genre_case(
             repository, report, genre_destination, genre_others
         )
+        if formatted_description == "written":
+            _seed_description_write(repository, database.parent, report, case_id)
         if owner_write:
             case_id, report = _seed_owner_write(
                 repository, database.parent, report, case_id, genre_destination
@@ -2240,6 +2253,59 @@ def _seed_owner_write(
     target.seed(operation.plan)
     assert service.apply(operation.plan.plan_id).state == "verified"
     return _read_back_title(repository, report, case, destination, title, at + 5)
+
+
+def _seed_description_write(repository, root: Path, report, case_id: str) -> None:
+    """Accept the offered description and write it as its copy over the
+    description the case read, through the guarded pipeline (#1995)."""
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.domain.human_decision import HumanDecision
+    from tests.support.description_advice import _guarded_application
+
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "description"
+    )
+    decision = HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="description",
+        actor="owner",
+        outcome="accept",
+        selected_value={"kind": "text", "value": "A qualified description."},
+        idempotency_key="browser-formatted-description-write",
+        occurred_at=900,
+    )
+    repository.record_human_decision(decision)
+    authority = PersistedFieldEffectAuthority(repository)
+    service, target = _guarded_application(repository, root, authority)
+    repository.grant_field_effect_consents(
+        report.target.connection, (report.target.library,), ("description",), 12
+    )
+    snapshot = authority.resolve(decision)
+    assert snapshot.decision_form is not None
+    operation = service.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=snapshot.destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest="c" * 64,
+    )
+    assert operation is not None
+    assert operation.plan.desired_form == snapshot.decision_form
+    target.seed(operation.plan)
+    assert service.apply(operation.plan.plan_id).state == "verified"
 
 
 def _read_back_title(
@@ -11999,23 +12065,29 @@ def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch)
                         )
                         if state == "automatic":
                             expect(select).to_be_disabled()
+                    elif state == "hostile":
+                        # The description reader refuses it, so it is shown
+                        # as written and can't be chosen (#1995, D3).
+                        _assert_hostile_description_inert(page, select)
+                        expect(select).to_be_disabled()
+                        expect(select).to_contain_text(
+                            "This advice’s formatting can’t be read safely. "
+                            "Retry description advice."
+                        )
                     else:
                         expect(select).to_be_enabled()
                         card = select.locator("xpath=ancestor::article[1]")
-                        if state == "hostile":
-                            _assert_hostile_description_inert(page, select)
-                        else:
-                            shown = card.locator(".description-choice-content strong")
-                            expect(shown).to_have_text("Authored text stays text.")
-                            assert shown.evaluate("node => node.attributes.length") == 0
-                            # Only the app's own elements carry attributes.
-                            assert card.locator(".description-formatted").evaluate(
-                                "node => [...node.querySelectorAll('*')]"
-                                ".every((child) => child.attributes.length === 0)"
-                            )
-                            expect(
-                                card.get_by_text("<strong>", exact=False)
-                            ).to_have_count(0)
+                        shown = card.locator(".description-choice-content strong")
+                        expect(shown).to_have_text("Authored text stays text.")
+                        assert shown.evaluate("node => node.attributes.length") == 0
+                        # Only the app's own elements carry attributes.
+                        assert card.locator(".description-formatted").evaluate(
+                            "node => [...node.querySelectorAll('*')]"
+                            ".every((child) => child.attributes.length === 0)"
+                        )
+                        expect(card.get_by_text("<strong>", exact=False)).to_have_count(
+                            0
+                        )
                         expect(select.locator("strong strong")).to_have_count(0)
                         if state == "needs_review":
                             expect(select).to_contain_text("Automatic never applies it")
@@ -13698,6 +13770,86 @@ def test_owner_chooses_the_previous_title_again():
             panel.get_by_text("You entered “Real Tigers”.", exact=True)
         ).to_be_focused()
         expect(panel.get_by_text("Your value is recorded.", exact=True)).to_be_visible()
+
+
+def _assert_own_elements(content: Locator) -> None:
+    """The description shows as the page's own elements, none with attributes."""
+    assert content.evaluate(
+        "node => [...node.querySelectorAll('*')]"
+        ".every((child) => child.attributes.length === 0)"
+    )
+    expect(content.get_by_text("<", exact=False)).to_have_count(0)
+
+
+def test_a_provider_description_shows_its_formatted_copy():
+    """#1995: the provider's description card shows the copy that would be
+    written, the stored description shows its own, and both are named by
+    their visible text."""
+    with _owner_page(genre_fixture=("Fantasy",), formatted_description="offered") as (
+        page,
+        origin,
+        case_id,
+    ):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=description")
+        chooser = page.locator("section.direct-choice")
+        proposed = chooser.get_by_role("radio", name="Choose proposed description")
+        expect(proposed).to_be_enabled()
+        offered = proposed.locator("xpath=ancestor::article[1]").locator(
+            ".description-choice-content .description-formatted"
+        )
+        expect(offered.locator("p strong")).to_have_text("A qualified")
+        expect(offered).to_have_text("A qualified description.")
+        _assert_own_elements(offered)
+        current = chooser.get_by_role("radio", name="Choose current description")
+        stored = current.locator("xpath=ancestor::article[1]").locator(
+            ".description-choice-content .description-formatted"
+        )
+        expect(stored.locator("p")).to_have_text("Fish & chips.")
+        expect(stored.locator("ul li")).to_have_text("Formatted.")
+        _assert_own_elements(stored)
+        assert page.evaluate(
+            "document.documentElement.scrollWidth <= window.innerWidth"
+        )
+
+
+def test_before_your_change_restores_a_formatted_description():
+    """#1995: after the case writes over a description stored with
+    formatting it can write, Before your change is offered with that
+    formatting, and choosing it is recorded."""
+    with _owner_page(genre_fixture=("Fantasy",), formatted_description="written") as (
+        page,
+        origin,
+        case_id,
+    ):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=description")
+        chooser = page.locator("section.direct-choice")
+        expect(chooser.get_by_text("Before your change", exact=True)).to_have_count(1)
+        expect(
+            page.get_by_text("restore it in Audiobookshelf", exact=False)
+        ).to_have_count(0)
+        before = chooser.get_by_role(
+            "radio", name="Choose the description before your change"
+        )
+        expect(before).to_be_enabled()
+        content = before.locator("xpath=ancestor::article[1]").locator(
+            ".description-choice-content .description-formatted"
+        )
+        expect(content.locator("p")).to_have_text("Fish & chips.")
+        expect(content.locator("ul li")).to_have_text("Formatted.")
+        _assert_own_elements(content)
+        with page.expect_response(
+            lambda response: (
+                response.request.method == "POST"
+                and response.url.endswith("/decisions")
+            )
+        ) as recorded:
+            before.click()
+        assert recorded.value.ok, recorded.value.text()
+        body = json.loads(recorded.value.request.post_data or "{}")
+        assert body["outcome"] == "keep_current"
+        assert page.evaluate(
+            "document.documentElement.scrollWidth <= window.innerWidth"
+        )
 
 
 def test_a_work_back_at_its_earlier_title_reads_as_new():

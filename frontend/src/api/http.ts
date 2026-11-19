@@ -571,6 +571,8 @@ export interface WorkSummaryFieldView {
   destination: TargetDestination
   state: TargetFieldState
   value: string
+  // A description's formatted copy, shown in place of its text (#1995).
+  formatted?: string | null
 }
 export interface WorkSummaryView {
   fields: readonly WorkSummaryFieldView[]
@@ -786,7 +788,12 @@ export interface ReviewFieldView {
   manualReturnFailed: boolean
   currentValue: string
   currentRaw: unknown
+  // A description's formatted copy, which its card shows in place of the
+  // visible text (#1995); names and sentences keep the visible text.
+  currentFormatted?: string | null
   proposedValues: readonly ResponseSchema<'_ProposedValue'>[]
+  // Each proposed value's formatted copy, beside it (#1995).
+  proposedFormatted?: readonly (string | null)[]
   choiceContexts: readonly ChoiceContextView[]
   proposalId: string
   targetFingerprint: string
@@ -3361,6 +3368,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
                 destination: field.destination,
                 state: field.state,
                 value: targetValueText(field.state, field.value),
+                formatted: field.formatted,
               })),
               reason: summary.reason,
               state: summary.state,
@@ -3426,6 +3434,18 @@ const mapDescriptionCandidate = (value: DescriptionCandidateDto): DescriptionCan
   if (!value.output.description.trim()) throw new ApiError(502, 'invalid_description_text')
   return value
 }
+// One formatted copy beside each proposed value, and only a description's
+// (ADR-0091, #1995).
+const mapProposedFormatted = (field: ReviewFieldDto): readonly (string | null)[] => {
+  if (
+    field.proposed_formatted.length !== field.proposed_values.length ||
+    (field.destination !== 'description' &&
+      field.proposed_formatted.some((value) => value !== null))
+  )
+    throw new ApiError(502, 'invalid_proposed_formatted')
+  return field.proposed_formatted
+}
+
 const mapDescriptionAdvice = (value: DescriptionAdviceView): DescriptionAdviceView => {
   if (value.application_outcome !== null && value.selection === null)
     throw new ApiError(502, 'invalid_description_application_outcome')
@@ -3513,7 +3533,9 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
       ? 'Current cover'
       : targetValueText(field.current.state, field.current.value),
   currentRaw: field.current.value,
+  currentFormatted: field.current.formatted ?? null,
   proposedValues: field.proposed_values,
+  proposedFormatted: mapProposedFormatted(field),
   choiceContexts: mapChoiceContexts(field.choice_contexts, field.proposed_values.length),
   proposalId: field.proposal_id,
   targetFingerprint: field.target_fingerprint,

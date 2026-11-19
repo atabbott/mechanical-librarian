@@ -15,7 +15,8 @@
         "current": {
           "destination": "narrators",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "unresolved_choice",
         "destination": "narrators",
@@ -62,6 +63,7 @@
             "value": ["Narrator 1"]
           }
         ],
+        "proposed_formatted": [null, null],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -129,14 +131,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_9accd53d1b828052415dfacf31dbbcd5875ff69116369c8c06fe1bcb98d5bbb2",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": ["competing_evidence"],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "41046460e74b1712aaacb8626dbfc1623819b2cdf85e4dce5e79cdb36a6b02b0",
+        "offer_digest": "ff8df8a7b381de874e0f273cdc8404234825e61d1cd1082656f8ed1767e8abf6",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -150,7 +152,8 @@
         "current": {
           "destination": "asin",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "unresolved_choice",
         "destination": "asin",
@@ -186,6 +189,7 @@
             "value": "B000000001"
           }
         ],
+        "proposed_formatted": [null, null],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -239,14 +243,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_7f8da20475bca2a2299fdb978b029ebb2a25bac19a4fbdfb8825658a079ba978",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": ["competing_evidence"],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "6a4255bc0427ffc7598f85a005cc3a028d1eea039de9e1f56ae88c57d3bf224d",
+        "offer_digest": "4c54a40955f5a4efe5d1df49aac8785d055d8214b30e2cd07e6adb30969f6b69",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -260,7 +264,8 @@
         "current": {
           "destination": "title",
           "state": "value",
-          "value": "Synthetic Journey"
+          "value": "Synthetic Journey",
+          "formatted": null
         },
         "deterministic_disposition": "keep",
         "destination": "title",
@@ -297,6 +302,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -358,14 +364,14 @@
         "preservation_only": true,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_7811a9075961545469a5e9b3c5a686aca0d7534141ac8087e89f8877bc95fba8",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "ad03ec3c208944981f47117e519dbbfdca08643cd61a40df5b51d3aff34d777f",
+        "offer_digest": "a9bc71b2e00fc8d9800b76126c38876f2964f6fd02deff70caba480a980a0dd9",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -379,7 +385,8 @@
         "current": {
           "destination": "subtitle",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "ineligible",
         "destination": "subtitle",
@@ -406,6 +413,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -422,14 +430,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_76faaccd2702d36da8422cc9b7d0d98596b7401b953d1f9323a350c654562cba",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "ad03ec3c208944981f47117e519dbbfdca08643cd61a40df5b51d3aff34d777f",
+        "offer_digest": "a9bc71b2e00fc8d9800b76126c38876f2964f6fd02deff70caba480a980a0dd9",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -443,7 +451,8 @@
         "current": {
           "destination": "authors",
           "state": "value",
-          "value": ["Example Author"]
+          "value": ["Example Author"],
+          "formatted": null
         },
         "deterministic_disposition": "keep",
         "destination": "authors",
@@ -481,6 +490,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -542,14 +552,14 @@
         "preservation_only": true,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_fe0fb718cd27ca845d0bf1964e688c3414f4bed67aad2bae73c7c370fb3078ec",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "263f034ae7e3bdc8dfc783d15d850b2c130156a57a29f8545f313937f55bc8b9",
+        "offer_digest": "6a5e250b73e79d48a75b990018b3320fbdc29ef77c20476035b1f37bbcf47e08",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -563,7 +573,8 @@
         "current": {
           "destination": "series",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "ineligible",
         "destination": "series",
@@ -590,6 +601,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -606,14 +618,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_c734101dc0d73ae4cf466b3bb706c47fadc8a692fcf6efab751aae8f2c22dbc8",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "ad03ec3c208944981f47117e519dbbfdca08643cd61a40df5b51d3aff34d777f",
+        "offer_digest": "a9bc71b2e00fc8d9800b76126c38876f2964f6fd02deff70caba480a980a0dd9",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -627,7 +639,8 @@
         "current": {
           "destination": "genres",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "ineligible",
         "destination": "genres",
@@ -654,6 +667,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -670,14 +684,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_a0f4bf1da45bfc7f3615068c54cf6f1a19adb748629941f5a28eb45c79026822",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "062ad8a0be8f12164a451b1fe5d7cf1e94567d1a3f6e75a574c35ee4de66991e",
+        "offer_digest": "915dd385d22fc00bde785ad712644e04ba7f0e8a2f0ce8c72f31e96de8d161d9",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -691,7 +705,8 @@
         "current": {
           "destination": "publishedDate",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "ineligible",
         "destination": "publishedDate",
@@ -718,6 +733,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -734,14 +750,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_c35c57c4f8a27485811b1b6823c7763dfe2fd428c5bd65babf20969913f4511b",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "0d1c45ee939a2818630d4dbc2470b28479b9d4665dfbf892f5ea81a2fdfbaa08",
+        "offer_digest": "2856873bdddf2fc769b46602276fdf90717ee65c105f454dc5aac5c7afbb5661",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -755,7 +771,8 @@
         "current": {
           "destination": "publisher",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "ineligible",
         "destination": "publisher",
@@ -782,6 +799,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -798,14 +816,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_26217c3e00bdd74ed5a3a8792f94705a7efb43cf1e688e605b69f7801156d4ef",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "11d2b6d72950e33fe2b959d27beb54c6c957ebe4277c402d389818fc985ea498",
+        "offer_digest": "c8914394b24818fd2ea56c6256251eeb4f67b850b938836d7c8f0bdab9e49107",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -819,7 +837,8 @@
         "current": {
           "destination": "description",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "ineligible",
         "destination": "description",
@@ -846,6 +865,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -862,14 +882,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_f3eb1ac53cd5d9d1ca767f6c9551cdb8181ba05936ec9615ec9fbfac42eb5dd8",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "2cd2cc7d602ddf09c84a78fcf67c3fa5c25b9710a6edfe0d67d7018b9c3f9f16",
+        "offer_digest": "9a9e6979e5fe162273ee988120494ba2083179af06f6baeeb56cb73407f506b7",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -883,7 +903,8 @@
         "current": {
           "destination": "isbn",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "defer",
         "destination": "isbn",
@@ -910,6 +931,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -926,14 +948,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_6f8132849aef1d738d5421d41884b36de276b94ad8d5872a1ef46563791fa3d2",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "2d5624cb0477f603b94aa9174a9b6c7656526101ee4b868b03f7bc5615aebfc5",
+        "offer_digest": "6f823400176508ec6606f8f6b4374580c959191985070e3eeaf876a858570204",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -947,7 +969,8 @@
         "current": {
           "destination": "language",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "ineligible",
         "destination": "language",
@@ -974,6 +997,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -990,14 +1014,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_1766cfdfd185ca1d6a01ffcd37fa715479be04f5e4b02e48daec843125a75993",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "e966d336ff9b8356b6ddc0361d5051c2f08cd24ce5129ad53fa2b7ea3c6b6b42",
+        "offer_digest": "ed349fe808fb79387c33c373865563bfd0303d00dba7b044d6777277a720b337",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -1011,7 +1035,8 @@
         "current": {
           "destination": "explicit",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "ineligible",
         "destination": "explicit",
@@ -1038,6 +1063,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -1054,14 +1080,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_8a5cedcdf7be9174c9c8dabb2e4b2c9476c4442f45dcf6ac33ad1b99e65b0fdc",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "2971546a9ea3e19468ffc09939799656250b732fcd71a2540ddd6d98429d1158",
+        "offer_digest": "ae8159e0d3c8eaca66eaba752b47cc2bde35cef47999b4bd4b28d579b786299f",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -1075,7 +1101,8 @@
         "current": {
           "destination": "tags",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "ineligible",
         "destination": "tags",
@@ -1102,6 +1129,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -1118,14 +1146,14 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_c66c0b9e58c7e819674212e781b679a4986ad27dcc28cd6bf4a23402caa6f353",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "a851a5418a55c6de2899d7a7202569f13c94d576accef58e3e601c058b75a1d6",
+        "offer_digest": "ca56362398e29a999f945d2b7a562fb57f67fdfd53fb71dc6496b9c5ecdcb641",
         "pin": null,
         "pin_control": {
           "pin": "available",
@@ -1139,7 +1167,8 @@
         "current": {
           "destination": "cover",
           "state": "missing",
-          "value": null
+          "value": null,
+          "formatted": null
         },
         "deterministic_disposition": "ineligible",
         "destination": "cover",
@@ -1166,6 +1195,7 @@
         "restore_unavailable": false,
         "change_written": false,
         "proposed_values": [],
+        "proposed_formatted": [],
         "choice_contexts": [
           {
             "alternative_id": null,
@@ -1182,21 +1212,21 @@
         "preservation_only": false,
         "corroboration_sources": [],
         "proposal_id": "review_proposal_efe2204d74cb6a8b422a402ab76dc66b6bef7650b39c11231cdfe3940202b8cf",
-        "target_fingerprint": "8cdf0bfa60c882e2205d65ef9f8e5144e2683f32cca840659aa63a146eb6e733",
+        "target_fingerprint": "b177f33d1c0f2559ea78fa46b4b467abbc59496d4fd117473e558f7d7e2adf4a",
         "uncertainty": [],
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
         "cover_taste_suggestion": null,
         "description_advice": null,
-        "offer_digest": "5ea63dab20dab2a044009f8e79b56fd460e792b171e4efb5beaecd3d49bfcdf7",
+        "offer_digest": "bb80bdc6ccadfc6153cd24d06d0b84ee99e1c7af19398ea06b172a2e062017ba",
         "pin": null,
         "pin_control": null
       }
     ],
     "media_health": [],
     "review_case_id": "review_case_a441009f289e33ef0de0eafd434ac2e62fc000afc53dbfe71b5e7df98203c283",
-    "schema_version": "review-case-detail-v13",
+    "schema_version": "review-case-detail-v14",
     "target": {
       "authors": ["Example Author"],
       "connection": "primary",

@@ -260,7 +260,7 @@ describe('the sentence at the foot of the field', () => {
           destination: 'language',
           pin: {
             state: 'changed',
-            value: { destination: 'language', state: 'value', value: 'en' },
+            value: { destination: 'language', state: 'value', value: 'en', formatted: null },
           },
         }),
         shown,
@@ -279,6 +279,7 @@ describe('the sentence at the foot of the field', () => {
               destination: 'description',
               state: 'value',
               value: '<p>A <b>pinned</b> line</p>',
+              formatted: null,
             },
           },
         }),

@@ -36,6 +36,7 @@ from mechanical_librarian.adapters.providers.sdk import (
 )
 from mechanical_librarian.adapters.providers.visible_text import (
     HTML_VISIBLE_TEXT_VERSION,
+    formatted_claim,
     projected_description,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -557,10 +558,11 @@ def _candidate(
         add(ClaimKind.SERIES_SEQUENCE, sequence)
     # The summary is the complete synopsis; invalid stated summaries remain
     # source failures rather than silently falling back to a teaser.
-    description, description_transformed = projected_description(
+    description, description_transformed, formatted = projected_description(
         payload.get("summary"), payload.get("description"), strict_primary=True
     )
     add(ClaimKind.DESCRIPTION, description)
+    claims[-1] = formatted_claim(claims[-1], description, formatted)
     add(ClaimKind.LANGUAGE, payload.get("language"))
     add(ClaimKind.PUBLISHER, payload.get("publisherName"))
     add(ClaimKind.PUBLICATION_DATE, payload.get("releaseDate"))

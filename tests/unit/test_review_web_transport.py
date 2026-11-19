@@ -4540,6 +4540,8 @@ def test_choose_then_pin_through_the_decision_route(
                 "destination": destination,
                 "state": "value",
                 "value": selected["value"],
+                # Only a description carries a formatted copy (#1995).
+                "formatted": None,
             },
         }
         assert type(field["pin"]["value"]["value"]) is type(selected["value"])
@@ -4650,6 +4652,47 @@ def test_keep_and_empty_values_the_route_refuses_append_nothing(
         )
         assert counts() == before
         assert store.repository.pending_field_effect_decision_documents(10) == ()
+    finally:
+        next(context, None)
+        store.close()
+
+
+def test_a_description_card_carries_its_formatted_copy(tmp_path: Path) -> None:
+    """Each proposed description and the stored one carry their formatted
+    copy beside the visible text; every other field's are null (#1995)."""
+    from tests.support.genre_reports import (
+        OFFERED_DESCRIPTION_COPY as offered,
+    )
+    from tests.support.genre_reports import (
+        STORED_DESCRIPTION_COPY as stored,
+    )
+    from tests.support.genre_reports import formatted_description_report
+    from tests.support.owner_values import OwnerStore
+
+    report = formatted_description_report()
+    store = OwnerStore(tmp_path, report)
+    context = review_web_context(lambda *_: cast(Any, store.repository))
+    web = next(context)
+    try:
+        web.login()
+        detail = web.client.get(f"/api/v1/review-cases/{store.case.review_case_id}")
+        assert detail.status_code == 200, detail.text
+        fields_by_destination = {
+            field["destination"]: field for field in detail.json()["fields"]
+        }
+        description = fields_by_destination["description"]
+        assert description["current"]["value"] == "Fish & chips. • Formatted."
+        assert description["current"]["formatted"] == stored
+        assert [value["value"] for value in description["proposed_values"]] == [
+            "A qualified description."
+        ]
+        assert description["proposed_formatted"] == [offered]
+        assert all(
+            field["proposed_formatted"] == [None] * len(field["proposed_values"])
+            and field["current"].get("formatted") is None
+            for destination, field in fields_by_destination.items()
+            if destination != "description"
+        )
     finally:
         next(context, None)
         store.close()

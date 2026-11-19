@@ -238,15 +238,16 @@ export const keepCard = (field: ReviewField): 'keep' | 'before' | null =>
       : wayBackInEntry(field) || noWayBack(field) || formattedNoWayBack(field)
         ? null
         : 'before'
-// Whether the description this case wrote over has formatting a restore from
-// here would lose, so there is no way back to it here (#1424).
+// Whether the description this case wrote over has a link or formatting a
+// restore from here would lose, so there is no way back to it here (#1424,
+// #1995).
 export const formattedNoWayBack = (field: ReviewField) =>
   field.writtenByCase === true &&
   field.decisionActions.includes('keep_current') &&
   field.restoreUnavailable === true
 // Said under the question, and when the store refuses a keep of it (#1424).
 export const formattedNoWayBackSentence =
-  'The earlier description has formatting, so restore it in Audiobookshelf.'
+  'The earlier description has a link or formatting Mechanical Librarian can’t write, so restore it in Audiobookshelf.'
 // Why a field this case wrote offers no way back to the value it read, said
 // under the question (#1523, #1424).
 export const noWayBackSentence = (field: ReviewField) =>
@@ -273,7 +274,10 @@ export const valueText = (destination: TargetDestination, value: string) =>
   destination === 'language' ? languageName(value) : value
 export const decisionValue = (field: ReviewField) => {
   if (authoredOwnerRecorded(field) && field.descriptionAdvice?.selected_advice)
-    return field.descriptionAdvice.selected_advice.candidate.output.description
+    return (
+      field.descriptionAdvice.selected_advice.visible_text ??
+      field.descriptionAdvice.selected_advice.candidate.output.description
+    )
   // A hold carried from an earlier case keeps the library's value (ADR-0085).
   const selected = (field.humanDecision ?? (field.manualHold ? null : field.automaticDecision))
     ?.selected_value

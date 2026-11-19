@@ -77,6 +77,7 @@ export const targetField = (overrides: Overrides = {}) => ({
   destination: 'title',
   state: 'value',
   value: 'A Book',
+  formatted: null,
   ...overrides,
 })
 
@@ -123,6 +124,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
   preservation_only: false,
   proposal_id: 'proposal-1',
   proposed_values: [],
+  proposed_formatted: [],
   provenance: [],
   target_fingerprint: 'fingerprint-1',
   uncertainty: [],
@@ -141,7 +143,7 @@ export const caseDetail = (overrides: Overrides = {}) => ({
   recording_admission_basis: null,
   recording_identity_basis: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-detail-v13',
+  schema_version: 'review-case-detail-v14',
   target: targetIdentity(),
   writes_consented: false,
   ...overrides,
@@ -436,7 +438,7 @@ export const library = (overrides: Overrides = {}) => ({
   page: 1,
   previous_cursor: null,
   query: null,
-  schema_version: 'review-library-v11',
+  schema_version: 'review-library-v12',
   ...overrides,
 })
 

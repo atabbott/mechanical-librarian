@@ -46,8 +46,13 @@ const pinned = (field: Field, empty = false): Field => ({
   pin: {
     state: 'in_force',
     value: empty
-      ? { destination: field.destination, state: 'missing', value: null }
-      : ({ destination: field.destination, state: 'value', value: field.currentValue } as never),
+      ? { destination: field.destination, state: 'missing', value: null, formatted: null }
+      : ({
+          destination: field.destination,
+          state: 'value',
+          value: field.currentValue,
+          formatted: null,
+        } as never),
   },
   pinControl: { pin: 'available', unpin: true },
 })
@@ -141,7 +146,10 @@ describe('the pin on a field with nothing to decide', () => {
       // A changed pin on a suspended field waits in its row with no pin.
       row('isbn', '9780000000002', {
         classificationCause: 'external_field_failure',
-        pin: { state: 'changed', value: { destination: 'isbn', state: 'missing', value: null } },
+        pin: {
+          state: 'changed',
+          value: { destination: 'isbn', state: 'missing', value: null, formatted: null },
+        },
         pinControl: { pin: 'available', unpin: true },
       }),
     ])

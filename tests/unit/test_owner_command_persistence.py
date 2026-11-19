@@ -739,9 +739,10 @@ def test_keeping_an_empty_isbn_after_a_write_is_refused(store: OwnerStore) -> No
     assert store.target.read(written.plan).value == "9780306406157"
 
 
-def _described(restorable: bool) -> MetadataReport:
+def _described(restorable: bool, formatted: str | None = None) -> MetadataReport:
     """The genre work with a description Audiobookshelf stored with formatting
-    (`restorable` False) or exactly as its text (#1424)."""
+    it can't write (`restorable` False), exactly as its text, or with
+    formatting it writes as its copy (#1424, #1995)."""
     report = genre_report()
     fields = tuple(
         TargetField(
@@ -749,6 +750,7 @@ def _described(restorable: bool) -> MetadataReport:
             TargetFieldState.VALUE,
             "Fish & chips for the earlier text.",
             restorable,
+            formatted,
         )
         if field.destination is TargetDestination.DESCRIPTION
         else field
@@ -809,6 +811,33 @@ def test_keeping_a_formatted_description_after_a_write_is_refused(
         )
         assert store.patches == [written.plan.plan_id]
         assert store.target.read(written.plan).value == "A qualified description."
+    finally:
+        store.close()
+
+
+def test_keeping_a_description_stored_with_writable_formatting_writes_its_copy(
+    tmp_path: Path,
+) -> None:
+    """A description stored with formatting from the closed set goes back as
+    its copy: the plan keeps the text as its value and the copy as its form
+    (#1995, ADR-0107)."""
+    copy = "<p>Fish &amp; chips <em>for the earlier text.</em></p>"
+    store = OwnerStore(tmp_path, _described(restorable=True, formatted=copy))
+    try:
+        store.write(
+            store.decide(
+                "accept",
+                {"kind": "text", "value": "A qualified description."},
+                destination="description",
+            )
+        )
+        assert _field(store, "description")["restore_unavailable"] is False
+        kept = store.write(store.decide("keep_current", destination="description"))
+        assert (kept.plan.desired_value, kept.plan.desired_form) == (
+            "Fish & chips for the earlier text.",
+            copy,
+        )
+        assert len(store.patches) == 2
     finally:
         store.close()
 
