@@ -89,7 +89,9 @@ def test_the_walker_reports_an_omission_it_was_not_told_about() -> None:
         items: list[Annotated[_Nested, Field(max_length=2)]]
         settings: LibrarySettings | None
 
-    assert _route_omissions(iter([_Response])) == _declared() | {("_Nested", "hidden")}
+    assert _route_omissions(iter([_Response])) == {
+        pair for pair in _declared() if pair[0] == "LibrarySettings"
+    } | {("_Nested", "hidden")}
 
 
 def test_each_omission_predicate_omits_only_its_default() -> None:
@@ -153,7 +155,42 @@ def _constructs(path: Path) -> Iterator[tuple[str, str, str]]:
 def test_no_other_omission_or_serializer_construct_exists() -> None:
     found = {hit for path in sorted(SOURCE.rglob("*.py")) for hit in _constructs(path)}
     declared = {
-        ("domain/owner_settings.py", component, field)
+        (
+            "domain/owner_settings.py"
+            if component == "LibrarySettings"
+            else "interfaces/web/app.py",
+            component,
+            field,
+        )
         for component, field in _declared()
     }
     assert found == declared | ALLOWED
+
+
+def test_each_formatted_copy_is_left_out_only_when_absent() -> None:
+    """A description's copy is optional on the wire, so a stub without one
+    still decodes; one that is set is always sent (#2003)."""
+    from mechanical_librarian.interfaces.web.app import (
+        _ActivityEvidence,
+        _HistoryAutomaticItem,
+        _HistoryDecisionItem,
+        _HistoryDescriptionItem,
+    )
+
+    for model, names in (
+        (_ActivityEvidence, ("formatted",)),
+        (_HistoryAutomaticItem, ("previous_formatted", "selected_formatted")),
+        (_HistoryDecisionItem, ("previous_formatted", "selected_formatted")),
+        (_HistoryDescriptionItem, ("formatted", "visible_text")),
+    ):
+        for name in names:
+            predicate = model.model_fields[name].exclude_if
+            assert predicate is not None
+            assert predicate(None) is True
+            assert predicate("<p>Words.</p>") is False
+    bare = _ActivityEvidence(label="New value", value="Words.")
+    assert bare.model_dump(mode="json") == {"label": "New value", "value": "Words."}
+    shown = _ActivityEvidence(
+        label="New value", value="Words.", formatted="<p>Words.</p>"
+    )
+    assert shown.model_dump(mode="json")["formatted"] == "<p>Words.</p>"

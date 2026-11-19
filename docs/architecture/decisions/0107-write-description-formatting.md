@@ -3,7 +3,7 @@
 - Status: proposed
 - Date: 2026-11-19
 - Owners: project maintainers
-- Issues: #1995
+- Issues: #1995, #2003
 - Amends: ADR-0106 (decision 6, display only), ADR-0105 (`restore_unavailable`)
 - Supersedes: none
 - Superseded by: none
@@ -56,9 +56,10 @@ writing its visible text back would flatten it.
    stored markup is entirely in the set without attributes, comments or
    declarations, as its copy. `restore_unavailable` remains for a link, an
    attribute, any other tag or markup the renderer refuses.
-9. **Shown.** Cards, advice and the Library summary show the copy in place of
-   the text; advice without a copy shows the visible text that is written,
-   never its own markup. Names, sentences and evidence keep the visible text.
+9. **Shown.** Cards, advice, the Library summary, History and Activity show
+   the copy in place of the text; advice without a copy shows the visible
+   text that is written, never its own markup. Names, sentences, the Activity
+   change line and evidence keep the visible text.
 10. Sources that record no rendering keep their description as stated, as
     before.
 
@@ -80,8 +81,6 @@ writing its visible text back would flatten it.
 
 ### Neutral or deferred
 
-- History and Activity still show visible text; a later change shows the
-  copy there.
 - A description already stored flattened stays flattened: formatting alone
   is never a reason to write.
 

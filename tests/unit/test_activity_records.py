@@ -16,6 +16,7 @@ import pytest
 from mechanical_librarian.domain import readable_activity
 from mechanical_librarian.domain.activity_records import (
     activity_result_label,
+    activity_search_text,
     readable_activity_event,
 )
 from mechanical_librarian.domain.metadata_policy import DESTINATIONS, OPTION_CATALOGUE
@@ -1746,3 +1747,182 @@ def test_a_withdrawal_names_what_it_withdrew_and_what_changed_since() -> None:
     single = _import_record("withdrawn", rows=1, linked=1, affected=1)
     assert single["change"] == "Withdrew 1 link"
     assert "Changed since the import" not in _facts(single)
+
+
+# --- a description's formatted copy beside its value (#2003) -----------------
+
+_PLAIN, _COPY = (
+    "Fish & chips. • Formatted.",
+    "<p>Fish &amp; chips.</p><p><b>Formatted.</b></p>",
+)
+_OTHER, _OTHER_COPY = (
+    "A qualified description.",
+    "<ul><li>A <em>qualified</em> description.</li></ul>",
+)
+
+
+def _formatted_report(plain: str = _PLAIN, copy: str | None = _COPY) -> MetadataReport:
+    fields = tuple(
+        TargetField(field.destination, TargetFieldState.VALUE, plain, formatted=copy)
+        if field.destination is TargetDestination.DESCRIPTION
+        else field
+        for field in default_target_fields("Recorded")
+    )
+    return _report(fields)
+
+
+def _formats(event: dict[str, object]) -> dict[str, str | None]:
+    return {
+        str(item["label"]): item.get("formatted")
+        for item in cast("list[dict[str, str]]", event["evidence"])
+    }
+
+
+def test_a_description_write_shows_each_value_with_its_own_copy() -> None:
+    event = _project(
+        _event(
+            destination="description",
+            record={
+                "source_kind": "field_effect",
+                "pre_value": _PLAIN,
+                "pre_form": _COPY,
+                "desired_value": _OTHER,
+                "desired_form": _OTHER_COPY,
+            },
+        )
+    )
+    assert _formats(event)["Previous value"] == _COPY
+    assert _formats(event)["New value"] == _OTHER_COPY
+    assert _facts(event)["New value"] == _OTHER
+    # The change line and the searched words stay the visible text.
+    assert event["change"] == f"{_PLAIN} → {_OTHER}"
+    searched = activity_search_text(
+        _event(
+            destination="description",
+            record={
+                "source_kind": "field_effect",
+                "pre_value": _PLAIN,
+                "pre_form": _COPY,
+                "desired_value": _OTHER,
+                "desired_form": _OTHER_COPY,
+            },
+        ),
+        None,
+    )
+    assert "<" not in searched and "qualified description" in searched
+
+
+def test_a_value_with_no_copy_or_another_field_carries_none() -> None:
+    plain = _project(
+        _event(
+            destination="description",
+            record={
+                "source_kind": "field_effect",
+                "pre_value": None,
+                "desired_value": "Plain <b> text",
+                "desired_form": None,
+            },
+        )
+    )
+    assert set(_formats(plain).values()) == {None}
+    # A copy is never set beside an absent value, nor on any other field.
+    absent = _project(
+        _event(
+            destination="description",
+            record={
+                "source_kind": "field_effect",
+                "pre_value": None,
+                "pre_form": _COPY,
+                "desired_value": _OTHER,
+            },
+        )
+    )
+    assert _formats(absent)["Previous value"] is None
+    title = _project(
+        _event(
+            record={
+                "source_kind": "field_effect",
+                "pre_value": "A",
+                "pre_form": _COPY,
+                "desired_value": "B",
+                "desired_form": _COPY,
+            },
+        )
+    )
+    assert set(_formats(title).values()) == {None}
+
+
+def test_a_value_read_from_the_pinned_report_shows_the_reports_copy() -> None:
+    report = _formatted_report()
+    record = {
+        "source_kind": "human_decision",
+        "target_fingerprint": report.target.fingerprint,
+    }
+    kept = _project(
+        _event(destination="description", state="keep_current", record=dict(record)),
+        report,
+    )
+    assert _formats(kept)["Current value"] == _COPY
+    assert _formats(kept)["Selected value"] == _COPY
+    automatic = _automatic("description", "candidate", report, _OTHER)
+    assert _formats(automatic)["Previous value"] == _COPY
+    # Its candidate shows only the copy its own record carries: none here.
+    assert _formats(automatic)["New value"] is None
+    check = _automatic("description", "keep_current", report)
+    assert _formats(check)["New value"] == _COPY
+
+
+def test_went_back_and_advice_values_show_their_own_copies() -> None:
+    went_back = _project(
+        _event(
+            destination="description",
+            state="keep_current",
+            record={
+                "source_kind": "human_decision",
+                "went_back": {
+                    "written": _OTHER,
+                    "written_form": _OTHER_COPY,
+                    "before": _PLAIN,
+                    "before_form": _COPY,
+                    "state": "verified",
+                    "failure": None,
+                },
+            },
+        )
+    )
+    assert _formats(went_back)["Written value"] == _OTHER_COPY
+    assert _formats(went_back)["Value before your change"] == _COPY
+    advice = _project(
+        _event(
+            destination="description",
+            state="recorded",
+            record={
+                "source_kind": "description_decision",
+                "selected_value": {"kind": "text", "value": _OTHER},
+                "selected_form": _OTHER_COPY,
+            },
+        )
+    )
+    assert _formats(advice)["Selected description"] == _OTHER_COPY
+
+
+def test_a_long_copy_is_cut_as_a_copy_within_the_fact_bound() -> None:
+    copy = "<p>" + "<b>Bold words</b> and plain words. " * 40 + "</p>"
+    plain = "Bold words and plain words. " * 40
+    event = _project(
+        _event(
+            destination="description",
+            record={
+                "source_kind": "field_effect",
+                "pre_value": None,
+                "desired_value": plain.strip(),
+                "desired_form": copy.replace(". </p>", ".</p>"),
+            },
+        )
+    )
+    formatted = _formats(event)["New value"]
+    assert formatted is not None and len(formatted) <= EVIDENCE_LIMIT
+    assert formatted.startswith("<p><b>Bold words</b>")
+    assert formatted.endswith("…</b></p>")
+    assert len(event["change"]) <= CHANGE_LIMIT + len(f"{ABSENT} → ")
+    assert "<" not in str(event["change"])

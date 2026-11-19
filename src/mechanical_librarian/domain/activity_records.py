@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
 
+from mechanical_librarian.domain.evidence_bounds import cut_formatted_description
 from mechanical_librarian.domain.field_effect import CONNECTION_REPLAN_LIMIT
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -34,6 +35,7 @@ from mechanical_librarian.domain.proposal_set import canonical_target_fields
 from mechanical_librarian.domain.readable_activity import (
     ABSENT,
     AUTOMATIC_AUTHORITY_UNAVAILABLE,
+    EVIDENCE_LIMIT,
     ISBN_REFUSAL_REASONS,
     ReadableChange,
     chooser_label,
@@ -272,6 +274,30 @@ def _reported_value(report: MetadataReport | None, destination: str) -> object:
     return value
 
 
+def _reported_form(report: MetadataReport | None, destination: str) -> object:
+    """The formatted copy of the description the pinned report recorded."""
+    if report is None or destination != "description":
+        return None
+    return canonical_target_fields(report.target.fields)[
+        TargetDestination.DESCRIPTION
+    ].formatted
+
+
+def _value_fact(
+    label: str, destination: str, value: object, form: object = None
+) -> dict[str, str]:
+    """One value fact, with its description's own formatted copy (#2003).
+
+    The copy is shown in place of the text and cut, still well nested, to
+    the bound a fact's text has; the text stays what is compared and
+    searched.
+    """
+    fact = {"label": label, "value": value_text(destination, value)}
+    if destination == "description" and type(value) is str and type(form) is str:
+        fact["formatted"] = cut_formatted_description(form, EVIDENCE_LIMIT)
+    return fact
+
+
 def _pinned_report(
     record: dict[str, object], report: MetadataReport | None
 ) -> MetadataReport | None:
@@ -321,9 +347,10 @@ def _write_facts(
         ]
     change = set_change(destination, previous, desired)
     chosen = chooser_label(origin)
+    desired_form = record.get("desired_form")
     if state == "reconciling":
         return ReadableChange("Change not confirmed yet", "Change not confirmed yet"), [
-            {"label": "Selected value", "value": value_text(destination, desired)},
+            _value_fact("Selected value", destination, desired, desired_form),
             {"label": "Chosen by", "value": chosen},
             {"label": "Confirmed in Audiobookshelf", "value": "Not confirmed yet"},
             {
@@ -334,7 +361,7 @@ def _write_facts(
     if failure:
         # A closed preparation may follow a write whose outcome was not confirmed.
         facts = [
-            {"label": "Prepared value", "value": value_text(destination, desired)},
+            _value_fact("Prepared value", destination, desired, desired_form),
             {
                 # A waiting change and an ended one both say what happened;
                 # the summary carries the result word (#1402, #1765).
@@ -386,8 +413,8 @@ def _write_facts(
         closed = f"Prepared change {_CLOSED_VERBS.get(state, 'closed')}"
         return ReadableChange(closed, closed), facts
     facts = [
-        {"label": "Previous value", "value": value_text(destination, previous)},
-        {"label": "New value", "value": value_text(destination, desired)},
+        _value_fact("Previous value", destination, previous, record.get("pre_form")),
+        _value_fact("New value", destination, desired, desired_form),
         {"label": "Chosen by", "value": chosen},
     ]
     if state == "verified":
@@ -411,10 +438,11 @@ def _decision_facts(
     # replaced, which an earlier write on the same case can have made differ
     # from the pinned report (#1286); otherwise, the report it was made
     # against. Only accept and owner-entered rows carry ``pre_value``.
-    current = (
-        record["pre_value"]
+    pinned = _pinned_report(record, report)
+    current, current_form = (
+        (record["pre_value"], record.get("pre_form"))
         if "pre_value" in record
-        else _reported_value(_pinned_report(record, report), destination)
+        else (_reported_value(pinned, destination), _reported_form(pinned, destination))
     )
     selected = record.get("selected_value")
     chosen = {"label": "Chosen by", "value": "You"}
@@ -425,14 +453,18 @@ def _decision_facts(
         return went_back_change(
             destination, went_back.get("written"), went_back.get("before")
         ), [
-            {
-                "label": "Written value",
-                "value": value_text(destination, went_back.get("written")),
-            },
-            {
-                "label": "Value before your change",
-                "value": value_text(destination, went_back.get("before")),
-            },
+            _value_fact(
+                "Written value",
+                destination,
+                went_back.get("written"),
+                went_back.get("written_form"),
+            ),
+            _value_fact(
+                "Value before your change",
+                destination,
+                went_back.get("before"),
+                went_back.get("before_form"),
+            ),
             chosen,
         ] + (
             # A write-back that did not land says why, as its write's row does.
@@ -442,8 +474,8 @@ def _decision_facts(
         )
     if state == "keep_current":
         return keep_change(destination, current), [
-            {"label": "Current value", "value": value_text(destination, current)},
-            {"label": "Selected value", "value": value_text(destination, current)},
+            _value_fact("Current value", destination, current, current_form),
+            _value_fact("Selected value", destination, current, current_form),
             chosen,
         ]
     if state == "withdraw":
@@ -452,7 +484,7 @@ def _decision_facts(
         return ReadableChange(
             "Withdrawn", f"Withdrew the {destination_label(destination)} decision"
         ), [
-            {"label": "Current value", "value": value_text(destination, current)},
+            _value_fact("Current value", destination, current, current_form),
             chosen,
             {"label": "Outcome", "value": "The earlier decision no longer applies"},
         ]
@@ -464,7 +496,7 @@ def _decision_facts(
         return ReadableChange(
             "Unpinned", f"Unpinned the {destination_label(destination)} field"
         ), [
-            {"label": "Current value", "value": value_text(destination, current)},
+            _value_fact("Current value", destination, current, current_form),
             chosen,
             {
                 "label": "Outcome",
@@ -477,14 +509,16 @@ def _decision_facts(
                 "Left unchanged", f"Left {destination_label(destination)} unchanged"
             ),
             [
-                {"label": "Current value", "value": value_text(destination, current)},
+                _value_fact("Current value", destination, current, current_form),
                 chosen,
             ],
         )
     chosen_value = cast("dict[str, object]", selected).get("value")
     return set_change(destination, current, chosen_value), [
-        {"label": "Previous value", "value": value_text(destination, current)},
-        {"label": "New value", "value": value_text(destination, chosen_value)},
+        _value_fact("Previous value", destination, current, current_form),
+        _value_fact(
+            "New value", destination, chosen_value, record.get("selected_form")
+        ),
         chosen,
     ]
 
@@ -497,7 +531,9 @@ def _automatic_facts(
     A check is an automatic outcome that left the pinned value as it was: a
     keep, an ignore, or a candidate exactly equal to the reported value.
     """
-    current = _reported_value(_pinned_report(record, report), destination)
+    pinned = _pinned_report(record, report)
+    current = _reported_value(pinned, destination)
+    current_form = _reported_form(pinned, destination)
     outcome = record.get("outcome")
     selected_value = record.get("selected_value")
     chosen = type(selected_value) is dict
@@ -513,8 +549,15 @@ def _automatic_facts(
     option = cast(str, record.get("policy_option", "")).partition(":")[0]
     generation = record.get("policy_generation")
     facts = [
-        {"label": "Previous value", "value": value_text(destination, current)},
-        {"label": "New value", "value": value_text(destination, selected)},
+        _value_fact("Previous value", destination, current, current_form),
+        _value_fact(
+            "New value",
+            destination,
+            selected,
+            current_form
+            if outcome in {"keep_current", "ignore"}
+            else record.get("selected_form"),
+        ),
         {"label": "Chosen by", "value": "Automatic policy"},
         {
             "label": "Policy option",
@@ -748,13 +791,12 @@ def readable_activity_event(
         )
         selected = record.get("selected_value")
         facts = [
-            {
-                "label": "Selected description",
-                "value": value_text(
-                    "description",
-                    selected.get("value") if type(selected) is dict else None,
-                ),
-            },
+            _value_fact(
+                "Selected description",
+                "description",
+                selected.get("value") if type(selected) is dict else None,
+                record.get("selected_form"),
+            ),
             {"label": "Chosen by", "value": chooser_label(origin)},
             {
                 "label": "What happens next",
@@ -774,14 +816,18 @@ def readable_activity_event(
     elif source_kind == "field_effect_no_change":
         # An owner's accept with nothing to write keeps the value the case's
         # latest write holds, not the value the case read.
-        current = (
-            record["kept_value"]
+        pinned = _pinned_report(record, report)
+        current, current_form = (
+            (record["kept_value"], record.get("kept_form"))
             if "kept_value" in record
-            else _reported_value(_pinned_report(record, report), destination)
+            else (
+                _reported_value(pinned, destination),
+                _reported_form(pinned, destination),
+            )
         )
         change = keep_change(destination, current)
         facts = [
-            {"label": "Current value", "value": value_text(destination, current)},
+            _value_fact("Current value", destination, current, current_form),
             {"label": "Chosen by", "value": chooser_label(origin)},
             {
                 "label": "Confirmed in Audiobookshelf",

@@ -1296,6 +1296,24 @@ class _ReviewCaseReadContext:
     ask_destinations: frozenset[str]
 
 
+def _automatic_citations(
+    snapshot: CurrentReviewCaseSnapshot, review_case_id: str
+) -> dict[str, tuple[str, ...]]:
+    """Each automatic source outcome's citations, one set per outcome id."""
+    citations: dict[str, tuple[str, ...]] = {}
+    for document in snapshot.automatic_source_outcome_documents:
+        outcome_set = ShadowOutcomeSet.from_json(document)
+        if outcome_set.review_case_id != review_case_id:
+            raise ReviewWebError("unavailable")
+        for outcome in outcome_set.outcomes:
+            if (
+                citations.setdefault(outcome.outcome_id, outcome.citation_ids)
+                != outcome.citation_ids
+            ):
+                raise ReviewWebError("unavailable")
+    return citations
+
+
 def _automatic_field_decision(
     context: _ReviewCaseReadContext,
     destination: str,
@@ -1680,17 +1698,7 @@ class InspectCurrentReviewCase:
             decisions: dict[str, HumanDecision] = {}
             automatic: dict[str, dict[str, object]] = {}
             automatic_source_outcome_ids: dict[str, str] = {}
-            automatic_sources: dict[str, tuple[str, ...]] = {}
-            for document in snapshot.automatic_source_outcome_documents:
-                outcome_set = ShadowOutcomeSet.from_json(document)
-                if outcome_set.review_case_id != review_case_id:
-                    raise ReviewWebError("unavailable")
-                for outcome in outcome_set.outcomes:
-                    previous = automatic_sources.setdefault(
-                        outcome.outcome_id, outcome.citation_ids
-                    )
-                    if previous != outcome.citation_ids:
-                        raise ReviewWebError("unavailable")
+            automatic_sources = _automatic_citations(snapshot, review_case_id)
             # Declared once: the parse loop below binds a decision, while the
             # per-field projection later looks one up and may find none.
             decision: HumanDecision | None
@@ -2370,10 +2378,23 @@ class InspectCurrentReviewCase:
 
     def history(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
         _detail, report, snapshot = self._read(review_case_id, limit)
+        try:
+            citations = _automatic_citations(snapshot, review_case_id)
+        except ReviewWebError:
+            raise
+        except Exception as error:
+            # The same snapshot detail reads; one it can't read is unavailable.
+            raise ReviewWebError("unavailable") from error
         case = ReviewCase.create_from_data(json.loads(snapshot.case_document)["case"])
         target_fields = canonical_target_fields(report.target.fields)
         automatic_values: dict[
-            str, tuple[dict[str, object] | None, dict[str, object] | None]
+            str,
+            tuple[
+                dict[str, object] | None,
+                dict[str, object] | None,
+                str | None,
+                str | None,
+            ],
         ] = {}
         decisions: dict[str, dict[str, object]] = {}
         for document in snapshot.decision_documents:
@@ -2433,7 +2454,23 @@ class InspectCurrentReviewCase:
                 )
                 if historical_decision.outcome == "candidate" and selected is None:
                     continue
-                automatic_values[decision_id] = (previous, selected)
+                # Each description value's own copy: the report's, or the one
+                # the decision's own citations agree on (#2003).
+                previous_formatted = current.get("formatted") if previous else None
+                automatic_values[decision_id] = (
+                    previous,
+                    selected,
+                    cast("str | None", previous_formatted),
+                    alternative_formatted(
+                        report,
+                        citations.get(historical_decision.source_outcome_id, ()),
+                        selected.get("value"),
+                    )
+                    if historical_decision.outcome == "candidate" and selected
+                    else cast("str | None", previous_formatted)
+                    if selected
+                    else None,
+                )
                 continue
             try:
                 decision = HumanDecision.from_json(document)
@@ -2469,10 +2506,17 @@ class InspectCurrentReviewCase:
                     == decisions.get(decision_id, {}).get("destination")
                     else None
                 )
-                item["previous_value"], item["selected_value"] = joined or (
+                previous, selected, previous_formatted, selected_formatted = joined or (
+                    None,
+                    None,
                     None,
                     None,
                 )
+                item["previous_value"], item["selected_value"] = previous, selected
+                if previous_formatted is not None:
+                    item["previous_formatted"] = previous_formatted
+                if selected_formatted is not None:
+                    item["selected_formatted"] = selected_formatted
             history_items.append(item)
         cover_history = []
         for raw in snapshot.cover_history:

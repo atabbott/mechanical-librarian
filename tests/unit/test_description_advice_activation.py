@@ -3591,3 +3591,64 @@ def test_advice_that_reads_as_the_current_text_records_no_change_that_reopens(
         ).fetchone() == (1,)
     finally:
         repository.close()
+
+
+def test_history_and_activity_show_chosen_advice_as_it_is_written(
+    tmp_path: Path,
+) -> None:
+    """History's advice items and Activity's selected description read as
+    the text that is written, never the adviser's own markup (#2003)."""
+    from mechanical_librarian.adapters.persistence.description_advice import (
+        advised_description,
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from mechanical_librarian.domain.activity_records import readable_activity_event
+
+    raw = '<p>Advised <u>words</u> &nbsp;<a href="x">and</a> <strong>bold</strong>.</p>'
+    advised = advised_description(raw)
+    assert advised is not None
+    plain, copy = advised
+    assert copy is not None and "<strong>" in copy and "<u>" not in copy
+    repository, store, binding, candidate, _ = _prepared(tmp_path, description=raw)
+    store.admit(candidate.candidate_id, binding, "human", "b" * 64, 12)
+    items = InspectCurrentReviewCase(repository).history(binding.review_case_id)[
+        "items"
+    ]
+    for kind in ("description_advice_recorded", "description_selected"):
+        item = next(item for item in items if item["kind"] == kind)
+        assert (item["formatted"], item["visible_text"]) == (copy, plain)
+        # The adviser's own text stays recorded as it was, and is not shown.
+        assert item["candidate"]["output"]["description"] == raw
+    page = repository.field_effect_activity_page(
+        search=None, event_type="all", occurred_after=0, page=1, page_size=25
+    )
+    selected = next(
+        event
+        for event in page["events"]
+        if event["record"]["source_kind"] == "description_decision"
+    )
+    assert selected["record"]["selected_value"] == {"kind": "text", "value": plain}
+    assert selected["record"]["selected_form"] == copy
+    readable_activity_event(selected, None)
+    (fact,) = (
+        fact for fact in selected["evidence"] if fact["label"] == "Selected description"
+    )
+    assert fact == {"label": "Selected description", "value": plain, "formatted": copy}
+    repository.close()
+
+
+def test_history_shows_unreadable_advice_with_no_copy(tmp_path: Path) -> None:
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    repository, _store, binding, _candidate, _ = _prepared(
+        tmp_path, description="<p>An unclosed story."
+    )
+    item = next(
+        item
+        for item in InspectCurrentReviewCase(repository).history(
+            binding.review_case_id
+        )["items"]
+        if item["kind"] == "description_advice_recorded"
+    )
+    assert (item["formatted"], item["visible_text"]) == (None, None)
+    repository.close()

@@ -22,6 +22,8 @@ from mechanical_librarian.adapters.providers.visible_text import (
 from mechanical_librarian.domain.description_formatting import chosen_formatted
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
+    _well_nested,
+    cut_formatted_description,
     formatted_description_text,
     validate_formatted_description,
 )
@@ -349,3 +351,58 @@ def test_a_copy_that_does_not_nest_as_a_copy_is_refused(copy: str) -> None:
 def test_the_deepest_copy_the_serialiser_writes_is_admitted() -> None:
     copy = "<b>" * MAX_FORMATTED_DEPTH + "Words." + "</b>" * MAX_FORMATTED_DEPTH
     assert validate_formatted_description(copy, "copy", MAX_DESCRIPTION_CHARACTERS)
+
+
+def _copies() -> list[str]:
+    """Every copy the corpus reads to, and one long copy of each shape."""
+    copies = [copy for value in CORPUS if (copy := read_description(value)[2])]
+    long = (
+        "<p>Fish &amp; chips. " + "<b>Bold words</b> and plain words. " * 20 + "</p>"
+        "<ul><li>2 &lt; 3 &gt; 1</li><li>Two <em>items</em></li></ul>"
+        "<ol><li>Outer<ul><li>Inner <strong>deep</strong></li></ul></li></ol>"
+        "<p>Line<br>break &amp; end</p>"
+    )
+    assert read_description(long)[2] == long
+    return [*copies, long]
+
+
+def _letters(text: str) -> str:
+    return re.sub(r"[\s•]", "", text)
+
+
+def test_a_cut_copy_stays_a_well_nested_copy_within_its_bound() -> None:
+    """Activity cuts a copy as a copy (#2003): whole tags, whole references,
+    no empty element, `…` inside the last element open, within the bound."""
+    for copy in _copies():
+        assert cut_formatted_description(copy, len(copy)) == copy
+        for limit in range(1, len(copy)):
+            cut = cut_formatted_description(copy, limit)
+            assert len(cut) <= limit
+            assert cut == "…" or _well_nested(cut), (copy, limit, cut)
+            assert re.sub(r"(</[a-z]+>)+$", "", cut).endswith("…")
+            assert not re.search(r"&(?!amp;|lt;|gt;)", cut), cut
+            assert {tag.strip("</>") for tag in _TAG.findall(cut)} <= _WRITTEN
+            # It reads as the start of the copy's own text.
+            assert _letters(formatted_description_text(copy)).startswith(
+                _letters(formatted_description_text(cut).removesuffix("…"))
+            )
+
+
+def test_a_cut_at_activity_bound_keeps_the_copy_whole_when_it_fits() -> None:
+    copy = "<p>A <b>bold</b> one.</p>"
+    assert cut_formatted_description(copy, 512) == copy
+    long = "<p>" + "word " * 200 + "<b>late</b></p>"
+    cut = cut_formatted_description(long.replace(" <b>", "<b>"), 512)
+    assert len(cut) <= 512 and cut.endswith("…</p>") and "<b>" not in cut
+
+
+def test_a_naive_cut_breaks_the_copy() -> None:
+    """Negative control: cutting a copy as text, as a plain value is cut,
+    splits tags and references and leaves elements open."""
+    broken = 0
+    for copy in _copies():
+        for limit in range(2, len(copy)):
+            naive = copy[: limit - 1].rstrip() + "…"
+            broken += not _well_nested(naive)
+    assert broken > 100
+    assert cut_formatted_description("<p>Fish &amp; chips</p>", 13) == "<p>Fish…</p>"
