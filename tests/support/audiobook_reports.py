@@ -983,8 +983,12 @@ def publish_audiobook_preview(
     *,
     selected_options: dict[str, str] | None = None,
     selected_destinations: dict[str, str] | None = None,
+    preview: bool = False,
 ) -> tuple[str, ResolvedMetadataPolicy]:
-    """Publish one recording under a policy routing `automatic` to Automatic."""
+    """Publish one recording under a policy routing `automatic` to Automatic.
+
+    With `preview` the owner stays in Preview, so Automatic decides nothing
+    until it is turned on."""
     import json
     from typing import cast
 
@@ -1017,7 +1021,8 @@ def publish_audiobook_preview(
         2,
         expected_active_generation=1,
     )
-    repository.activate_qualified_automatic(3)
+    if not preview:
+        repository.activate_qualified_automatic(3)
     proposal = evaluate_report(
         report, resolved.resolved_id, human_review_destinations(resolved)
     )

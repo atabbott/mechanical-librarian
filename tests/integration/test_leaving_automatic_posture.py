@@ -888,6 +888,74 @@ def test_a_pin_taken_back_before_automatic_decided_shows_the_hold_once_it_is_on(
     assert _read_fields(library)["authors"]["manual_hold"] is False
 
 
+def test_a_title_pin_taken_back_in_preview_holds_the_whole_bundle(
+    tmp_path: Path,
+) -> None:
+    """An audiobook's split title and subtitle are decided as one bundle. A
+    pin on the title taken back in Preview leaves a hold Automatic decides the
+    bundle under once it is on: the title shows the hold, and Resume on it
+    lets the bundle plan (ADR-0085, Amendment 6)."""
+    root = open_repository(tmp_path / "pair.sqlite3", cross_thread=True)
+    try:
+        report = synthetic_audiobook_bibliographic_report()
+        case_id, _policy = publish_audiobook_preview(
+            root,
+            report,
+            ("title_layout", "subtitle"),
+            selected_options={
+                "title_layout": "title_and_subtitle",
+                "subtitle": "corroborated_split",
+            },
+            preview=True,
+        )
+        root.persist_shadow_outcome(case_id, 4)
+        case = ReviewCase.create_from_data(
+            json.loads(root.get_review_case(case_id))["case"]
+        )
+        proposal_id = next(
+            value["proposal_id"]
+            for value in case.proposals
+            if value["destination"] == "title"
+        )
+        pin, unpin = (
+            HumanDecision.create(
+                case,
+                proposal_id=str(proposal_id),
+                target_fingerprint=case.target_fingerprint,
+                destination="title",
+                actor="owner",
+                outcome=outcome,
+                selected_value=None,
+                idempotency_key=f"owner-command-{outcome}-title",
+                occurred_at=at,
+            )
+            for outcome, at in (("pin", 7), ("unpin", 8))
+        )
+        root.record_human_decision(pin)
+        root.record_human_decision(unpin)
+        root.activate_qualified_automatic(40)
+        root.reconcile_case_level(case_id, 41)
+        root.persist_shadow_outcome(case_id, 41)
+
+        bundles = root._connection.execute(
+            "SELECT destination,json_extract(document,'$.bundle_id') "
+            "FROM automatic_decisions ORDER BY destination"
+        ).fetchall()
+        assert [row[0] for row in bundles] == ["subtitle", "title"]
+        assert bundles[0][1] is not None and bundles[0][1] == bundles[1][1]
+        detail = InspectCurrentReviewCase(root).run(case_id)
+        fields = {str(field["destination"]): field for field in detail["fields"]}
+        assert fields["title"]["manual_hold"] is True
+        assert root.clear_field_effect_manual_hold(
+            case_id, "title", 50, pin.decision_id
+        )
+        detail = InspectCurrentReviewCase(root).run(case_id)
+        fields = {str(field["destination"]): field for field in detail["fields"]}
+        assert fields["title"]["manual_hold"] is False
+    finally:
+        root.close()
+
+
 def test_an_owner_plan_waits_while_its_case_is_retired_for_reconciliation(
     library: _Library, tmp_path: Path
 ) -> None:

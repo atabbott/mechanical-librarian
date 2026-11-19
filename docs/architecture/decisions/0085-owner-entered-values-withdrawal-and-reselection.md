@@ -470,6 +470,9 @@ gains the decision at the case's next admission.
 
 Proof: `test_a_pin_taken_back_before_automatic_decided_shows_the_hold_once_it_is_on`
 in `tests/integration/test_leaving_automatic_posture.py` (unpinned fails before
-this amendment; pinned keeps a pin in force refusing) and
+this amendment; pinned keeps a pin in force refusing),
+`test_a_title_pin_taken_back_in_preview_holds_the_whole_bundle` in the same
+file (an audiobook's title and subtitle are decided as one bundle under the
+title's hold), and
 `test_a_pin_taken_back_in_preview_shows_the_hold_once_automatic_is_on` in
 `tests/browser/test_review_browser.py`.
