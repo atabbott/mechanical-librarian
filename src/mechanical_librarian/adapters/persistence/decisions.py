@@ -1165,7 +1165,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         still in force, speaks for the field again, as it did before that
         answer. A hold this answer did not set stays. A released row goes,
         so the case reads as never held (a withdrawal is only accepted on a
-        case with no automatic decision). A pin on the restored hold is
+        case with no automatic decision of the active generation). A pin on the restored hold is
         compared again with this case's value (ADR-0085, Amendment 2).
 
         Runs inside `record_human_decision`'s transaction.

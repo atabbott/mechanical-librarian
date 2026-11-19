@@ -57,7 +57,7 @@ handling, which the field offers once Automatic has a decision for it
 Amendment 1). Withdrawing a decision removes the hold it set. While Automatic
 has a decision for the field, you cannot withdraw yours. Resume automatic
 handling removes the hold instead. A decision Automatic made before you last
-left Automatic doesn't count, since it can never be written
+left Automatic doesn't count, since it decides nothing now
 ([ADR-0036](../architecture/decisions/0036-qualified-decision-only-automatic-policy.md)). Clearing a subtitle, publisher, genres or
 narrators is an answer like any other: it holds the field and ends a pin on
 it, and the cleared field can be pinned, so a source still offering a value
