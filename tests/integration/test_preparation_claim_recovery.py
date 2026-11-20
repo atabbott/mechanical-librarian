@@ -2028,10 +2028,8 @@ def test_guard_busy_retries_without_unknown_and_every_other_failure_settles_unkn
             [
                 {
                     "code": "unknown",
-                    "connection": action.connection,
                     "event": "preparation_discovery_failed",
                     "level": "warning",
-                    "library": action.library,
                 }
             ]
             if stage == "discovery"

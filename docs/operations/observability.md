@@ -91,7 +91,7 @@ text, credential or path.
 | --- | --- |
 | `preparation_unknown_failure` | An unclassified preparation exception is observed (WARNING). |
 | `preparation_claim_contended` | A preparation claim, or a claimed stage's target-connection check, lost the write lock and will retry (WARNING, `code: contention`). |
-| `preparation_discovery_failed` | A library's discovery stopped (WARNING). `code` is the stored reason; `connection` and `library` are the configured names, or null. |
+| `preparation_discovery_failed` | A library's discovery stopped (WARNING). `code` is the stored reason. Neither this event nor `preparation_items_unread` names the connection or library; Background activity shows which library it was. |
 | `preparation_items_unread` | A completed discovery left items it could not read (WARNING). `changed`, `no_media`, `oversized` and `unreadable` count them, up to 10,000 each. |
 | `activity_projector` | The background Activity projector stopped. `code` is `stopped`, `released` or `admission_closed` (info), or `unexpected` (WARNING, with the exception type in `error`). Shutdown adds `join_timeout` (WARNING) if the projector's current step outlasts the join bound; closing still waits for that step. |
 | `reviewer_sandbox_check` | A Codex sandbox check failed before sign-in or a review (WARNING). `check` is `sandbox_version` or `sandbox_probe`; `outcome` is `spawn_failed`, `timed_out`, `resource_refused`, `exit_nonzero`, `stderr` or `version_mismatch`; `exit_status` is the exit status or null; `stderr` says whether stderr was empty (`none`), Bubblewrap's own (`bwrap`) or `other`. Never the output itself. |
