@@ -31,12 +31,14 @@ from mechanical_librarian.adapters.persistence.schema import (
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
+    sqlite_busy,
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     ReportNotFoundError,
     ReportRepository,
+    ReportStorageError,
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -242,7 +244,16 @@ class SQLiteReportRepository(ConnectionScoped):
         if isinstance(failure, (TargetConnectionError, MetadataReportError)):
             raise failure
         if isinstance(failure, sqlite3.Error):
-            raise MetadataReportError("report publication failed") from failure
+            # Busy is retryable only once the scope and its connection are
+            # proven released, so nothing of this publication remains (#2024).
+            try:
+                released = (
+                    not transaction.started and not self._connection.in_transaction
+                )
+            except sqlite3.Error:
+                released = False
+            busy = released and sqlite_busy(failure)
+            raise ReportStorageError(busy=busy) from failure
         if isinstance(failure, Exception):
             raise MetadataReportError(
                 "report publication precondition failed"

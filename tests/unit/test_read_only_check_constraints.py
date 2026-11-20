@@ -19,6 +19,7 @@ from mechanical_librarian.adapters.persistence import catalogue, metadata_report
 from mechanical_librarian.adapters.persistence import provider_recovery as recovery
 from mechanical_librarian.adapters.persistence.catalogue import (
     CatalogueReadAdmission,
+    CatalogueSchemaAdmission,
     open_catalogue,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
@@ -192,7 +193,7 @@ def test_bridge_output_validation_refuses_a_check_violation(tmp_path: Path) -> N
         bridge._validate_output(path, bridge._BridgeData((), (), (), 0))
 
 
-def _catalogue_store(tmp_path: Path) -> Path:
+def _catalogue_store(tmp_path: Path, *, violate: bool = True) -> Path:
     tmp_path.chmod(0o700)
     path = tmp_path / "catalogue.sqlite"
     writer = open_catalogue(path, create=True)
@@ -219,7 +220,8 @@ def _catalogue_store(tmp_path: Path) -> Path:
         ),
     )
     writer.close()
-    _write_past_checks(path, "UPDATE catalogue_entries SET has_ebook=7")
+    if violate:
+        _write_past_checks(path, "UPDATE catalogue_entries SET has_ebook=7")
     return path
 
 
@@ -234,6 +236,20 @@ def test_catalogue_open_refuses_a_check_violation_read_only_first(
     path = _catalogue_store(tmp_path)
     with pytest.raises(CatalogueError, match=_CATALOGUE_REFUSAL):
         open_catalogue(path)
+
+
+def test_catalogue_schema_admission_refuses_a_violation_written_after_admission(
+    tmp_path: Path,
+) -> None:
+    """#2024: a write after a file was admitted brings the read-only sweep back."""
+    path = _catalogue_store(tmp_path, violate=False)
+    admission = CatalogueSchemaAdmission()
+    open_catalogue(path, admission=admission).close()
+    assert admission.admits(path.stat())
+    _write_past_checks(path, "UPDATE catalogue_entries SET has_ebook=7")
+    assert not admission.admits(path.stat())
+    with pytest.raises(CatalogueError, match=_CATALOGUE_REFUSAL):
+        open_catalogue(path, admission=admission)
 
 
 def test_catalogue_library_admission_refuses_a_check_violation(

@@ -19,6 +19,8 @@ it with `catalogue-list` and `catalogue-get`, from the
   readable until then.
 - A second refresh against the same database returns busy. It does not wait or
   retry.
+- When the catalogue is busy as preparation checks a book, preparation tries
+  that book again later instead of failing it.
 - Changes in Audiobookshelf after the observation window are not part of that
   generation.
 - A configuration change makes the catalogue report `catalogue requires

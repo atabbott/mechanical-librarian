@@ -90,6 +90,7 @@ text, credential or path.
 | `event` | Written when |
 | --- | --- |
 | `preparation_unknown_failure` | An unclassified preparation exception is observed (WARNING). |
+| `preparation_storage_failure` | Extraction could not open or read the catalogue, or could not publish its report (WARNING). `store` is `catalogue` or `reports`; `code` is `transient` when the book is retried later or `persistence` when it fails; `sqlite_error_code` is the SQLite error code or null; `attempt`, `recovery_attempt` and `reference` are as for `preparation_unknown_failure`. |
 | `preparation_claim_contended` | A preparation claim, or a claimed stage's target-connection check, lost the write lock and will retry (WARNING, `code: contention`). |
 | `activity_projector` | The background Activity projector stopped. `code` is `stopped`, `released` or `admission_closed` (info), or `unexpected` (WARNING, with the exception type in `error`). Shutdown adds `join_timeout` (WARNING) if the projector's current step outlasts the join bound; closing still waits for that step. |
 | `reviewer_sandbox_check` | A Codex sandbox check failed before sign-in or a review (WARNING). `check` is `sandbox_version` or `sandbox_probe`; `outcome` is `spawn_failed`, `timed_out`, `resource_refused`, `exit_nonzero`, `stderr` or `version_mismatch`; `exit_status` is the exit status or null; `stderr` says whether stderr was empty (`none`), Bubblewrap's own (`bwrap`) or `other`. Never the output itself. |
@@ -100,8 +101,11 @@ text, credential or path.
 | `identifier_import` | An identifiers file preview, import or withdrawal finished. `action` is `preview`, `import` or `withdraw`; `outcome` is `previewed`, `recorded`, `replayed`, a refusal code or `failed`; `rows` counts the file's rows and `linked` the links made or withdrawn. Never a path, row, title or item ID. |
 | `provider_request_failed`, `provider_throttled`, `provider_deadline_stop`, `provider_adapter_fault`, `provider_recovery_job`, `provider_response_store` | See [provider logs](#provider-logs). |
 
-`preparation_unknown_failure` holds only validated code identities and
-application frame locations. Match its `reference` to the preparation reference
+`preparation_unknown_failure` holds only validated code identities,
+application frame locations and `sqlite_error_code`: the first SQLite error code
+on the exception chain, such as 5 for a busy database or 11 for a corrupt one,
+or null when there is none. Only SQLite's documented error codes are recorded,
+never the error's text. Match its `reference` to the preparation reference
 in status or support evidence when the failure was recorded, or its
 `restart_reference` to a **Preparation stopped** reference when it was not.
 `observation: before_fail` means the exception was seen, not that an outcome
