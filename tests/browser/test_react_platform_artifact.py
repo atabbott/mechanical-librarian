@@ -3894,6 +3894,115 @@ def test_the_works_count_never_starts_a_wrapped_line_with_a_dot() -> None:
         assert "·" not in starts, starts
 
 
+def _settled_series(field: dict[str, Any]) -> dict[str, Any]:
+    """Case-1's Series as reported in #2012: one current value, nothing offered."""
+    field.update(
+        classification="unsupported",
+        classification_cause="nothing_to_decide",
+        classification_reason="Nothing to decide for this field.",
+        decision_actions=[],
+        deterministic_disposition="unresolved_choice",
+        editable=False,
+        automatic_decision=None,
+        automatic_withheld_reason=None,
+        automatic_withheld_condition=None,
+        proposed_values=[],
+        proposed_formatted=[],
+        preservation_only=False,
+        notices=["no_safe_bibliographic_combination"],
+        current={
+            "destination": "series",
+            "state": "value",
+            "value": [{"name": "Reading Order", "sequence": "1"}],
+            "formatted": None,
+        },
+        choice_contexts=[
+            {
+                "alternative_id": None,
+                "evidence": [],
+                "limitations": [],
+                "match_basis": None,
+                "rationale": "",
+                "recommendation": "no_recommendation",
+                "recommendation_reason": "",
+                "selection": "current",
+            }
+        ],
+    )
+    return field
+
+
+_SETTLED_FIELD_RHYTHM = """() => {
+  const box = (node) => node.getBoundingClientRect()
+  const canvas = document.querySelector('.decision-canvas')
+  const heading = canvas.querySelector(':scope > header h3')
+  const context = [...canvas.querySelectorAll('p')].find(
+    (node) => node.textContent === 'No source offered a different value.')
+  const last = [...canvas.querySelectorAll('*')]
+    .filter((node) => box(node).height > 0)
+    .reduce((bottom, node) => Math.max(bottom, box(node).bottom), 0)
+  const match = [...document.querySelectorAll('h3')].find(
+    (node) => node.textContent === 'Recording match')
+  const paragraph = match.parentElement.querySelector('p')
+  return {
+    headingToContext: box(context).top - box(heading).bottom,
+    canvasToMatch: box(match).top - last,
+    matchToParagraph: box(paragraph).top - box(match).bottom,
+  }
+}"""
+
+
+@pytest.mark.parametrize("width", (1440, 390), ids=("wide", "phone"))
+def test_a_settled_field_keeps_an_even_rhythm_down_to_the_recording_match(
+    width: int,
+) -> None:
+    """#2012: a field no source offered a different value for sits close under
+    its heading, the Recording match below it keeps a section's gap, and that
+    heading sits close over its own first line."""
+
+    def reshape(route: Route) -> None:
+        path = urlsplit(route.request.url).path
+        payload: Any = rich_payload(route.request.url)
+        if path == "/api/v1/review-cases/case-1":
+            payload["target"]["media_kind"] = "m4b"
+            payload["audiobook_review_scope"] = "work"
+            payload["fields"] = [
+                _settled_series(field) if field["destination"] == "series" else field
+                for field in payload["fields"]
+            ]
+        else:
+            # No other source values sit between the field and the match.
+            payload.update(items=[], next_cursor=None, missing_lineage_count=0)
+        route.fulfill(content_type="application/json", body=json.dumps(payload))
+
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(
+            viewport={"width": width, "height": 1000}, locale="en-US"
+        )
+        _serve_cohort(page)
+        page.route("**/api/v1/review-cases/case-1", reshape)
+        page.route("**/api/v1/review-cases/case-1/evidence*", reshape)
+        page.goto(
+            "https://react-platform.invalid/library?lens=all&preview=case-1&field=series"
+        )
+        expect(
+            page.locator(".decision-canvas").get_by_text(
+                "No source offered a different value.", exact=True
+            )
+        ).to_be_visible()
+        expect(page.get_by_role("heading", name="Recording match")).to_be_visible()
+        expect(
+            page.get_by_role("complementary", name="Comparison condition")
+        ).to_have_count(0)
+        rhythm = page.evaluate(_SETTLED_FIELD_RHYTHM)
+        assert rhythm["headingToContext"] <= 24, rhythm
+        assert rhythm["canvasToMatch"] >= 20, rhythm
+        assert rhythm["matchToParagraph"] <= 12, rhythm
+
+
 def test_works_rows_show_a_retained_cover_without_growing() -> None:
     """A work's retained cover is its mark: whole, fitted to the spine's own
     column (48 by 72 px, 42 by 63 on phones) and centred like the spine, so

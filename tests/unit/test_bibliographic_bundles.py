@@ -9,21 +9,38 @@ from typing import cast
 import pytest
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.domain import proposal_set, rich_metadata_preview
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    FileFacts,
+    MetadataReport,
     TargetDestination,
+    TargetFacts,
     TargetField,
     TargetFieldState,
+    TargetSeries,
 )
 from mechanical_librarian.domain.proposal_set import (
+    ProposalAssessment,
     ProposalOutcome,
+    ProposalResult,
     ProposalSet,
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionIncompatibleError,
     ReviewCase,
+)
+from mechanical_librarian.domain.rich_metadata_preview import (
+    compile_rich_metadata_preview,
 )
 from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
@@ -33,6 +50,13 @@ from mechanical_librarian.domain.shadow_review import (
 from mechanical_librarian.domain.shadow_review_actions import (
     compile_shadow_review_actions,
 )
+from tests.support.audiobook_reports import (
+    audio_local_claims,
+    audio_target_fields,
+    audiobook_candidate,
+    qualified_audiobook,
+)
+from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.support.proposal_evidence import (
     _claim,
     _fields,
@@ -397,6 +421,114 @@ def test_sequence_only_duplication_is_also_withheld() -> None:
         for value in proposal.results
         if value.destination is TargetDestination.SERIES
     ).reasons
+
+
+def _recording_with_series(title: str) -> MetadataReport:
+    """Two audiobook authorities giving the recording's own series, with title."""
+    claims = audio_local_claims()
+    series = ("Reading Order", "2")
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary",
+            "audio",
+            "item-1",
+            tuple(
+                TargetField(
+                    TargetDestination.SERIES,
+                    TargetFieldState.VALUE,
+                    (TargetSeries(*series),),
+                )
+                if field.destination is TargetDestination.SERIES
+                else field
+                for field in audio_target_fields()
+            ),
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=tuple(
+            qualified_audiobook(
+                claims,
+                authority=authority,
+                provider=provider,
+                candidates=(
+                    audiobook_candidate(
+                        claims, provider=provider, series=series, title=title
+                    ),
+                ),
+            )
+            for provider, authority in (
+                ("catalogue", "audible_catalog"),
+                ("registry", "audnexus"),
+            )
+        ),
+        audio=single_track_audio_facts("b" * 64),
+    )
+
+
+def test_a_kept_series_left_unresolved_reads_as_disagreement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The cause of #2012: both sources give the recording's current series,
+    # so series is kept, but their title restates it and leaves no safe
+    # combination. The kept series becomes an unresolved choice holding only
+    # its preserving alternative. On the builtin Automatic route a recording
+    # that is not admitted is projected as Ask, which abstains as ambiguous
+    # evidence; an admitted recording on Automatic is target_preserved instead.
+    unresolved: list[tuple[ProposalResult, ProposalResult]] = []
+    real = proposal_set._bibliographic_unresolved
+
+    def record(result: ProposalResult) -> ProposalResult:
+        unresolved.append((result, real(result)))
+        return unresolved[-1][1]
+
+    monkeypatch.setattr(proposal_set, "_bibliographic_unresolved", record)
+    report = _recording_with_series("Ember Tide Protocol: Reading Order, Book 2")
+    policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
+    assert ("automatic", "primary_narrative") == (
+        dict(policy.destinations)["series"],
+        dict(policy.options)["series"],
+    )
+
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+
+    assert admitted_audiobook_identity(report)
+    before, after = next(
+        pair for pair in unresolved if pair[0].destination is TargetDestination.SERIES
+    )
+    assert (ProposalOutcome.KEEP, (ProposalAssessment.PRESERVES_TARGET,)) == (
+        before.outcome,
+        tuple(value.assessment for value in before.alternatives),
+    )
+    series = next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.SERIES
+    )
+    assert series == after
+    assert () == proposal.bibliographic_combinations
+    assert (
+        ProposalOutcome.UNRESOLVED_CHOICE,
+        ("no_safe_bibliographic_combination",),
+        before.alternatives,
+    ) == (series.outcome, series.reasons, series.alternatives)
+
+    def series_preview() -> tuple[str, str | None]:
+        preview = next(
+            value
+            for value in compile_rich_metadata_preview(policy, report, proposal).fields
+            if value.field == "series"
+        )
+        return preview.outcome, preview.reason
+
+    assert ("no_op", "target_preserved") == series_preview()
+    # The same result read as a recording whose identity is not admitted, by
+    # substituting the preview's admission check: this test support builds no
+    # real unadmitted report that reaches this state.
+    monkeypatch.setattr(
+        rich_metadata_preview, "admitted_audiobook_identity", lambda _report: False
+    )
+    assert ("abstain", "ambiguous_evidence") == series_preview()
 
 
 def test_action_catalogue_partitions_candidates_by_allowed_combination() -> None:
