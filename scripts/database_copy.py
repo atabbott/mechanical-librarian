@@ -14,6 +14,7 @@ asks this module whether the copy's recorded Unicode version is the cause.
 
 from __future__ import annotations
 
+import os
 import platform
 import re
 import sqlite3
@@ -23,6 +24,8 @@ from urllib.parse import quote
 
 PYTHON_PIN = Path(__file__).resolve().parents[1] / ".python-version"
 _UNICODE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+# The schema's CHECK bound; the copy was refused, so it is not trusted to hold.
+_STORED_LIMIT = 32
 
 
 def pinned_python() -> str | None:
@@ -37,22 +40,29 @@ def pinned_python() -> str | None:
 def stored_unicode_version(database: Path) -> str | None:
     """The Unicode version the copy's browse facts record, read without writing.
 
-    None when the file is not a database that records exactly one.
+    None when the file is not a database that records exactly one short text
+    value. Only a bounded prefix is ever loaded.
     """
-    absolute = quote(str(database.absolute()), safe="/")
     try:
+        # Bytes keep a pathname that is not valid UTF-8 exactly as the OS has it.
+        absolute = quote(os.fsencode(database.absolute()), safe="/")
         connection = sqlite3.connect(f"file:{absolute}?mode=ro&immutable=1", uri=True)
         try:
             rows = connection.execute(
-                "SELECT unicode_version FROM browse_fact_identity"
+                "SELECT typeof(unicode_version),length(unicode_version),"
+                "substr(unicode_version,1,?) FROM browse_fact_identity LIMIT 2",
+                (_STORED_LIMIT,),
             ).fetchall()
         finally:
             connection.close()
-    except sqlite3.Error:
+    except (sqlite3.Error, OSError, ValueError):
         return None
-    if len(rows) != 1 or not isinstance(rows[0][0], str):
+    if len(rows) != 1:
         return None
-    return str(rows[0][0])
+    kind, length, value = rows[0]
+    if kind != "text" or not 1 <= length <= _STORED_LIMIT:
+        return None
+    return str(value)
 
 
 def unicode_refusal(database: Path) -> str | None:

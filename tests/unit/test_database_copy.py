@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import unicodedata
 from pathlib import Path
@@ -101,7 +102,9 @@ def test_only_a_version_number_is_repeated_from_the_copy(
 
 
 @pytest.mark.parametrize(
-    "version", ["16.0.0", 17, None], ids=["same", "integer", "null"]
+    "version",
+    ["16.0.0", 17, None, "", "9" * 33, "9" * 10_000_000],
+    ids=["same", "integer", "null", "empty", "over_limit", "huge"],
 )
 def test_no_refusal_when_the_copy_records_this_unicode_or_no_text(
     python_3_14: Path, tmp_path: Path, version: object
@@ -120,6 +123,28 @@ def test_no_refusal_for_a_file_that_is_not_such_a_database(tmp_path: Path) -> No
         assert database_copy.unicode_refusal(database) is None
     assert not missing.exists()
     assert garbage.read_bytes() == b"not a database"
+
+
+def test_two_identity_rows_give_no_refusal(python_3_14: Path, tmp_path: Path) -> None:
+    database = _copy(tmp_path, "17.0.0")
+    connection = sqlite3.connect(database)
+    connection.execute("INSERT INTO browse_fact_identity VALUES (2, '17.0.0')")
+    connection.commit()
+    connection.close()
+    assert database_copy.unicode_refusal(database) is None
+
+
+def test_a_pathname_that_is_not_utf8_is_read(python_3_14: Path, tmp_path: Path) -> None:
+    python_3_14.write_text("3.15\n")
+    folder = Path(os.fsdecode(bytes(tmp_path) + b"/copy-\xff"))
+    try:
+        folder.mkdir()
+    except (OSError, UnicodeError):
+        pytest.skip("this filesystem refuses the name")
+    database = _copy(folder, "17.0.0")
+    assert database_copy.unicode_refusal(database) == (
+        f"{STATED} Run the script with Python 3.15, as the image does."
+    )
 
 
 def test_reading_the_version_writes_nothing(tmp_path: Path) -> None:
