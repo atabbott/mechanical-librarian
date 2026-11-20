@@ -484,6 +484,10 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                         )
                                     ).to_be_visible(),
                                 )
+                                # History sits in the header's More menu (#1940).
+                                page.get_by_role(
+                                    "button", name="More for this work", exact=True
+                                ).click()
                                 page.get_by_role(
                                     "link", name="History", exact=True
                                 ).click()
