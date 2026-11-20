@@ -424,6 +424,7 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 /* Book matching has one control: it sits beside the section's heading, level
    with it, as a field's Setting sits beside the field's name. */
 .cm-policy-settings-control { grid-row:1; display:grid; align-content:start; gap:.4rem; container-type:inline-size; }
+.cm-policy-settings:has(.cm-policy-settings-control) > .cm-policy-settings-intro { padding-top:calc(23px + .2rem - .625rem); }
 .cm-policy-settings .is-wide .settings-field-control { container-type:inline-size; }
 @container (max-width:30rem) {
   .cm-policy-settings-control .cm-segmented, .cm-policy-settings .is-wide .cm-segmented { grid-template-columns:minmax(0,1fr); }
@@ -604,6 +605,7 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-policy-field-list { --policy-columns:minmax(0,1fr) minmax(0,1fr); }
   .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, [role='alert'], .stale-build-read, :has(> .cm-policy-settings-control) > .cm-policy-settings-footer), .cm-policy-settings .settings-field-row.is-wide > * { grid-column:1 / -1; grid-row:auto; }
   .cm-policy-settings .is-wide > div:first-child { padding-top:0; }
+  .cm-policy-settings:has(.cm-policy-settings-control) > .cm-policy-settings-intro { padding-top:0; }
   .cm-policy-field > header { grid-column:1 / -1; }
   .cm-policy-field > header p { max-width:64ch; }
   .cm-finish-tray { grid-template-columns:minmax(0,1fr) auto; }
@@ -622,6 +624,7 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-policy-field-list > * { --policy-columns:minmax(0,1fr) minmax(0,1fr); }
   .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, [role='alert'], .stale-build-read, :has(> .cm-policy-settings-control) > .cm-policy-settings-footer), .cm-policy-settings .settings-field-row.is-wide > * { grid-column:1 / -1; grid-row:auto; }
   .cm-policy-settings .is-wide > div:first-child { padding-top:0; }
+  .cm-policy-settings:has(.cm-policy-settings-control) > .cm-policy-settings-intro { padding-top:0; }
   .cm-policy-field > header { grid-column:1 / -1; }
   .cm-policy-field > header p { max-width:64ch; }
 }
@@ -630,6 +633,7 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-policy-field { gap:.7rem; }
   .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, .cm-policy-settings-footer, [role='alert'], .stale-build-read), .cm-policy-settings .settings-field-row > *, .cm-policy-settings .is-wide > * { grid-column:1 / -1; grid-row:auto; }
   .cm-policy-settings .settings-field-row > div:first-child { padding-top:0; }
+  .cm-policy-settings:has(.cm-policy-settings-control) > .cm-policy-settings-intro { padding-top:0; }
   .cm-policy-field > header { grid-column:1; }
   .cm-policy-field > header p { max-width:52ch; }
 }
@@ -688,6 +692,7 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-policy-field > header p { max-width:52ch; }
   .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, .cm-policy-settings-footer, [role='alert'], .stale-build-read), .cm-policy-settings .settings-field-row > *, .cm-policy-settings .is-wide > * { grid-column:1 / -1; grid-row:auto; }
   .cm-policy-settings .settings-field-row > div:first-child { padding-top:0; }
+  .cm-policy-settings:has(.cm-policy-settings-control) > .cm-policy-settings-intro { padding-top:0; }
   .cm-policy-mode-control, .cm-policy-representation { gap:.3rem; }
   .cm-finish-tray { grid-template-columns:minmax(0,1fr); gap:.65rem; margin:.5rem; padding:.75rem; }
   .cm-finish-summary, .cm-policy-finish-message { gap:.18rem; }

@@ -6228,19 +6228,23 @@ _CURATION_LAYOUT = """() => {
   const sections = rows.filter((row) => row.matches('.cm-policy-settings'));
   const controls = [...list.querySelectorAll(
     '.cm-segmented, .cm-dropdown-trigger, .cm-policy-settings-value, .cm-policy-settings-footer > button')];
-  const firstLine = (row) => {
-    const control = row.querySelector('.settings-field-control > :first-child');
-    const label = row.querySelector('.settings-field-title strong');
+  const firstLine = (label, control) => {
     const target = control.matches('.cm-segmented') ? control.querySelector('button') : control;
     // A row too narrow for both stacks its name above its control.
     const beside = box(label).right <= box(target).left;
     return [label.textContent, beside ? round(centre(label) - centre(target)) : 0];
   };
+  // Book matching's heading names its only control, so it is that control's label.
+  const named = (section) => [
+    ...[...section.querySelectorAll('.settings-field-row')].map((row) => [
+      row.querySelector('.settings-field-title strong'), row.querySelector('.settings-field-control > :first-child')]),
+    ...[...section.querySelectorAll('.cm-policy-settings-control > .cm-segmented')].map((control) => [
+      section.querySelector('h3'), control])];
   return {
     lefts: [...new Set(controls.map((node) => round(box(node).left)))].sort((a, b) => a - b),
     settingLeft: round(box(asin.querySelector('.cm-segmented')).left),
     rights: [...new Set(rows.map((row) => round(box(row).right)))],
-    offsets: sections.flatMap((section) => [...section.querySelectorAll('.settings-field-row')].map(firstLine)),
+    offsets: sections.flatMap((section) => named(section).map(([label, control]) => firstLine(label, control))),
     headings: [...new Set([font(asin.querySelector('header strong')),
       ...sections.map((section) => font(section.querySelector('h3')))])],
     text: [...new Set([getComputedStyle(asin.querySelector('header p')).fontSize,
@@ -6280,9 +6284,9 @@ def test_policy_curation_sections_share_the_field_grid() -> None:
     """Current covers, Description advice and Book matching sit on the policy
     field grid: every control and Save start at the Setting column (or the
     Option column's dropdowns), every row ends at one right edge, each row's
-    name is level with its control's first line, one heading style and one
-    explaining size serve every section and ASIN, Save sits inside its
-    section and fills in only once there is something to save, and no control
+    name (and Book matching's heading) is level with its control's first
+    line, one heading style and one explaining size serve every section and
+    ASIN, Save sits inside its section and fills in only once there is something to save, and no control
     is left under the floating draft bar. On a phone everything starts at one
     edge (#2015)."""
     with ExitStack() as stack:
