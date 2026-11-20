@@ -4582,6 +4582,33 @@ _TWO = [{"kind": "text", "value": "One"}, {"kind": "text", "value": "Two"}]
             False,
             ("No recorded automatic evaluation is available for this field.", None),
         ),
+        # Disagreement is stated only where a source offered another value: a
+        # series whose every source value matches the current one, unresolved
+        # with its title, has none to state (#2012).
+        (
+            "series",
+            "ambiguous_evidence",
+            None,
+            {"current": {"state": "value", "value": []}, "proposed_values": _TWO},
+            False,
+            ("The sources do not agree on one value.", None),
+        ),
+        (
+            "series",
+            "ambiguous_evidence",
+            None,
+            {"current": {"state": "value", "value": []}, "proposed_values": []},
+            False,
+            (None, None),
+        ),
+        (
+            "series",
+            "ambiguous_evidence",
+            None,
+            {"current": {"state": "value", "value": []}, "proposed_values": []},
+            True,
+            ("Changes made for you are paused for this field.", None),
+        ),
         # A paused field still states the condition after its prefix (#1802).
         (
             "title",
@@ -4603,7 +4630,7 @@ def test_a_withheld_reason_names_the_condition_it_states(
     option: str | None,
     fields: dict[str, object],
     paused: bool,
-    expected: tuple[str, str | None],
+    expected: tuple[str | None, str | None],
 ) -> None:
     """Library leaves out a restated notice by its code, never its words (#1802)."""
     from mechanical_librarian.application.review_web import _automatic_withheld

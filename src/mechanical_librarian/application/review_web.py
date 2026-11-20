@@ -3528,13 +3528,15 @@ def _automatic_withheld(
     outcome: ShadowFieldOutcome | None,
     destination: str,
     paused: bool,
-) -> tuple[str, AutomaticWithheldCondition | None]:
+) -> tuple[str | None, AutomaticWithheldCondition | None]:
     """Say why a field was not changed for you, and which condition that states.
 
     A paused field still states the condition after its prefix, so its notice
-    is not repeated either (#1802).
+    is not repeated either (#1802). A field whose every source value matches
+    its current one has no disagreement to state (#2012).
     """
     condition: AutomaticWithheldCondition | None = None
+    message: str | None
     if outcome is None:
         message = "No recorded automatic evaluation is available for this field."
     elif (
@@ -3548,6 +3550,10 @@ def _automatic_withheld(
         and outcome.reason_code in _CURRENT_VALUE_REFUSAL_TEXT
     ):
         message = _CURRENT_VALUE_REFUSAL_TEXT[outcome.reason_code]
+    elif outcome.reason_code == "ambiguous_evidence" and not field["proposed_values"]:
+        # No source offered a value other than the current one, so there is
+        # no disagreement to state (#2012).
+        message = None
     elif outcome.reason_code == "ambiguous_evidence" and _lone_candidate_for_empty(
         field
     ):
@@ -3560,7 +3566,9 @@ def _automatic_withheld(
         if outcome.reason_code == "isbn_title_material_conflict":
             condition = "isbn_title_material_conflict"
     if paused:
-        message = "Changes made for you are paused for this field. " + message
+        message = "Changes made for you are paused for this field." + (
+            "" if message is None else " " + message
+        )
     return message, condition
 
 

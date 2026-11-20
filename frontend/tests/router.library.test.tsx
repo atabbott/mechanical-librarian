@@ -4917,6 +4917,9 @@ describe('Library route', () => {
       needsAttention: false,
       navigationRole: 'resolved' as const,
       notices: ['decoration_equivalent_subtitle_segment'],
+      // The server drops the target-preserving alternative, so nothing is
+      // offered, and the condition still says why the title is kept (#2012).
+      proposedValues: [],
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', {
       ...createHttp(),
@@ -18180,6 +18183,69 @@ describe('a focused field decision (#1519)', () => {
     expect(lines).toHaveLength(1)
     expect(lines[0]).toHaveTextContent(reason)
     expect(screen.queryByRole('complementary', { name: 'Comparison condition' })).toBeNull()
+  })
+
+  // A settled field no source offered a different value for has nothing to
+  // compare, so its notice is not stated; its Evidence reads as the choices'
+  // link (#2012). A field with offered values keeps its notice, as in "states
+  // a condition, not the generic review line, when nothing was withheld".
+  it('states no comparison condition where no source offered a different value (#2012)', async () => {
+    open(
+      focused({
+        decisionActions: [],
+        needsAttention: false,
+        proposedValues: [],
+        notices: ['no_safe_bibliographic_combination'],
+        automaticWithheldReason: null,
+        automaticWithheldCondition: null,
+        choiceContexts: focused().choiceContexts.filter(
+          (context) => context.selection === 'current',
+        ),
+      }),
+    )
+    expect(
+      await screen.findByText('No source offered a different value.', {
+        selector: '.decision-context',
+      }),
+    ).toBeVisible()
+    expect(screen.queryByRole('complementary', { name: 'Comparison condition' })).toBeNull()
+    expect(
+      screen.queryByText('No combination of these details is safe to apply automatically.'),
+    ).toBeNull()
+    const current = screen.getByRole('region', { name: 'Title current value' })
+    expect(within(current).getByRole('button', { name: 'Evidence' })).toHaveClass(
+      'choice-evidence-toggle',
+    )
+    expect(document.querySelector('.context-evidence-toggle')).toBeNull()
+  })
+
+  it('shows a recorded outcome’s Evidence as the choices’ link (#2012)', async () => {
+    open(
+      focused({
+        decisionActions: [],
+        editable: false,
+        needsAttention: false,
+        navigationRole: 'resolved',
+        humanDecision: {
+          actor: 'owner',
+          application: 'apply',
+          application_reason: null,
+          decision_id: 'decision-title',
+          destination: 'title',
+          occurred_at: 2,
+          outcome: 'keep_current',
+          proposal_id: base.proposalId,
+          review_case_id: 'case-1',
+          selected_value: null,
+          target_fingerprint: base.targetFingerprint,
+        },
+      }),
+    )
+    const recorded = await screen.findByRole('region', { name: 'Title recorded outcome' })
+    expect(within(recorded).getByRole('button', { name: 'Evidence' })).toHaveClass(
+      'choice-evidence-toggle',
+    )
+    expect(document.querySelector('.context-evidence-toggle')).toBeNull()
   })
 
   it('leaves out Other source values when the field has none', async () => {
