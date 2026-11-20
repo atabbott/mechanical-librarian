@@ -44,7 +44,7 @@ const discoveryFailureLines = {
   response_too_large:
     'An answer from Audiobookshelf was over the Audiobookshelf response limit. Raise it in Settings → Background work.',
   response_unreadable:
-    'Audiobookshelf’s book list for this library could not be read. Scan now to try again.',
+    'Mechanical Librarian could not read Audiobookshelf’s book list for this library. Scan now to try again.',
   catalogue_unavailable: notRecorded,
   persistence: notRecorded,
   unknown: notRecorded,

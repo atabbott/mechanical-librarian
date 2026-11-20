@@ -4804,8 +4804,7 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
     "item_oversized": (
         "This book’s details from Audiobookshelf are over the Audiobookshelf "
         "response limit.",
-        "Raise the Audiobookshelf response limit in Settings → Background work, "
-        "then scan this library again.",
+        "Raise it in Settings → Background work, then scan this library again.",
     ),
     "unknown": (
         "Preparation stopped, and no more detail can be shown.",

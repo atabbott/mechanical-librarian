@@ -665,7 +665,7 @@ describe('BackgroundActivity library reason (#2013)', () => {
     ],
     [
       'response_unreadable',
-      'Audiobookshelf’s book list for this library could not be read. Scan now to try again.',
+      'Mechanical Librarian could not read Audiobookshelf’s book list for this library. Scan now to try again.',
     ],
     [
       'catalogue_unavailable',

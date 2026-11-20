@@ -3455,7 +3455,7 @@ describe('Library route', () => {
       delete baseWork.reviewCaseId
       const recovery =
         status === 'item_oversized'
-          ? 'Raise the Audiobookshelf response limit in Settings → Background work, then scan this library again.'
+          ? 'Raise it in Settings → Background work, then scan this library again.'
           : 'Add its file in Audiobookshelf, then scan this library again.'
       const unread = {
         ...baseWork,
@@ -3496,6 +3496,50 @@ describe('Library route', () => {
       }
     },
   )
+
+  it('links the settings an inert could-not-finish row names (#2013)', async () => {
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const baseWork = { ...firstWork }
+    delete baseWork.reviewCaseId
+    const unread = {
+      ...baseWork,
+      id: 'library_work_oversized',
+      workId: 'library_work_oversized',
+      title: 'Oversized book',
+      attentionCount: 0,
+      attention: 'preparation_failed' as const,
+      detailUrl: null,
+      detailKind: null,
+      preparation: {
+        attempt: 0,
+        checkGivenUp: false,
+        diagnosticReference: 'prep-0123456789abcdef',
+        mediaHealth: [],
+        provider: '',
+        reason:
+          'This book’s details from Audiobookshelf are over the Audiobookshelf response limit.',
+        recovery: 'Raise it in Settings → Background work, then scan this library again.',
+        recoveryAttempt: 0,
+        stage: 'extraction' as const,
+        status: 'item_oversized' as const,
+      },
+    }
+    renderRoute('/library?lens=all', {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({ ...library, works: [...library.works, unread] })),
+    })
+    const title = await screen.findByText('Oversized book', { selector: 'strong' })
+    const row = title.closest('article')
+    if (!row) throw new Error('the unread work renders as an inert row')
+    expect(within(row).getByRole('link', { name: 'Settings → Background work' })).toHaveAttribute(
+      'href',
+      '/settings?group=background',
+    )
+    expect(row).toHaveTextContent(
+      'over the Audiobookshelf response limit. Raise it in Settings → Background work, then scan this library again.',
+    )
+  })
 
   it('keeps a current case selectable while exposing its terminal preparation diagnostic', async () => {
     const user = userEvent.setup()
