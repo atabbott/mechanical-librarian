@@ -13487,7 +13487,8 @@ def test_an_unlisted_discovery_code_is_stored_as_unknown_and_the_check_is_closed
 def test_a_retried_failed_stage_clears_the_stored_discovery_reason(
     application_path: Path,
 ) -> None:
-    """A retried stage moves a failed scan on, so it carries no reason."""
+    """A retried stage queues a scan whose discovery failed for a fresh
+    discovery (#2023), which carries no reason unless it fails again."""
     repository = open_repository(application_path)
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
@@ -13513,7 +13514,7 @@ def test_a_retried_failed_stage_clears_the_stored_discovery_reason(
         "SELECT state,discovery_failure FROM review_preparation_scans"
     ).fetchone()
     repository.close()
-    assert scan == ("processing", None)
+    assert scan == ("queued", None)
 
 
 def test_unread_item_event_counts_each_reason_without_values(

@@ -68,6 +68,9 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _LANDED_LAST_SQL,
     _LATEST_VERIFIED_WRITE_SQL,
     _LIBRARY_LATEST_SCAN_SQL,
+    _REDISCOVER_FAILED_LATEST_SCAN_SQL,
+    _REOPEN_LATEST_SCAN_SQL,
+    _REOPENED_AT_SQL,
     _active_generation_automatic_sql,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
@@ -160,16 +163,14 @@ _MATCHING_CONSIDERATION_SQL = (
 _MATCHING_LEVEL_SQL = "json_extract(consideration.document,'$.work_identity_level')"
 
 
-# Reopen the latest scan of a work's library for the work queued again in
-# it (#2023). The strict increase orders the reopen after the close its
-# finished enrollment recorded, even within the same second. Binds the time
-# and the work id.
-_REOPEN_LATEST_SCAN_SQL = (
-    "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,"
-    "updated_at=MAX(?,updated_at+1) WHERE scan_id="
-    + _LIBRARY_LATEST_SCAN_SQL
-    + " AND state IN ('completed','completed_with_failures')"
-)
+def _reopen_latest_scan(
+    connection: sqlite3.Connection, work_id: str, updated_at: int
+) -> None:
+    """Open the latest scan of a requeued work's library to claim it (#2023)."""
+    connection.execute(
+        _REDISCOVER_FAILED_LATEST_SCAN_SQL, (updated_at, updated_at, work_id)
+    )
+    connection.execute(_REOPEN_LATEST_SCAN_SQL, (updated_at, work_id))
 
 
 def _join_latest_scan(
@@ -245,9 +246,9 @@ def recover_stranded_preparation_work(
             (scan_id, connection_name, library_name, scan_id),
         ).rowcount
         connection.execute(
-            "UPDATE review_preparation_scans SET state='processing',"
-            "discovery_failure=NULL,updated_at=MAX(?,updated_at+1) "
-            "WHERE scan_id=? AND state IN ('completed','completed_with_failures') "
+            "UPDATE review_preparation_scans SET state='processing',updated_at="
+            + _REOPENED_AT_SQL
+            + " WHERE scan_id=? AND state IN ('completed','completed_with_failures') "
             "AND EXISTS(SELECT 1 FROM review_preparation_work w "
             "WHERE w.scan_id=? AND w.state IN ('queued','delayed'))",
             (updated_at, scan_id, scan_id),
@@ -272,7 +273,7 @@ def requeue_projection_work(
         )
     _join_latest_scan(connection, tuple(row[0] for row in rows))
     for work_id, _scan_id in rows:
-        connection.execute(_REOPEN_LATEST_SCAN_SQL, (updated_at, work_id))
+        _reopen_latest_scan(connection, work_id, updated_at)
     if rows:
         reopen_preparation_projection(
             connection, tuple(row[0] for row in rows), updated_at, trigger
@@ -389,7 +390,7 @@ def _retry_failed_stage(
         (updated_at, work_id),
     )
     _join_latest_scan(connection, (work_id,))
-    connection.execute(_REOPEN_LATEST_SCAN_SQL, (updated_at, work_id))
+    _reopen_latest_scan(connection, work_id, updated_at)
 
 
 def matching_check_given_up(
@@ -1068,7 +1069,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         ):
             raise MetadataReportError("provider retry staging changed")
         _join_latest_scan(self._connection, (row[0],))
-        self._connection.execute(_REOPEN_LATEST_SCAN_SQL, (staged_at, row[0]))
+        _reopen_latest_scan(self._connection, row[0], staged_at)
         return cast(str, row[0])
 
     def mark_owner_link_work_fresh(self, report: MetadataReport) -> None:
@@ -2672,7 +2673,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 row[0], "proposal", current_report_id, updated_at
             )
         _join_latest_scan(self._connection, (row[0],))
-        self._connection.execute(_REOPEN_LATEST_SCAN_SQL, (updated_at, row[0]))
+        _reopen_latest_scan(self._connection, row[0], updated_at)
 
     def _requeue_title_projections(self, updated_at: int) -> None:
         """Reconsider completed current titles inside the safety recovery transaction."""

@@ -54,6 +54,9 @@ from mechanical_librarian.adapters.persistence.proposal_sets import (
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
     _LIBRARY_LATEST_SCAN_SQL,
+    _REDISCOVER_FAILED_LATEST_SCAN_SQL,
+    _REOPEN_LATEST_SCAN_SQL,
+    _REOPENED_AT_SQL,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _validate_review_browse_row,
@@ -117,7 +120,7 @@ _UNRETURNED_CASES_SQL = (
 # cohort reopened it. A discovering or busy scan is left as it is.
 _REQUEUE_SCAN_FOR_DISCOVERY_SQL = (
     "UPDATE review_preparation_scans SET state='queued',discovery_failure=NULL,"
-    "requested_at=?,updated_at=MAX(?,updated_at+1),"
+    "requested_at=?,updated_at=" + _REOPENED_AT_SQL + ","
     "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
     "qualification_epoch=NULL,refresh_count=0,rescan_requested=0 "
     "WHERE scan_id=" + _LIBRARY_LATEST_SCAN_SQL + " "
@@ -1071,13 +1074,20 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 )
             # A queued or discovering scan has yet to finish discovering its
             # library: it keeps that discovery, which leaves it processing,
-            # rather than skipping or interrupting it. Only a reopen moves the
-            # time past the close: every work of the cohort runs this, and an
-            # open scan keeps the activation's time.
+            # rather than skipping or interrupting it. One whose discovery
+            # failed is queued for another. Only a reopen moves the time past
+            # the close: every work of the cohort runs this, and an open scan
+            # keeps the activation's time.
             self._connection.execute(
-                "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,"
+                _REDISCOVER_FAILED_LATEST_SCAN_SQL,
+                (activated_at, activated_at, work[0]),
+            )
+            self._connection.execute(
+                "UPDATE review_preparation_scans SET state='processing',"
                 "updated_at=CASE WHEN state IN ('completed','completed_with_failures') "
-                "THEN MAX(?,updated_at+1) ELSE ? END WHERE scan_id="
+                "THEN "
+                + _REOPENED_AT_SQL
+                + " ELSE ? END WHERE scan_id="
                 + _LIBRARY_LATEST_SCAN_SQL
                 + " AND state NOT IN ('queued','discovering')",
                 (activated_at, activated_at, work[0]),
@@ -1210,12 +1220,10 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 # Pending work is claimed only from a processing scan, and an
                 # idle claim may already have closed this one (#1369).
                 self._connection.execute(
-                    "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,"
-                    "updated_at=MAX(?,updated_at+1) WHERE scan_id="
-                    + _LIBRARY_LATEST_SCAN_SQL
-                    + " AND state IN ('completed','completed_with_failures')",
-                    (retried_at, work_id),
+                    _REDISCOVER_FAILED_LATEST_SCAN_SQL,
+                    (retried_at, retried_at, work_id),
                 )
+                self._connection.execute(_REOPEN_LATEST_SCAN_SQL, (retried_at, work_id))
             self._refresh_metadata_policy_transition(transition_id, retried_at)
             result = self.metadata_policy_transition()
             if result is None or result.transition_id != transition_id:

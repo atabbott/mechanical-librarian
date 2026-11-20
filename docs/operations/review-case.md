@@ -143,7 +143,8 @@ decision, plan, write or deletion.
   work to the queue, or marks it failed once its attempts are spent, and
   invents no result. Work queued again by a Settings or Policy change joins
   its library's latest scan, and queued work a finished scan left behind is
-  picked up at the next claim or restart.
+  picked up at the next claim or restart. If that library's discovery failed,
+  the change lists the library again first, as Retry does.
 - **New libraries.** A library added in Settings joins scans once the new
   runtime is published, and waits visibly while preparation is paused.
 - **Absences.** Missing or ineligible items retire current lineages only if

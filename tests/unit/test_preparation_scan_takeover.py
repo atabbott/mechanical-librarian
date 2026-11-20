@@ -558,6 +558,121 @@ def test_a_policy_change_during_the_latest_scans_discovery_lets_it_finish(
     library.repository.close()
 
 
+_LARGEST_TIME = 9_223_372_036_854_775_807
+
+
+@pytest.mark.parametrize("opener", ("requeue", "recovery"), ids=("requeue", "recovery"))
+def test_reopening_a_scan_at_the_largest_time_keeps_an_integer(
+    tmp_path: Path, opener: str
+) -> None:
+    """The reopen's strict increase saturates rather than storing a real."""
+    item_1 = "provider" if opener == "requeue" else "projection"
+    library = _stranded_library(tmp_path / "state.sqlite3", "completed", item_1)
+    connection = library.repository._connection
+    connection.execute(
+        "UPDATE review_preparation_scans SET updated_at=? WHERE scan_id=?",
+        (_LARGEST_TIME, SCAN_B),
+    )
+    connection.commit()
+    library.reopen()
+
+    if opener == "requeue":
+        _change_matching(library, 40)
+    else:
+        _claim(library, 40)
+
+    assert library.repository._connection.execute(
+        "SELECT state,updated_at,typeof(updated_at) FROM review_preparation_scans "
+        "WHERE scan_id=?",
+        (SCAN_B,),
+    ).fetchone() == ("processing", _LARGEST_TIME, "integer")
+    library.reopen()
+    library.repository.close()
+
+
+def _failed_discovery_library(path: Path) -> _Library:
+    """B, the latest scan, fails to list the library; A keeps both works."""
+    library = _closed_first_boot_library(path)
+    library.repository.request_review_scan("primary", "ebooks", "lib-1", PRODUCER, 30)
+    discovery = _claim(library, 31)
+    assert discovery.scan_id == SCAN_B
+    library.repository.fail_review_pipeline_action(
+        discovery, "library_unavailable", False, 32
+    )
+    assert _discovery_failure(library) == (
+        "completed_with_failures",
+        "library_unavailable",
+    )
+    return library
+
+
+def _discovery_failure(library: _Library) -> tuple[str, str | None]:
+    return library.repository._connection.execute(
+        "SELECT state,discovery_failure FROM review_preparation_scans WHERE scan_id=?",
+        (SCAN_B,),
+    ).fetchone()
+
+
+@pytest.mark.parametrize(
+    ("cause", "discovery"),
+    (
+        ("matching", "succeeds"),
+        ("matching", "fails"),
+        ("policy", "succeeds"),
+        ("policy", "fails"),
+    ),
+    ids=(
+        "matching-succeeds",
+        "matching-fails",
+        "policy-succeeds",
+        "policy-fails",
+    ),
+)
+def test_requeued_work_waits_for_a_fresh_discovery_of_a_failed_library(
+    tmp_path: Path, cause: str, discovery: str
+) -> None:
+    """A requeue never opens a scan whose discovery failed: it queues the
+    scan for another discovery, and the work runs only once one succeeds."""
+    library = _failed_discovery_library(tmp_path / "state.sqlite3")
+    if cause == "matching":
+        _change_matching(library, 40)
+        expected_stage = "projection"
+    else:
+        _activate_policy(library, 40)
+        expected_stage = "proposal"
+
+    # Queued for discovery, as a scan request leaves it; a queued scan
+    # carries no reason until a discovery fails again.
+    assert _discovery_failure(library) == ("queued", None)
+    assert _works(library)["item-1"] == (SCAN_B, expected_stage, "queued")
+    assert _library_state(library) == "queued"
+    library.reopen()
+    action = _claim(library, 50)
+    assert (action.stage, action.scan_id) == ("discovery", SCAN_B)
+    if discovery == "fails":
+        library.repository.fail_review_pipeline_action(
+            action, "library_unavailable", False, 51
+        )
+        assert library.repository.claim_review_pipeline_action(52) is None
+        assert _discovery_failure(library) == (
+            "completed_with_failures",
+            "library_unavailable",
+        )
+        assert _works(library)["item-1"] == (SCAN_B, expected_stage, "queued")
+    else:
+        library.repository.complete_review_discovery(
+            action, 2, "b" * 64, _entries(library.report), 51
+        )
+        action = _claim(library, 52)
+        assert (action.item_id, action.stage, action.scan_id) == (
+            "item-1",
+            expected_stage,
+            SCAN_B,
+        )
+    library.reopen()
+    library.repository.close()
+
+
 # --- T6: the presentation follows a moved work ------------------------------
 
 
