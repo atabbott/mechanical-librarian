@@ -17,6 +17,7 @@ import json
 import tempfile
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -888,6 +889,87 @@ def test_a_disabled_cover_switch_acquires_no_audiobook_cover_bytes(
         if source.kind
         in {CoverSourceKind.AUDIBLE_CATALOG, CoverSourceKind.ITUNES_SEARCH}
     ]
+
+
+@pytest.mark.parametrize("covers", [True, False], ids=["covers-on", "covers-off"])
+def test_an_admitted_audible_recording_offers_its_cover_as_a_selectable_candidate(
+    calls: list[tuple[str, ProviderQueryKind]], covers: bool
+) -> None:
+    """Report assembly through consideration offers Audible's cover (#2014).
+
+    With cover evidence on, the admitted recording's Audible art is retrieved,
+    bound to the admitted edition and offered as a selectable candidate. With
+    it off, which is what setup used to store, the recording is still
+    admitted but nothing is offered.
+    """
+    from mechanical_librarian.application.cover_consideration import (
+        CoverConsiderationService,
+    )
+    from mechanical_librarian.application.metadata_report import (
+        admitted_audiobook_identity,
+    )
+    from tests.support.cover_consideration_store import (
+        InMemoryCoverConsiderationStore,
+    )
+
+    def fetch(url: str, **_kwargs: object) -> RemoteCover:
+        return RemoteCover(url, "image/jpeg", _one_design_two_authorities()[url])
+
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        with patch.object(
+            cover_evidence_observer, "fetch_remote_cover", side_effect=fetch
+        ):
+            serialized, repository = _run(
+                root, _cover_providers(calls), covers=covers, store_covers=covers
+            )
+        cast("Any", repository).close()
+        report = MetadataReport.from_json(serialized)
+        artifacts = composition.CoverArtifactStore(root / "artifacts")
+        by_artifact = {
+            source.artifact.artifact_id: source.artifact.preview_digest
+            for source in report.cover_sources
+            if source.artifact is not None
+        }
+        service = CoverConsiderationService(
+            InMemoryCoverConsiderationStore(),
+            read_preview=lambda artifact, _variant: artifacts.read_preview_digest(
+                by_artifact[artifact]
+            ),
+            read_preview_digest=artifacts.read_preview_digest,
+            clock=lambda: 10,
+        )
+        considered = service.ensure(
+            "review_case_" + "e" * 64,
+            serialized,
+            {"proposal_id": "review_proposal_" + "c" * 64},
+        )
+
+    assert admitted_audiobook_identity(report)
+    audible = [
+        source
+        for source in report.cover_sources
+        if source.kind is CoverSourceKind.AUDIBLE_CATALOG
+    ]
+    candidates = cast("list[dict[str, Any]]", considered["candidates"])
+    if not covers:
+        assert audible == []
+        assert candidates == []
+        return
+    (source,) = audible
+    assert source.state is CoverSourceState.RETRIEVED
+    assert source.provenance is not None
+    assert source.provenance.provider == "audible"
+    (admitted,) = next(
+        provider for provider in report.providers if provider.provider == "audible"
+    ).candidates
+    assert source.provenance.edition_identity == admitted.identity
+    offered = [
+        item for item in candidates if item["source_kinds"] == ["audible_catalog"]
+    ]
+    assert len(offered) == 1
+    assert offered[0]["selectable"] is True
+    assert offered[0]["identity"]["outcome"] == "verified_work_match"
 
 
 def test_a_refused_cover_origin_is_published_as_a_typed_outcome(
@@ -2633,7 +2715,6 @@ def _dispatch_flow(
     import contextlib
     import copy
     from dataclasses import replace
-    from typing import Any
 
     import httpx
 

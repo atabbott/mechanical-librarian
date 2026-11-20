@@ -15,6 +15,13 @@ brackets are GitHub issues.
 - The Policy preview reads a field whose sources only repeat its current
   value as No change under both policies. It no longer lists such a field as
   left to you with the sources said to disagree, or counts it as affected.
+- Guided setup, and switching a source on in Settings, now turn on cover
+  evidence for Audible, iTunes, Hardcover, Open Library and Inventaire, so
+  their covers are offered for each book. Settings shows the Cover evidence
+  switch for all five so you can turn any of them off. Covers already saved
+  off stay off until you change them (#2014).
+- Audnexus lookups no longer report a dropped field for its ratings summary,
+  which no choice uses (#2014).
 - A field whose sources only repeat its current value no longer says the
   sources disagree or shows a warning about combining details; it says no
   source offered a different value. Evidence on a field's current or recorded

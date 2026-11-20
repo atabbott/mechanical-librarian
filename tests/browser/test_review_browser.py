@@ -11187,10 +11187,12 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 assert saved_inventaire["enabled"] is True
                 assert saved_inventaire["cover_enabled"] is True
 
-                # #967: the two audiobook sources that state a cover asset of
+                # #967: the audiobook sources that state a cover asset of
                 # their own carry an owner-visible switch; the two that restate
                 # Audible's carry none, and the heading names the provider
-                # while the instance name stays beside it.
+                # while the instance name stays beside it. #2014: switching a
+                # cover source on turns its cover evidence on, and the owner
+                # can still turn it off.
                 page.get_by_role("button", name="Add Audible").click()
                 page.get_by_role("button", name="Add Audnexus").click()
                 expect(
@@ -11209,6 +11211,11 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(audible_cover_on).to_be_disabled()
                 segment("Use Audible", "On").click()
                 expect(audible_cover_on).to_be_enabled()
+                expect(audible_cover_on).to_have_attribute("aria-pressed", "true")
+                audible_cover_off = segment("Audible cover evidence", "Off")
+                audible_cover_off.focus()
+                page.keyboard.press("Space")
+                expect(audible_cover_off).to_have_attribute("aria-pressed", "true")
                 audible_cover_on.focus()
                 page.keyboard.press("Space")
                 expect(audible_cover_on).to_have_attribute("aria-pressed", "true")
@@ -11459,11 +11466,17 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(
                     page.get_by_role("heading", name="Audible audible_catalog")
                 ).to_be_visible()
-                expect(
-                    page.locator(".settings-field-row").filter(
-                        has_text="Cover evidence"
-                    )
-                ).to_contain_text("On")
+                # Each cover source shows its saved value read-only.
+                for heading in (
+                    "Audible audible_catalog",
+                    "Inventaire inventaire",
+                ):
+                    expect(
+                        page.locator(".settings-record")
+                        .filter(has=page.get_by_role("heading", name=heading))
+                        .locator(".settings-field-row")
+                        .filter(has_text="Cover evidence")
+                    ).to_contain_text("On")
                 page.unroute("**/api/v1/settings")
                 assert not errors
 

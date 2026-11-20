@@ -19,7 +19,7 @@
   },
   "required_provider_keys": ["hardcover", "google_books"],
   "keyless_provider_adapters": ["audible_catalog", "audiosilo", "audnexus", "inventaire", "itunes_search"],
-  "cover_switch_provider_adapters": ["audible_catalog", "itunes_search"],
+  "cover_switch_provider_adapters": ["audible_catalog", "hardcover", "inventaire", "itunes_search", "open_library"],
   "provider_labels": {
     "audible_catalog": "Audible",
     "audiosilo": "AudioSilo",
