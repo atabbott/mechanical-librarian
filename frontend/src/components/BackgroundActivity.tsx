@@ -42,7 +42,7 @@ const discoveryFailureLines = {
   library_too_large:
     'This library would take the catalogue past 10,000 books. Remove a library in Settings → Libraries.',
   response_too_large:
-    'An answer from Audiobookshelf was over the Audiobookshelf response limit. Raise it in Settings → Background work.',
+    'An answer from Audiobookshelf was over the Audiobookshelf response limit. Raise it in Settings → Background work, or check this library in Audiobookshelf, then scan it again.',
   response_unreadable:
     'Mechanical Librarian could not read Audiobookshelf’s book list for this library. Scan now to try again.',
   catalogue_unavailable: notRecorded,
