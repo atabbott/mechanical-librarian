@@ -160,11 +160,12 @@ decision, plan, write or deletion.
   enrolled as such a failure: `item_no_media`, `item_unreadable` or
   `item_oversized`, or `stale` for a changed one, which rediscovers. An
   `item_no_media` failure does not end its scan with failures, so the library
-  keeps polling, but Background activity still marks it as needing you. A library whose discovery fails keeps its reason, shown in
-  Background activity. Requesting description
-  advice, or resuming preparation while advice waits, starts a scan that also
-  retries that library's failed items. Fix the cause and use Retry; never edit
-  SQLite.
+  keeps polling and Background activity still says it needs attention; adding
+  the file in Audiobookshelf and the next scan recover it. A library whose
+  discovery fails keeps its reason, shown in Background activity. Requesting
+  description advice, or resuming preparation while advice waits, starts a scan
+  that also retries that library's failed items. Fix the cause and use Retry;
+  never edit SQLite.
 - **Pause** stops new admissions without cancelling committed work.
 
 A target connection failure (TLS, authentication, authorization or
