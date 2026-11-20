@@ -52,6 +52,7 @@ from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     ReviewPipelineRepository,
     ReviewPreparationPipeline,
+    preparation_failure_reference,
 )
 from mechanical_librarian.application.review_pipeline_stages import (
     ReviewPipelineStages,
@@ -250,6 +251,34 @@ def test_busy_catalogue_delays_the_work_and_the_next_pass_extracts_it(
     assert len(harness.published) == 1
     assert harness.work()[:3] == ("proposal", "queued", None)
     assert capsys.readouterr().err == ""
+
+
+def test_a_busy_catalogue_on_every_retry_fails_with_the_logged_reference(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    capsys.readouterr()
+    monkeypatch.setattr(catalogue_module, "_BUSY_TIMEOUT_SECONDS", 0.05)
+    holder = _exclusive_holder(harness.catalogue_path)
+    try:
+        for _ in range(3):
+            harness.run_once()
+            harness.now += 10
+    finally:
+        holder.close()
+    stage, state, code, _ = harness.work()
+    assert (stage, state, code) == ("extraction", "failed", "transient")
+    work_id, attempt, recovery_attempt = harness.root._connection.execute(
+        "SELECT work_id,attempt,recovery_attempt FROM review_preparation_work"
+    ).fetchone()
+    lines = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [line["code"] for line in lines] == ["transient"] * 3
+    # Status derives the failed work's reference from its settled row; the last
+    # storage line names the same one, so support can find it (#2024).
+    assert lines[-1]["reference"] == preparation_failure_reference(
+        work_id, "extraction", attempt, recovery_attempt, "transient"
+    )
 
 
 @pytest.mark.parametrize(

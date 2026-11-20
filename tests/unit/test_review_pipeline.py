@@ -12862,8 +12862,10 @@ def test_storage_failure_event_is_value_free_and_never_raises(
         "event": "preparation_storage_failure",
         "level": "warning",
         "recovery_attempt": 0,
+        # A transient settlement rewrites the row to attempt 0 and the next
+        # recovery attempt; the reference names that settled identity.
         "reference": module.preparation_failure_reference(
-            "work", "extraction", 1, 0, "transient"
+            "work", "extraction", 0, 1, "transient"
         ),
         "sqlite_error_code": 5,
         "store": "reports",

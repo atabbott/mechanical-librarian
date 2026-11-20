@@ -184,6 +184,14 @@ def _log_storage_failure(
     sink cannot stop the lane.
     """
     try:
+        # A transient settlement rewrites the row to attempt 0 and the next
+        # recovery attempt, and status derives a terminal reference from that
+        # row, so the line names the settled identity rather than the claim.
+        settled = (
+            (0, action.recovery_attempt + 1)
+            if code == "transient"
+            else (action.attempt, action.recovery_attempt)
+        )
         payload = json.dumps(
             {
                 "event": "preparation_storage_failure",
@@ -196,8 +204,7 @@ def _log_storage_failure(
                 "reference": preparation_failure_reference(
                     action.action_id,
                     action.stage,
-                    action.attempt,
-                    action.recovery_attempt,
+                    *settled,
                     code,
                 ),
             },

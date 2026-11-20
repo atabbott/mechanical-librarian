@@ -536,7 +536,9 @@ The first time preparation opens a catalogue file in a process, and again
 after the file changes, it validates the file in full: a read-only pass with
 CHECK constraints, then the integrity and foreign-key checks. Later opens of
 the unchanged file compare only the exact schema and its version. A file
-counts as changed when its device, inode or change time differs. The catalogue is regenerable and need not be backed up.
+counts as changed when its device, inode or change time differs; a write still
+held in the write-ahead log changes the file only once it is checkpointed. The
+catalogue is regenerable and need not be backed up.
 See [Current book catalogue](../operations/catalogue.md).
 
 ## Changing the topology

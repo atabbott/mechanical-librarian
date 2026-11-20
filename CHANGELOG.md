@@ -12,9 +12,9 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
-- Preparation retries a book later when Mechanical Librarian's catalogue or
-  application database is briefly busy, instead of failing it as Preparation
-  failed. A lasting storage failure now shows Progress could not be saved, and
+- Preparation retries a book up to three times, 10 seconds apart, when
+  Mechanical Librarian's catalogue or application database is briefly busy,
+  instead of failing it as Preparation failed. A lasting storage failure now shows Progress could not be saved, and
   the container log records the SQLite error code (#2024).
 - In setup, the three "Get a key" links open in a new tab. After Check key and
   use OpenRouter the card shows the chosen model with the form folded, or a
