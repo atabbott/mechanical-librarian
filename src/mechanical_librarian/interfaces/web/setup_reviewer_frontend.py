@@ -431,6 +431,9 @@ const renderReviewer=async()=>{
     failed(e);
     return
   }
+  // A fresh read no longer naming the refused sandbox means the service
+  // restarted, so the remembered refusal is dropped (#2011).
+  if(codexTerminal?.failure==='sandbox_unavailable'&&access.codex.reason!=='sandbox_unavailable')codexTerminal=null;
   renderCodexOption(form,access,failed);
   renderOpenRouterOption(form,access,failed);
   const actions=document.createElement('div');

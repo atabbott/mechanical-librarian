@@ -3382,6 +3382,55 @@ it('shows the sandbox remedy and stops polling when a sign-in meets a refused sa
   expect(fetch.mock.calls).toHaveLength(reads)
 })
 
+it('offers sign-in again once a restarted service no longer reports the refused sandbox', async () => {
+  let started = false
+  let restarted = false
+  let reads = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (isRecheck(url, init)) return recheckAs('ready')
+      if (url.endsWith('/codex/device') && init?.method === 'POST') {
+        started = true
+        return response({ state: 'starting' })
+      }
+      if (url.endsWith('/codex/device'))
+        return response({ state: 'failed', failure: 'sandbox_unavailable' })
+      if (url.endsWith('/reviewer-access'))
+        return response(
+          started && !restarted
+            ? reviewerAccess('host_unsupported', 'sandbox_unavailable')
+            : reviewerAccess('ready'),
+        )
+      if (url === '/api/setup/reviewer/openrouter')
+        return response({ detail: { error: 'csrf' } }, 403)
+      if (url === '/api/setup/state') reads += 1
+      return response(setupState('reviewer', { csrf_token: `token-${String(reads)}` }))
+    }),
+  )
+  runSetup()
+  fireEvent.click(await signInReady())
+  await screen.findByText(
+    'Codex could not start its sandbox on this host. The container log says why.',
+  )
+  // The owner fixes the host and restarts the service with setup still open;
+  // the next drawing reads access that no longer names the sandbox (#2011).
+  restarted = true
+  fireEvent.input(screen.getByLabelText('OpenRouter API key'), {
+    target: { value: 'synthetic-key' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Check key and use OpenRouter' }))
+  await screen.findByText('Your session was refreshed. Press again.')
+
+  expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeVisible()
+  expect(
+    screen.queryByText(
+      'Codex could not start its sandbox on this host. The container log says why.',
+    ),
+  ).toBeNull()
+})
+
 it('moves focus to the redrawn card command when a pressed sign-in ends', async () => {
   let started = false
   vi.stubGlobal(

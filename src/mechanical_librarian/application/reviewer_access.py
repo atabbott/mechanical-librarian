@@ -1004,6 +1004,11 @@ class ReviewerAccessOperations:
             if document.revision != expected_revision:
                 raise ReviewerAccessApplicationError("access_changed")
             self._admit_codex()
+            flow = self._codex_auth.passive_status()
+            if flow.state == "failed" and flow.failure == "sandbox_unavailable":
+                # The refusal holds until restart, so no start would run:
+                # refuse before clearing any Codex selection (#2011).
+                raise ReviewerAccessApplicationError("host_unsupported")
             committed = any(
                 isinstance(task, CodexTaskSelection)
                 for task in (

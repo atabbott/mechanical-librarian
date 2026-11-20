@@ -2315,3 +2315,27 @@ def test_a_refused_sandbox_survives_cancel_and_another_start(tmp_path: Path) -> 
     # Clearing the credential leaves the refusal standing until a restart.
     assert manager.clear() == refused
     assert manager.status() == refused
+
+
+def test_a_refused_sandbox_survives_a_credential_recheck(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    # A first sign-in installs a credential a recheck could prove.
+    _finish(manager)
+    assert manager.status().state == "usable"
+    prepared: list[str] = []
+
+    def refuse(_staging: Path, action: str):
+        prepared.append(action)
+        raise _sandbox_unavailable()
+
+    manager._command_factory = refuse
+    _finish(manager)
+    refused = CodexDeviceAuthState("failed", failure="sandbox_unavailable")
+    assert manager.status() == refused
+    prepared.clear()
+
+    # A recheck would prepare a command the host refused: it reports the
+    # recorded refusal instead, and the refusal stays recorded.
+    assert manager.recheck_credential_status() == refused
+    assert prepared == []
+    assert manager.status() == refused

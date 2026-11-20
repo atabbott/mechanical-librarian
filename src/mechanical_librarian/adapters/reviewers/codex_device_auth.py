@@ -362,6 +362,9 @@ class CodexDeviceAuthManager:
             with self._lock:
                 if self._thread is not None and self._thread.is_alive():
                     return self._state
+                if self._sandbox_refused():
+                    # Rechecking would prepare a command the host refused (#2011).
+                    return self._state
         current = self.current_credential_status()
         if current.state != "configured":
             return current
