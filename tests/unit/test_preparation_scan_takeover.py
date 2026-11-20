@@ -78,11 +78,12 @@ def _claim(library: _Library, at: int) -> PipelineAction:
     return action
 
 
-def _closed_first_boot_library(path: Path) -> _Library:
+def _closed_first_boot_library(path: Path, item_2_code: str = "failed") -> _Library:
     """First-boot scan A prepares item-1 and gives up on item-2.
 
-    item-2 fails at extraction, a permanent failure, so A closes
-    ``completed_with_failures`` and its INITIAL_SETUP run finishes.
+    item-2 fails at extraction with ``item_2_code``, a permanent failure, so
+    A closes ``completed_with_failures`` and its INITIAL_SETUP run finishes.
+    A ``stale`` failure first rediscovers the library up to three times.
     """
     repository = open_repository(path)
     report = _report()
@@ -107,10 +108,18 @@ def _closed_first_boot_library(path: Path) -> _Library:
         action = _claim(library, at)
         assert action.item_id == "item-1"
         repository.advance_review_pipeline_action(action, output, at + 1)
-    failing = _claim(library, 23)
-    assert (failing.item_id, failing.stage) == ("item-2", "extraction")
-    repository.fail_review_pipeline_action(failing, "failed", False, 24)
-    assert repository.claim_review_pipeline_action(25) is None
+    for at in range(23, 43):
+        claimed = repository.claim_review_pipeline_action(at)
+        if claimed is None:
+            if _scan_states(library)[SCAN_A] != "queued":
+                break
+        elif claimed.stage == "discovery":
+            repository.complete_review_discovery(
+                claimed, 1, "a" * 64, _entries(report), at
+            )
+        else:
+            assert (claimed.item_id, claimed.stage) == ("item-2", "extraction")
+            repository.fail_review_pipeline_action(claimed, item_2_code, False, at)
     assert _scan_states(library) == {SCAN_A: "completed_with_failures"}
     return library
 
@@ -403,18 +412,11 @@ def test_startup_recovery_retires_stranded_work_of_a_removed_library(
 
 
 def test_retrying_a_failed_stage_runs_under_the_latest_scan(tmp_path: Path) -> None:
-    from mechanical_librarian.adapters.persistence.review_preparation import (
-        _retry_failed_stage,
-    )
-
+    """Saving Book matching retries a work that gave up at a stored-data
+    stage; the retry runs under B, not the closed A that holds it."""
     library = _stranded_library(tmp_path / "state.sqlite3", "completed", "provider")
-    connection = library.repository._connection
-    work_id = connection.execute(
-        "SELECT work_id FROM review_preparation_work WHERE item_id='item-1'"
-    ).fetchone()[0]
-    connection.execute("BEGIN IMMEDIATE")
-    _retry_failed_stage(connection, work_id, 40)
-    connection.execute("COMMIT")
+
+    _change_matching(library, 40)
 
     assert _works(library)["item-1"] == (SCAN_B, "provider", "queued")
     assert _scan_states(library) == {
@@ -530,6 +532,32 @@ def test_book_matching_saved_while_the_latest_scan_waits_joins_that_scan(
     library.repository.close()
 
 
+def test_a_policy_change_during_the_latest_scans_discovery_lets_it_finish(
+    tmp_path: Path,
+) -> None:
+    """The activation leaves a discovering scan to its discovery, which
+    then runs the restarted work, rather than interrupting it."""
+    library = _closed_first_boot_library(tmp_path / "state.sqlite3")
+    library.repository.request_review_scan("primary", "ebooks", "lib-1", PRODUCER, 30)
+    discovery = _claim(library, 31)
+    assert (discovery.stage, discovery.scan_id) == ("discovery", SCAN_B)
+
+    _activate_policy(library, 32)
+
+    assert _scan_states(library)[SCAN_B] == "discovering"
+    library.repository.complete_review_discovery(
+        discovery, 2, "b" * 64, _entries(library.report), 35
+    )
+    library.reopen()
+    action = _claim(library, 40)
+    assert (action.item_id, action.stage, action.scan_id) == (
+        "item-1",
+        "proposal",
+        SCAN_B,
+    )
+    library.repository.close()
+
+
 # --- T6: the presentation follows a moved work ------------------------------
 
 
@@ -554,6 +582,41 @@ def test_a_finished_run_drops_the_rows_of_work_a_newer_scan_took_over(
         "SELECT completion_count FROM review_preparation_presentation "
         "WHERE row_id='run'"
     ).fetchone() == (0,)
+    library.repository.close()
+
+
+@pytest.mark.parametrize(
+    ("code", "kept"),
+    (("failed", "failed"), ("stale", "failed")),
+    ids=("failed", "stale"),
+)
+def test_a_finished_run_keeps_only_the_outcome_of_a_book_the_newer_scan_dropped(
+    tmp_path: Path, code: str, kept: str
+) -> None:
+    """item-2 left the library before B listed it: B deletes A's work, and
+    the finished run keeps the row only as the outcome it recorded."""
+    library = _closed_first_boot_library(tmp_path / "state.sqlite3", code)
+    assert _works(library)["item-2"] == (SCAN_A, "extraction", code)
+    # A stale failure rediscovers A first, so B starts after A closed.
+    at = library.repository._connection.execute(
+        "SELECT MAX(updated_at) FROM review_preparation_scans"
+    ).fetchone()[0]
+    library.repository.request_review_scan(
+        "primary", "ebooks", "lib-1", PRODUCER, at + 1
+    )
+    discovery = _claim(library, at + 2)
+    assert discovery.scan_id == SCAN_B
+    library.repository.complete_review_discovery(
+        discovery, 2, "b" * 64, _entries(library.report)[:1], at + 3
+    )
+    library.reopen()
+
+    assert set(_works(library)) == {"item-1"}
+    assert library.repository._connection.execute(
+        "SELECT p.current_work_state,p.work_outcome FROM review_preparation_presentation p "
+        "WHERE p.row_kind='work' AND NOT EXISTS(SELECT 1 FROM review_preparation_work w "
+        "WHERE w.work_id=p.work_id)"
+    ).fetchall() == [(kept, "failed")]
     library.repository.close()
 
 

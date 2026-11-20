@@ -1069,16 +1069,17 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     _REQUEUE_SCAN_FOR_DISCOVERY_SQL,
                     (activated_at, activated_at, work[0], work[0], transition_id),
                 )
-            # A queued scan has yet to discover its library: it keeps waiting
-            # for that discovery rather than skipping it.
-            # Only a reopen moves the time past the close: every work of the
-            # cohort runs this, and an open scan keeps the activation's time.
+            # A queued or discovering scan has yet to finish discovering its
+            # library: it keeps that discovery, which leaves it processing,
+            # rather than skipping or interrupting it. Only a reopen moves the
+            # time past the close: every work of the cohort runs this, and an
+            # open scan keeps the activation's time.
             self._connection.execute(
                 "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,"
                 "updated_at=CASE WHEN state IN ('completed','completed_with_failures') "
                 "THEN MAX(?,updated_at+1) ELSE ? END WHERE scan_id="
                 + _LIBRARY_LATEST_SCAN_SQL
-                + " AND state<>'queued'",
+                + " AND state NOT IN ('queued','discovering')",
                 (activated_at, activated_at, work[0]),
             )
         self._connection.execute(
