@@ -134,13 +134,17 @@ decision, plan, write or deletion.
   serialize catalogue publication and share provider pacing.
 - **Reuse.** An unchanged work is reused; a changed source or producer
   restarts at extraction; a partial work resumes at its first missing stage.
+  Each scan takes over every work in its library.
 - **Publication.** The report, ProposalSet, case (or no-case disposition) and
   projection publish together as one package, only after projection succeeds.
   During a refresh the last package stays browseable; failed or stale work
   never replaces it.
 - **Restart.** Claims are persisted before work. A restart returns running
   work to the queue, or marks it failed once its attempts are spent, and
-  invents no result.
+  invents no result. Work queued again by a Settings or Policy change joins
+  its library's latest scan, and queued work a finished scan left behind is
+  picked up at the next claim or restart. If that library's discovery failed,
+  the change lists the library again first, as Retry does.
 - **New libraries.** A library added in Settings joins scans once the new
   runtime is published, and waits visibly while preparation is paused.
 - **Absences.** Missing or ineligible items retire current lineages only if
@@ -158,10 +162,11 @@ decision, plan, write or deletion.
 - **Failures.** An item that fails before a package exists appears in Library
   only, with recovery guidance and no automatic retry. An unread item is
   enrolled as such a failure: `item_no_media`, `item_unreadable` or
-  `item_oversized`, or `stale` for a changed one, which rediscovers. An
-  `item_no_media` failure does not end its scan with failures, so the library
-  keeps polling and Background activity still says it needs attention; adding
-  the file in Audiobookshelf and the next scan recover it. A library whose
+  `item_oversized`, or `stale` for a changed one, which rediscovers. Any other
+  failed item ends its library's scan with failures, which stops polling that
+  library until Retry or Scan now. An `item_no_media` failure does not, so the
+  library keeps polling and Background activity still says it needs
+  attention; adding the file in Audiobookshelf and the next scan recover it. A library whose
   discovery fails keeps its reason, shown in Background activity. Requesting
   description advice, or resuming preparation while advice waits, starts a scan
   that also retries that library's failed items. Fix the cause and use Retry;
