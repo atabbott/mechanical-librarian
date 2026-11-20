@@ -3156,22 +3156,6 @@ def _owner_selection_facts(
     }
 
 
-class BrowseFactUnicodeError(MetadataReportError):
-    """The database's browse facts were folded under another Unicode version.
-
-    It carries both versions, so a workbench script reading a copy can say
-    which Python to run with (#2018).
-    """
-
-    def __init__(self, stored: str, running: str) -> None:
-        super().__init__(
-            "database browse facts were folded under a different Unicode version; "
-            "a clean rebuild is required"
-        )
-        self.stored = stored
-        self.running = running
-
-
 def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
     """Require every reconstructible browse fact to equal its canonical JSON."""
     identity = connection.execute(
@@ -3180,7 +3164,10 @@ def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
     if len(identity) != 1:
         raise MetadataReportError("database is unavailable or incompatible")
     if identity[0][0] != unicodedata.unidata_version:
-        raise BrowseFactUnicodeError(str(identity[0][0]), unicodedata.unidata_version)
+        raise MetadataReportError(
+            "database browse facts were folded under a different Unicode version; "
+            "a clean rebuild is required"
+        )
     if identity[0][1] != VALUE_FLAG_RULES_VERSION:
         raise MetadataReportError(
             "database value flags were derived under a different rule list; "

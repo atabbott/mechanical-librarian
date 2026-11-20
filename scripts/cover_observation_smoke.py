@@ -71,7 +71,6 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.adapters.persistence.reviewer_access import (
     ReviewerAccessStore,
 )
-from mechanical_librarian.adapters.persistence.schema import BrowseFactUnicodeError
 from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterReviewer
 from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewerError,
@@ -306,11 +305,10 @@ def load_population(database: Path, artifacts: Path, limit: int) -> Population:
         connection.close()
     try:
         reader = open_shadow_preview_repository(database)
-    except BrowseFactUnicodeError as error:
-        raise SmokeRefused(database_copy.unicode_refusal(error)) from error
     except Exception as error:
         raise SmokeRefused(
-            "This checkout cannot read the database copy. Check out the commit "
+            database_copy.unicode_refusal(database)
+            or "This checkout cannot read the database copy. Check out the commit "
             "your install was built from, or copy the database again with the "
             "app stopped."
         ) from error

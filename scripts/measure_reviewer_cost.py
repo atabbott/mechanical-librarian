@@ -32,7 +32,6 @@ from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtif
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_shadow_preview_repository,
 )
-from mechanical_librarian.adapters.persistence.schema import BrowseFactUnicodeError
 from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterReviewer
 from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewRequest,
@@ -40,6 +39,7 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 )
 from mechanical_librarian.application.cover_observation import observe_cover_packet
 from mechanical_librarian.application.cover_packets import prepare_cover_packet
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.reviewer_contracts import (
     openrouter_cover_profile,
     openrouter_profile,
@@ -165,8 +165,11 @@ def inventory(
 ) -> tuple[FrozenInput, ...]:
     try:
         reader = open_shadow_preview_repository(database)
-    except BrowseFactUnicodeError as error:
-        raise SystemExit(database_copy.unicode_refusal(error)) from error
+    except MetadataReportError as error:
+        refusal = database_copy.unicode_refusal(database)
+        if refusal is None:
+            raise
+        raise SystemExit(refusal) from error
     store = CoverArtifactStore(artifacts, create=False)
     values = []
     try:

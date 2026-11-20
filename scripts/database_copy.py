@@ -7,15 +7,19 @@ image's Python minor version, so `uv run` picks a Python that reads a copy of
 the install's database. When a script still runs under another Python, the
 refusal names both Unicode versions and the remedy instead of sending the
 owner for a copy they already have (#2018).
+
+The reader's refusal stays a plain `MetadataReportError`; after it, a script
+asks this module whether the copy's recorded Unicode version is the cause.
 """
 
 from __future__ import annotations
 
 import platform
 import re
+import sqlite3
+import unicodedata
 from pathlib import Path
-
-from mechanical_librarian.adapters.persistence.schema import BrowseFactUnicodeError
+from urllib.parse import quote
 
 PYTHON_PIN = Path(__file__).resolve().parents[1] / ".python-version"
 _UNICODE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
@@ -30,18 +34,45 @@ def pinned_python() -> str | None:
     return value if re.fullmatch(r"[0-9]+\.[0-9]+", value) else None
 
 
-def unicode_refusal(error: BrowseFactUnicodeError) -> str:
-    """Both Unicode versions, then the Python to run with or the copy to take."""
+def stored_unicode_version(database: Path) -> str | None:
+    """The Unicode version the copy's browse facts record, read without writing.
+
+    None when the file is not a database that records exactly one.
+    """
+    absolute = quote(str(database.absolute()), safe="/")
+    try:
+        connection = sqlite3.connect(f"file:{absolute}?mode=ro&immutable=1", uri=True)
+        try:
+            rows = connection.execute(
+                "SELECT unicode_version FROM browse_fact_identity"
+            ).fetchall()
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return None
+    if len(rows) != 1 or not isinstance(rows[0][0], str):
+        return None
+    return str(rows[0][0])
+
+
+def unicode_refusal(database: Path) -> str | None:
+    """Both Unicode versions, then the Python to run with or the copy to take.
+
+    None when the copy records this Python's Unicode version, or none at all.
+    """
+    stored = stored_unicode_version(database)
+    running = unicodedata.unidata_version
+    if stored is None or stored == running:
+        return None
     running_python = platform.python_version()
     # The stored value is the copy's text; only a version number is repeated.
-    stored = (
-        f"Unicode {error.stored}"
-        if _UNICODE_VERSION.fullmatch(error.stored)
+    copy = (
+        f"Unicode {stored}"
+        if _UNICODE_VERSION.fullmatch(stored)
         else "another Unicode version"
     )
     stated = (
-        f"This copy uses {stored}, and Python {running_python} uses "
-        f"Unicode {error.running}."
+        f"This copy uses {copy}, and Python {running_python} uses Unicode {running}."
     )
     pin = pinned_python()
     if pin is None:

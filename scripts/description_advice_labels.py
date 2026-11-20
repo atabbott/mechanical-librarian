@@ -48,7 +48,6 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteShadowPreviewRepository,
     open_shadow_preview_repository,
 )
-from mechanical_librarian.adapters.persistence.schema import BrowseFactUnicodeError
 from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewRequest,
     canonical_json,
@@ -952,10 +951,9 @@ def _open(database: Path) -> SQLiteShadowPreviewRepository:
         raise SystemExit(relaxation_sample._WAL)
     try:
         return open_shadow_preview_repository(database)
-    except BrowseFactUnicodeError as error:
-        raise SystemExit(database_copy.unicode_refusal(error)) from error
     except Exception as error:
-        raise SystemExit(series_sample._UNREADABLE) from error
+        refusal = database_copy.unicode_refusal(database)
+        raise SystemExit(refusal or series_sample._UNREADABLE) from error
 
 
 def _parser() -> argparse.ArgumentParser:
