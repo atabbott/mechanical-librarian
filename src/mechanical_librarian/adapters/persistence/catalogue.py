@@ -153,32 +153,54 @@ def _storage_failure(error: sqlite3.Error) -> CatalogueError:
     return CatalogueError("catalogue database is unavailable")
 
 
+_WalKey = tuple[int, int, int, int, int]
+_AdmissionKey = tuple[int, int, int, _WalKey | None]
+
+
 class CatalogueSchemaAdmission:
     """Remember the catalogue file this process last validated in full.
 
-    The key is the open descriptor's device, inode and change time, recorded
-    only after every check passed. A later open of the same unchanged file
-    skips the read-only pass and the integrity and foreign-key checks, but
-    still compares the exact schema rows and version. Any write that reaches
-    the file, or a replacement, changes the key and forces a full validation
-    again (#2024).
+    The key is the main file's device, inode and change time, together with
+    the write-ahead log's device, inode, size and times while the log holds
+    any frames. It is taken before the checks and recorded only after every
+    one passed. A later open of the same unchanged files skips the read-only
+    pass and the integrity and foreign-key checks, but still compares the
+    exact schema rows and version. A commit, which reaches the log before the
+    main file, a checkpoint or a replacement changes the key and forces a
+    full validation again (#2024).
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._key: tuple[int, int, int] | None = None
+        self._key: _AdmissionKey | None = None
 
     @staticmethod
-    def _of(information: os.stat_result) -> tuple[int, int, int]:
-        return (information.st_dev, information.st_ino, information.st_ctime_ns)
+    def key_of(
+        information: os.stat_result, wal: os.stat_result | None
+    ) -> _AdmissionKey:
+        return (
+            information.st_dev,
+            information.st_ino,
+            information.st_ctime_ns,
+            # An empty log holds no frames, so it reads as no log at all.
+            None
+            if wal is None or wal.st_size == 0
+            else (
+                wal.st_dev,
+                wal.st_ino,
+                wal.st_size,
+                wal.st_mtime_ns,
+                wal.st_ctime_ns,
+            ),
+        )
 
-    def admits(self, information: os.stat_result) -> bool:
+    def admits(self, key: _AdmissionKey | None) -> bool:
         with self._lock:
-            return self._key == self._of(information)
+            return key is not None and self._key == key
 
-    def admit(self, information: os.stat_result) -> None:
+    def admit(self, key: _AdmissionKey | None) -> None:
         with self._lock:
-            self._key = self._of(information)
+            self._key = key
 
 
 class SQLiteCatalogueRepository:
@@ -244,7 +266,8 @@ class SQLiteCatalogueRepository:
             ):
                 raise CatalogueError("catalogue database is unsafe")
             self._identity = information
-            admitted = admission is not None and admission.admits(information)
+            key = None if admission is None else self._admission_key(information)
+            admitted = admission is not None and admission.admits(key)
             if exists and not admitted:
                 self._validate_existing_readonly()
             self._require_bound_name(information)
@@ -264,7 +287,8 @@ class SQLiteCatalogueRepository:
             self._verify_or_create(full=not admitted)
             self._connection.execute("PRAGMA journal_mode = WAL")
             if exists and admission is not None:
-                admission.admit(information)
+                # Keyed before the checks: a write while they ran changes it.
+                admission.admit(key)
         except Exception as error:
             if hasattr(self, "_connection"):
                 self._connection.close()
@@ -279,6 +303,25 @@ class SQLiteCatalogueRepository:
 
     def _require_bound_name(self, expected: os.stat_result) -> None:
         _require_bound_name(self._path, self._chain, expected)
+
+    def _admission_key(self, information: os.stat_result) -> _AdmissionKey | None:
+        """Key the main file and its log; None when the log is not a file."""
+        name = f"{self._path.name}-wal"
+        try:
+            wal: os.stat_result | None = (
+                os.stat(self._path.with_name(name), follow_symlinks=False)
+                if self._chain is None
+                else os.stat(
+                    name, dir_fd=self._chain.parent_descriptor, follow_symlinks=False
+                )
+            )
+        except FileNotFoundError:
+            wal = None
+        except OSError:
+            return None
+        if wal is not None and not stat.S_ISREG(wal.st_mode):
+            return None
+        return CatalogueSchemaAdmission.key_of(information, wal)
 
     def _validate_existing_readonly(self) -> None:
         connection = sqlite3.connect(

@@ -90,7 +90,7 @@ text, credential or path.
 | `event` | Written when |
 | --- | --- |
 | `preparation_unknown_failure` | An unclassified preparation exception is observed (WARNING). |
-| `preparation_storage_failure` | Extraction could not open or read the catalogue, or could not publish its report (WARNING). `store` is `catalogue` or `reports`; `code` is `transient` when the book is retried 10 seconds later (up to three times, then it fails as `transient`) or `persistence` when it fails; `sqlite_error_code` is the SQLite error code or null; `attempt` and `recovery_attempt` are the claim's. `reference` matches the work's preparation reference if this attempt ends it. |
+| `preparation_storage_failure` | Extraction could not open or read the catalogue, or could not publish its report (WARNING). `store` is `catalogue` or `reports`; `code` is `transient` when the book is tried again at least 10 seconds later (three tries in all, then it fails as `transient`) or `persistence` when it fails; `sqlite_error_code` is the SQLite error code or null; `attempt` and `recovery_attempt` are the claim's. `reference` matches the work's preparation reference if this attempt ends it. |
 | `preparation_claim_contended` | A preparation claim, or a claimed stage's target-connection check, lost the write lock and will retry (WARNING, `code: contention`). |
 | `preparation_discovery_failed` | A library's discovery stopped (WARNING). `code` is the stored reason. Neither this event nor `preparation_items_unread` names the connection or library; Background activity shows which library it was. |
 | `preparation_items_unread` | A completed discovery left items it could not read (WARNING). `changed`, `no_media`, `oversized` and `unreadable` count them, up to 10,000 each. |

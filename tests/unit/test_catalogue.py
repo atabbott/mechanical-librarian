@@ -806,6 +806,43 @@ def test_schema_admission_validates_a_file_version_in_full_once() -> None:
             patch.stopall()
 
 
+def test_schema_admission_skips_a_file_written_while_it_was_checked() -> None:
+    """#2024: a commit during the full validation leaves nothing admitted."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "catalogue.sqlite"
+        open_catalogue(path, create=True).close()
+        admission = CatalogueSchemaAdmission()
+        existing = SQLiteCatalogueRepository._validate_existing_readonly
+        writes: list[str] = []
+
+        def checked_then_written(repository: SQLiteCatalogueRepository) -> None:
+            existing(repository)
+            if not writes:
+                writes.append("written")
+                writer = sqlite3.connect(path)
+                writer.execute("UPDATE catalogue_schema SET version=version")
+                writer.commit()
+                writer.close()
+
+        try:
+            patch.object(
+                SQLiteCatalogueRepository,
+                "_validate_existing_readonly",
+                checked_then_written,
+            ).start()
+            full, readonly = _validation_spy()
+            open_catalogue(path, admission=admission).close()
+            open_catalogue(path, admission=admission).close()
+            open_catalogue(path, admission=admission).close()
+            # The write lands after the stat the first open keyed, so that key
+            # never matches again; the second validates in full and admits.
+            assert writes == ["written"]
+            assert readonly == ["readonly", "readonly"]
+            assert full == [True, True, True, True, False]
+        finally:
+            patch.stopall()
+
+
 def test_schema_admission_still_refuses_a_changed_schema() -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "catalogue.sqlite"
@@ -817,7 +854,7 @@ def test_schema_admission_still_refuses_a_changed_schema() -> None:
         admission = CatalogueSchemaAdmission()
         # Even a matching key, as if the change left the file's times alone,
         # keeps the exact schema comparison.
-        admission.admit(path.stat())
+        admission.admit(CatalogueSchemaAdmission.key_of(path.stat(), None))
         try:
             full, readonly = _validation_spy()
             with pytest.raises(CatalogueError, match="catalogue schema is unsupported"):

@@ -245,11 +245,41 @@ def test_catalogue_schema_admission_refuses_a_violation_written_after_admission(
     path = _catalogue_store(tmp_path, violate=False)
     admission = CatalogueSchemaAdmission()
     open_catalogue(path, admission=admission).close()
-    assert admission.admits(path.stat())
+    assert admission.admits(CatalogueSchemaAdmission.key_of(path.stat(), None))
     _write_past_checks(path, "UPDATE catalogue_entries SET has_ebook=7")
-    assert not admission.admits(path.stat())
+    assert not admission.admits(CatalogueSchemaAdmission.key_of(path.stat(), None))
     with pytest.raises(CatalogueError, match=_CATALOGUE_REFUSAL):
         open_catalogue(path, admission=admission)
+
+
+def test_catalogue_schema_admission_refuses_a_violation_still_in_the_wal(
+    tmp_path: Path,
+) -> None:
+    """#2024: a commit that has not reached the main file yet is a write too.
+
+    While another connection keeps the write-ahead log open, a commit changes
+    only the log, so the main file's device, inode and change time stay as
+    they were admitted. The log's state must bring the sweep back.
+    """
+    path = _catalogue_store(tmp_path, violate=False)
+    admission = CatalogueSchemaAdmission()
+    open_catalogue(path, admission=admission).close()
+    holder = sqlite3.connect(path)
+    try:
+        holder.execute("SELECT count(*) FROM catalogue_entries").fetchone()
+        before = path.stat()
+        _write_past_checks(path, "UPDATE catalogue_entries SET has_ebook=7")
+        after = path.stat()
+        assert (after.st_dev, after.st_ino, after.st_ctime_ns) == (
+            before.st_dev,
+            before.st_ino,
+            before.st_ctime_ns,
+        )
+        assert path.with_name(f"{path.name}-wal").stat().st_size > 0
+        with pytest.raises(CatalogueError, match=_CATALOGUE_REFUSAL):
+            open_catalogue(path, admission=admission)
+    finally:
+        holder.close()
 
 
 def test_catalogue_library_admission_refuses_a_check_violation(

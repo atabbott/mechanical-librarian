@@ -536,8 +536,9 @@ The first time preparation opens a catalogue file in a process, and again
 after the file changes, it validates the file in full: a read-only pass with
 CHECK constraints, then the integrity and foreign-key checks. Later opens of
 the unchanged file compare only the exact schema and its version. A file
-counts as changed when its device, inode or change time differs; a write still
-held in the write-ahead log changes the file only once it is checkpointed. The
+counts as changed when its device, inode or change time differs, or when its
+write-ahead log holds frames whose device, inode, size or times differ, since
+a commit reaches the log before it is checkpointed into the file. The
 catalogue is regenerable and need not be backed up.
 See [Current book catalogue](../operations/catalogue.md).
 

@@ -41,6 +41,7 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
     InspectionResult,
+    MetadataReportError,
     ReportStorageError,
     TargetFile,
     TargetSnapshot,
@@ -386,6 +387,36 @@ def test_busy_report_publication_delays_the_work_and_then_publishes(
     harness.run_once()
     assert len(harness.published) == 1
     assert harness.work()[:3] == ("proposal", "queued", None)
+    assert capsys.readouterr().err == ""
+
+
+def test_a_read_back_fault_after_publication_leaves_the_work_advanced(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#2024: once publication commits, the work has already moved on.
+
+    The same transaction completed the extraction, so a busy read-back has
+    nothing to retry and no failure code to settle: the work stays queued for
+    its proposal and no failure is logged.
+    """
+    capsys.readouterr()
+    reads: list[str] = []
+
+    def busy_read_back(_repository: SQLiteReportRepository, report_id: str) -> str:
+        reads.append(report_id)
+        cause = sqlite3.OperationalError("database is locked")
+        cause.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        raise MetadataReportError("persisted report is invalid") from cause
+
+    monkeypatch.setattr(SQLiteReportRepository, "get", busy_read_back)
+    harness.run_once()
+    assert reads == harness.published and len(reads) == 1
+    assert harness.work() == ("proposal", "queued", None, 0)
+    assert harness.root._connection.execute(
+        "SELECT count(*) FROM metadata_reports"
+    ).fetchone() == (1,)
     assert capsys.readouterr().err == ""
 
 
