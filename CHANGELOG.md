@@ -14,7 +14,8 @@ brackets are GitHub issues.
 
 - The Policy preview reads a field whose sources only repeat its current
   value as No change under both policies. It no longer lists such a field as
-  left to you with the sources said to disagree, or counts it as affected.
+  left to you with the sources said to disagree, or counts it as affected
+  (#2021).
 - Guided setup, and switching a source on in Settings, now turn on cover
   evidence for Audible, iTunes, Hardcover, Open Library and Inventaire, so
   their covers are offered for each book. Settings shows the Cover evidence
