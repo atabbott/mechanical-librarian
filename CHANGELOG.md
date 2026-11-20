@@ -19,6 +19,11 @@ brackets are GitHub issues.
   off stay off until you change them (#2014).
 - Audnexus lookups no longer report a dropped field for its ratings summary,
   which no choice uses (#2014).
+- A field whose sources only repeat its current value no longer says the
+  sources disagree or shows a warning about combining details; it says no
+  source offered a different value. Evidence on a field's current or recorded
+  value is the same link the choices use, and the spacing above and inside
+  Recording match is even (#2012).
 - After you pin a field and take the pin back on a work Automatic had not
   decided yet, turning on Automatic now shows that your earlier decision holds
   the field, with Automatic's choice and Resume automatic handling, on the
