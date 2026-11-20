@@ -6222,17 +6222,24 @@ _CURATION_LAYOUT = """() => {
   const rows = [...list.querySelectorAll(':scope > :is(.cm-policy-field, .cm-policy-settings)')];
   const box = (node) => node.getBoundingClientRect();
   const round = (value) => Math.round(value);
-  const centre = (node) => { const b = box(node); return b.top + b.height / 2; };
   const font = (node) => { const s = getComputedStyle(node); return [s.fontFamily, s.fontSize, s.fontWeight].join(' '); };
   const asin = rows.find((row) => row.getAttribute('aria-label') === 'ASIN');
   const sections = rows.filter((row) => row.matches('.cm-policy-settings'));
   const controls = [...list.querySelectorAll(
     '.cm-segmented, .cm-dropdown-trigger, .cm-policy-settings-value, .cm-policy-settings-footer > button')];
+  // The middle of a node's first line of text, so a wrapped name or a taller
+  // control (enlarged text) is compared by its first line.
+  const lineMiddle = (node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const line = [...range.getClientRects()].find((rect) => rect.height > 0);
+    return line.top + line.height / 2;
+  };
   const firstLine = (label, control) => {
     const target = control.matches('.cm-segmented') ? control.querySelector('button') : control;
     // A row too narrow for both stacks its name above its control.
     const beside = box(label).right <= box(target).left;
-    return [label.textContent, beside ? round(centre(label) - centre(target)) : 0];
+    return [label.textContent, beside ? round(lineMiddle(label) - lineMiddle(target)) : 0];
   };
   // Book matching's heading names its only control, so it is that control's label.
   const named = (section) => [
@@ -6285,10 +6292,10 @@ def test_policy_curation_sections_share_the_field_grid() -> None:
     field grid: every control and Save start at the Setting column (or the
     Option column's dropdowns), every row ends at one right edge, each row's
     name (and Book matching's heading) is level with its control's first
-    line, one heading style and one explaining size serve every section and
-    ASIN, Save sits inside its section and fills in only once there is something to save, and no control
-    is left under the floating draft bar. On a phone everything starts at one
-    edge (#2015)."""
+    line, also with enlarged text, one heading style and one explaining size
+    serve every section and ASIN, Save sits inside its section and fills in
+    only once there is something to save, and no control is left under the
+    floating draft bar. On a phone everything starts at one edge (#2015)."""
     with ExitStack() as stack:
         playwright = stack.enter_context(sync_playwright())
         browser = playwright.chromium.launch(headless=True)
@@ -6351,6 +6358,19 @@ def test_policy_curation_sections_share_the_field_grid() -> None:
                 bar = page.evaluate(_UNDER_THE_DRAFT_BAR)
                 if bar["hidden"] or bar["end"] < 0:
                     failures.append(f"{where}: under the draft bar {bar}")
+        # Enlarged text makes segments taller and wraps long names; first
+        # lines stay level wherever a name sits beside its control.
+        page.set_viewport_size({"width": 1440, "height": 900})
+        for size in ("150%", "200%"):
+            page.goto("https://react-platform.invalid/policy?section=curation")
+            page.get_by_role("button", name="Save book matching").wait_for()
+            page.evaluate(f"document.documentElement.style.fontSize = '{size}'")
+            page.evaluate(_TWO_FRAMES)
+            failures += [
+                f"text at {size}: {name} is {offset}px off its control's first line"
+                for name, offset in page.evaluate(_CURATION_LAYOUT)["offsets"]
+                if abs(offset) > 2
+            ]
         assert failures == [], "\n".join(failures)
 
 
