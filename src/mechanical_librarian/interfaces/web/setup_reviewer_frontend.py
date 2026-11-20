@@ -7,7 +7,10 @@ it runs in that one script's scope and defines `renderReviewer` for `render`.
 
 from __future__ import annotations
 
-SETUP_REVIEWER_JS = r"""const reviewerLabels={'openai/gpt-6-luna':'GPT-6 Luna','xiaomi/mimo-v2.6-flash':'MiMo 2.6 Flash','qwen/qwen3.8-flash':'Qwen 3.8 Flash','mistralai/ministral-3b-2512':'Ministral 3B','openai/gpt-5.6-luna':'GPT-5.6 Luna','mistralai/mistral-small-2603':'Mistral Small 4'};
+SETUP_REVIEWER_JS = r"""// The model a check on this page proved usable. A later read of reviewer access
+// says only that the key is configured, so the check's own answer is kept.
+let openrouterChecked=null;
+const reviewerLabels={'openai/gpt-6-luna':'GPT-6 Luna','xiaomi/mimo-v2.6-flash':'MiMo 2.6 Flash','qwen/qwen3.8-flash':'Qwen 3.8 Flash','mistralai/ministral-3b-2512':'Ministral 3B','openai/gpt-5.6-luna':'GPT-5.6 Luna','mistralai/mistral-small-2603':'Mistral Small 4'};
 const reviewerLabel=model=>reviewerLabels[model]||model;
 const codexActive=value=>['starting','issued','waiting','validating'].includes(value);
 // Only a press moves focus to Cancel; resuming on page load leaves it.
@@ -276,10 +279,11 @@ const renderOpenRouterOption=(form,access,failed)=>{
     save.setAttribute('aria-live','polite');
     save.textContent='Checking key…';
     try{
-      await api('/api/setup/reviewer/openrouter',{method:'POST',body:JSON.stringify({expected_revision:access.revision,api_key:key.value,model:model.value}),mutation:true});
+      const checked=await api('/api/setup/reviewer/openrouter',{method:'POST',body:JSON.stringify({expected_revision:access.revision,api_key:key.value,model:model.value}),mutation:true});
+      openrouterChecked=checked?.openrouter?.state==='usable'?checked.mapping?.model??null:null;
       key.value='';
       await render();
-      // The result is said where it was asked for, then Continue is next.
+      // The folded card says the chosen model; Continue is next.
       const chosen=main.querySelector('[data-openrouter-selected]');
       const next=main.querySelector('.actions .primary');
       announce(chosen?.textContent||'');
@@ -289,6 +293,7 @@ const renderOpenRouterOption=(form,access,failed)=>{
         if(next?.isConnected)next.focus()
       })
     }catch(e){
+      openrouterChecked=null;
       // What was typed stays for the next press, as in Settings.
       save.removeAttribute('aria-disabled');
       save.textContent='Check key and use OpenRouter';
@@ -313,14 +318,34 @@ const renderOpenRouterOption=(form,access,failed)=>{
   const caveat=document.createElement('p');
   caveat.textContent=access.data_use_caveat;
   about.append(aboutSummary,prices,packet,freeCaveat,caveat);
-  router.append(cost,toggle,others,keyField,getKey,save);
+  // Once OpenRouter is chosen the card says so under its heading, and the
+  // form waits behind one toggle.
+  const change=document.createElement('div');
+  change.id='setup-openrouter-change';
+  change.append(cost,toggle,others,keyField,getKey,save);
   if(mapped){
     const selected=document.createElement('p');
     selected.dataset.openrouterSelected='';
     selected.textContent=`Selected: ${reviewerLabel(mapped)}`;
-    router.append(selected)
+    router.append(selected);
+    if(access.openrouter?.state==='usable'||openrouterChecked===mapped){
+      const ready=document.createElement('p');
+      ready.textContent='Status: ready to use';
+      router.append(ready)
+    }
+    const fold=button('Change model or key');
+    fold.type='button';
+    fold.setAttribute('aria-expanded','false');
+    fold.setAttribute('aria-controls',change.id);
+    change.hidden=true;
+    fold.addEventListener('click',()=>{
+      const expanded=fold.getAttribute('aria-expanded')!=='true';
+      fold.setAttribute('aria-expanded',String(expanded));
+      change.hidden=!expanded
+    });
+    router.append(fold)
   }
-  router.append(about);
+  router.append(change,about);
   form.append(router)
 };
 const renderReviewer=async()=>{
@@ -345,6 +370,9 @@ const renderReviewer=async()=>{
       // Still on this step: the fresh button asks for the press again, with
       // what was typed kept. Otherwise the step changed, said at the top.
       const again=!automatic&&state?.next_step==='reviewer'?[...fresh.querySelectorAll('button')].find(action=>action.textContent===label):null;
+      // A chosen reviewer's form starts folded; open it to the pressed button.
+      const folded=again?.closest('[hidden]');
+      if(folded)fresh.querySelector(`[aria-controls="${folded.id}"]`)?.click();
       if(again)for(const [name,value] of typed){
         const field=fresh.querySelector(`input[name="${name}"]`);
         if(!field||field.value===value)continue;

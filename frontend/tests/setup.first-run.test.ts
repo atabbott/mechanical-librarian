@@ -3790,7 +3790,8 @@ it('keeps validated reviewer prices visible before Continue and on reopen', asyn
   expect(about).not.toHaveAttribute('open')
   about.open = true
   expect(prices).toBeVisible()
-  expect(screen.getByText('GPT-6 Luna: cost not measured.')).toBeVisible()
+  // The cost line folds with the form; the chosen model is said instead.
+  expect(screen.getByText('GPT-6 Luna: cost not measured.')).not.toBeVisible()
   expect(
     within(document.querySelector<HTMLElement>('#setup-main') ?? document.body).getByText(
       'Selected: GPT-6 Luna',
@@ -3804,10 +3805,11 @@ it('keeps validated reviewer prices visible before Continue and on reopen', asyn
   resetSetupDocument()
   runSetup()
   expect(await screen.findByText(rates)).toBeInTheDocument()
-  // On reopen the line is drawn in the same place: under the button.
+  // On reopen the card is drawn the same way: the line under its heading.
   expect(screen.getByText('Selected: GPT-6 Luna').previousElementSibling).toBe(
-    screen.getByRole('button', { name: 'Check key and use OpenRouter' }),
+    screen.getByRole('heading', { name: 'OpenRouter' }),
   )
+  expect(screen.getByRole('button', { name: 'Change model or key' })).toBeVisible()
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
   await waitFor(() => expect(advanced).toBe(true))
 })
@@ -3877,20 +3879,29 @@ const typeOpenRouter = async (model = 'provider/model') => {
 const scrolled = (element: Element) =>
   vi.mocked(Element.prototype.scrollIntoView).mock.contexts.includes(element)
 
-it('shows the chosen OpenRouter model at its button and moves focus to Continue after a check', async () => {
+// OpenRouter as the chosen reviewer. The check's own answer says usable; a later
+// read of reviewer access says only configured, as the server does.
+const chosenOpenRouter = (saved: boolean, checked = false) => ({
+  ...reviewerAccess('not_provisioned', 'profile_not_provisioned'),
+  mapping: saved ? { engine: 'openrouter', model: 'openai/gpt-6-luna' } : null,
+  openrouter: {
+    state: checked ? 'usable' : saved ? 'configured' : 'unconfigured',
+    model: saved ? 'openai/gpt-6-luna' : null,
+  },
+})
+
+it('folds the chosen OpenRouter card, says it is ready and moves focus to Continue after a check', async () => {
   let saved = false
-  const access = () => ({
-    ...reviewerAccess('not_provisioned', 'profile_not_provisioned'),
-    mapping: saved ? { engine: 'openrouter', model: 'openai/gpt-6-luna' } : null,
-  })
+  let refuse = false
   vi.stubGlobal(
     'fetch',
     vi.fn(async (request: RequestInfo | URL) => {
       const url = requestUrl(request)
-      if (url === '/api/setup/reviewer-access') return response(access())
+      if (url === '/api/setup/reviewer-access') return response(chosenOpenRouter(saved))
       if (url === '/api/setup/reviewer/openrouter') {
+        if (refuse) return response({ detail: { error: 'invalid_key' } }, 422)
         saved = true
-        return response(access())
+        return response(chosenOpenRouter(true, true))
       }
       return response(setupState('reviewer'))
     }),
@@ -3904,15 +3915,94 @@ it('shows the chosen OpenRouter model at its button and moves focus to Continue 
   expect(continueButton.isConnected).toBe(false)
   const page = within(document.querySelector<HTMLElement>('#setup-main') ?? document.body)
   const line = page.getByText('Selected: GPT-6 Luna')
-  const save = screen.getByRole('button', { name: 'Check key and use OpenRouter' })
-  expect(line.previousElementSibling).toBe(save)
-  // Said once: nothing under the card's heading repeats it.
+  expect(line.previousElementSibling).toBe(screen.getByRole('heading', { name: 'OpenRouter' }))
+  expect(line.nextElementSibling).toHaveTextContent('Status: ready to use')
   expect(page.getAllByText(/^Selected: /u)).toHaveLength(1)
+  const change = screen.getByRole('button', { name: 'Change model or key' })
+  expect(change).toHaveAttribute('aria-expanded', 'false')
+  const folded = document.getElementById(change.getAttribute('aria-controls') ?? '')
+  expect(folded).not.toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Check key and use OpenRouter' })).toBeNull()
+  expect(screen.getByLabelText('OpenRouter API key')).not.toBeVisible()
   expect(scrolled(line)).toBe(true)
   expect(scrolled(screen.getByRole('button', { name: 'Continue' }))).toBe(true)
   expect(document.querySelector('#setup-status')?.textContent).toBe('Selected: GPT-6 Luna')
   expect(screen.getByLabelText('OpenRouter API key')).toHaveValue('')
   expect(screen.queryByRole('alert')).toBeNull()
+
+  // Opening the toggle restores the form; a refusal there lands under the
+  // button and keeps the key.
+  fireEvent.click(change)
+  expect(change).toHaveAttribute('aria-expanded', 'true')
+  expect(folded).toBeVisible()
+  const key = screen.getByLabelText('OpenRouter API key')
+  fireEvent.input(key, { target: { value: 'replacement-key' } })
+  refuse = true
+  const save = screen.getByRole('button', { name: 'Check key and use OpenRouter' })
+  fireEvent.click(save)
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('OpenRouter rejected this key. Replace it and check it again.')
+  expect(alert.nextElementSibling).toBe(save)
+  expect(key).toHaveValue('replacement-key')
+  expect(key).toHaveFocus()
+})
+
+it('starts a fresh visit with OpenRouter chosen folded, without a status it cannot prove', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) =>
+      requestUrl(request) === '/api/setup/reviewer-access'
+        ? response(chosenOpenRouter(true))
+        : response(setupState('reviewer')),
+    ),
+  )
+  runSetup()
+  const change = await screen.findByRole('button', { name: 'Change model or key' })
+  expect(change).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.getByText('Selected: GPT-6 Luna')).toBeVisible()
+  expect(screen.queryByText('Status: ready to use')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Check key and use OpenRouter' })).toBeNull()
+  fireEvent.click(change)
+  expect(screen.getByRole('button', { name: 'Check key and use OpenRouter' })).toBeVisible()
+  expect(screen.getByText('GPT-6 Luna: cost not measured.')).toBeVisible()
+  expect(screen.getByLabelText('Model ID')).toHaveValue('openai/gpt-6-luna')
+})
+
+it('opens the folded card under its fresh button when the token rotated after Change model or key', async () => {
+  let reads = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/reviewer-access') return response(chosenOpenRouter(true))
+      if (url === '/api/setup/reviewer/openrouter')
+        return response({ detail: { error: 'csrf' } }, 403)
+      if (url === '/api/setup/state') reads += 1
+      return response(setupState('reviewer', { csrf_token: `token-${String(reads)}` }))
+    }),
+  )
+  runSetup()
+  await reviewerStepSettled()
+  fireEvent.click(screen.getByRole('button', { name: 'Change model or key' }))
+  fireEvent.input(screen.getByLabelText('OpenRouter API key'), {
+    target: { value: 'synthetic-key' },
+  })
+  const pressed = screen.getByRole('button', { name: 'Check key and use OpenRouter' })
+  fireEvent.click(pressed)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('Your session was refreshed. Press again.')
+  const save = screen.getByRole('button', { name: 'Check key and use OpenRouter' })
+  expect(save).not.toBe(pressed)
+  expect(save).toBeVisible()
+  expect(alert.previousElementSibling).toBe(save)
+  expect(screen.getByRole('button', { name: 'Change model or key' })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  )
+  expect(screen.getByLabelText('OpenRouter API key')).toHaveValue('synthetic-key')
+  await waitFor(() => expect(save).toHaveFocus())
+  expect(reads).toBe(2)
 })
 
 it('keeps the model and key and asks to press again under the OpenRouter button when the form token rotated', async () => {
