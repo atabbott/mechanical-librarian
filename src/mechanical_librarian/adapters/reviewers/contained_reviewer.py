@@ -21,7 +21,10 @@ from pathlib import Path
 from typing import IO, Iterator, Literal, cast
 
 from mechanical_librarian.adapters.reviewers import process_group as process_groups
-from mechanical_librarian.adapters.reviewers.codex_device_auth import CodexAuthCommand
+from mechanical_librarian.adapters.reviewers.codex_device_auth import (
+    CodexAuthCommand,
+    CodexSandboxUnavailable,
+)
 from mechanical_librarian.adapters.reviewers.resource_budget import (
     MAX_SANDBOX_INFO_BYTES as _MAX_SANDBOX_INFO_BYTES,
 )
@@ -54,6 +57,10 @@ from mechanical_librarian.application.cover_taste_judge_contract import (
     TASTE_JUDGE_OUTPUT_SCHEMA,
     TASTE_JUDGE_REFERENCE,
     AdmittedTasteJudgeRequest,
+)
+from mechanical_librarian.application.failure_diagnostics import (
+    emit_reviewer_events,
+    reviewer_sandbox_check_event,
 )
 from mechanical_librarian.domain.cover_taste import (
     TASTE_JUDGE_MAX_ALTERNATIVES,
@@ -1136,21 +1143,26 @@ class ContainedReviewerAdapter:
                     "/runtime/seccomp.bpf",
                 )
                 pass_fds = (codex.descriptor, sandbox.descriptor, seccomp_descriptor)
-                completed = _run_owned_command(
-                    _resource_command(command, pass_fds),
-                    env={},
-                    pass_fds=pass_fds,
-                    timeout=min(self._profile.identity.timeout_seconds, 30),
-                )
+                try:
+                    completed = _run_owned_command(
+                        _resource_command(command, pass_fds),
+                        env={},
+                        pass_fds=pass_fds,
+                        timeout=min(self._profile.identity.timeout_seconds, 30),
+                    )
+                except (OSError, subprocess.SubprocessError) as error:
+                    # Classified here: the descriptor's context would report
+                    # a spawn failure as a resource refusal.
+                    raise _sandbox_check_error("sandbox_probe", error) from error
         except (OSError, subprocess.SubprocessError, ReviewerResourceError) as error:
-            raise ContainedReviewerProcessError("setup") from error
+            raise _sandbox_check_error("sandbox_probe", error) from error
         expected = self._profile.identity.executable_version.encode("utf-8")
         if (
             completed.returncode != 0
             or completed.stderr
             or completed.stdout.rstrip(b"\r\n") != expected
         ):
-            raise ContainedReviewerProcessError("setup")
+            raise _sandbox_check_refused("sandbox_probe", completed)
 
     def _verify_sandbox(self, sandbox: "_BoundArtifact") -> None:
         try:
@@ -1163,7 +1175,7 @@ class ContainedReviewerAdapter:
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as error:
-            raise ContainedReviewerProcessError("setup") from error
+            raise _sandbox_check_error("sandbox_version", error) from error
         expected = self._profile.identity.sandbox_version.encode("utf-8")
         canonical = {expected, expected + b"\n", expected + b"\r\n"}
         if (
@@ -1171,7 +1183,7 @@ class ContainedReviewerAdapter:
             or completed.stderr
             or completed.stdout not in canonical
         ):
-            raise ContainedReviewerProcessError("setup")
+            raise _sandbox_check_refused("sandbox_version", completed)
 
     def _require_chatgpt_auth(
         self,
@@ -2512,6 +2524,50 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
+class _SandboxCheckRefused(ContainedReviewerProcessError):
+    """A sandbox check that ran and was refused: by its exit, stderr or version.
+
+    Only this form means the host cannot run the sandbox. A spawn, timeout or
+    resource failure stays an ordinary setup failure, which a retry may clear.
+    """
+
+
+def _sandbox_check_error(
+    check: str, error: BaseException
+) -> ContainedReviewerProcessError:
+    """Report a check that did not run, value-free, and return its setup error."""
+    outcome = (
+        "resource_refused"
+        if isinstance(error, ReviewerResourceError)
+        else "timed_out"
+        if isinstance(error, subprocess.TimeoutExpired)
+        else "spawn_failed"
+    )
+    emit_reviewer_events(reviewer_sandbox_check_event, check=check, outcome=outcome)
+    return ContainedReviewerProcessError("setup")
+
+
+def _sandbox_check_refused(
+    check: str, completed: subprocess.CompletedProcess[bytes]
+) -> _SandboxCheckRefused:
+    """Report a refused check by outcome, exit status and stderr class only."""
+    outcome = (
+        "exit_nonzero"
+        if completed.returncode != 0
+        else "stderr"
+        if completed.stderr
+        else "version_mismatch"
+    )
+    emit_reviewer_events(
+        reviewer_sandbox_check_event,
+        check=check,
+        outcome=outcome,
+        exit_status=completed.returncode,
+        stderr=completed.stderr,
+    )
+    return _SandboxCheckRefused("setup")
+
+
 def prepare_contained_device_auth_command(
     profile: ContainedReviewerProfile, staging: Path, action: str
 ) -> CodexAuthCommand:
@@ -2529,11 +2585,15 @@ def prepare_contained_device_auth_command(
         sandbox = stack.enter_context(
             _bound_artifact(staged.sandbox_path, staged.identity.sandbox_sha256)
         )
-        reviewer._verify_sandbox(sandbox)
-        stack.enter_context(reviewer._auth_lock())
-        empty_config = stack.enter_context(reviewer._empty_auth_config())
-        seccomp_descriptor = stack.enter_context(no_process_seccomp_descriptor())
-        reviewer._verify_codex(codex, sandbox)
+        try:
+            reviewer._verify_sandbox(sandbox)
+            stack.enter_context(reviewer._auth_lock())
+            empty_config = stack.enter_context(reviewer._empty_auth_config())
+            seccomp_descriptor = stack.enter_context(no_process_seccomp_descriptor())
+            reviewer._verify_codex(codex, sandbox)
+        except _SandboxCheckRefused:
+            # The host refused the sandbox; the event already says which check.
+            raise CodexSandboxUnavailable() from None
         command = reviewer._auth_command(
             codex, sandbox, empty_config, seccomp_descriptor
         )

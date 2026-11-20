@@ -79,7 +79,7 @@
       "openrouter_key_configured": false,
       "recommendations": ["openai/gpt-6-luna"],
       "revision": 7,
-      "schema_version": "reviewer-access-view-v6",
+      "schema_version": "reviewer-access-view-v7",
       "taste_daily_requests": 8,
       "taste_mapping": null,
       "taste_metadata": null,

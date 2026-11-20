@@ -37,7 +37,10 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerProcessError,
 )
-from mechanical_librarian.application.reviewer_contracts import DeviceAuthStatus
+from mechanical_librarian.application.reviewer_contracts import (
+    DeviceAuthFailure,
+    DeviceAuthStatus,
+)
 
 # Captured once from the pinned Codex CLI; a pin bump must recapture it.
 _CAPTURE_PATH = Path(__file__).parents[1] / "fixtures" / "codex-device-auth-prompt.json"
@@ -2188,3 +2191,151 @@ def test_lazy_cancel_uses_existing_manager_after_profile_disappears(
     assert killed == [(123456789, 15)]
     assert calls == [b"synthetic-profile"]
     assert manager._process is None and manager._process_group is None
+
+
+def _sandbox_unavailable() -> Exception:
+    return auth_module.CodexSandboxUnavailable()
+
+
+def _reviewer_access_refused() -> Exception:
+    from mechanical_librarian.application.reviewer_access import (
+        ReviewerAccessApplicationError,
+    )
+
+    return ReviewerAccessApplicationError("not_provisioned")
+
+
+@pytest.mark.parametrize(
+    ("action", "error", "failure", "events"),
+    [
+        ("start", _sandbox_unavailable, "sandbox_unavailable", 0),
+        (
+            "start",
+            lambda: ContainedReviewerProcessError("setup"),
+            "protocol_or_process",
+            0,
+        ),
+        (
+            "status",
+            lambda: ContainedReviewerProcessError("profile"),
+            "protocol_or_process",
+            0,
+        ),
+        ("start", _reviewer_access_refused, "protocol_or_process", 0),
+        ("start", lambda: ValueError("private /secret/path"), "protocol_or_process", 1),
+    ],
+    ids=["sandbox", "contained-setup", "contained-status", "access", "backstop"],
+)
+def test_failure_preparing_the_contained_command_ends_the_flow_failed_without_a_traceback(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    action: str,
+    error: Callable[[], Exception],
+    failure: DeviceAuthFailure,
+    events: int,
+) -> None:
+    manager = _manager(tmp_path)
+    command_factory = manager._command_factory
+
+    def refuse(staging: Path, requested: str):
+        if requested == action:
+            raise error()
+        return command_factory(staging, requested)
+
+    manager._command_factory = refuse
+    hooked: list[object] = []
+    with patch("threading.excepthook", side_effect=hooked.append):
+        _finish(manager)
+
+    assert hooked == []
+    assert manager.status() == CodexDeviceAuthState("failed", failure=failure)
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "private" not in captured.err and "/secret" not in captured.err
+    lines = [json.loads(line) for line in captured.err.splitlines()]
+    assert (
+        lines
+        == [
+            {
+                "event": "codex_sign_in",
+                "level": "warning",
+                "outcome": "unexpected",
+                "error": "ValueError",
+            }
+        ][:events]
+    )
+    assert not list(tmp_path.glob("reviewer-auth-*"))
+
+
+@pytest.mark.parametrize(
+    ("error", "recorded"),
+    [
+        (
+            _sandbox_unavailable,
+            CodexDeviceAuthState("failed", failure="sandbox_unavailable"),
+        ),
+        (lambda: ContainedReviewerProcessError("setup"), _REFUSED),
+        (_reviewer_access_refused, _REFUSED),
+    ],
+    ids=["sandbox", "contained", "access"],
+)
+def test_recheck_reports_an_unavailable_sandbox(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    error: Callable[[], Exception],
+    recorded: CodexDeviceAuthState,
+) -> None:
+    manager = _manager(tmp_path)
+    _finish(manager)
+
+    def refuse(_staging: Path, _action: str):
+        raise error()
+
+    manager._command_factory = refuse
+    assert manager.recheck_credential_status() == recorded
+    assert manager.status() == recorded
+    assert _lazy_over(manager).passive_status() == recorded
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_a_refused_sandbox_survives_cancel_and_another_start(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+
+    def refuse(_staging: Path, _action: str):
+        raise _sandbox_unavailable()
+
+    manager._command_factory = refuse
+    _finish(manager)
+    refused = CodexDeviceAuthState("failed", failure="sandbox_unavailable")
+    assert manager.status() == refused
+
+    assert manager.cancel() == refused
+    assert manager.start() == refused
+    assert manager.status() == refused
+    # Clearing the credential leaves the refusal standing until a restart.
+    assert manager.clear() == refused
+    assert manager.status() == refused
+
+
+def test_a_refused_sandbox_survives_a_credential_recheck(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    # A first sign-in installs a credential a recheck could prove.
+    _finish(manager)
+    assert manager.status().state == "usable"
+    prepared: list[str] = []
+
+    def refuse(_staging: Path, action: str):
+        prepared.append(action)
+        raise _sandbox_unavailable()
+
+    manager._command_factory = refuse
+    _finish(manager)
+    refused = CodexDeviceAuthState("failed", failure="sandbox_unavailable")
+    assert manager.status() == refused
+    prepared.clear()
+
+    # A recheck would prepare a command the host refused: it reports the
+    # recorded refusal instead, and the refusal stays recorded.
+    assert manager.recheck_credential_status() == refused
+    assert prepared == []
+    assert manager.status() == refused

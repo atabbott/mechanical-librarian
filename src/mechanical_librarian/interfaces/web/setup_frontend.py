@@ -10,6 +10,9 @@ from mechanical_librarian.application.configuration import (
     AUDIOBOOK_DISPATCH_ADAPTERS,
     EBOOK_DISPATCH_ADAPTERS,
 )
+from mechanical_librarian.interfaces.web.setup_reviewer_frontend import (
+    SETUP_REVIEWER_JS,
+)
 
 SETUP_HTML = """<!doctype html>
 <html lang="en">
@@ -141,7 +144,7 @@ _VOCABULARY = json.loads(
 )
 
 # One source, served as written: no fragment is patched in afterwards.
-_SETUP_JS_SOURCE = r"""const main=document.querySelector('#setup-main');
+_SETUP_JS_HEAD = r"""const main=document.querySelector('#setup-main');
 const ledger=document.querySelector('#setup-ledger');
 const status=document.querySelector('#setup-status');
 const steps=[['claim','Create your password'],['connect','Connect Audiobookshelf'],['libraries','Choose libraries'],['mounts','Find library folders'],['providers','Choose metadata sources'],['reviewer','Cover reviewer (optional)'],['kick_off','Start']];
@@ -329,7 +332,7 @@ const recovery=(code,address)=>{
   const origin=address?originOf(address):null;
   return origin&&reachCopy[code]?reachCopy[code](origin):recoveryCopy(code)
 };
-const recoveryCopy=code=>({reviewer_unconfigured:'The chosen reviewer is not ready any more. Choose it again, or skip for now.',reviewer_unchosen:'Choose Codex or OpenRouter, or skip for now.',not_provisioned:'Codex is not set up on this host. Reload the page to see what to fix.',invalid_key:'OpenRouter rejected this key. Replace it and check it again.',quota_exhausted:'OpenRouter credits are used up. Add credits, then try again.',rate_limited:'OpenRouter is rate limited. Wait, then try again.',model_unavailable:'That model is unavailable. Choose another model.',model_text_only:'That model cannot inspect covers. Choose a model with image input.',malformed_response:'OpenRouter’s answer could not be read. Retry later, or choose another model.',timed_out:'OpenRouter did not answer in time. Check network access, then retry.',response_too_large:'OpenRouter returned an answer too large to read. Retry later, or choose another model.',unreachable:'OpenRouter could not be reached. Check network access, then retry.',credential_clear_failed:'The OpenRouter key was not cleared. Try again.',host_unsupported:'Codex is not supported on this host. Reload the page to see what to fix.',credential_unavailable:'You’re not signed in to ChatGPT. Sign in with ChatGPT, then choose Codex again.',access_changed:'Reviewer settings changed elsewhere. Reload, then try again.',reviewer_access_stale:'Reviewer settings changed elsewhere. Reload, then try again.',reviewer_access_unavailable:'Reviewer settings could not be loaded. Try again.',unauthorized:'Audiobookshelf did not accept that API key. Create a key that can read your libraries, then paste it.',invalid_endpoint:'Enter only the address and port, such as http://192.168.1.10:13378, with no path, user name or password.',tls:'The certificate for that address could not be verified. Use an address with a trusted certificate, or its http:// address on your own network.',timeout:'Audiobookshelf did not answer in time. Check that Mechanical Librarian can reach it, then try again.',redirect:'That address redirects somewhere else. Enter Audiobookshelf’s own address.',oversize:'Audiobookshelf sent more data than setup can read. Check that the address points at Audiobookshelf itself.',malformed:'That address did not answer like Audiobookshelf. Check that it points at Audiobookshelf itself.',unavailable:'That step was not saved. Wait a moment, then try again.',invalid_origin:settingsVocabulary.errors.invalid_origin,session_expired:'Your sign-in expired, so that step was not saved. Reload the page and sign in again.',activation_failed:'Mechanical Librarian could not start. Press Start again. If it fails again, the container log says why.',invalid_mounts:'Those folders could not be checked. Reload the page, then check again.',invalid_providers:'A source could not be saved. Check the email and API key on each ticked source.',invalid_credentials:'That owner password was not accepted. Check it and try again.',throttled:'Too many sign-in attempts from this device. Wait five minutes, then try again.',invalid_password:settingsVocabulary.errors.owner_password,invalid_password_long:settingsVocabulary.errors.owner_password_long,invalid_password_empty:settingsVocabulary.errors.owner_password_empty,invalid_password_mismatch:settingsVocabulary.errors.owner_password_mismatch,claimed:'This workspace was claimed in another tab. Sign in with its owner password.',claim_token:'That setup claim token was not accepted. Copy the newest one from the container log.',csrf:'This setup form expired. Reload it and try again.',invalid_secret:settingsVocabulary.errors.secret,invalid_provider_email:settingsVocabulary.errors.open_library_email,missing_provider_key:settingsVocabulary.errors.provider_key,stale:'Setup changed in another tab. The latest recorded step has been restored.',invalid_libraries:settingsVocabulary.errors.libraries,invalid_library_name:settingsVocabulary.errors.library_name,invalid_library_display_name_duplicate:'Two of these libraries have the same name. Rename one in Audiobookshelf, or untick one.',mounts_unready:'A library’s folder was not found. Find it before you start.'}[code]||'That was not saved. Check the fields, then try again.');
+const recoveryCopy=code=>({reviewer_unconfigured:'The chosen reviewer is not ready any more. Choose it again, or skip for now.',reviewer_unchosen:'Choose Codex or OpenRouter, or skip for now.',not_provisioned:'Codex is not set up on this host. Reload the page to see what to fix.',invalid_key:'OpenRouter rejected this key. Replace it and check it again.',quota_exhausted:'OpenRouter credits are used up. Add credits, then try again.',rate_limited:'OpenRouter is rate limited. Wait, then try again.',model_unavailable:'That model is unavailable. Choose another model.',model_text_only:'That model cannot inspect covers. Choose a model with image input.',malformed_response:'OpenRouter’s answer could not be read. Retry later, or choose another model.',timed_out:'OpenRouter did not answer in time. Check network access, then retry.',response_too_large:'OpenRouter returned an answer too large to read. Retry later, or choose another model.',unreachable:'OpenRouter could not be reached. Check network access, then retry.',credential_clear_failed:'The OpenRouter key was not cleared. Try again.',host_unsupported:'Codex is not supported on this host. Reload the page to see what to fix.',credential_unavailable:'You’re not signed in to ChatGPT. Sign in with ChatGPT, then choose Codex again.',access_changed:'Reviewer settings changed elsewhere. Reload, then try again.',reviewer_access_stale:'Reviewer settings changed elsewhere. Reload, then try again.',reviewer_access_unavailable:'Reviewer settings could not be loaded. Try again.',unauthorized:'Audiobookshelf did not accept that API key. Create a key that can read your libraries, then paste it.',invalid_endpoint:'Enter only the address and port, such as http://192.168.1.10:13378, with no path, user name or password.',tls:'The certificate for that address could not be verified. Use an address with a trusted certificate, or its http:// address on your own network.',timeout:'Audiobookshelf did not answer in time. Check that Mechanical Librarian can reach it, then try again.',redirect:'That address redirects somewhere else. Enter Audiobookshelf’s own address.',oversize:'Audiobookshelf sent more data than setup can read. Check that the address points at Audiobookshelf itself.',malformed:'That address did not answer like Audiobookshelf. Check that it points at Audiobookshelf itself.',unavailable:'That step was not saved. Wait a moment, then try again.',invalid_origin:settingsVocabulary.errors.invalid_origin,session_expired:'Your sign-in expired, so that step was not saved. Reload the page and sign in again.',activation_failed:'Mechanical Librarian could not start. Press Start again. If it fails again, the container log says why.',invalid_mounts:'Those folders could not be checked. Reload the page, then check again.',invalid_providers:'A source could not be saved. Check the email and API key on each ticked source.',invalid_credentials:'That owner password was not accepted. Check it and try again.',throttled:'Too many sign-in attempts from this device. Wait five minutes, then try again.',invalid_password:settingsVocabulary.errors.owner_password,invalid_password_long:settingsVocabulary.errors.owner_password_long,invalid_password_empty:settingsVocabulary.errors.owner_password_empty,invalid_password_mismatch:settingsVocabulary.errors.owner_password_mismatch,claimed:'This workspace was claimed in another tab. Sign in with its owner password.',claim_token:'That setup claim token was not accepted. Copy the newest one from the container log.',csrf:'This setup form expired. Reload it and try again.',invalid_secret:settingsVocabulary.errors.secret,invalid_provider_email:settingsVocabulary.errors.open_library_email,missing_provider_key:settingsVocabulary.errors.provider_key,stale:'Setup changed in another tab. The latest recorded step has been restored.',csrf_renewed:'Your session was refreshed. Press again.',no_answer:'No answer came back. Check whether the reviewer change was saved before trying again.',invalid_libraries:settingsVocabulary.errors.libraries,invalid_library_name:settingsVocabulary.errors.library_name,invalid_library_display_name_duplicate:'Two of these libraries have the same name. Rename one in Audiobookshelf, or untick one.',mounts_unready:'A library’s folder was not found. Find it before you start.'}[code]||'That was not saved. Check the fields, then try again.');
 // `control` names the field a refusal is about and `submitted` the button
 // pressed; `address` is the Audiobookshelf address a reach failure names;
 // `confirm` says what the recorded step found. A field refusal sits after its
@@ -854,12 +857,14 @@ const renderProviders=async()=>{
         contact.textContent='Needs your email address. No account needed.';
         row.append(contact)
       }
-      const accessHref={hardcover:'https://hardcover.app/account/api',google_books:'https://console.cloud.google.com/apis/credentials'}[adapter];
+      // Settings' targets; each opens in a new tab so this step keeps its place.
+      const accessHref={hardcover:'https://hardcover.app/account/api',google_books:'https://developers.google.com/books/docs/v1/using'}[adapter];
       if(accessHref){
         const access=document.createElement('a');
         access.className='provider-access';
         access.href=accessHref;
-        access.rel='noreferrer';
+        access.target='_blank';
+        access.rel='noopener noreferrer';
         access.textContent=`Get a ${label} key`;
         row.append(access)
       }
@@ -936,361 +941,10 @@ const renderProviders=async()=>{
     next.removeAttribute('aria-disabled')
   }
 };
-const reviewerLabels={'openai/gpt-6-luna':'GPT-6 Luna','xiaomi/mimo-v2.6-flash':'MiMo 2.6 Flash','qwen/qwen3.8-flash':'Qwen 3.8 Flash','mistralai/ministral-3b-2512':'Ministral 3B','openai/gpt-5.6-luna':'GPT-5.6 Luna','mistralai/mistral-small-2603':'Mistral Small 4'};
-const reviewerLabel=model=>reviewerLabels[model]||model;
-const codexActive=value=>['starting','issued','waiting','validating'].includes(value);
-// Only a press moves focus to Cancel; resuming on page load leaves it.
-const followCodexSignIn=async(codex,form,failed,focus)=>{
-  const cancel=button('Cancel sign-in');
-  cancel.type='button';
-  cancel.addEventListener('click',async()=>{
-    if(cancel.getAttribute('aria-disabled')==='true')return;
-    cancel.setAttribute('aria-disabled','true');
-    announce('Cancelling sign-in…');
-    try{
-      codexTerminal=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});
-      // Say the redrawn line, which stays true if the sign-in finished first,
-      // and return focus to that card's command rather than the step heading.
-      await render();
-      const status=main.querySelector('[data-codex-status]');
-      announce(status?.textContent||'');
-      const next=status?.closest('.reviewer-option')?.querySelector('button:not(:disabled)');
-      if(next)requestAnimationFrame(()=>{if(next.isConnected)next.focus()})
-    }catch(e){
-      cancel.removeAttribute('aria-disabled');
-      failed(e,null,cancel)
-    }
-  });
-  codex.append(cancel);
-  if(focus)cancel.focus();
-  try{
-    let device;
-    do{
-      device=await api('/api/setup/reviewer/codex/device');
-      if(!form.isConnected)return;
-      let prompt=codex.querySelector('[data-device-prompt]');
-      if(device.verification_url&&device.user_code&&prompt?.dataset.code!==device.user_code){
-        if(!prompt){
-          prompt=document.createElement('div');
-          prompt.dataset.devicePrompt='true';
-          codex.append(prompt)
-        }
-        prompt.dataset.code=device.user_code;
-        const lead=document.createElement('p');
-        const link=document.createElement('a');
-        link.href=device.verification_url;
-        link.target='_blank';
-        link.rel='noreferrer';
-        link.textContent='Open the device sign-in page';
-        lead.append(link,document.createTextNode(' in a new tab and enter this code:'));
-        const row=document.createElement('p');
-        row.className='device-code-row';
-        const code=document.createElement('code');
-        code.className='device-code';
-        code.textContent=device.user_code;
-        const copy=document.createElement('button');
-        copy.type='button';
-        copy.textContent='Copy code';
-        const copied=document.createElement('span');
-        copied.setAttribute('role','status');
-        copy.addEventListener('click',async()=>{
-          try{
-            await navigator.clipboard.writeText(device.user_code);
-            copied.textContent='Copied.'
-          }catch{
-            const range=document.createRange();
-            range.selectNodeContents(code);
-            getSelection()?.removeAllRanges();
-            getSelection()?.addRange(range);
-            copied.textContent='Code selected. Press Ctrl+C or Command+C to copy it.'
-          }
-        });
-        row.append(code,copy,copied);
-        prompt.replaceChildren(lead,row);
-        // Focus sits on Cancel after a press, so the code is said there too.
-        if(focus)announce(`${lead.textContent} ${device.user_code}`)
-      }
-      if(codexActive(device.state))await new Promise(resolve=>setTimeout(resolve,1000))
-    }while(form.isConnected&&codexActive(device.state));
-    if(!form.isConnected)return;
-    codexTerminal=device;
-    await render()
-  }catch(e){if(form.isConnected)failed(e,null,cancel)}
-};
-const renderCodexOption=(form,access,failed)=>{
-  const codex=document.createElement('div');
-  codex.className='option reviewer-option';
-  const heading=document.createElement('h3');
-  heading.textContent='Codex';
-  codex.append(heading);
-  if(access.mapping?.engine==='codex'){
-    const selected=document.createElement('p');
-    selected.textContent='Selected';
-    codex.append(selected)
-  }
-  // The first drawing of each visit is the one that may check a sign-in.
-  const firstDrawing=!codexChecked;
-  codexChecked=true;
-  const blocked=['host_unsupported','not_provisioned'].includes(access.codex.state);
-  const codexState=blocked?access.codex:(codexTerminal||access.codex);
-  const signedIn=['usable','configured'].includes(codexState.state);
-  const line=document.createElement('p');
-  line.setAttribute('aria-live','polite');
-  line.dataset.codexStatus='';
-  line.textContent=signedIn?'Signed in':'Not signed in';
-  const allowance=document.createElement('p');
-  allowance.textContent='Uses your ChatGPT plan.';
-  codex.append(line,allowance);
-  // Settings' words for each host reason (#1607).
-  const reasons={profile_not_provisioned:'The Codex profile is missing. Restore the image’s profile or correct the profile path, then restart the service.',profile_unreadable:'The Codex profile cannot be read. Fix the file’s permissions or contents, then restart the service.',profile_contract_mismatch:'The Codex profile does not match the model and limits this version needs. Restore the image’s profile or regenerate it, then restart the service.',host_evidence_unavailable:'Mechanical Librarian cannot read the host’s free memory. Fix the host or container memory reporting before using Codex.',cgroup_limit_below_1_gib:'The container memory limit is below 1 GB. Increase it before using Codex.',headroom_below_1_gib:'Less than 1 GB of memory is free. Free some memory or raise the container limit.'};
-  if(blocked){
-    const remedy=document.createElement('p');
-    remedy.textContent=reasons[access.codex.reason]||recoveryCopy(access.codex.state);
-    codex.append(remedy)
-  }
-  // The remedy follows the shown result, and leaves once a new sign-in starts.
-  const deviceRemedy={permission_or_profile:'Your ChatGPT sign-in could not be checked. Sign in with ChatGPT again.',permission_or_process:'Codex could not finish signing in. Sign in with ChatGPT again.',protocol_or_process:'Codex returned an unexpected sign-in result. Sign in with ChatGPT again.',restart_interrupted:'The last sign-in was interrupted. Sign in with ChatGPT again.'};
-  const codexRemedy=document.createElement('p');
-  codexRemedy.textContent=blocked?'':deviceRemedy[codexTerminal?codexTerminal.failure:access.codex.reason]||'';
-  if(codexRemedy.textContent)codex.append(codexRemedy);
-  if(codexActive(access.codex.state))void followCodexSignIn(codex,form,failed);
-  else if(signedIn){
-    if(access.mapping?.engine!=='codex'){
-      const use=button('Use Codex');
-      use.type='button';
-      use.addEventListener('click',async()=>{
-        if(use.getAttribute('aria-disabled')==='true')return;
-        use.setAttribute('aria-disabled','true');
-        announce('Selecting Codex…');
-        try{
-          await api('/api/setup/reviewer/selection',{method:'POST',body:JSON.stringify({expected_revision:access.revision,engine:'codex'}),mutation:true});
-          await render();
-          announce('Codex selected.')
-        }catch(e){
-          // The server recorded the refused sign-in; read it again, then say so
-          // above the fresh option's first control (#1617).
-          if(refusal(e)==='credential_unavailable'){
-            codexTerminal=null;
-            await render();
-            const fresh=main.querySelector('form');
-            const first=fresh?.querySelector('.option button');
-            if(first)first.before(error(fresh,'credential_unavailable'));
-            return
-          }
-          use.removeAttribute('aria-disabled');
-          failed(e,null,use)
-        }
-      });
-      codex.append(use)
-    }
-  }else if(!blocked){
-    // A blocked host shows only its remedy: no sign-in can start there.
-    const signIn=button('Sign in with ChatGPT');
-    signIn.type='button';
-    signIn.addEventListener('click',async()=>{
-      if(signIn.disabled||signIn.getAttribute('aria-disabled')==='true')return;
-      signIn.setAttribute('aria-disabled','true');
-      announce('Starting sign-in…');
-      try{
-        await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});
-        signIn.remove();
-        codexRemedy.remove();
-        codex.querySelector('.error')?.remove();
-        await followCodexSignIn(codex,form,failed,true)
-      }catch(e){
-        signIn.removeAttribute('aria-disabled');
-        failed(e,null,signIn)
-      }
-    });
-    codex.append(signIn);
-    // An existing sign-in is checked once per visit, without a press.
-    if(firstDrawing){
-      line.textContent='Checking your ChatGPT sign-in…';
-      signIn.disabled=true;
-      void (async()=>{
-        try{
-          codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});
-          if(!codex.isConnected)return;
-          // Only this card is drawn again, so focus and anything typed elsewhere stay.
-          renderCodexOption(form,access,failed);
-          const fresh=form.lastElementChild;
-          codex.replaceWith(fresh);
-          announce(fresh.querySelector('[aria-live]')?.textContent||'')
-        }catch(e){
-          if(!form.isConnected)return;
-          line.textContent='Not signed in';
-          signIn.disabled=false;
-          failed(e,null,signIn)
-        }
-      })()
-    }
-  }
-  form.append(codex)
-};
-const renderOpenRouterOption=(form,access,failed)=>{
-  const router=document.createElement('div');
-  router.className='option reviewer-option';
-  const heading=document.createElement('h3');
-  heading.textContent='OpenRouter';
-  router.append(heading);
-  const mapped=access.mapping?.engine==='openrouter'?access.mapping.model:null;
-  if(mapped){
-    const selected=document.createElement('p');
-    selected.textContent=`Selected: ${reviewerLabel(mapped)}`;
-    router.append(selected)
-  }
-  // The recommended model is preselected; the others wait behind a toggle.
-  const model=input('reviewer-model');
-  model.value=mapped||access.recommendations[0]||'';
-  model.placeholder='provider/model';
-  model.maxLength=256;
-  const cost=document.createElement('p');
-  cost.setAttribute('aria-live','polite');
-  const prices=document.createElement('p');
-  const showCost=()=>{
-    const label=reviewerLabel(model.value);
-    const measured=access.cost_evidence.models.find(row=>row.model===model.value&&row.task==='cover');
-    const perThousand=measured?Number(measured.per_1000_usd):0;
-    // Rounded as Settings → Reviewer rounds it (ReviewerCost.tsx, #1863).
-    cost.textContent=!model.value?'':measured?`${label}: ${perThousand<0.01?'under $0.01':`about $${perThousand.toFixed(2)}`} per 1,000 works.`:`${label}: cost not measured.`;
-    const observed=access.cover_metadata?.model===model.value?access.cover_metadata:null;
-    prices.textContent=observed?`Prices in USD: ${observed.prompt_price??'Unavailable'} per input token, ${observed.completion_price??'Unavailable'} per output token, ${observed.image_price??'Unavailable'} per image, ${observed.request_price??'Unavailable'} per request.`:'Check the key to see this model’s prices.'
-  };
-  model.addEventListener('input',showCost);
-  showCost();
-  const others=document.createElement('div');
-  others.id='setup-reviewer-models';
-  others.className='reviewer-models';
-  others.hidden=true;
-  const toggle=button('Choose another model');
-  toggle.type='button';
-  toggle.setAttribute('aria-expanded','false');
-  toggle.setAttribute('aria-controls',others.id);
-  toggle.addEventListener('click',()=>{
-    const expanded=toggle.getAttribute('aria-expanded')!=='true';
-    toggle.setAttribute('aria-expanded',String(expanded));
-    others.hidden=!expanded
-  });
-  const list=document.createElement('ul');
-  const seen=new Set();
-  for(const candidate of [...access.recommendations.map(value=>({model:value,tier:'paid'})),...access.candidates]){
-    if(seen.has(candidate.model))continue;
-    seen.add(candidate.model);
-    const item=document.createElement('li');
-    const choose=button(`Use ${reviewerLabel(candidate.model)} (${candidate.tier==='free'?'Free':'Paid'})`);
-    choose.type='button';
-    choose.addEventListener('click',()=>{
-      model.value=candidate.model;
-      model.dispatchEvent(new Event('input'));
-      model.focus()
-    });
-    item.append(choose);
-    list.append(item)
-  }
-  others.append(list,field('Model ID',model));
-  const key=input('reviewer-key','password');
-  key.autocomplete='new-password';
-  key.maxLength=2048;
-  const keyField=field('OpenRouter API key',key);
-  const getKey=document.createElement('p');
-  getKey.className='hint';
-  const getKeyLink=document.createElement('a');
-  getKeyLink.href='https://openrouter.ai/settings/keys';
-  getKeyLink.rel='noreferrer';
-  getKeyLink.textContent='Get a key';
-  getKey.append(getKeyLink);
-  const save=button('Check key and use OpenRouter');
-  save.type='button';
-  save.addEventListener('click',async()=>{
-    if(save.getAttribute('aria-disabled')==='true')return;
-    save.setAttribute('aria-disabled','true');
-    save.setAttribute('aria-live','polite');
-    save.textContent='Checking key…';
-    try{
-      await api('/api/setup/reviewer/openrouter',{method:'POST',body:JSON.stringify({expected_revision:access.revision,api_key:key.value,model:model.value}),mutation:true});
-      key.value='';
-      await render();
-      announce('OpenRouter selected.')
-    }catch(e){
-      key.value='';
-      save.removeAttribute('aria-disabled');
-      save.textContent='Check key and use OpenRouter';
-      const aboutModel=['model_unavailable','model_text_only'].includes(refusal(e));
-      // The refused model is shown, so its field can take focus.
-      if(aboutModel){
-        toggle.setAttribute('aria-expanded','true');
-        others.hidden=false
-      }
-      failed(e,aboutModel?model:key,save)
-    }
-  });
-  // Rates and data use are reference detail, read on demand.
-  const about=document.createElement('details');
-  about.className='reviewer-detail';
-  const aboutSummary=document.createElement('summary');
-  aboutSummary.textContent='Prices and data use';
-  const packet=document.createElement('p');
-  packet.textContent='One request per work, with every cover it compares.';
-  const freeCaveat=document.createElement('p');
-  freeCaveat.textContent=access.free_tier_caveat;
-  const caveat=document.createElement('p');
-  caveat.textContent=access.data_use_caveat;
-  about.append(aboutSummary,prices,packet,freeCaveat,caveat);
-  router.append(cost,toggle,others,keyField,getKey,save,about);
-  form.append(router)
-};
-const renderReviewer=async()=>{
-  const section=card('Cover reviewer (optional)','An AI model can look at cover images and tell you what it sees. It only advises, and you still choose. You can set this up later in Settings.');
-  const form=document.createElement('form');
-  section.append(form);
-  // `control` is the field the refusal is about and `submitted` the button pressed.
-  // A field refusal sits just above that button, between the field and it; a
-  // button-only refusal sits directly under the button. Without either it opens the
-  // form, so it is scrolled into view rather than left above a phone viewport.
-  const failed=async(e,control,submitted)=>{
-    const code=refusal(e);
-    // Another tab rotated this form's token; read the state again before saying so.
-    if(e.status===403&&e.message==='csrf'){
-      await load();
-      const fresh=main.querySelector('form');
-      if(fresh)error(fresh,code);
-      return
-    }
-    const node=error(form,code,control);
-    if(submitted)control?submitted.before(node):submitted.after(node);
-    // Bring the button in first, then its alert, so both end up on screen together.
-    submitted?.scrollIntoView?.({block:'nearest'});
-    node.scrollIntoView?.({block:'nearest'})
-  };
-  let access;
-  try{access=await api('/api/setup/reviewer-access')}catch(e){
-    failed(e);
-    return
-  }
-  renderCodexOption(form,access,failed);
-  renderOpenRouterOption(form,access,failed);
-  const actions=document.createElement('div');
-  actions.className='actions';
-  const next=button('Continue',true);
-  next.type='button';
-  next.addEventListener('click',()=>{
-    if(mutating)return;
-    if(!access.mapping){
-      const node=error(form,'reviewer_unchosen');
-      actions.after(node);
-      next.scrollIntoView?.({block:'nearest'});
-      node.scrollIntoView?.({block:'nearest'});
-      return
-    }
-    mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'configured'},form,{submitted:next})
-  });
-  const skip=button('Skip for now');
-  skip.type='button';
-  skip.addEventListener('click',()=>mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'skipped'},form,{submitted:skip}));
-  actions.append(next,skip);
-  form.append(actions)
-};
-// The cross-document motion runs only for the handoff into the run's detail.
+"""
+
+# The reviewer step lives in `setup_reviewer_frontend`; the rest follows it.
+_SETUP_JS_TAIL = r"""// The cross-document motion runs only for the handoff into the run's detail.
 const handoffMotion=()=>{
   const motion=document.querySelector('#setup-handoff-motion');
   if(!(motion instanceof HTMLLinkElement))return;
@@ -1445,7 +1099,9 @@ SETUP_JS = (
     + "const settingsLocalLibraryNameValid=value=>settingsTextValid(value,settingsVocabulary.local_library_name)&&new RegExp(settingsVocabulary.local_library_name.pattern,'u').test(value);"
     + "const settingsProviderKeyRequired=adapter=>settingsVocabulary.required_provider_keys.includes(adapter);"
     + "const settingsProviderKeyless=adapter=>settingsVocabulary.keyless_provider_adapters.includes(adapter);"
-    + _SETUP_JS_SOURCE
+    + _SETUP_JS_HEAD
+    + SETUP_REVIEWER_JS
+    + _SETUP_JS_TAIL
 )
 
 SETUP_ORIGIN_REFUSAL_HTML = (

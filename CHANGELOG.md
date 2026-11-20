@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- In setup, the three "Get a key" links open in a new tab. After Check key and
+  use OpenRouter the card shows the chosen model with the form folded, or a
+  refusal under the button that keeps the typed key. Sign in with ChatGPT
+  always ends; on a host whose sandbox cannot run, setup and Settings say so
+  and the container log names the failed check (#2011).
 - The Policy preview reads a field whose sources only repeat its current
   value as No change under both policies. It no longer lists such a field as
   left to you with the sources said to disagree, or counts it as affected

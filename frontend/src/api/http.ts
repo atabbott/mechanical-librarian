@@ -2873,12 +2873,14 @@ const codexHostReasons = new Set<ReviewerReason>([
   'host_evidence_unavailable',
   'cgroup_limit_below_1_gib',
   'headroom_below_1_gib',
+  'sandbox_unavailable',
 ])
 const codexFailureReasons = new Set<ReviewerReason>([
   'permission_or_profile',
   'permission_or_process',
   'protocol_or_process',
   'restart_interrupted',
+  'sandbox_unavailable',
 ])
 const openRouterFailures = new Set<ReviewerState>(reviewerFailureCodes)
 // The OpenRouter model grammar on the status model, which the schema shares

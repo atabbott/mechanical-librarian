@@ -33,7 +33,7 @@ import { document, savedDocument, view } from './settingsFixtures'
 beforeAll(loadRouteModules)
 
 const reviewerView: ReviewerAccessView = {
-  schema_version: 'reviewer-access-view-v6',
+  schema_version: 'reviewer-access-view-v7',
   taste_mapping: null,
   taste_metadata: null,
   taste_daily_requests: 8,
@@ -1886,6 +1886,12 @@ describe('owner settings route', () => {
       true,
       'Less than 1 GB of memory is free. Free some memory or raise the container limit.',
     ],
+    [
+      'host_unsupported',
+      'sandbox_unavailable',
+      true,
+      'Codex could not start its sandbox on this host. The container log says why.',
+    ],
   ] as const)(
     'keeps mapped unhealthy Codex state %s manageable',
     async (state, reason, hostUnsupported, expectedReason) => {
@@ -1911,6 +1917,9 @@ describe('owner settings route', () => {
       }
       expect(clear).toBeEnabled()
       expect(screen.getByRole('button', { name: 'Use Codex for cover review' })).toBeDisabled()
+      // A refused sandbox has no sign-in to cancel (#2011).
+      if (reason === 'sandbox_unavailable')
+        expect(screen.queryByRole('button', { name: 'Cancel any active sign-in' })).toBeNull()
       if (expectedReason) {
         expect(screen.getAllByRole('alert')).toHaveLength(1)
         expect(screen.getByRole('alert')).toHaveTextContent(expectedReason)

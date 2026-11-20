@@ -193,7 +193,7 @@ const uncertain = (failure: string) => {
 }
 
 const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
-  schema_version: 'reviewer-access-view-v6',
+  schema_version: 'reviewer-access-view-v7',
   taste_mapping: null,
   taste_metadata: null,
   taste_daily_requests: 8,
@@ -238,6 +238,16 @@ const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
 const unnamed = (code: string) => ({ status: 502, code })
 
 describe('reviewer access transport vocabulary', () => {
+  it('admits a sandbox the host refused as host_unsupported or failed', async () => {
+    for (const state of ['host_unsupported', 'failed'] as const) {
+      const codex = { ...reviewerAccessPayload().codex, state, reason: 'sandbox_unavailable' }
+      expect((await readReviewerAccess(reviewerAccessPayload({ codex }))).codex).toMatchObject({
+        state,
+        reason: 'sandbox_unavailable',
+      })
+    }
+  })
+
   it.each(['profile_not_provisioned', 'profile_unreadable', 'profile_contract_mismatch'])(
     'admits provisioning reason %s only in its exact state',
     async (reason) => {
@@ -471,6 +481,7 @@ describe('reviewer access transport vocabulary', () => {
     'permission_or_process',
     'protocol_or_process',
     'restart_interrupted',
+    'sandbox_unavailable',
   ] as const)('preserves the closed device failure %s', async (failure) => {
     expect(
       (

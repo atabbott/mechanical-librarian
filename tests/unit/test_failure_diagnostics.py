@@ -835,3 +835,89 @@ def test_retained_refused_answers_leave_failure_diagnostics_unchanged() -> None:
     encoded = json.dumps([value.to_data() for value in observed])
     assert candidate.identity not in encoded
     assert "Private Synthetic Title" not in encoded
+
+
+def test_reviewer_events_carry_only_closed_words_and_bounded_integers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from mechanical_librarian.application.failure_diagnostics import (
+        codex_sign_in_event,
+        emit_reviewer_events,
+        reviewer_sandbox_check_event,
+    )
+
+    class PrivateError(Exception):
+        pass
+
+    emit_reviewer_events(
+        reviewer_sandbox_check_event,
+        check="sandbox_probe",
+        outcome="exit_nonzero",
+        exit_status=1,
+        stderr=b"bwrap: /private/library/secret\n",
+    )
+    emit_reviewer_events(
+        lambda: (
+            {
+                "event": "reviewer_sandbox_check",
+                "check": "/private/library/secret",
+                "outcome": "credential=secret",
+                "exit_status": 256,
+                "stderr": "bwrap: /private",
+                "message": "credential=/private/library/secret",
+            },
+        )
+    )
+    emit_reviewer_events(
+        lambda: ({"event": "reviewer_sandbox_check", "exit_status": True},)
+    )
+    emit_reviewer_events(codex_sign_in_event, error=PrivateError("/private/secret"))
+    emit_reviewer_events(codex_sign_in_event, error=ValueError("/private/secret"))
+    # A type whose name is made at run time is never written as its name.
+    dynamic = type("SecretTokenAbc123", (ValueError,), {})
+    emit_reviewer_events(codex_sign_in_event, error=dynamic("/private/secret"))
+    emit_reviewer_events(lambda: ({"event": "codex_sign_in", "error": "x" * 2000},))
+    emit_reviewer_events(lambda: ({"event": "codex_sign_in", "error": "PrivateError"},))
+
+    written = capsys.readouterr().err
+    assert "private" not in written and "secret" not in written
+    assert "Secret" not in written
+    assert all(len(line) + 1 <= 1024 for line in written.splitlines())
+    assert [json.loads(line) for line in written.splitlines()] == [
+        {
+            "check": "sandbox_probe",
+            "event": "reviewer_sandbox_check",
+            "exit_status": 1,
+            "level": "warning",
+            "outcome": "exit_nonzero",
+            "stderr": "bwrap",
+        },
+        {
+            "check": None,
+            "event": "reviewer_sandbox_check",
+            "exit_status": None,
+            "outcome": None,
+            "stderr": None,
+        },
+        {"event": "reviewer_sandbox_check", "exit_status": None},
+        {
+            "error": "other",
+            "event": "codex_sign_in",
+            "level": "warning",
+            "outcome": "unexpected",
+        },
+        {
+            "error": "ValueError",
+            "event": "codex_sign_in",
+            "level": "warning",
+            "outcome": "unexpected",
+        },
+        {
+            "error": "other",
+            "event": "codex_sign_in",
+            "level": "warning",
+            "outcome": "unexpected",
+        },
+        {"error": None, "event": "codex_sign_in"},
+        {"error": None, "event": "codex_sign_in"},
+    ]

@@ -21,8 +21,19 @@ from pathlib import Path
 from threading import Lock, Thread
 
 from mechanical_librarian.adapters.reviewers import process_group as process_groups
+from mechanical_librarian.application.contained_reviewer_contract import (
+    ContainedReviewerError,
+)
+from mechanical_librarian.application.failure_diagnostics import (
+    codex_sign_in_event,
+    emit_reviewer_events,
+)
+from mechanical_librarian.application.reviewer_access import (
+    ReviewerAccessApplicationError,
+)
 from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
+    DeviceAuthFailure,
     DeviceAuthStatus,
 )
 
@@ -60,6 +71,24 @@ _RECHECK_RECORDED: frozenset[DeviceAuthStatus] = frozenset(
 
 class CodexDeviceAuthError(RuntimeError):
     """Value-free device authentication failure."""
+
+
+class CodexSandboxUnavailable(CodexDeviceAuthError):
+    """The host refused the contained sandbox's own checks (#2011)."""
+
+    def __init__(self) -> None:
+        super().__init__("sandbox")
+
+
+# What preparing or running the contained command may raise. Anything else is
+# a defect the flow's backstop records by type name.
+_PREPARATION_ERRORS = (
+    OSError,
+    subprocess.SubprocessError,
+    CodexDeviceAuthError,
+    ContainedReviewerError,
+    ReviewerAccessApplicationError,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +180,7 @@ class CodexDeviceAuthManager:
         with self._lock:
             if self._quarantined:
                 return self._state
-            if self._trust_failed:
+            if self._trust_failed or self._sandbox_refused():
                 return self._state
             if self._thread is not None and self._thread.is_alive():
                 return self._state
@@ -181,7 +210,7 @@ class CodexDeviceAuthManager:
         with self._lock:
             if self._quarantined:
                 raise CodexDeviceAuthError("process")
-            if self._trust_failed:
+            if self._trust_failed or self._sandbox_refused():
                 return self._state
             if self._installing:
                 return self._state
@@ -198,6 +227,14 @@ class CodexDeviceAuthManager:
             self._release_retained_process_or_quarantine()
         return CodexDeviceAuthState("cancelled")
 
+    def _sandbox_refused(self) -> bool:
+        # A refused sandbox stays refused until the service restarts, as the
+        # remedy says: neither Cancel nor another start clears it (#2011).
+        return (
+            self._state.state == "failed"
+            and self._state.failure == "sandbox_unavailable"
+        )
+
     def close(self) -> None:
         """Boundedly stop this generation without deleting installed credentials."""
         self.cancel()
@@ -212,6 +249,8 @@ class CodexDeviceAuthManager:
         with self._lock:
             if self._quarantined or self._trust_failed:
                 raise CodexDeviceAuthError("staging")
+            # Clearing removes the credential, not a refused sandbox (#2011).
+            refused = self._sandbox_refused()
         self.close()
         with self._activity_guard(), self._lease_guard():
             self._require_lease()
@@ -233,8 +272,9 @@ class CodexDeviceAuthManager:
                 if directory >= 0:
                     os.close(directory)
         with self._lock:
-            self._state = CodexDeviceAuthState("ready")
-            self._transitions += 1
+            if not refused:
+                self._state = CodexDeviceAuthState("ready")
+                self._transitions += 1
             return self._state
 
     def current_credential_status(self) -> CodexDeviceAuthState:
@@ -322,6 +362,9 @@ class CodexDeviceAuthManager:
             with self._lock:
                 if self._thread is not None and self._thread.is_alive():
                     return self._state
+                if self._sandbox_refused():
+                    # Rechecking would prepare a command the host refused (#2011).
+                    return self._state
         current = self.current_credential_status()
         if current.state != "configured":
             return current
@@ -345,11 +388,18 @@ class CodexDeviceAuthManager:
                 )
             finally:
                 prepared.close()
-        except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
+        except _PREPARATION_ERRORS as error:
             with self._lock:
                 if self._quarantined:
                     return self._state
-            return CodexDeviceAuthState("failed", failure="permission_or_profile")
+            return CodexDeviceAuthState(
+                "failed",
+                failure=(
+                    "sandbox_unavailable"
+                    if isinstance(error, CodexSandboxUnavailable)
+                    else "permission_or_profile"
+                ),
+            )
         if returncode == 0 and output == b"Logged in using ChatGPT\n":
             self._require_lease()
             return CodexDeviceAuthState("usable")
@@ -361,6 +411,10 @@ class CodexDeviceAuthManager:
         with self._activity_guard():
             try:
                 self._run_flow()
+            except Exception as error:
+                # Backstop: no flow ends in `starting` or prints a traceback.
+                emit_reviewer_events(codex_sign_in_event, error=error)
+                self._fail_unless_cancelled("protocol_or_process")
             finally:
                 try:
                     self._release_retained_process_or_quarantine()
@@ -461,13 +515,10 @@ class CodexDeviceAuthManager:
                 finally:
                     with self._lock:
                         self._installing = False
-        except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
-            with self._lock:
-                if not self._cancelled:
-                    self._state = CodexDeviceAuthState(
-                        "failed", failure="protocol_or_process"
-                    )
-                    self._transitions += 1
+        except CodexSandboxUnavailable:
+            self._fail_unless_cancelled("sandbox_unavailable")
+        except _PREPARATION_ERRORS:
+            self._fail_unless_cancelled("protocol_or_process")
         finally:
             if prepared is not None:
                 prepared.close()
@@ -481,6 +532,12 @@ class CodexDeviceAuthManager:
                             "failed", failure="protocol_or_process"
                         )
                         self._transitions += 1
+
+    def _fail_unless_cancelled(self, failure: DeviceAuthFailure) -> None:
+        with self._lock:
+            if not self._cancelled:
+                self._state = CodexDeviceAuthState("failed", failure=failure)
+                self._transitions += 1
 
     def _spawn(
         self, prepared: CodexAuthCommand, *, flow_owned: bool
