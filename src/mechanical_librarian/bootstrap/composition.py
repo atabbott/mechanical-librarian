@@ -58,7 +58,10 @@ from mechanical_librarian.adapters.persistence.batch_manifest import (
 from mechanical_librarian.adapters.persistence.batch_manifest import (
     read as read_batch_manifest,
 )
-from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+from mechanical_librarian.adapters.persistence.catalogue import (
+    CatalogueSchemaAdmission,
+    open_catalogue,
+)
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     activity_projector_event,
@@ -1635,12 +1638,15 @@ def create_review_pipeline(
         provider_responses,
     )
 
+    # One full catalogue validation per file version, not per extraction.
+    schema = CatalogueSchemaAdmission()
+
     # The pipeline hands every stage callback back exactly the repository
     # ``repository_factory`` above created, so each of these narrows the seam's
     # ``ReviewPipelineRepository`` to that concrete adapter where it needs a
     # capability the seam does not name.
     def catalogue_repository(create: bool) -> SQLiteCatalogueRepository:
-        return open_catalogue(catalogue_path, create=create)
+        return open_catalogue(catalogue_path, create=create, admission=schema)
 
     def generate_report(
         action: PipelineAction,

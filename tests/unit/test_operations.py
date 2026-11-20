@@ -792,3 +792,32 @@ def test_container_entrypoint_preserves_retained_reviewer_authority(
             if credential:
                 assert retained.read_bytes() == b'{"synthetic":true}'
                 assert retained.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize(
+    "code", ("item_no_media", "item_unreadable", "item_oversized", "not_a_code")
+)
+def test_an_unread_item_incident_carries_its_closed_code(code: str) -> None:
+    """A work discovery could not read is an incident with its own code (#2013)."""
+    from mechanical_librarian.application.operations import Incident
+
+    def incident() -> Incident:
+        return Incident(
+            "incident-1",
+            "owner_action_required",
+            "preparation_failed",
+            "work",
+            connection="primary",
+            library="fiction",
+            work_id="review_work_" + "a" * 64,
+            diagnostic_reference="prep-" + "0" * 16,
+            stage="extraction",
+            code=code,
+            attempt=0,
+        )
+
+    if code == "not_a_code":
+        with pytest.raises(OperationsError, match="invalid_incident"):
+            incident()
+    else:
+        assert incident().to_data()["code"] == code

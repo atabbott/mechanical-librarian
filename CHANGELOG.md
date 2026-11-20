@@ -17,6 +17,22 @@ brackets are GitHub issues.
   still runs under another Python, the description advice labels, cover
   observation smoke and reviewer cost tools name both Unicode versions and the
   Python to run with, instead of asking for a copy you already have (#2018).
+- Preparation tries a book up to three times, at least 10 seconds apart, when
+  Mechanical Librarian's catalogue or application database is briefly busy,
+  instead of failing it as Preparation failed. A lasting storage failure now
+  shows Progress could not be saved, and the container log records the SQLite
+  error code (#2024).
+- Choosing a description adviser, changing Book matching or changing the
+  policy now prepares the books it affects after a library's newer scan has
+  finished, instead of leaving them queued while Activity said Preparation
+  idle. A library with a book that could not finish, other than one with no
+  file in Audiobookshelf, now says Preparation needs attention and is not
+  scanned again automatically until Retry or Scan now (#2023).
+- **Clean rebuild required.** One book Audiobookshelf cannot give, such as a
+  book with no audio or ebook file, no longer stops its whole library: it is
+  listed under Could not finish with its reason and next step, and every other
+  book is prepared. When a whole library cannot be read, Background activity
+  says why (#2013).
 - In setup, the three "Get a key" links open in a new tab. After Check key and
   use OpenRouter the card shows the chosen model with the form folded, or a
   refusal under the button that keeps the typed key. Sign in with ChatGPT

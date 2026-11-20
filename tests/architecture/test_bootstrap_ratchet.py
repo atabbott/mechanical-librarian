@@ -102,8 +102,10 @@ CEILING = {
     # judge service, one opener that binds the cover authority to the lane's
     # repository, the two lanes passed to CoverTasteBackground, and one
     # keyword argument for the judge's daily limit. 3487 since #1372 PR 4b
-    # passed that limit to the taste profile read: one keyword argument.
-    "composition.py": 3490,
+    # passed that limit to the taste profile read: one keyword argument. 3494
+    # since #2024 passed the pipeline's catalogue schema admission to each
+    # catalogue open: one constructor, one import and one keyword argument.
+    "composition.py": 3494,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer; PR 4 renamed it
     # run_taste_reviewer, which takes a build or a judgement: 146 for the
@@ -159,8 +161,10 @@ RESIDUAL: dict[str, int | None] = {
     # 217 since #1523 passes the scan's time to admission; 219 since #1477
     # accepts the generation's pacers its owner search shares; 236 since
     # #1372 PR 4 passes the taste judge beside the build as the background
-    # lane and opens the lane's repository with the cover authority bound.
-    _C + "create_review_pipeline": 237,
+    # lane and opens the lane's repository with the cover authority bound;
+    # 240 since #2024 builds one catalogue schema admission and passes it to
+    # each catalogue open: one constructor and one keyword argument.
+    _C + "create_review_pipeline": 240,
     # Wires recovery to the built pipeline; catches an adapter error type.
     # 96 since #1064 passes the response store to the retry constructor.
     _C + "_provider_recovery_wiring": 96,

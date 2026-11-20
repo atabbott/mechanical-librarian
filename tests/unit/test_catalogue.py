@@ -4,6 +4,8 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
+import time
 from dataclasses import replace
 from multiprocessing import Event, Process
 from multiprocessing.synchronize import Event as EventType
@@ -13,7 +15,9 @@ from unittest.mock import patch
 
 import pytest
 
+from mechanical_librarian.adapters.persistence import catalogue as catalogue_module
 from mechanical_librarian.adapters.persistence.catalogue import (
+    CatalogueSchemaAdmission,
     SQLiteCatalogueRepository,
     open_catalogue,
 )
@@ -307,10 +311,16 @@ def test_cross_process_second_refresh_is_nonblocking_busy() -> None:
         try:
             assert ready.wait(5)
             second = open_catalogue(path)
+            started = time.monotonic()
             with pytest.raises(CatalogueBusyError):
                 RefreshCurrentCatalogue(
                     _BlockingReader(Event(), Event()), second
                 ).refresh(_configuration())
+            # Opens and reads wait out a lock; a second refresh never does.
+            assert time.monotonic() - started < 1
+            assert second._connection.execute("PRAGMA busy_timeout").fetchone() == (
+                5000,
+            )
         finally:
             release.set()
             holder.join(10)
@@ -646,6 +656,290 @@ def test_a_catalogue_main_created_before_item_paths_is_refused_unchanged(
     finally:
         connection.close()
     assert "item_path" not in columns
+    before = path.read_bytes()
+    with pytest.raises(CatalogueError):
+        open_catalogue(path)
+    assert path.read_bytes() == before
+
+
+def _exclusive_holder(path: Path) -> sqlite3.Connection:
+    """A real connection holding the catalogue's file lock until it closes."""
+    holder = sqlite3.connect(
+        path, timeout=0, isolation_level=None, check_same_thread=False
+    )
+    holder.execute("PRAGMA locking_mode = EXCLUSIVE")
+    holder.execute("BEGIN EXCLUSIVE")
+    return holder
+
+
+def test_open_waits_through_a_brief_exclusive_hold() -> None:
+    """#2024: an open waits out a short lock instead of failing at once."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "catalogue.sqlite"
+        open_catalogue(path, create=True).close()
+        holder = _exclusive_holder(path)
+        release = threading.Timer(0.3, holder.close)
+        started = time.monotonic()
+        release.start()
+        try:
+            repository = open_catalogue(path)
+        finally:
+            release.join()
+        assert time.monotonic() - started >= 0.25
+        repository.close()
+
+
+def test_busy_open_and_read_are_busy_and_other_sqlite_failures_are_not() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "catalogue.sqlite"
+        repository = open_catalogue(path, create=True)
+        repository.close()
+        holder = _exclusive_holder(path)
+        try:
+            with (
+                patch.object(catalogue_module, "_BUSY_TIMEOUT_SECONDS", 0.0),
+                pytest.raises(CatalogueBusyError) as busy,
+            ):
+                open_catalogue(path)
+        finally:
+            holder.close()
+        cause = busy.value.__cause__
+        assert isinstance(cause, sqlite3.OperationalError)
+        assert cause.sqlite_errorcode == sqlite3.SQLITE_BUSY
+        reader = open_catalogue(path)
+        connection = reader._connection
+
+        class Contended:
+            """A read whose SELECT meets another writer's lock."""
+
+            @property
+            def in_transaction(self) -> bool:
+                return connection.in_transaction
+
+            def execute(self, sql: str, *arguments: object) -> sqlite3.Cursor:
+                if sql.startswith("SELECT"):
+                    error = sqlite3.OperationalError("database is locked")
+                    error.sqlite_errorcode = sqlite3.SQLITE_BUSY_SNAPSHOT
+                    raise error
+                return connection.execute(sql, *arguments)
+
+        reader._connection = cast(sqlite3.Connection, Contended())
+        with pytest.raises(CatalogueBusyError):
+            reader.latest_entry("a" * 64, ("primary", "books", "id", "item"))
+        reader._connection = connection
+        assert not connection.in_transaction
+        dropper = sqlite3.connect(path)
+        dropper.execute("DROP TABLE catalogue_entries")
+        dropper.execute("DROP TABLE catalogue_generations")
+        dropper.commit()
+        dropper.close()
+        with pytest.raises(CatalogueError) as missing:
+            reader.latest_entry("a" * 64, ("primary", "books", "id", "item"))
+        assert type(missing.value) is CatalogueError
+        assert isinstance(missing.value.__cause__, sqlite3.OperationalError)
+        assert missing.value.__cause__.sqlite_errorcode == sqlite3.SQLITE_ERROR
+        assert not connection.in_transaction
+        reader.close()
+        damaged = Path(directory) / "damaged.sqlite"
+        damaged.write_bytes(b"not a database" * 512)
+        damaged.chmod(0o600)
+        with pytest.raises(CatalogueError) as failed:
+            open_catalogue(damaged)
+        assert type(failed.value) is CatalogueError
+        assert str(failed.value) == "catalogue database is unavailable"
+        assert isinstance(failed.value.__cause__, sqlite3.DatabaseError)
+        assert failed.value.__cause__.sqlite_errorcode == sqlite3.SQLITE_NOTADB
+
+
+def _validation_spy() -> tuple[list[bool], list[str]]:
+    full: list[bool] = []
+    readonly: list[str] = []
+    validate = catalogue_module._validate_schema
+    existing = SQLiteCatalogueRepository._validate_existing_readonly
+
+    def schema(*arguments: object, **keywords: object) -> None:
+        full.append(cast(bool, keywords.get("full", True)))
+        validate(*arguments, **keywords)
+
+    def readonly_pass(repository: SQLiteCatalogueRepository) -> None:
+        readonly.append("readonly")
+        existing(repository)
+
+    patch.object(catalogue_module, "_validate_schema", schema).start()
+    patch.object(
+        SQLiteCatalogueRepository, "_validate_existing_readonly", readonly_pass
+    ).start()
+    return full, readonly
+
+
+def test_schema_admission_validates_a_file_version_in_full_once() -> None:
+    """#2024: later opens of an unchanged file check only the exact schema."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "catalogue.sqlite"
+        open_catalogue(path, create=True).close()
+        admission = CatalogueSchemaAdmission()
+        try:
+            full, readonly = _validation_spy()
+            for _ in range(3):
+                open_catalogue(path, admission=admission).close()
+            # Read-only pass and full main check once, then exact rows only.
+            assert readonly == ["readonly"]
+            assert full == [True, True, False, False]
+            full.clear()
+            readonly.clear()
+            for _ in range(2):
+                open_catalogue(path).close()
+            # Without an admission every open validates in full.
+            assert readonly == ["readonly", "readonly"]
+            assert full == [True, True, True, True]
+            full.clear()
+            readonly.clear()
+            writer = sqlite3.connect(path)
+            writer.execute("UPDATE catalogue_schema SET version=version")
+            writer.commit()
+            writer.close()
+            open_catalogue(path, admission=admission).close()
+            # A write that reached the file forces a full validation again.
+            assert readonly == ["readonly"]
+            assert full == [True, True]
+        finally:
+            patch.stopall()
+
+
+def test_schema_admission_skips_a_file_written_while_it_was_checked() -> None:
+    """#2024: a commit during the full validation leaves nothing admitted."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "catalogue.sqlite"
+        open_catalogue(path, create=True).close()
+        admission = CatalogueSchemaAdmission()
+        existing = SQLiteCatalogueRepository._validate_existing_readonly
+        writes: list[str] = []
+
+        def checked_then_written(repository: SQLiteCatalogueRepository) -> None:
+            existing(repository)
+            if not writes:
+                writes.append("written")
+                writer = sqlite3.connect(path)
+                writer.execute("UPDATE catalogue_schema SET version=version")
+                writer.commit()
+                writer.close()
+
+        try:
+            patch.object(
+                SQLiteCatalogueRepository,
+                "_validate_existing_readonly",
+                checked_then_written,
+            ).start()
+            full, readonly = _validation_spy()
+            open_catalogue(path, admission=admission).close()
+            open_catalogue(path, admission=admission).close()
+            open_catalogue(path, admission=admission).close()
+            # The write lands after the stat the first open keyed, so that key
+            # never matches again; the second validates in full and admits.
+            assert writes == ["written"]
+            assert readonly == ["readonly", "readonly"]
+            assert full == [True, True, True, True, False]
+        finally:
+            patch.stopall()
+
+
+def test_schema_admission_still_refuses_a_changed_schema() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "catalogue.sqlite"
+        open_catalogue(path, create=True).close()
+        connection = sqlite3.connect(path)
+        connection.execute("CREATE VIEW unexpected_view AS SELECT 1")
+        connection.commit()
+        connection.close()
+        admission = CatalogueSchemaAdmission()
+        # Even a matching key, as if the change left the file's times alone,
+        # keeps the exact schema comparison.
+        admission.admit(CatalogueSchemaAdmission.key_of(path.stat(), None))
+        try:
+            full, readonly = _validation_spy()
+            with pytest.raises(CatalogueError, match="catalogue schema is unsupported"):
+                open_catalogue(path, admission=admission)
+            assert readonly == [] and full == [False]
+        finally:
+            patch.stopall()
+        with pytest.raises(CatalogueError):
+            open_catalogue(path, admission=admission)
+
+
+def _unread(item: str = "unread-1", code: str = "no_media") -> CatalogueEntry:
+    return CatalogueEntry(
+        "primary",
+        "books",
+        "library-id",
+        item,
+        1,
+        "Title",
+        (),
+        False,
+        False,
+        "needs-attention",
+        unread=code,
+    )
+
+
+def test_an_unread_entry_round_trips_and_its_check_is_closed() -> None:
+    """An item the service could not give keeps its reason (#2013)."""
+    stored = (_entry(), _unread(), _unread("unread-2", "changed"))
+    assert _unread().source_fingerprint != _unread(code="unreadable").source_fingerprint
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_catalogue(Path(directory) / "catalogue.sqlite", create=True)
+        repository.acquire_refresh()
+        repository.publish("a" * 64, stored)
+        assert repository.inspect("a" * 64) == stored
+        for statement in (
+            "UPDATE catalogue_entries SET unread='no_media' WHERE item_id='item-1'",
+            "UPDATE catalogue_entries SET unread='gone' WHERE item_id='unread-1'",
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                repository._connection.execute(statement)
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    "fields",
+    (
+        {"unread": "gone"},
+        {"classification": "none"},
+        {"file_identity": "a" * 64},
+        {"mount": "books"},
+    ),
+)
+def test_an_unread_entry_has_nothing_to_prepare(fields: dict[str, object]) -> None:
+    with pytest.raises(CatalogueError):
+        replace(_unread(), **fields)
+
+
+def test_a_catalogue_v3_main_without_unread_reasons_is_refused_unchanged(
+    tmp_path: Path,
+) -> None:
+    """The catalogue-v3 shape, rebuilt here from the current DDL without its
+    `unread` column, fails schema validation and is left as it was (#2013)."""
+    from mechanical_librarian.adapters.persistence import catalogue as module
+
+    unread = (
+        " unread TEXT CHECK(unread IS NULL OR (classification='needs-attention' "
+        "AND unread IN ('no_media','unreadable','oversized','changed'))),"
+    )
+    assert unread in module._SQL[3]
+    statements = [
+        sql.replace(module.CATALOGUE_SCHEMA, "catalogue-v3").replace(unread, "")
+        for sql in module._SQL
+    ]
+    path = tmp_path / "catalogue.sqlite"
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript("".join(statements))
+        connection.execute(
+            "INSERT INTO catalogue_schema(version) VALUES('catalogue-v3')"
+        )
+        connection.commit()
+    finally:
+        connection.close()
     before = path.read_bytes()
     with pytest.raises(CatalogueError):
         open_catalogue(path)

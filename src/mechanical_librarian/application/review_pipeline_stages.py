@@ -25,9 +25,12 @@ from mechanical_librarian.application.batch import (
     catalogue_fingerprint as batch_catalogue_fingerprint,
 )
 from mechanical_librarian.application.catalogue import (
+    CatalogueBusyError,
     CatalogueError,
+    CatalogueLibraryError,
     CatalogueReader,
     CatalogueRepository,
+    CatalogueStaleError,
     RefreshCurrentCatalogue,
     TargetConnectionError,
 )
@@ -36,6 +39,7 @@ from mechanical_librarian.application.metadata_report import (
     CredentialError,
     CurrentnessError,
     ItemInspectionError,
+    ReportStorageError,
     TargetNotFoundError,
     UnsupportedMediaError,
 )
@@ -64,6 +68,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPipelineRepository,
     ReviewPreparationPipeline,
+    _log_storage_failure,
     audio_inspection_failure_code,
     inspection_failure_code,
 )
@@ -254,8 +259,12 @@ class ReviewPipelineStages:
                 return snapshot.generation, snapshot.fingerprint, snapshot.entries
             except TargetConnectionError:
                 raise
+            except CatalogueLibraryError as error:
+                # The library itself could not be read; its reason is kept
+                # and shown (#2013).
+                raise ReviewPipelineError(error.code) from error
             except CatalogueError as error:
-                raise ReviewPipelineError("transient") from error
+                raise ReviewPipelineError("catalogue_unavailable") from error
             finally:
                 repository.close()
 
@@ -275,6 +284,12 @@ class ReviewPipelineStages:
             raise self._credential_failure(error, action) from error
         except (CurrentnessError, TargetNotFoundError) as error:
             raise ReviewPipelineError("stale") from error
+        except ReportStorageError as error:
+            # A briefly busy application database retries the work later; any
+            # other storage failure is lasting (#2024).
+            code = "transient" if error.busy else "persistence"
+            _log_storage_failure(action, code, "reports", error)
+            raise ReviewPipelineError(code) from error
         except ItemInspectionError as error:
             if type(error.outcome) is EpubInspectionOutcome:
                 raise ReviewPipelineError(
@@ -315,21 +330,30 @@ class ReviewPipelineStages:
         )
 
     def _require_eligible_entry(self, action: PipelineAction) -> None:
-        catalogue = self._catalogue(False)
         try:
-            entry = catalogue.latest_entry(
-                action.catalogue_fingerprint or "",
-                (
-                    action.connection,
-                    action.library,
-                    action.library_id,
-                    action.item_id or "",
-                ),
-            )
-        except CatalogueError as error:
+            catalogue = self._catalogue(False)
+            try:
+                entry = catalogue.latest_entry(
+                    action.catalogue_fingerprint or "",
+                    (
+                        action.connection,
+                        action.library,
+                        action.library_id,
+                        action.item_id or "",
+                    ),
+                )
+            finally:
+                catalogue.close()
+        except CatalogueStaleError as error:
             raise ReviewPipelineError("stale") from error
-        finally:
-            catalogue.close()
+        except CatalogueError as error:
+            # Busy waits for the stage's ordinary retry; anything else means
+            # the catalogue cannot be read and will not recover alone (#2024).
+            code = (
+                "transient" if isinstance(error, CatalogueBusyError) else "persistence"
+            )
+            _log_storage_failure(action, code, "catalogue", error)
+            raise ReviewPipelineError(code) from error
         if (
             entry is None
             or entry.file_identity != action.file_identity

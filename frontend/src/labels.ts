@@ -339,8 +339,17 @@ export const preparationStatusLabels = {
   missing_required_input: 'Required input missing',
   malformed_retained_data: 'Saved preparation data unreadable',
   internal_failure: 'Preparation stopped',
+  item_no_media: 'No file in Audiobookshelf',
+  item_unreadable: 'Details unreadable',
+  item_oversized: 'Details too large',
   unknown: 'Preparation failed',
 } satisfies Record<PreparationFailureStatus, string>
+// Nothing was read for these, so no stage phrase follows their label (#2013).
+export const unreadItemStatuses: ReadonlySet<PreparationFailureStatus> = new Set([
+  'item_no_media',
+  'item_unreadable',
+  'item_oversized',
+])
 export const preparationStageLabels = {
   extraction: 'while reading the file',
   provider: 'while searching sources',

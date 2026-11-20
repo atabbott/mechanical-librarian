@@ -526,10 +526,20 @@ a recovery command, can hold it at once.
 `/data/catalogue.sqlite3` holds the catalogue schema
 ([current versions](../reference/compatibility.md#current-versions)): a schema
 marker, numbered generations with at most one current, and up to 10,000
-entries per generation. A refresh takes the write lock with a zero busy
-timeout, so a second concurrent refresh returns busy instead of waiting. A new
-generation is published in one transaction, and the previous one stays
-readable until then. The catalogue is regenerable and need not be backed up.
+entries per generation. Opening the catalogue and reading it wait up to 5
+seconds for another connection's lock. A refresh takes the write lock with a
+zero busy timeout, so a second concurrent refresh returns busy instead of
+waiting. A new generation is published in one transaction, and the previous
+one stays readable until then.
+
+The first time preparation opens a catalogue file in a process, and again
+after the file changes, it validates the file in full: a read-only pass with
+CHECK constraints, then the integrity and foreign-key checks. Later opens of
+the unchanged file compare only the exact schema and its version. A file
+counts as changed when its device, inode or change time differs, or when its
+write-ahead log holds frames whose device, inode, size or times differ, since
+a commit reaches the log before it is checkpointed into the file. The
+catalogue is regenerable and need not be backed up.
 See [Current book catalogue](../operations/catalogue.md).
 
 ## Changing the topology

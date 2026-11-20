@@ -8831,7 +8831,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v12",
+            "const": "review-library-v13",
             "title": "Schema Version",
             "type": "string"
           }
@@ -9329,6 +9329,9 @@
                   "missing_required_input",
                   "malformed_retained_data",
                   "internal_failure",
+                  "item_no_media",
+                  "item_unreadable",
+                  "item_oversized",
                   "unknown"
                 ],
                 "type": "string"
@@ -11296,6 +11299,9 @@
               "missing_required_input",
               "malformed_retained_data",
               "internal_failure",
+              "item_no_media",
+              "item_unreadable",
+              "item_oversized",
               "unknown"
             ],
             "title": "Status",
@@ -11545,6 +11551,26 @@
             "title": "Connection",
             "type": "string"
           },
+          "discovery_failure": {
+            "anyOf": [
+              {
+                "enum": [
+                  "library_unavailable",
+                  "library_too_large",
+                  "response_too_large",
+                  "response_unreadable",
+                  "catalogue_unavailable",
+                  "persistence",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Failure"
+          },
           "library": {
             "title": "Library",
             "type": "string"
@@ -11621,7 +11647,8 @@
           "blocked",
           "recorded",
           "not_matched",
-          "rescan_requested"
+          "rescan_requested",
+          "discovery_failure"
         ],
         "title": "_PreparationProgress",
         "type": "object"
@@ -11706,8 +11733,8 @@
             "type": "boolean"
           },
           "schema_version": {
-            "const": "review-preparation-v2",
-            "default": "review-preparation-v2",
+            "const": "review-preparation-v3",
+            "default": "review-preparation-v3",
             "title": "Schema Version",
             "type": "string"
           }

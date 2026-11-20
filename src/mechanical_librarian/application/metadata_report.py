@@ -203,6 +203,19 @@ class MetadataReportError(RuntimeError):
     """A value-free operational failure at the command boundary."""
 
 
+class ReportStorageError(MetadataReportError):
+    """The report store could not publish; ``busy`` says it may succeed later.
+
+    ``busy`` is true only for SQLite busy or locked contention after the
+    publication's transaction was proven released, so nothing was written and
+    the work can be retried. Every other storage failure is lasting (#2024).
+    """
+
+    def __init__(self, *, busy: bool) -> None:
+        super().__init__("report publication failed")
+        self.busy = busy
+
+
 class ReportNotFoundError(MetadataReportError):
     """The requested immutable report is absent from retained storage."""
 
@@ -5465,6 +5478,7 @@ __all__ = [
     "WorkLadderFacts",
     "ReportRepository",
     "ReportNotFoundError",
+    "ReportStorageError",
     "TargetFile",
     "TargetNotFoundError",
     "TargetReader",

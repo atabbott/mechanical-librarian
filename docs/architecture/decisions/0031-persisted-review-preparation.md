@@ -170,3 +170,21 @@ scheduled search that identifies nothing still keeps the case
 ([ADR-0102](0102-search-every-finished-book-again.md)). Because preparation
 retired it, a later preparation that identifies the book again admits its case
 as a new episode rather than replaying the retirement.
+
+## Amendment: an item Audiobookshelf cannot give is present, not absent (#2013)
+
+Status: proposed (#2013)
+
+An item the library lists whose detail cannot be used (missing or invalid in
+Audiobookshelf, unreadable, over the response limit, or changed between the
+list and the detail) no longer fails discovery for the whole library. The
+catalogue keeps it as an unread entry with a closed reason, and discovery
+enrols it as a work that could not finish at extraction, named from what could
+be read. Unread items are neither absent nor ineligible: they stage no
+tombstone or retirement, so being unreadable never retires a case. A per-item
+404 is the typed stale-input signal this ADR already names; such an item is
+enrolled `stale` and requests the bounded rediscovery. An item with no media
+file is listed as could not finish but does not end its scan with failures,
+so the library keeps polling and a file added in Audiobookshelf is picked up.
+Conditions of the library itself still fail its discovery, and the scan now
+keeps that failure's closed reason until the scan moves on.

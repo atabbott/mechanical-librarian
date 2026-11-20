@@ -169,7 +169,7 @@ describe('Application shell', () => {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: true,
         actionable: false,
@@ -226,6 +226,7 @@ describe('Application shell', () => {
             library_id: 'books',
             ready: 1,
             rescan_requested: false,
+            discovery_failure: null,
             scan_id: 'scan-1',
             state: 'processing',
             total: 7,
@@ -254,7 +255,7 @@ describe('Application shell', () => {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: false,
         actionable: true,
@@ -310,6 +311,7 @@ describe('Application shell', () => {
             library_id: 'books',
             ready: 5,
             rescan_requested: false,
+            discovery_failure: null,
             scan_id: 'scan-1',
             state: 'completed_with_failures',
             stages: [
@@ -360,6 +362,7 @@ describe('Application shell', () => {
       library_id: name.toLowerCase(),
       ready,
       rescan_requested: false,
+      discovery_failure: null,
       scan_id: scanId,
       state,
       total: ready + recorded + notMatched + blocked,
@@ -375,7 +378,7 @@ describe('Application shell', () => {
       presentation: NonNullable<PreparationView['presentation']> | null,
     ): PreparationView => ({
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: false,
       actionable: true,
@@ -493,7 +496,7 @@ describe('Application shell', () => {
         ...createHttp(),
         getPreparation: vi.fn(async (): Promise<PreparationView> => ({
           ...idlePreparation,
-          schema_version: 'review-preparation-v2',
+          schema_version: 'review-preparation-v3',
           recovery_required: false,
           active: true,
           actionable: false,
@@ -510,6 +513,7 @@ describe('Application shell', () => {
               library_id: 'books',
               ready: 0,
               rescan_requested: false,
+              discovery_failure: null,
               scan_id: 'scan-1',
               state: 'discovering',
               total: 2,
@@ -540,7 +544,7 @@ describe('Application shell', () => {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: true,
         active: true,
         actionable: true,
@@ -557,6 +561,7 @@ describe('Application shell', () => {
             library_id: 'books',
             ready: 1,
             rescan_requested: false,
+            discovery_failure: null,
             scan_id: 'scan-1',
             state: 'completed_with_failures',
             total: 4,
@@ -589,7 +594,7 @@ describe('Application shell', () => {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: true,
         actionable: false,
@@ -606,6 +611,7 @@ describe('Application shell', () => {
             library_id: 'books',
             ready: 0,
             rescan_requested: false,
+            discovery_failure: null,
             scan_id: 'scan-1',
             state: 'discovering',
             total: 2,
@@ -668,6 +674,7 @@ describe('Application shell', () => {
               library_id: 'books',
               ready: 2,
               rescan_requested: false,
+              discovery_failure: null,
               scan_id: null,
               state: 'completed',
               total: 2,
@@ -716,7 +723,7 @@ describe('Application shell', () => {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: true,
         actionable: false,
@@ -733,6 +740,7 @@ describe('Application shell', () => {
             library_id: 'books',
             ready: 0,
             rescan_requested: false,
+            discovery_failure: null,
             scan_id: 'scan-1',
             state: 'processing',
             total: 2,
@@ -775,7 +783,7 @@ describe('Application shell', () => {
     async (state, title, action, disabled) => {
       const preparation: PreparationView = {
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: true,
         actionable: false,
@@ -792,6 +800,7 @@ describe('Application shell', () => {
             library_id: 'books',
             ready: 1,
             rescan_requested: false,
+            discovery_failure: null,
             scan_id: 'scan-1',
             state: 'processing',
             total: 3,
@@ -874,7 +883,7 @@ describe('Application shell', () => {
   it('reads the library summary on Activity only while a connection notice is shown', async () => {
     const paused = (connections: NonNullable<PreparationView['connections']>): PreparationView => ({
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -930,7 +939,7 @@ describe('Application shell', () => {
   it('does not restore a completed connection incident from retained recovered state', async () => {
     const recovered: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -963,7 +972,7 @@ describe('Application shell', () => {
   it('sums simultaneous connection holds while keeping one focused recovery control', async () => {
     const preparation: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -1000,7 +1009,7 @@ describe('Application shell', () => {
     async (code, expected) => {
       const preparation: PreparationView = {
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: true,
         actionable: false,
@@ -1043,7 +1052,7 @@ describe('Application shell', () => {
     }
     const paused: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -1102,7 +1111,7 @@ describe('Application shell', () => {
       }
       const paused: PreparationView = {
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: true,
         actionable: false,
@@ -1190,7 +1199,7 @@ describe('Application shell', () => {
     }
     const paused: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -1227,7 +1236,7 @@ describe('Application shell', () => {
     }
     const view = (state: 'paused' | 'recovered', updated_at: number): PreparationView => ({
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -1278,7 +1287,7 @@ describe('Application shell', () => {
       }
       const paused: PreparationView = {
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: true,
         actionable: false,
@@ -1351,7 +1360,7 @@ describe('Application shell', () => {
       }
       const paused: PreparationView = {
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: true,
         actionable: false,
@@ -1390,7 +1399,7 @@ describe('Application shell', () => {
   it('moves focus to the route target when the connection notice goes while its Settings link has focus', async () => {
     const paused: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -1430,7 +1439,7 @@ describe('Application shell', () => {
     // library leaves nothing for it to control.
     const active: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -1447,6 +1456,7 @@ describe('Application shell', () => {
           library_id: 'books',
           ready: 1,
           rescan_requested: false,
+          discovery_failure: null,
           scan_id: 'scan-1',
           state: 'processing',
           total: 3,
@@ -1455,7 +1465,7 @@ describe('Application shell', () => {
     }
     const inactive: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: false,
       actionable: false,
@@ -1489,13 +1499,14 @@ describe('Application shell', () => {
       library_id: 'books',
       ready: 3,
       rescan_requested: false,
+      discovery_failure: null,
       scan_id: 'scan-1',
       state,
       total: 3,
     })
     const view = (state: ScanState, overrides: Partial<PreparationView> = {}): PreparationView => ({
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: state !== 'completed',
       actionable: false,
@@ -1816,7 +1827,7 @@ describe('Application shell', () => {
       }
       const active: PreparationView = {
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: true,
         actionable: false,
@@ -1945,7 +1956,7 @@ describe('Application shell', () => {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: true,
         actionable: false,
@@ -1998,7 +2009,7 @@ describe('Application shell', () => {
     const updates = createLiveStream()
     const initial: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -2071,7 +2082,7 @@ describe('Application shell', () => {
     }
     const initial: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -2162,7 +2173,7 @@ describe('Application shell', () => {
     const updates = createLiveStream()
     const initial: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -2218,7 +2229,7 @@ describe('Application shell', () => {
     }
     const degraded: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
