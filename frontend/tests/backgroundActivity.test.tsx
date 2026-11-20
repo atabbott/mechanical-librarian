@@ -698,6 +698,7 @@ describe('BackgroundActivity library reason (#2013)', () => {
     const article = within(popover).getByRole('article')
     expect(article).toHaveTextContent(line)
     expect(article).not.toHaveTextContent('Complete · some works could not finish')
+    expect(article).not.toHaveTextContent('works checked')
     expect(within(article).getByRole('button', { name: 'Scan now' })).toBeInTheDocument()
     expect(within(article).getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })
@@ -732,5 +733,6 @@ describe('BackgroundActivity library reason (#2013)', () => {
     expect(within(popover).getByRole('article')).toHaveTextContent(
       'Complete · some works could not finish',
     )
+    expect(within(popover).getByRole('article')).toHaveTextContent('works checked')
   })
 })

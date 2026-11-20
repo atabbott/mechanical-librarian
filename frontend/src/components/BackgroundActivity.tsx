@@ -150,7 +150,7 @@ const SourceLookups = ({
   )
 }
 
-/** One library's line in the popover: its state, works checked, Scan now and Retry. */
+/** One library's line in the popover: its state or why it stopped, works checked, Scan now and Retry. */
 const LibraryProgress = ({
   item,
   data,
@@ -192,7 +192,10 @@ const LibraryProgress = ({
          */}
         {outsideRun ? ' · not in this run' : ''}
       </span>
-      <span>{`${item.checked.toLocaleString()} of ${item.total.toLocaleString()} works checked`}</span>
+      {/* A library that stopped before listing its books has none to count. */}
+      {item.discovery_failure && !data.recovery_required ? null : (
+        <span>{`${item.checked.toLocaleString()} of ${item.total.toLocaleString()} works checked`}</span>
+      )}
       <button
         type="button"
         aria-disabled={scanRefused || pending}

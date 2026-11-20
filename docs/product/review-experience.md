@@ -154,11 +154,10 @@ row each: the title, linked into Library, then "Prepared" or "Couldn't
 finish". A rate in works a minute appears only while running.
 
 The masthead's background-work icon fills while libraries are prepared and
-marks what needs you. Its popover shows each library's scan state, or why it
-stopped, and works checked, marks a library outside the current run, and
-offers Scan now and
-Pause. Pause stops new scans. Source lookups already waiting keep their schedule. The popover fits the window
-below the masthead and scrolls inside itself. `Escape` closes it
+marks what needs you. Its popover shows each library's scan state and works
+checked, or why it stopped, marks a library outside the current run, and offers
+Scan now and Pause. Pause stops new scans. Waiting source lookups keep their schedule. The popover fits the window
+below the masthead and scrolls inside itself if needed. `Escape` closes it
 and returns focus to its trigger. The popover disables a pending command
 instead of removing it, so focus stays put and a second press sends nothing.
 When no answer confirms a command's result, the popover shows the refreshed

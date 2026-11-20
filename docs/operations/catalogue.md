@@ -75,7 +75,7 @@ A whole library fails only for conditions of the library itself, each with a
 closed code: `library_unavailable` (no such book library),
 `library_too_large` (past the 10,000-item cap), `response_too_large` or
 `response_unreadable` (the library list or a page). A 401, 403, other non-200
-status, non-JSON answer or transport error on any request stays a
+status (except an item's 404), non-JSON answer or transport error on any request stays a
 [connection failure](#connection-failures).
 
 ## Privacy
