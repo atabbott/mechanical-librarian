@@ -66,6 +66,7 @@ from tests.support.proposal_evidence import (
     _target_work_candidate,
     _target_work_report,
 )
+from tests.unit.test_database_copy import other_unicode
 from tests.unit.test_owner_settings_store import _document
 
 SENTINEL = "Quillwort Vantablack"
@@ -486,6 +487,15 @@ def test_garbage_file_is_unreadable(tmp_path: Path) -> None:
         assert (
             _refusal(command, "--database", str(database)) == series_sample._UNREADABLE
         )
+
+
+def test_a_copy_under_another_unicode_version_names_both_and_the_remedy(
+    tmp_path: Path,
+) -> None:
+    database = _store(tmp_path).copy()
+    refusal = other_unicode(database)
+    for command in ("sample", "score"):
+        assert _refusal(command, "--database", str(database)) == refusal
 
 
 def test_copy_without_saved_settings_is_refused(tmp_path: Path) -> None:

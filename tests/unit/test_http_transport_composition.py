@@ -232,7 +232,8 @@ def test_pipeline_target_clients_read_the_secret_file_only_without_credentials(
             ),
         ),
         patch.object(composition, "ProviderRecoveryActivation", side_effect=recovery),
-        patch.object(composition, "ReviewPipelineStages"),
+        patch.object(composition, "ReviewPipelineStages") as stages,
+        patch.object(composition, "open_catalogue") as opened,
     ):
         for credentials in (None, {"target:primary": "synthetic-token"}):
             composition.create_review_pipeline(
@@ -245,6 +246,21 @@ def test_pipeline_target_clients_read_the_secret_file_only_without_credentials(
                 credentials=credentials,
             ).stop()
 
+        # Every catalogue open one pipeline makes shares one schema admission,
+        # so an unchanged file is validated in full once (#2024).
+        for composed in stages.call_args_list:
+            composed.kwargs["catalogue"](False)
+            composed.kwargs["catalogue"](True)
+    assert [call.kwargs["create"] for call in opened.call_args_list] == [
+        False,
+        True,
+    ] * 2
+    admissions = [call.kwargs["admission"] for call in opened.call_args_list]
+    assert all(
+        isinstance(item, composition.CatalogueSchemaAdmission) for item in admissions
+    )
+    assert admissions[0] is admissions[1] and admissions[2] is admissions[3]
+    assert admissions[0] is not admissions[2]
     assert {
         "catalogue": ["from-file", "from-token"],
         "item": ["from-file", "from-token"],

@@ -7,6 +7,7 @@ import os
 import sqlite3
 import stat
 import sys
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Final, Iterator, cast
@@ -18,6 +19,7 @@ from mechanical_librarian.adapters.persistence.binding import (
 from mechanical_librarian.adapters.persistence.schema import (
     _check_constraint_violation,
 )
+from mechanical_librarian.adapters.persistence.transactions import sqlite_busy
 from mechanical_librarian.application.batch import CatalogueSnapshot
 from mechanical_librarian.application.catalogue import (
     CatalogueBusyError,
@@ -26,18 +28,22 @@ from mechanical_librarian.application.catalogue import (
     CatalogueStaleError,
 )
 
-CATALOGUE_SCHEMA: Final = "catalogue-v3"
+CATALOGUE_SCHEMA: Final = "catalogue-v4"
+
+# How long an open or read waits on another connection's lock before it is
+# busy. A refresh never waits: `acquire_refresh` drops it to zero (#2024).
+_BUSY_TIMEOUT_SECONDS = 5.0
 
 _SQL = (
     f"CREATE TABLE catalogue_schema (version TEXT PRIMARY KEY CHECK (version = '{CATALOGUE_SCHEMA}'));",
     "CREATE TABLE catalogue_generations (generation INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL CHECK(length(fingerprint)=64), current INTEGER NOT NULL CHECK(current IN (0,1)), CHECK(current = 0 OR generation > 0));",
     "CREATE UNIQUE INDEX catalogue_one_current ON catalogue_generations(current) WHERE current = 1;",
-    "CREATE TABLE catalogue_entries (generation INTEGER NOT NULL REFERENCES catalogue_generations(generation), connection TEXT NOT NULL, library TEXT NOT NULL, library_id TEXT NOT NULL, item_id TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL, authors TEXT NOT NULL, has_ebook INTEGER NOT NULL CHECK(has_ebook IN (0,1)), has_audio INTEGER NOT NULL CHECK(has_audio IN (0,1)), classification TEXT NOT NULL CHECK(classification IN ('none','singular-supported','needs-attention')), file_identity TEXT, service_path TEXT, format TEXT, mount TEXT, source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), item_path TEXT CHECK(item_path IS NULL OR length(item_path)>0), PRIMARY KEY(generation, connection, library, item_id));",
+    "CREATE TABLE catalogue_entries (generation INTEGER NOT NULL REFERENCES catalogue_generations(generation), connection TEXT NOT NULL, library TEXT NOT NULL, library_id TEXT NOT NULL, item_id TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL, authors TEXT NOT NULL, has_ebook INTEGER NOT NULL CHECK(has_ebook IN (0,1)), has_audio INTEGER NOT NULL CHECK(has_audio IN (0,1)), classification TEXT NOT NULL CHECK(classification IN ('none','singular-supported','needs-attention')), file_identity TEXT, service_path TEXT, format TEXT, mount TEXT, source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), item_path TEXT CHECK(item_path IS NULL OR length(item_path)>0), unread TEXT CHECK(unread IS NULL OR (classification='needs-attention' AND unread IN ('no_media','unreadable','oversized','changed'))), PRIMARY KEY(generation, connection, library, item_id));",
 )
 _ENTRY_COLUMNS: Final = (
     "connection,library,library_id,item_id,updated_at,title,authors,has_ebook,"
     "has_audio,classification,file_identity,service_path,format,mount,"
-    "source_fingerprint,item_path"
+    "source_fingerprint,item_path,unread"
 )
 
 
@@ -60,6 +66,7 @@ def _entry(value: tuple[Any, ...]) -> CatalogueEntry:
         value[13],
         value[14],
         value[15],
+        value[16],
     )
 
 
@@ -91,6 +98,7 @@ def _validate_schema(
     rows: list[tuple[str, str, str | None]] | None = None,
     *,
     read_only: bool = False,
+    full: bool = True,
 ) -> None:
     rows = (
         rows
@@ -124,8 +132,11 @@ def _validate_schema(
         )
         or connection.execute("SELECT version FROM catalogue_schema").fetchall()
         != [(CATALOGUE_SCHEMA,)]
-        or connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
-        or connection.execute("PRAGMA foreign_key_check").fetchall()
+        or full
+        and (
+            connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
+            or connection.execute("PRAGMA foreign_key_check").fetchall()
+        )
     ):
         raise CatalogueError("catalogue schema is unsupported")
     # A `mode=ro` integrity check skips CHECK constraints (#1401).
@@ -135,8 +146,71 @@ def _validate_schema(
         )
 
 
+def _storage_failure(error: sqlite3.Error) -> CatalogueError:
+    """Translate a SQLite failure: busy or locked is retryable, the rest is not."""
+    if sqlite_busy(error):
+        return CatalogueBusyError("catalogue database is busy")
+    return CatalogueError("catalogue database is unavailable")
+
+
+_WalKey = tuple[int, int, int, int, int]
+_AdmissionKey = tuple[int, int, int, _WalKey | None]
+
+
+class CatalogueSchemaAdmission:
+    """Remember the catalogue file this process last validated in full.
+
+    The key is the main file's device, inode and change time, together with
+    the write-ahead log's device, inode, size and times while the log holds
+    any frames. It is taken before the checks and recorded only after every
+    one passed. A later open of the same unchanged files skips the read-only
+    pass and the integrity and foreign-key checks, but still compares the
+    exact schema rows and version. A commit, which reaches the log before the
+    main file, a checkpoint or a replacement changes the key and forces a
+    full validation again (#2024).
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._key: _AdmissionKey | None = None
+
+    @staticmethod
+    def key_of(
+        information: os.stat_result, wal: os.stat_result | None
+    ) -> _AdmissionKey:
+        return (
+            information.st_dev,
+            information.st_ino,
+            information.st_ctime_ns,
+            # An empty log holds no frames, so it reads as no log at all.
+            None
+            if wal is None or wal.st_size == 0
+            else (
+                wal.st_dev,
+                wal.st_ino,
+                wal.st_size,
+                wal.st_mtime_ns,
+                wal.st_ctime_ns,
+            ),
+        )
+
+    def admits(self, key: _AdmissionKey | None) -> bool:
+        with self._lock:
+            return key is not None and self._key == key
+
+    def admit(self, key: _AdmissionKey | None) -> None:
+        with self._lock:
+            self._key = key
+
+
 class SQLiteCatalogueRepository:
-    def __init__(self, path: Path, *, create: bool = False) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        create: bool = False,
+        admission: CatalogueSchemaAdmission | None = None,
+    ) -> None:
         self._path = path.absolute()
         if not self._path.is_absolute() or not self._path.name:
             raise CatalogueError("catalogue database is unavailable")
@@ -192,14 +266,16 @@ class SQLiteCatalogueRepository:
             ):
                 raise CatalogueError("catalogue database is unsafe")
             self._identity = information
-            if exists:
+            key = None if admission is None else self._admission_key(information)
+            admitted = admission is not None and admission.admits(key)
+            if exists and not admitted:
                 self._validate_existing_readonly()
             self._require_bound_name(information)
             try:
                 self._connection = sqlite3.connect(
                     f"file:{quote(str(self._path))}?mode=rw",
                     uri=True,
-                    timeout=0,
+                    timeout=_BUSY_TIMEOUT_SECONDS,
                     isolation_level=None,
                 )
             except sqlite3.OperationalError as error:
@@ -208,13 +284,18 @@ class SQLiteCatalogueRepository:
                 raise CatalogueError("catalogue database is unavailable") from error
             self._require_bound_name(information)
             self._connection.execute("PRAGMA foreign_keys = ON")
-            self._verify_or_create()
+            self._verify_or_create(full=not admitted)
             self._connection.execute("PRAGMA journal_mode = WAL")
-        except Exception:
+            if exists and admission is not None:
+                # Keyed before the checks: a write while they ran changes it.
+                admission.admit(key)
+        except Exception as error:
             if hasattr(self, "_connection"):
                 self._connection.close()
             if self._chain is not None:
                 self._chain.close()
+            if isinstance(error, sqlite3.Error):
+                raise _storage_failure(error) from error
             raise
         finally:
             if descriptor >= 0:
@@ -223,11 +304,30 @@ class SQLiteCatalogueRepository:
     def _require_bound_name(self, expected: os.stat_result) -> None:
         _require_bound_name(self._path, self._chain, expected)
 
+    def _admission_key(self, information: os.stat_result) -> _AdmissionKey | None:
+        """Key the main file and its log; None when the log is not a file."""
+        name = f"{self._path.name}-wal"
+        try:
+            wal: os.stat_result | None = (
+                os.stat(self._path.with_name(name), follow_symlinks=False)
+                if self._chain is None
+                else os.stat(
+                    name, dir_fd=self._chain.parent_descriptor, follow_symlinks=False
+                )
+            )
+        except FileNotFoundError:
+            wal = None
+        except OSError:
+            return None
+        if wal is not None and not stat.S_ISREG(wal.st_mode):
+            return None
+        return CatalogueSchemaAdmission.key_of(information, wal)
+
     def _validate_existing_readonly(self) -> None:
         connection = sqlite3.connect(
             f"file:{quote(str(self._path))}?mode=ro",
             uri=True,
-            timeout=0,
+            timeout=_BUSY_TIMEOUT_SECONDS,
             isolation_level=None,
         )
         try:
@@ -235,7 +335,7 @@ class SQLiteCatalogueRepository:
         finally:
             connection.close()
 
-    def _verify_or_create(self) -> None:
+    def _verify_or_create(self, *, full: bool = True) -> None:
         rows = self._connection.execute(
             "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
         ).fetchall()
@@ -252,12 +352,19 @@ class SQLiteCatalogueRepository:
                 self._connection.execute("ROLLBACK")
                 raise
             return
-        _validate_schema(self._connection, rows)
+        _validate_schema(self._connection, rows, full=full)
 
     def acquire_refresh(self) -> None:
         try:
             self._require_bound_name(self._identity)
-            self._connection.execute("BEGIN IMMEDIATE")
+            # A second refresh is refused at once rather than queued (#2024).
+            self._connection.execute("PRAGMA busy_timeout = 0")
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+            finally:
+                self._connection.execute(
+                    f"PRAGMA busy_timeout = {int(_BUSY_TIMEOUT_SECONDS * 1000)}"
+                )
         except sqlite3.OperationalError as error:
             raise CatalogueBusyError("catalogue refresh is busy") from error
 
@@ -275,7 +382,7 @@ class SQLiteCatalogueRepository:
                 (generation, fingerprint),
             )
             self._connection.executemany(
-                "INSERT INTO catalogue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO catalogue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     (
                         generation,
@@ -297,6 +404,7 @@ class SQLiteCatalogueRepository:
                         item.mount,
                         item.source_fingerprint,
                         item.item_path,
+                        item.unread,
                     )
                     for item in entries
                 ],
@@ -379,29 +487,32 @@ class SQLiteCatalogueRepository:
     def latest_entry(
         self, fingerprint: str, key: tuple[str, str, str, str]
     ) -> CatalogueEntry | None:
-        self._connection.execute("BEGIN")
         try:
-            current = self._connection.execute(
-                "SELECT generation FROM catalogue_generations "
-                "WHERE current=1 AND fingerprint=?",
-                (fingerprint,),
-            ).fetchone()
-            if current is None:
-                raise CatalogueStaleError("catalogue requires refresh")
-            entries = self._connection.execute(
-                f"SELECT {_ENTRY_COLUMNS} "  # noqa: S608 - fixed column list
-                "FROM catalogue_entries WHERE generation=? AND connection=? "
-                "AND library=? AND library_id=? AND item_id=?",
-                (current[0], *key),
-            ).fetchall()
-            self._connection.execute("COMMIT")
-            if len(entries) != 1:
-                return None
-            return _entry(entries[0])
-        except Exception:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise
+            self._connection.execute("BEGIN")
+            try:
+                current = self._connection.execute(
+                    "SELECT generation FROM catalogue_generations "
+                    "WHERE current=1 AND fingerprint=?",
+                    (fingerprint,),
+                ).fetchone()
+                if current is None:
+                    raise CatalogueStaleError("catalogue requires refresh")
+                entries = self._connection.execute(
+                    f"SELECT {_ENTRY_COLUMNS} "  # noqa: S608 - fixed column list
+                    "FROM catalogue_entries WHERE generation=? AND connection=? "
+                    "AND library=? AND library_id=? AND item_id=?",
+                    (current[0], *key),
+                ).fetchall()
+                self._connection.execute("COMMIT")
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+        except sqlite3.Error as error:
+            raise _storage_failure(error) from error
+        if len(entries) != 1:
+            return None
+        return _entry(entries[0])
 
     def close(self) -> None:
         try:
@@ -519,8 +630,17 @@ class CatalogueReadAdmission:
                 connection.execute("DETACH DATABASE retained_catalogue")
 
 
-def open_catalogue(path: Path, *, create: bool = False) -> SQLiteCatalogueRepository:
-    return SQLiteCatalogueRepository(path, create=create)
+def open_catalogue(
+    path: Path,
+    *,
+    create: bool = False,
+    admission: CatalogueSchemaAdmission | None = None,
+) -> SQLiteCatalogueRepository:
+    return SQLiteCatalogueRepository(path, create=create, admission=admission)
 
 
-__all__ = ["SQLiteCatalogueRepository", "open_catalogue"]
+__all__ = [
+    "CatalogueSchemaAdmission",
+    "SQLiteCatalogueRepository",
+    "open_catalogue",
+]

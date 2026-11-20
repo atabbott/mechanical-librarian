@@ -21,6 +21,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_locatio
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
     CatalogueError,
+    CatalogueLibraryError,
     TargetConnectionError,
 )
 from mechanical_librarian.application.configuration import (
@@ -38,6 +39,31 @@ from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     validate_observed_title,
 )
+
+
+class _UnreadItem(CatalogueError):
+    """One listed item the service could not give usably (#2013).
+
+    It stays a `CatalogueError`, so any caller of `_entry` sees the type it
+    always saw; `_read_item` turns it into an unread entry.
+    """
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__("catalogue item is unavailable")
+
+
+class _ItemNotFound(TargetConnectionError):
+    """A 404 for one item's own path: the stale signal of ADR-0031.
+
+    Anywhere else it is the connection-wide `unavailable` it always was.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("unavailable")
+
+
+_UNTITLED = "Untitled item requiring attention"
 
 
 def target_connection_code(error: BaseException) -> str:
@@ -69,14 +95,14 @@ class AudiobookshelfCatalogueReader:
         self, connection: str, library: LibraryConfiguration, remaining: int
     ) -> tuple[CatalogueEntry, ...]:
         if type(remaining) is not int or not 0 <= remaining <= 10_000:
-            raise CatalogueError("catalogue limit exceeded")
+            raise CatalogueLibraryError("library_too_large")
         try:
             with self._client_factory(connection) as client:
                 libraries = _get(
                     client, "/api/libraries", self._maximum_bytes, self._timeout_seconds
                 )
                 if library.library_id not in _book_library_ids(libraries):
-                    raise CatalogueError("configured library is unavailable")
+                    raise CatalogueLibraryError("library_unavailable")
                 summaries: list[dict[str, Any]] = []
                 page = 0
                 total: int | None = None
@@ -95,42 +121,33 @@ class AudiobookshelfCatalogueReader:
                     )
                     rows = payload.get("results")
                     if type(rows) is not list or len(rows) > 100:
-                        raise CatalogueError("catalogue response is invalid")
+                        raise CatalogueLibraryError("response_unreadable")
                     reported = payload.get("total")
-                    if (
-                        type(reported) is not int
-                        or reported < 0
-                        or reported > remaining
-                    ):
-                        raise CatalogueError("catalogue limit exceeded")
+                    if type(reported) is not int or reported < 0:
+                        raise CatalogueLibraryError("response_unreadable")
+                    if reported > remaining:
+                        raise CatalogueLibraryError("library_too_large")
                     total = reported if total is None else total
                     if total != reported or len(summaries) + len(rows) > total:
-                        raise CatalogueError("catalogue response is invalid")
-                    if any(type(row) is not dict for row in rows):
-                        raise CatalogueError("catalogue response is invalid")
+                        raise CatalogueLibraryError("response_unreadable")
+                    # A row with no item identity names nothing to record, so
+                    # it stays a condition of the whole list (#2013).
+                    if any(
+                        type(row) is not dict or type(row.get("id")) is not str
+                        for row in rows
+                    ):
+                        raise CatalogueLibraryError("response_unreadable")
                     summaries.extend(rows)
                     if len(summaries) == total:
                         break
                     if not rows:
-                        raise CatalogueError("catalogue response is invalid")
+                        raise CatalogueLibraryError("response_unreadable")
                     page += 1
                     if page > 100:
-                        raise CatalogueError("catalogue limit exceeded")
+                        raise CatalogueLibraryError("library_too_large")
                 mount = None if library.mount is None else self._mounts[library.mount]
                 return tuple(
-                    _entry(
-                        connection,
-                        library,
-                        mount,
-                        summary,
-                        _get(
-                            client,
-                            f"/api/items/{quote(str(summary.get('id')), safe='')}",
-                            self._maximum_bytes,
-                            self._timeout_seconds,
-                            {"expanded": "1"},
-                        ),
-                    )
+                    self._read_item(client, connection, library, mount, summary)
                     for summary in summaries
                 )
         except CatalogueError:
@@ -141,6 +158,47 @@ class AudiobookshelfCatalogueReader:
             raise TargetConnectionError(target_connection_code(error)) from None
         except (httpx.HTTPError, OSError):
             raise TargetConnectionError("unavailable") from None
+
+    def _read_item(
+        self,
+        client: httpx.Client,
+        connection: str,
+        library: LibraryConfiguration,
+        mount: MediaMountConfiguration | None,
+        summary: dict[str, Any],
+    ) -> CatalogueEntry:
+        """Read one listed item, or record why the service could not give it.
+
+        Only conditions of this one item are kept here (#2013); everything
+        connection-wide still raises, so one bad item no longer stops the
+        library and a broken connection still pauses it.
+        """
+        detail: dict[str, Any] | None = None
+        try:
+            detail = _get(
+                client,
+                f"/api/items/{quote(summary['id'], safe='')}",
+                self._maximum_bytes,
+                self._timeout_seconds,
+                {"expanded": "1"},
+            )
+        except _ItemNotFound:
+            code = "changed"
+        except CatalogueLibraryError as error:
+            code = "oversized" if error.code == "response_too_large" else "unreadable"
+        else:
+            try:
+                return _entry(connection, library, mount, summary, detail)
+            except _UnreadItem as error:
+                code = error.code
+            # A detail for another item or library says nothing about this
+            # one, so only the listing names it then.
+            if (
+                detail.get("id") != summary["id"]
+                or detail.get("libraryId") != library.library_id
+            ):
+                detail = None
+        return _unread_entry(connection, library, summary, detail, code)
 
     def probe_connection(
         self, connection: str, libraries: tuple[LibraryConfiguration, ...]
@@ -183,6 +241,8 @@ def _get(
             raise TargetConnectionError("authentication")
         if response.status_code == 403:
             raise TargetConnectionError("authorization")
+        if response.status_code == 404 and path.startswith("/api/items/"):
+            raise _ItemNotFound()
         if (
             response.status_code != 200
             or response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
@@ -194,7 +254,7 @@ def _get(
         for chunk in response.iter_bytes():
             size += len(chunk)
             if size > maximum:
-                raise CatalogueError("catalogue response is oversized")
+                raise CatalogueLibraryError("response_too_large")
             chunks.append(chunk)
         payload = b"".join(chunks)
     try:
@@ -205,9 +265,9 @@ def _get(
             parse_constant=_reject_constant,
         )
     except (UnicodeError, ValueError, RecursionError):
-        raise CatalogueError("catalogue response is invalid") from None
+        raise CatalogueLibraryError("response_unreadable") from None
     if type(value) is not dict:
-        raise CatalogueError("catalogue response is invalid")
+        raise CatalogueLibraryError("response_unreadable")
     return value
 
 
@@ -227,34 +287,26 @@ def _entry(
         or summary.get("updatedAt") != detail.get("updatedAt")
         or type(detail.get("updatedAt")) is not int
     ):
-        raise CatalogueError("catalogue item changed")
-    media = detail.get("media")
-    if type(media) is not dict:
-        raise CatalogueError("catalogue response is invalid")
-    metadata = media.get("metadata")
-    if type(metadata) is not dict:
-        raise CatalogueError("catalogue response is invalid")
-    title, invalid_title = _observed_catalogue_title(metadata.get("title"))
-    authors = metadata.get("authors", [])
-    if type(authors) is not list or len(authors) > 32:
-        raise CatalogueError("catalogue response is invalid")
-    names = tuple(
-        value
-        if type(value) is str
-        else value.get("name")
-        if type(value) is dict
-        else None
-        for value in authors
-    )
-    if any(type(value) is not str or not 1 <= len(value) <= 256 for value in names):
-        raise CatalogueError("catalogue response is invalid")
+        raise _UnreadItem("changed")
+    # Audiobookshelf marks an item with no audio or ebook file, or whose folder
+    # is gone, as missing or invalid; that outranks any shape it then has.
     if (
         summary.get("isMissing") is True
         or summary.get("isInvalid") is True
         or detail.get("isMissing") is True
         or detail.get("isInvalid") is True
     ):
-        raise CatalogueError("catalogue item is unavailable")
+        raise _UnreadItem("no_media")
+    media = detail.get("media")
+    if type(media) is not dict:
+        raise _UnreadItem("unreadable")
+    metadata = media.get("metadata")
+    if type(metadata) is not dict:
+        raise _UnreadItem("unreadable")
+    title, invalid_title = _observed_catalogue_title(metadata.get("title"))
+    names = _author_names(metadata)
+    if names is None:
+        raise _UnreadItem("unreadable")
     ebook = media.get("ebookFile")
     plural = media.get("ebookFiles")
     audio_revisions: tuple[object, ...] = (None,)
@@ -349,6 +401,56 @@ def _entry(
         # from rereading the untrimmed title through its stricter item boundary.
         classification = "needs-attention"
         file_identity = service_path = format_value = mount_name = None
+    source_fingerprint = _source_fingerprint(
+        item_id,
+        library.library_id,
+        detail,
+        has_audio=has_audio,
+        has_ebook=has_ebook,
+        file_identity=file_identity,
+        audio_revisions=audio_revisions,
+        audio_indexes=audio_indexes,
+        companion=companion,
+    )
+    return CatalogueEntry(
+        connection,
+        library.name,
+        library.library_id,
+        item_id,
+        detail["updatedAt"],
+        title,
+        names,
+        has_ebook,
+        has_audio,
+        classification,
+        file_identity,
+        service_path,
+        format_value,
+        mount_name,
+        source_fingerprint,
+        _item_path(detail, mount if classification == "singular-supported" else None),
+    )
+
+
+def _source_fingerprint(
+    item_id: str,
+    library_id: str,
+    detail: dict[str, Any],
+    *,
+    has_audio: bool,
+    has_ebook: bool,
+    file_identity: str | None,
+    audio_revisions: tuple[object, ...],
+    audio_indexes: tuple[object, ...],
+    companion: object,
+) -> str:
+    """Fingerprint the reviewed evidence of one readable item.
+
+    Every readable item's fingerprint is pinned by exact-value tests, so this
+    shape changes only with a deliberate schema move.
+    """
+    media = detail["media"]
+    metadata = media["metadata"]
     reviewed_fields = {
         name: {
             "present": name in metadata,
@@ -426,11 +528,11 @@ def _entry(
         or (cover_revision_reference is not None and not has_audio and has_ebook)
         else None
     )
-    source_fingerprint = hashlib.sha256(
+    return hashlib.sha256(
         canonical_json(
             {
                 "schema": "audiobookshelf-review-source-v1",
-                "identity": {"item_id": item_id, "library_id": library.library_id},
+                "identity": {"item_id": item_id, "library_id": library_id},
                 "metadata": reviewed_fields,
                 "cover": {
                     "field": cover_field,
@@ -449,24 +551,65 @@ def _entry(
             }
         ).encode("utf-8")
     ).hexdigest()
-    # `names` was rejected above unless every element is a 1..256 character str.
+
+
+def _author_names(metadata: dict[str, Any]) -> tuple[str, ...] | None:
+    """Return the item's author names, or none when any of them is unusable."""
+    authors = metadata.get("authors", [])
+    if type(authors) is not list or len(authors) > 32:
+        return None
+    names = tuple(
+        value
+        if type(value) is str
+        else value.get("name")
+        if type(value) is dict
+        else None
+        for value in authors
+    )
+    if any(type(value) is not str or not 1 <= len(value) <= 256 for value in names):
+        return None
+    return cast("tuple[str, ...]", names)
+
+
+def _metadata_of(value: object) -> dict[str, Any] | None:
+    media = value.get("media") if type(value) is dict else None
+    metadata = media.get("metadata") if type(media) is dict else None
+    return metadata if type(metadata) is dict else None
+
+
+def _unread_entry(
+    connection: str,
+    library: LibraryConfiguration,
+    summary: dict[str, Any],
+    detail: dict[str, Any] | None,
+    code: str,
+) -> CatalogueEntry:
+    """Name an item the service could not give usably, with nothing to prepare.
+
+    The name is the detail's title, else the listing's own title, else the
+    placeholder every unnamed item gets, each through the one title rule.
+    """
+    detail_metadata = _metadata_of(detail)
+    title = _UNTITLED
+    for metadata in (detail_metadata, _metadata_of(summary)):
+        if metadata is not None and "title" in metadata:
+            title, _ = _observed_catalogue_title(metadata["title"])
+            if title != _UNTITLED:
+                break
+    names = None if detail_metadata is None else _author_names(detail_metadata)
+    updated_at = summary.get("updatedAt")
     return CatalogueEntry(
         connection,
         library.name,
         library.library_id,
-        item_id,
-        detail["updatedAt"],
+        summary["id"],
+        updated_at if type(updated_at) is int and updated_at >= 0 else 0,
         title,
-        cast("tuple[str, ...]", names),
-        has_ebook,
-        has_audio,
-        classification,
-        file_identity,
-        service_path,
-        format_value,
-        mount_name,
-        source_fingerprint,
-        _item_path(detail, mount if classification == "singular-supported" else None),
+        () if names is None else names,
+        False,
+        False,
+        "needs-attention",
+        unread=code,
     )
 
 
@@ -656,7 +799,7 @@ def _observed_catalogue_title(value: object) -> tuple[str, bool]:
                 return validate_observed_title(value.strip()), True
             except ReportValueError:
                 pass
-        return "Untitled item requiring attention", True
+        return _UNTITLED, True
 
 
 def _fingerprint_observed_title(value: object) -> object:
@@ -677,7 +820,7 @@ def _fingerprint_observed_title(value: object) -> object:
 def _book_library_ids(payload: dict[str, Any]) -> set[str]:
     values = payload.get("libraries")
     if type(values) is not list:
-        raise CatalogueError("catalogue response is invalid")
+        raise CatalogueLibraryError("response_unreadable")
     return {
         value["id"]
         for value in values
@@ -718,13 +861,13 @@ def _json_depth(payload: bytes) -> None:
         elif byte in (91, 123):
             depth += 1
             if depth > 100:
-                raise CatalogueError("catalogue response is invalid")
+                raise CatalogueLibraryError("response_unreadable")
         elif byte in (93, 125):
             depth -= 1
             if depth < 0:
-                raise CatalogueError("catalogue response is invalid")
+                raise CatalogueLibraryError("response_unreadable")
     if quoted or escaped or depth:
-        raise CatalogueError("catalogue response is invalid")
+        raise CatalogueLibraryError("response_unreadable")
 
 
 __all__ = ["AudiobookshelfCatalogueReader"]

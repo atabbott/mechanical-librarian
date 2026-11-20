@@ -12598,6 +12598,7 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                         "recorded": 2,
                         "not_matched": 0,
                         "rescan_requested": False,
+                        "discovery_failure": None,
                         "stages": [{"stage": "extracting", "count": 2}],
                     }
                 ]

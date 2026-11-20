@@ -497,6 +497,43 @@ _CURRENT_REVIEW_CASE_COUNT_SQL = (
     + "WHERE COALESCE(c.outcome,'')<>'tombstoned'"
     + _REVIEW_SEARCH_SQL
 )
+# The latest scan of a work's library, the one a work queued again joins
+# (#2023): the work's own scan may be an older one the latest replaced.
+# Binds the work id.
+_LIBRARY_LATEST_SCAN_SQL = (
+    "(SELECT latest.scan_id FROM review_preparation_scans latest "
+    "JOIN review_preparation_work keyed ON keyed.connection_name=latest.connection_name "
+    "AND keyed.library_name=latest.library_name WHERE keyed.work_id=? "
+    "ORDER BY latest.requested_at DESC,latest.scan_id DESC LIMIT 1)"
+)
+# When a closed scan opened again was last written: after the close its
+# finished enrollment recorded, even within the same second, and never past
+# SQLite's largest integer, where adding one would store a real. Binds the
+# time.
+_REOPENED_AT_SQL = "MAX(?,updated_at+(updated_at<9223372036854775807))"
+# Work queued again needs its library's latest scan open (#2023). A latest
+# scan whose discovery failed never listed the library, so it is not opened:
+# it is queued for a fresh discovery with the reset a scan request gives a
+# closed scan, and the work waits for that discovery to take it over. The
+# first binds the time twice and the work id; the second binds the time and
+# the work id.
+_REDISCOVER_FAILED_LATEST_SCAN_SQL = (
+    "UPDATE review_preparation_scans SET state='queued',discovery_failure=NULL,"
+    "requested_at=?,updated_at="
+    + _REOPENED_AT_SQL
+    + ",catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
+    "qualification_epoch=NULL,refresh_count=0,rescan_requested=0 WHERE scan_id="
+    + _LIBRARY_LATEST_SCAN_SQL
+    + " AND discovery_failure IS NOT NULL"
+)
+_REOPEN_LATEST_SCAN_SQL = (
+    "UPDATE review_preparation_scans SET state='processing',updated_at="
+    + _REOPENED_AT_SQL
+    + " WHERE scan_id="
+    + _LIBRARY_LATEST_SCAN_SQL
+    + " AND state IN ('completed','completed_with_failures') "
+    "AND discovery_failure IS NULL"
+)
 _LATEST_PREPARATION_WORK_SQL = (
     "SELECT work_id,stage,attempt,recovery_attempt,state,failure_code,failure_root "
     "FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? "

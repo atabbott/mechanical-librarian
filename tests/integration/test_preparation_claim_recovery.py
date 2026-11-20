@@ -1324,6 +1324,8 @@ def test_unknown_diagnostics_retain_distinct_inner_publication_sites(
             assert expected in payload["frames"]
             assert payload["frames"][-1] == expected
             assert len(payload["frames"]) == 8 and payload["frames_truncated"]
+            assert payload["sqlite_error_code"] == cause.sqlite_errorcode
+            assert type(cause.sqlite_errorcode) is int
             assert len(output.err.encode()) <= 4096
             observed.append(payload)
         finally:
@@ -1779,6 +1781,7 @@ def test_claim_blocked_by_a_long_reader_resumes_once_the_read_ends(
             "recovery_attempt": 0,
             "reference": "prep-31c82ea5b1c9f5be",
             "restart_reference": "prep-d6a7008e59c62303",
+            "sqlite_error_code": None,
         }
 
 
@@ -2020,8 +2023,21 @@ def test_guard_busy_retries_without_unknown_and_every_other_failure_settles_unkn
         # value-free diagnostic.
         assert contentions == [] and waits == []
         assert guard_calls == [action]
-        (line,) = err.splitlines()
+        line, *settled = err.splitlines()
         record = json.loads(line)
+        # A discovery that settles says, value-free, why its library stopped
+        # (#2013); no other stage writes a second line.
+        assert [json.loads(value) for value in settled] == (
+            [
+                {
+                    "code": "unknown",
+                    "event": "preparation_discovery_failed",
+                    "level": "warning",
+                }
+            ]
+            if stage == "discovery"
+            else []
+        )
         assert record["event"] == "preparation_unknown_failure"
         assert record["code"] == "unknown"
         assert record["execution_stage"] == record["owned_stage"] == stage
@@ -2032,6 +2048,8 @@ def test_guard_busy_retries_without_unknown_and_every_other_failure_settles_unkn
             },
             {"module": "sqlite3", "type": "OperationalError"},
         ]
+        # The event names the fault's own SQLite code and nothing else (#2024).
+        assert record["sqlite_error_code"] == codes.get(fault, sqlite3.SQLITE_BUSY)
         assert "database is locked" not in err
         if fault == "busy_open_connection_transaction":
             # The injected unreleased connection transaction also enclosed the

@@ -49,7 +49,10 @@ from mechanical_librarian.adapters.persistence.schema import (
 from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
+    CatalogueError,
+    CatalogueLibraryError,
     CatalogueReader,
+    CatalogueStaleError,
     TargetConnectionError,
 )
 from mechanical_librarian.application.configuration import (
@@ -65,6 +68,7 @@ from mechanical_librarian.application.metadata_report import (
     ItemInspectionError,
     MetadataReportError,
     ReportRepository,
+    ReportStorageError,
     TargetNotFoundError,
     UnsupportedMediaError,
 )
@@ -176,8 +180,18 @@ def _proposal_stages(
             "internal_failure",
         ),
         (ItemInspectionError(), "unknown"),
+        (ReportStorageError(busy=True), "transient"),
+        (ReportStorageError(busy=False), "persistence"),
     ),
-    ids=("unsupported", "unreadable", "parser-refused", "internal", "unknown"),
+    ids=(
+        "unsupported",
+        "unreadable",
+        "parser-refused",
+        "internal",
+        "unknown",
+        "report-store-busy",
+        "report-store-failed",
+    ),
 )
 def test_extraction_stage_projects_only_declared_failure_boundaries(
     failure: Exception, code: str
@@ -7752,7 +7766,9 @@ def test_failed_rediscovery_cannot_claim_queued_children(
     rediscovery = repository.claim_review_pipeline_action(13)
     assert rediscovery is not None
     assert rediscovery.stage == "discovery"
-    repository.fail_review_pipeline_action(rediscovery, "transient", True, 14)
+    repository.fail_review_pipeline_action(
+        rediscovery, "catalogue_unavailable", True, 14
+    )
 
     assert repository.claim_review_pipeline_action(15) is None
     progress = repository.review_pipeline_progress("primary", "fiction")
@@ -7762,7 +7778,10 @@ def test_failed_rediscovery_cannot_claim_queued_children(
     repository.close()
 
     assert progress is not None
-    assert progress.state == "completed_with_failures"
+    assert (progress.state, progress.discovery_failure) == (
+        "completed_with_failures",
+        "catalogue_unavailable",
+    )
     assert child == ("queued",)
 
 
@@ -12708,6 +12727,257 @@ def test_unknown_failure_combined_limits_and_final_encoded_boundary(capsys):
     ]
 
 
+def _storage_action() -> PipelineAction:
+    return PipelineAction(
+        "work",
+        "scan",
+        "extraction",
+        1,
+        "primary",
+        "fiction",
+        "lib",
+        _PRODUCER,
+        catalogue_generation=1,
+        catalogue_fingerprint="a" * 64,
+        item_id="item",
+        file_identity="file",
+        source_revision=1,
+        source_fingerprint="b" * 64,
+    )
+
+
+def _sqlite_failure(code: object, message: str = "SQL_PRIVATE") -> sqlite3.Error:
+    error = sqlite3.OperationalError(message)
+    error.sqlite_errorcode = code  # type: ignore[assignment]  # reason: the projection must refuse any value a chain carries
+    return error
+
+
+def test_sqlite_error_code_allow_list_covers_every_runtime_error_constant() -> None:
+    from mechanical_librarian.application.review_pipeline import _SQLITE_ERROR_CODES
+
+    # SQLite's 28 documented primary error result names, in code order; the
+    # module also exposes authorizer constants in the same numeric range.
+    primaries = (
+        "ERROR INTERNAL PERM ABORT BUSY LOCKED NOMEM READONLY INTERRUPT IOERR "
+        "CORRUPT NOTFOUND FULL CANTOPEN PROTOCOL EMPTY SCHEMA TOOBIG CONSTRAINT "
+        "MISMATCH MISUSE NOLFS AUTH FORMAT RANGE NOTADB NOTICE WARNING"
+    ).split()
+    assert [getattr(sqlite3, f"SQLITE_{name}") for name in primaries] == list(
+        range(1, 29)
+    )
+    runtime = {
+        name: getattr(sqlite3, name)
+        for name in dir(sqlite3)
+        if any(
+            name == f"SQLITE_{primary}" or name.startswith(f"SQLITE_{primary}_")
+            for primary in primaries
+        )
+    }
+    assert {
+        name: code for name, code in runtime.items() if code not in _SQLITE_ERROR_CODES
+    } == {}
+    assert all(
+        type(code) is int and 1 <= code & 0xFF <= 28 for code in _SQLITE_ERROR_CODES
+    )
+    assert 8714 in _SQLITE_ERROR_CODES  # SQLITE_IOERR_IN_PAGE
+
+
+@pytest.mark.parametrize(
+    ("codes", "expected"),
+    (
+        ((sqlite3.SQLITE_IOERR_SHORT_READ,), 522),
+        ((None, sqlite3.SQLITE_BUSY), sqlite3.SQLITE_BUSY),
+        ((True,), None),
+        (("5",), None),
+        ((5.0,), None),
+        ((99_999,), None),
+        ((0,), None),
+        ((), None),
+    ),
+    ids=(
+        "extended",
+        "inner-cause",
+        "bool",
+        "string",
+        "float",
+        "unlisted",
+        "ok",
+        "no-sqlite",
+    ),
+)
+def test_unknown_failure_carries_only_an_allow_listed_sqlite_code(
+    capsys: pytest.CaptureFixture[str], codes: tuple[object, ...], expected: int | None
+) -> None:
+    from mechanical_librarian.application.review_pipeline import _log_unknown_failure
+
+    error: BaseException = MetadataReportError("PRIVATE_OUTER")
+    outer = error
+    for code in codes:
+        inner = (
+            RuntimeError("PRIVATE_INNER")
+            if code is None
+            else _sqlite_failure(code, "SQL_PRIVATE_SENTINEL")
+        )
+        outer.__cause__ = inner
+        outer = inner
+    _log_unknown_failure(cast(Exception, error), "extraction", _storage_action())
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "PRIVATE" not in output.err
+    payload = json.loads(output.err)
+    assert payload["sqlite_error_code"] == expected
+    assert type(payload["sqlite_error_code"]) in {int, type(None)}
+
+
+def test_unknown_failure_survives_a_raising_sqlite_code_attribute(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from mechanical_librarian.application.review_pipeline import _log_unknown_failure
+
+    class Hostile(sqlite3.OperationalError):
+        @property
+        def sqlite_errorcode(self) -> int:  # type: ignore[override]  # reason: a hostile attribute must not stop the line
+            raise RuntimeError("PRIVATE")
+
+    error = MetadataReportError("report publication failed")
+    error.__cause__ = Hostile("SQL_PRIVATE")
+    _log_unknown_failure(error, "extraction", _storage_action())
+    output = capsys.readouterr().err
+    assert "PRIVATE" not in output
+    assert json.loads(output)["sqlite_error_code"] is None
+    # The chain walk stays bounded at four exceptions, like the identities.
+    chain = [_sqlite_failure(None) for _ in range(4)] + [_sqlite_failure(5)]
+    for left, right in zip(chain[:-1], chain[1:], strict=True):
+        left.__cause__ = right
+    _log_unknown_failure(cast(Exception, chain[0]), "extraction", _storage_action())
+    assert json.loads(capsys.readouterr().err)["sqlite_error_code"] is None
+
+
+def test_storage_failure_event_is_value_free_and_never_raises(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import mechanical_librarian.application.review_pipeline as module
+
+    action = _storage_action()
+    failure = ReportStorageError(busy=True)
+    failure.__cause__ = _sqlite_failure(sqlite3.SQLITE_BUSY, "SQL_PRIVATE_SENTINEL")
+    module._log_storage_failure(action, "transient", "reports", failure)
+    output = capsys.readouterr()
+    assert output.out == "" and "PRIVATE" not in output.err
+    assert json.loads(output.err) == {
+        "attempt": 1,
+        "code": "transient",
+        "event": "preparation_storage_failure",
+        "level": "warning",
+        "recovery_attempt": 0,
+        # A transient settlement rewrites the row to attempt 0 and the next
+        # recovery attempt; the reference names that settled identity.
+        "reference": module.preparation_failure_reference(
+            "work", "extraction", 0, 1, "transient"
+        ),
+        "sqlite_error_code": 5,
+        "store": "reports",
+    }
+
+    class BrokenStream:
+        def write(self, _text: str) -> None:
+            raise OSError("SINK_PRIVATE")
+
+    with patch.object(module.sys, "stderr", BrokenStream()):
+        module._log_storage_failure(action, "persistence", "catalogue", failure)
+    module._log_storage_failure(
+        cast(PipelineAction, object()), "persistence", "catalogue", failure
+    )
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize(
+    ("site", "failure", "code"),
+    (
+        ("open", "busy", "transient"),
+        ("open", "stale", "stale"),
+        ("open", "failed", "persistence"),
+        ("read", "busy", "transient"),
+        ("read", "stale", "stale"),
+        ("read", "failed", "persistence"),
+    ),
+    ids=(
+        "open-busy",
+        "open-stale",
+        "open-failed",
+        "read-busy",
+        "read-stale",
+        "read-failed",
+    ),
+)
+def test_extraction_eligibility_maps_catalogue_storage_failures(
+    capsys: pytest.CaptureFixture[str], site: str, failure: str, code: str
+) -> None:
+    from mechanical_librarian.application.catalogue import (
+        CatalogueBusyError,
+        CatalogueError,
+        CatalogueStaleError,
+    )
+
+    error = {
+        "busy": CatalogueBusyError("catalogue database is busy"),
+        "stale": CatalogueStaleError("catalogue requires refresh"),
+        "failed": CatalogueError("catalogue database is unavailable"),
+    }[failure]
+    closed: list[bool] = []
+
+    class Catalogue:
+        def latest_entry(self, *_arguments: object) -> None:
+            raise error
+
+        def close(self) -> None:
+            closed.append(True)
+
+    def catalogue(create: bool) -> Catalogue:
+        assert create is False
+        if site == "open":
+            raise error
+        return Catalogue()
+
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=cast("Callable[[bool], Any]", catalogue),
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=unreachable,
+        generate_report=unreachable,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+    with pytest.raises(ReviewPipelineError) as raised:
+        stages.extract(
+            cast("ReviewPipelineRepository", object()), _storage_action(), False
+        )
+    assert raised.value.code == code
+    assert raised.value.__cause__ is error
+    assert closed == ([] if site == "open" else [True])
+    err = capsys.readouterr().err
+    if failure == "stale":
+        assert err == ""
+    else:
+        record = json.loads(err)
+        assert (record["event"], record["store"], record["code"]) == (
+            "preparation_storage_failure",
+            "catalogue",
+            code,
+        )
+
+
 @pytest.mark.parametrize("timeout", (False, True))
 def test_supervisor_wait_for_drain_retains_borrowed_dependencies(timeout: bool) -> None:
     pipeline = _LifecyclePipeline(hold_run=timeout)
@@ -13165,3 +13435,429 @@ def test_a_run_announces_preparation_when_it_settled_a_member(
     supervisor._announce = lambda topic, _subject: topics.append(topic)
     supervisor.recover_provider_once()
     assert ["preparation"] * announced == topics
+
+
+def _unread(item_id: str, code: str, title: str = "Unread work") -> CatalogueEntry:
+    return CatalogueEntry(
+        "primary",
+        "fiction",
+        "lib-1",
+        item_id,
+        1,
+        title,
+        (),
+        False,
+        False,
+        "needs-attention",
+        unread=code,
+    )
+
+
+def test_unread_items_become_named_works_that_could_not_finish(
+    application_path: Path,
+) -> None:
+    """#2013: an item the service could not give is a named, failed work."""
+    from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+
+    entries = (
+        _entry("readable-1", "1" * 64),
+        _entry("readable-2", "2" * 64),
+        _entry("readable-3", "3" * 64),
+        _unread("missing", "no_media", "Missing work"),
+        _unread("unreadable", "unreadable", "Unreadable work"),
+        _unread("oversized", "oversized", "Oversized work"),
+        _unread("changed", "changed", "Changed work"),
+    )
+    catalogue_path = application_path.parent / "catalogue" / "catalogue.sqlite"
+    catalogue_path.parent.mkdir(mode=0o700)
+    catalogue = open_catalogue(catalogue_path, create=True)
+    catalogue.acquire_refresh()
+    generation = catalogue.publish("a" * 64, entries)
+    catalogue.close()
+    repository = open_repository(application_path)
+    repository.bind_library_catalogue(catalogue_path, "a" * 64)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(discovery, generation, "a" * 64, entries, 12)
+    progress = repository.review_pipeline_progress("primary", "fiction")
+    works = repository._connection.execute(
+        "SELECT item_id,stage,state,failure_code,file_identity "
+        "FROM review_preparation_work ORDER BY item_id"
+    ).fetchall()
+    scan = repository._connection.execute(
+        "SELECT rescan_requested,refresh_count,discovery_failure "
+        "FROM review_preparation_scans"
+    ).fetchone()
+    absences = repository._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_absences"
+    ).fetchone()
+    browse = BrowseReviewLibrary(repository)
+    page = browse.library(lens="preparation_failed", search=None, limit=50, cursor=None)
+    repository.close()
+
+    assert progress is not None
+    assert (progress.total, progress.discovery_failure) == (7, None)
+    assert [row[:4] for row in works] == [
+        ("changed", "extraction", "stale", "stale"),
+        ("missing", "extraction", "failed", "item_no_media"),
+        ("oversized", "extraction", "failed", "item_oversized"),
+        ("readable-1", "extraction", "queued", None),
+        ("readable-2", "extraction", "queued", None),
+        ("readable-3", "extraction", "queued", None),
+        ("unreadable", "extraction", "failed", "item_unreadable"),
+    ]
+    sentinel = hashlib.sha256(
+        b"review-unread-item-v1\0primary\0fiction\0missing"
+    ).hexdigest()
+    assert works[1][4] == sentinel
+    assert scan == (1, 1, None)
+    assert absences == (0,)
+    rows = {
+        cast(str, item["title"]): cast("dict[str, object]", item["preparation"])
+        for item in cast("list[dict[str, object]]", page["items"])
+    }
+    assert {title: row["status"] for title, row in rows.items()} == {
+        "Missing work": "item_no_media",
+        "Unreadable work": "item_unreadable",
+        "Oversized work": "item_oversized",
+    }
+    assert (rows["Missing work"]["reason"], rows["Missing work"]["recovery"]) == (
+        "Audiobookshelf has no audio or ebook file for this book.",
+        "Add its file in Audiobookshelf, then scan this library again.",
+    )
+
+
+def test_a_book_with_no_file_keeps_its_case_and_its_library_polling(
+    application_path: Path,
+) -> None:
+    """An item Audiobookshelf has no file for is present, not absent, and it
+    does not end its library with failures (#2013, A2); reading it again once
+    it is readable replaces the failed work."""
+    repository = open_repository(application_path)
+    report = _report()
+    repository.publish(report, lambda: True)
+    proposal = evaluate_report(report)
+    repository.publish_proposal(proposal)
+    admitted = json.loads(repository.admit_review_case(proposal))
+    library = report.target.library
+    repository.request_review_scan("primary", library, "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    missing = replace(_unread(report.target.item, "no_media"), library=library)
+    repository.complete_review_discovery(discovery, 1, "c" * 64, (missing,), 12)
+    assert repository.claim_review_pipeline_action(13) is None
+    settled = repository.review_pipeline_progress("primary", library)
+    pointer = repository._connection.execute(
+        "SELECT review_case_id,outcome FROM current_review_case_lineages"
+    ).fetchone()
+    assert settled is not None
+    assert (settled.state, settled.blocked) == ("completed", 1)
+    assert pointer == (admitted["review_case_id"], "admitted")
+
+    repository.request_review_scan("primary", library, "lib-1", _PRODUCER, 20)
+    rediscovery = repository.claim_review_pipeline_action(21)
+    assert rediscovery is not None
+    readable = replace(
+        _entry(report.target.item, report.file.identity), library=library
+    )
+    repository.complete_review_discovery(rediscovery, 2, "c" * 64, (readable,), 22)
+    work = repository._connection.execute(
+        "SELECT state,failure_code,file_identity FROM review_preparation_work"
+    ).fetchall()
+    repository.close()
+    assert work == [("queued", None, report.file.identity)]
+
+
+@pytest.mark.parametrize("code", ("unreadable", "oversized"))
+def test_an_item_read_failure_still_ends_its_library_with_failures(
+    application_path: Path, code: str
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_unread("item", code),), 12
+    )
+    assert repository.claim_review_pipeline_action(13) is None
+    progress = repository.review_pipeline_progress("primary", "fiction")
+    repository.close()
+    assert progress is not None
+    assert (progress.state, progress.discovery_failure) == (
+        "completed_with_failures",
+        None,
+    )
+
+
+def test_the_discovery_failure_vocabulary_is_the_ddl_allow_list() -> None:
+    from mechanical_librarian.adapters.persistence.schema import _REVIEW_SCANS_SQL
+    from mechanical_librarian.application.review_pipeline import (
+        DISCOVERY_FAILURE_CODES,
+    )
+
+    allow_list = re.search(r"discovery_failure IN \(([^)]+)\)", _REVIEW_SCANS_SQL)
+    assert allow_list is not None
+    assert DISCOVERY_FAILURE_CODES == tuple(
+        value.strip().strip("'") for value in allow_list.group(1).split(",")
+    )
+
+
+class _LibraryFailingReader:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def read_library(self, *_arguments: object) -> tuple[CatalogueEntry, ...]:
+        raise self.error
+
+
+def _discovery_pipeline(
+    directory: Path, application_path: Path, reader: object
+) -> ReviewPreparationPipeline:
+    from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+
+    def unreachable(*_arguments: object, **_keywords: object) -> Any:
+        raise AssertionError
+
+    library = LibraryConfiguration("fiction", "primary", "lib-1", "book", None, ())
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration(
+            (TargetConnectionConfiguration("primary", "https://abs.invalid", "/t"),),
+            (library,),
+            (),
+            (),
+        ),
+        catalogue=lambda create: open_catalogue(
+            directory / "catalogue.sqlite", create=create
+        ),
+        catalogue_reader=cast("CatalogueReader", reader),
+        probe_connection=unreachable,
+        connections=frozenset({"primary"}),
+        repository_factory=lambda: open_repository(application_path),
+        recover_artifacts=unreachable,
+        generate_report=unreachable,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast(ProviderFailureObserver, object()),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 1,
+    )
+    return ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(application_path),
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=stages.discover,
+        extract=unreachable,
+        providers=unreachable,
+        propose=unreachable,
+        admit=unreachable,
+        project=unreachable,
+        clock=lambda: 2,
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    (
+        *(
+            (CatalogueLibraryError(code), code)
+            for code in (
+                "library_unavailable",
+                "library_too_large",
+                "response_too_large",
+                "response_unreadable",
+            )
+        ),
+        (CatalogueError("catalogue store is busy"), "catalogue_unavailable"),
+        (CatalogueStaleError("stale"), "catalogue_unavailable"),
+    ),
+)
+def test_a_library_that_cannot_be_read_stores_and_shows_why(
+    application_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+    code: str,
+) -> None:
+    """#2013: a whole-library failure keeps its reason, shows it and logs it."""
+    pipeline = _discovery_pipeline(
+        application_path.parent, application_path, _LibraryFailingReader(error)
+    )
+    pipeline.request("primary", "fiction")
+    capsys.readouterr()
+    assert pipeline.run_next()
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    repository = open_repository(application_path)
+    progress = repository.review_pipeline_progress("primary", "fiction")
+    (status,), _paused = repository.review_pipeline_status((("primary", "fiction"),))
+    repository.close()
+    assert progress is not None and status is not None
+    assert (progress.state, progress.total) == ("completed_with_failures", 0)
+    assert progress.discovery_failure == status.discovery_failure == code
+    assert events == [
+        {
+            "code": code,
+            "event": "preparation_discovery_failed",
+            "level": "warning",
+        }
+    ]
+
+
+def test_a_stored_discovery_reason_is_cleared_when_the_library_is_scanned_again(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.fail_review_pipeline_action(discovery, "response_unreadable", True, 12)
+    failed = repository.review_pipeline_progress("primary", "fiction")
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 13)
+    requeued = repository.review_pipeline_progress("primary", "fiction")
+    repository.close()
+    assert failed is not None and requeued is not None
+    assert (failed.state, failed.discovery_failure) == (
+        "completed_with_failures",
+        "response_unreadable",
+    )
+    assert (requeued.state, requeued.discovery_failure) == ("queued", None)
+
+
+def test_an_unlisted_discovery_code_is_stored_as_unknown_and_the_check_is_closed(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.fail_review_pipeline_action(discovery, "transient", True, 12)
+    stored = repository._connection.execute(
+        "SELECT discovery_failure FROM review_preparation_scans"
+    ).fetchone()
+    with pytest.raises(sqlite3.IntegrityError):
+        repository._connection.execute(
+            "UPDATE review_preparation_scans SET state='completed'"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        repository._connection.execute(
+            "UPDATE review_preparation_scans SET discovery_failure='transient'"
+        )
+    repository.close()
+    assert stored == ("unknown",)
+
+
+def test_a_retried_failed_stage_clears_the_stored_discovery_reason(
+    application_path: Path,
+) -> None:
+    """A retried stage queues a scan whose discovery failed for a fresh
+    discovery (#2023), which carries no reason unless it fails again."""
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item", "9" * 64),), 12
+    )
+    work = repository.claim_review_pipeline_action(13)
+    assert work is not None
+    repository.fail_review_pipeline_action(work, "provider", False, 14)
+    assert repository.claim_review_pipeline_action(15) is None
+    # A later failed discovery of the same scan records why it stopped.
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET discovery_failure='unknown'"
+    )
+    from mechanical_librarian.adapters.persistence.review_preparation import (
+        _retry_failed_stage,
+    )
+
+    _retry_failed_stage(repository._connection, work.action_id, 16)
+    repository._connection.commit()
+    scan = repository._connection.execute(
+        "SELECT state,discovery_failure FROM review_preparation_scans"
+    ).fetchone()
+    repository.close()
+    assert scan == ("queued", None)
+
+
+def test_unread_item_event_counts_each_reason_without_values(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from mechanical_librarian.application.review_pipeline import _log_unread_items
+
+    action = PipelineAction(
+        "review_scan_" + "a" * 64,
+        "review_scan_" + "a" * 64,
+        "discovery",
+        1,
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+    )
+    entries = (
+        _entry("readable", "1" * 64),
+        *(_unread(f"missing-{index}", "no_media") for index in range(3)),
+        _unread("changed", "changed"),
+        replace(_unread("elsewhere", "unreadable"), library="other"),
+    )
+    _log_unread_items(action, entries)
+    line = capsys.readouterr().err
+    assert line == (
+        '{"changed":1,"event":"preparation_items_unread","level":"warning",'
+        '"no_media":3,"oversized":0,"unreadable":0}\n'
+    )
+    _log_unread_items(action, (_entry("readable", "1" * 64),))
+    assert capsys.readouterr().err == ""
+    # Configured names are owner text, not a closed vocabulary, so no
+    # event carries one, whatever its shape.
+    _log_unread_items(
+        replace(action, library="medical-library"),
+        (replace(_unread("missing", "no_media"), library="medical-library"),),
+    )
+    assert "medical-library" not in capsys.readouterr().err
+
+
+def test_discovery_events_swallow_a_failing_sink() -> None:
+    from mechanical_librarian.application.review_pipeline import (
+        _log_discovery_failure,
+        _log_unread_items,
+    )
+
+    action = PipelineAction(
+        "review_scan_" + "a" * 64,
+        "review_scan_" + "a" * 64,
+        "discovery",
+        1,
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+    )
+    with patch.object(sys, "stderr") as stderr:
+        stderr.write.side_effect = OSError("closed")
+        _log_discovery_failure(action, "response_unreadable")
+        _log_unread_items(action, (_unread("missing", "no_media"),))
+    assert stderr.write.call_count == 2
+
+
+def test_discovery_failure_event_names_only_closed_values(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from mechanical_librarian.application.review_pipeline import (
+        _log_discovery_failure,
+    )
+
+    action = PipelineAction(
+        "review_scan_" + "a" * 64,
+        "review_scan_" + "a" * 64,
+        "discovery",
+        1,
+        "Primary Connection",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+    )
+    _log_discovery_failure(action, "something else")
+    assert capsys.readouterr().err == (
+        '{"code":"unknown","event":"preparation_discovery_failed","level":"warning"}\n'
+    )

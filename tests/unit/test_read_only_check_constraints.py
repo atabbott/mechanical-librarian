@@ -19,6 +19,7 @@ from mechanical_librarian.adapters.persistence import catalogue, metadata_report
 from mechanical_librarian.adapters.persistence import provider_recovery as recovery
 from mechanical_librarian.adapters.persistence.catalogue import (
     CatalogueReadAdmission,
+    CatalogueSchemaAdmission,
     open_catalogue,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
@@ -192,7 +193,7 @@ def test_bridge_output_validation_refuses_a_check_violation(tmp_path: Path) -> N
         bridge._validate_output(path, bridge._BridgeData((), (), (), 0))
 
 
-def _catalogue_store(tmp_path: Path) -> Path:
+def _catalogue_store(tmp_path: Path, *, violate: bool = True) -> Path:
     tmp_path.chmod(0o700)
     path = tmp_path / "catalogue.sqlite"
     writer = open_catalogue(path, create=True)
@@ -219,7 +220,8 @@ def _catalogue_store(tmp_path: Path) -> Path:
         ),
     )
     writer.close()
-    _write_past_checks(path, "UPDATE catalogue_entries SET has_ebook=7")
+    if violate:
+        _write_past_checks(path, "UPDATE catalogue_entries SET has_ebook=7")
     return path
 
 
@@ -234,6 +236,50 @@ def test_catalogue_open_refuses_a_check_violation_read_only_first(
     path = _catalogue_store(tmp_path)
     with pytest.raises(CatalogueError, match=_CATALOGUE_REFUSAL):
         open_catalogue(path)
+
+
+def test_catalogue_schema_admission_refuses_a_violation_written_after_admission(
+    tmp_path: Path,
+) -> None:
+    """#2024: a write after a file was admitted brings the read-only sweep back."""
+    path = _catalogue_store(tmp_path, violate=False)
+    admission = CatalogueSchemaAdmission()
+    open_catalogue(path, admission=admission).close()
+    assert admission.admits(CatalogueSchemaAdmission.key_of(path.stat(), None))
+    _write_past_checks(path, "UPDATE catalogue_entries SET has_ebook=7")
+    assert not admission.admits(CatalogueSchemaAdmission.key_of(path.stat(), None))
+    with pytest.raises(CatalogueError, match=_CATALOGUE_REFUSAL):
+        open_catalogue(path, admission=admission)
+
+
+def test_catalogue_schema_admission_refuses_a_violation_still_in_the_wal(
+    tmp_path: Path,
+) -> None:
+    """#2024: a commit that has not reached the main file yet is a write too.
+
+    While another connection keeps the write-ahead log open, a commit changes
+    only the log, so the main file's device, inode and change time stay as
+    they were admitted. The log's state must bring the sweep back.
+    """
+    path = _catalogue_store(tmp_path, violate=False)
+    admission = CatalogueSchemaAdmission()
+    open_catalogue(path, admission=admission).close()
+    holder = sqlite3.connect(path)
+    try:
+        holder.execute("SELECT count(*) FROM catalogue_entries").fetchone()
+        before = path.stat()
+        _write_past_checks(path, "UPDATE catalogue_entries SET has_ebook=7")
+        after = path.stat()
+        assert (after.st_dev, after.st_ino, after.st_ctime_ns) == (
+            before.st_dev,
+            before.st_ino,
+            before.st_ctime_ns,
+        )
+        assert path.with_name(f"{path.name}-wal").stat().st_size > 0
+        with pytest.raises(CatalogueError, match=_CATALOGUE_REFUSAL):
+            open_catalogue(path, admission=admission)
+    finally:
+        holder.close()
 
 
 def test_catalogue_library_admission_refuses_a_check_violation(

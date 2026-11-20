@@ -52,6 +52,7 @@ const library = (
   recorded: 2,
   not_matched: 0,
   rescan_requested: false,
+  discovery_failure: null,
   stages: [{ stage: 'providers', count: 7 }],
   ...overrides,
 })
@@ -645,5 +646,108 @@ describe('ThemeControl (#1494 acceptance 8)', () => {
     expect(button).toHaveAttribute('data-tooltip', 'dismissed')
     await user.tab()
     expect(button).not.toHaveAttribute('data-tooltip')
+  })
+})
+
+describe('BackgroundActivity library reason (#2013)', () => {
+  const reasons = [
+    [
+      'library_unavailable',
+      'Audiobookshelf no longer has this library. Check it in Settings → Libraries.',
+    ],
+    [
+      'library_too_large',
+      'This library would take the catalogue past 10,000 books. Remove a library in Settings → Libraries.',
+    ],
+    [
+      'response_too_large',
+      'An answer from Audiobookshelf was over the Audiobookshelf response limit. Raise it in Settings → Background work, or check this library in Audiobookshelf, then scan it again.',
+    ],
+    [
+      'response_unreadable',
+      'Mechanical Librarian could not read Audiobookshelf’s book list for this library. Scan now to try again.',
+    ],
+    [
+      'catalogue_unavailable',
+      'Mechanical Librarian could not record this library’s books. Scan now to try again.',
+    ],
+    [
+      'persistence',
+      'Mechanical Librarian could not record this library’s books. Scan now to try again.',
+    ],
+    [
+      'unknown',
+      'Mechanical Librarian could not record this library’s books. Scan now to try again.',
+    ],
+  ] as const
+
+  it.each(reasons)('says why %s stopped the library and keeps Scan now', async (code, line) => {
+    const user = userEvent.setup()
+    const failed = library({
+      state: 'completed_with_failures',
+      checked: 0,
+      total: 0,
+      discovery_failure: code,
+    })
+    const http = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => preparation(null, { libraries: [failed] })),
+    }
+    renderActivity(http)
+    const popover = await openPopover(user)
+    const article = within(popover).getByRole('article')
+    expect(article).toHaveTextContent(line)
+    expect(article).not.toHaveTextContent('Complete · some works could not finish')
+    expect(article).not.toHaveTextContent('works checked')
+    expect(within(article).getByRole('button', { name: 'Scan now' })).toBeInTheDocument()
+    expect(within(article).getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+
+  it('links the settings a reason names and closes on following it', async () => {
+    const user = userEvent.setup()
+    const failed = library({
+      state: 'completed_with_failures',
+      discovery_failure: 'response_too_large',
+    })
+    const http = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => preparation(null, { libraries: [failed] })),
+    }
+    const { router } = renderActivity(http)
+    const popover = await openPopover(user)
+    await user.click(within(popover).getByRole('link', { name: 'Settings → Background work' }))
+    await waitFor(() => expect(router.state.location.search).toEqual({ group: 'background' }))
+    expect(screen.queryByRole('region', { name: 'Background activity' })).toBeNull()
+  })
+
+  it('keeps the state line for a library whose works could not finish', async () => {
+    const user = userEvent.setup()
+    const http = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () =>
+        preparation(null, { libraries: [library({ state: 'completed_with_failures' })] }),
+      ),
+    }
+    renderActivity(http)
+    const popover = await openPopover(user)
+    expect(within(popover).getByRole('article')).toHaveTextContent(
+      'Complete · some works could not finish',
+    )
+    expect(within(popover).getByRole('article')).toHaveTextContent('works checked')
+  })
+
+  it('says some works could not finish when a complete library still has failed works (#2013)', async () => {
+    const user = userEvent.setup()
+    const http = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () =>
+        preparation(null, { libraries: [library({ state: 'completed', blocked: 2 })] }),
+      ),
+    }
+    renderActivity(http)
+    const popover = await openPopover(user)
+    const article = within(popover).getByRole('article')
+    expect(article).toHaveTextContent('Complete · some works could not finish')
+    expect(within(article).queryByRole('button', { name: 'Retry' })).toBeNull()
   })
 })

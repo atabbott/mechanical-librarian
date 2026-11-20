@@ -37,6 +37,7 @@ from mechanical_librarian.domain.reviewer_access import (
 )
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.cover_producers import _preview, _source
+from tests.unit.test_database_copy import other_unicode
 
 KEY = "sk-or-synthetic-key-0123456789"
 MODEL = "example/vision-model"
@@ -260,6 +261,16 @@ def test_population_is_current_items_in_a_stable_spread_order(library: Any) -> N
         smoke.load_population(database, artifacts, 0)
     with pytest.raises(smoke.SmokeRefused):
         smoke.load_population(database, artifacts, smoke.MAX_REQUESTS + 1)
+
+
+def test_a_copy_under_another_unicode_version_names_both_and_the_remedy(
+    library: Any,
+) -> None:
+    database, artifacts, _ = library
+    refusal = other_unicode(database)
+    with pytest.raises(smoke.SmokeRefused) as raised:
+        smoke.load_population(database, artifacts, 10)
+    assert str(raised.value) == refusal
 
 
 def _run(

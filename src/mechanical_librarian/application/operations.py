@@ -13,7 +13,7 @@ import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Iterator, Protocol, Sequence, cast
+from typing import Callable, Final, Iterator, Protocol, Sequence, cast
 
 STAGES = (
     "extraction",
@@ -42,6 +42,8 @@ KINDS = (
     "service_incompatibility",
 )
 SCOPES = ("runtime", "connection", "library", "category", "work", "field")
+# v2: an incident's code admits the item codes of #2013.
+OPERATIONAL_STATUS_SCHEMA: Final = "operational-status-v2"
 MAX_TIMINGS = 256
 MAX_INCIDENTS = 64
 MAX_SUPPORT_BYTES = 65_536
@@ -67,6 +69,9 @@ _TERMINAL_PREPARATION_CODES = frozenset(
         "missing_required_input",
         "malformed_retained_data",
         "internal_failure",
+        "item_no_media",
+        "item_unreadable",
+        "item_oversized",
         "unknown",
     )
 )
@@ -297,7 +302,7 @@ class OperationalStatus:
         return {
             "incidents": [value.to_data() for value in incidents],
             "readiness": "ready" if self.ready() else "draining",
-            "schema_version": "operational-status-v1",
+            "schema_version": OPERATIONAL_STATUS_SCHEMA,
             "summary": {
                 "automatic_recovery": sum(
                     value.kind == "automatic_recovery" for value in incidents

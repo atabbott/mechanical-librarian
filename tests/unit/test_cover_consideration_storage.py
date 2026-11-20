@@ -34,6 +34,7 @@ from tests.support.metadata_report_schemas import (
     PRIOR_HUMAN_DECISIONS_SQL,
     PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
     PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
+    PRIOR_REVIEW_SCANS_SQL,
     PRIOR_REVIEW_TRANSITIONS_SQL,
     PRIOR_REVIEW_WORK_SQL,
 )
@@ -216,6 +217,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             schema, "_ATTENTION_FACT_SOURCE_SQL", PRIOR_ATTENTION_FACT_SOURCE_SQL
         ),
         patch.object(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL),
+        patch.object(schema, "_REVIEW_SCANS_SQL", PRIOR_REVIEW_SCANS_SQL),
         patch.object(
             schema, "_CURRENT_REVIEW_PACKAGES_SQL", PRIOR_CURRENT_REVIEW_PACKAGES_SQL
         ),

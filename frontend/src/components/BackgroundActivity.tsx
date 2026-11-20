@@ -29,6 +29,26 @@ import {
 } from '../providerThrottling'
 import { invalidateBackgroundQueries, invalidateForegroundQueries } from '../queryWork'
 import { IconButton, StatusIcon } from './MastheadIcons'
+import { SettingsPathText } from './SettingsPathText'
+
+type DiscoveryFailure = NonNullable<PreparationView['libraries'][number]['discovery_failure']>
+const notRecorded =
+  'Mechanical Librarian could not record this library’s books. Scan now to try again.'
+// Why a library's discovery stopped (#2013), said under its name in place of
+// its state. Item failures never set it, so their library keeps its state line.
+const discoveryFailureLines = {
+  library_unavailable:
+    'Audiobookshelf no longer has this library. Check it in Settings → Libraries.',
+  library_too_large:
+    'This library would take the catalogue past 10,000 books. Remove a library in Settings → Libraries.',
+  response_too_large:
+    'An answer from Audiobookshelf was over the Audiobookshelf response limit. Raise it in Settings → Background work, or check this library in Audiobookshelf, then scan it again.',
+  response_unreadable:
+    'Mechanical Librarian could not read Audiobookshelf’s book list for this library. Scan now to try again.',
+  catalogue_unavailable: notRecorded,
+  persistence: notRecorded,
+  unknown: notRecorded,
+} satisfies Record<DiscoveryFailure, string>
 
 /**
  * The "Source lookups" part of the popover: every waiting library and source,
@@ -130,7 +150,7 @@ const SourceLookups = ({
   )
 }
 
-/** One library's line in the popover: its state, works checked, Scan now and Retry. */
+/** One library's line in the popover: its state or why it stopped, works checked, Scan now and Retry. */
 const LibraryProgress = ({
   item,
   data,
@@ -138,6 +158,7 @@ const LibraryProgress = ({
   outsideRun,
   pending,
   command,
+  onNavigate,
 }: {
   item: PreparationView['libraries'][number]
   data: PreparationView
@@ -145,6 +166,7 @@ const LibraryProgress = ({
   outsideRun: boolean
   pending: boolean
   command: (path: PreparationActionPath, refused: boolean) => () => void
+  onNavigate: () => void
 }) => {
   const connection = encodeURIComponent(item.connection)
   const library = encodeURIComponent(item.library)
@@ -154,14 +176,30 @@ const LibraryProgress = ({
     <article>
       <strong>{name}</strong>
       <span>
-        {data.recovery_required ? 'Last saved progress' : scanStateLabels[item.state]}
+        {data.recovery_required ? (
+          'Last saved progress'
+        ) : item.discovery_failure ? (
+          <SettingsPathText
+            text={discoveryFailureLines[item.discovery_failure]}
+            onNavigate={onNavigate}
+          />
+        ) : item.state === 'completed' && item.blocked > 0 ? (
+          // Books with no file in Audiobookshelf end the scan complete so it
+          // keeps polling, and they still could not finish (#2013).
+          scanStateLabels.completed_with_failures
+        ) : (
+          scanStateLabels[item.state]
+        )}
         {/*
          * The run line sums only the libraries its run enrolled, so a
          * library outside it is the one way the two totals differ.
          */}
         {outsideRun ? ' · not in this run' : ''}
       </span>
-      <span>{`${item.checked.toLocaleString()} of ${item.total.toLocaleString()} works checked`}</span>
+      {/* A library that stopped before listing its books has none to count. */}
+      {item.discovery_failure && !data.recovery_required ? null : (
+        <span>{`${item.checked.toLocaleString()} of ${item.total.toLocaleString()} works checked`}</span>
+      )}
       <button
         type="button"
         aria-disabled={scanRefused || pending}
@@ -268,6 +306,20 @@ export const BackgroundActivity = ({
   }, [open, unavailable])
   if (unavailable && !open) return null
   const status = mastheadState(data, now)
+  // Following a settings link closes the popover and the route takes focus.
+  // A link to the route already shown remounts nothing, so focus left on the
+  // body goes to the route's focus target.
+  const closeForRoute = () => {
+    setOpen(false)
+    requestAnimationFrame(() => {
+      const active = document.activeElement
+      if (active && active !== document.body) return
+      const main = document.getElementById('main-content')
+      ;(main?.querySelector<HTMLElement>('[data-route-focus]') ?? main)?.focus({
+        preventScroll: true,
+      })
+    })
+  }
   const close = () => {
     trigger.current?.focus()
     setOpen(false)
@@ -325,6 +377,7 @@ export const BackgroundActivity = ({
               outsideRun={Boolean(runScans && item.scan_id && !runScans.includes(item.scan_id))}
               pending={action.isPending}
               command={command}
+              onNavigate={closeForRoute}
             />
           ))}
           {/*
@@ -343,20 +396,7 @@ export const BackgroundActivity = ({
             retry={retry}
             name={names.name}
             now={now}
-            // Following the key link closes the popover and the route takes
-            // focus. A link to the route already shown remounts nothing, so
-            // focus left on the body goes to the route's focus target.
-            onNavigate={() => {
-              setOpen(false)
-              requestAnimationFrame(() => {
-                const active = document.activeElement
-                if (active && active !== document.body) return
-                const main = document.getElementById('main-content')
-                ;(main?.querySelector<HTMLElement>('[data-route-focus]') ?? main)?.focus({
-                  preventScroll: true,
-                })
-              })
-            }}
+            onNavigate={closeForRoute}
           />
           <button
             type="button"
