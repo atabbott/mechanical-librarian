@@ -65,9 +65,9 @@ from mechanical_librarian.domain.reviewer_cost import (
 )
 from mechanical_librarian.domain.validation import credential
 
-ReviewerAccessViewSchemaVersion = Literal["reviewer-access-view-v6"]
+ReviewerAccessViewSchemaVersion = Literal["reviewer-access-view-v7"]
 REVIEWER_ACCESS_VIEW_SCHEMA: Final[ReviewerAccessViewSchemaVersion] = (
-    "reviewer-access-view-v6"
+    "reviewer-access-view-v7"
 )
 # The measured default for taste profile builds (#1372 R5).
 TASTE_RECOMMENDED_MODEL: Final = "anthropic/claude-sonnet-5.5"
@@ -614,6 +614,13 @@ class ReviewerAccessOperations:
                 ),
                 host_headroom_bytes=host.headroom_bytes,
             )
+        if (
+            codex_status.state == "failed"
+            and codex_status.reason == "sandbox_unavailable"
+        ):
+            # The memory host check passed, but the sandbox itself was refused
+            # on the owner's last attempt (#2011). Held per process only.
+            codex_status = codex_status.model_copy(update={"state": "host_unsupported"})
         if provisioning.available:
             codex_status = codex_status.model_copy(update={"model": provisioning.model})
         openrouter_status = openrouter or ReviewerEngineStatus(

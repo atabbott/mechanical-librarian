@@ -21,8 +21,19 @@ from pathlib import Path
 from threading import Lock, Thread
 
 from mechanical_librarian.adapters.reviewers import process_group as process_groups
+from mechanical_librarian.application.contained_reviewer_contract import (
+    ContainedReviewerError,
+)
+from mechanical_librarian.application.failure_diagnostics import (
+    codex_sign_in_event,
+    emit_reviewer_events,
+)
+from mechanical_librarian.application.reviewer_access import (
+    ReviewerAccessApplicationError,
+)
 from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
+    DeviceAuthFailure,
     DeviceAuthStatus,
 )
 
@@ -60,6 +71,24 @@ _RECHECK_RECORDED: frozenset[DeviceAuthStatus] = frozenset(
 
 class CodexDeviceAuthError(RuntimeError):
     """Value-free device authentication failure."""
+
+
+class CodexSandboxUnavailable(CodexDeviceAuthError):
+    """The host refused the contained sandbox's own checks (#2011)."""
+
+    def __init__(self) -> None:
+        super().__init__("sandbox")
+
+
+# What preparing or running the contained command may raise. Anything else is
+# a defect the flow's backstop records by type name.
+_PREPARATION_ERRORS = (
+    OSError,
+    subprocess.SubprocessError,
+    CodexDeviceAuthError,
+    ContainedReviewerError,
+    ReviewerAccessApplicationError,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,11 +374,18 @@ class CodexDeviceAuthManager:
                 )
             finally:
                 prepared.close()
-        except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
+        except _PREPARATION_ERRORS as error:
             with self._lock:
                 if self._quarantined:
                     return self._state
-            return CodexDeviceAuthState("failed", failure="permission_or_profile")
+            return CodexDeviceAuthState(
+                "failed",
+                failure=(
+                    "sandbox_unavailable"
+                    if isinstance(error, CodexSandboxUnavailable)
+                    else "permission_or_profile"
+                ),
+            )
         if returncode == 0 and output == b"Logged in using ChatGPT\n":
             self._require_lease()
             return CodexDeviceAuthState("usable")
@@ -361,6 +397,10 @@ class CodexDeviceAuthManager:
         with self._activity_guard():
             try:
                 self._run_flow()
+            except Exception as error:
+                # Backstop: no flow ends in `starting` or prints a traceback.
+                emit_reviewer_events(codex_sign_in_event, error=error)
+                self._fail_unless_cancelled("protocol_or_process")
             finally:
                 try:
                     self._release_retained_process_or_quarantine()
@@ -461,13 +501,10 @@ class CodexDeviceAuthManager:
                 finally:
                     with self._lock:
                         self._installing = False
-        except (OSError, subprocess.SubprocessError, CodexDeviceAuthError):
-            with self._lock:
-                if not self._cancelled:
-                    self._state = CodexDeviceAuthState(
-                        "failed", failure="protocol_or_process"
-                    )
-                    self._transitions += 1
+        except CodexSandboxUnavailable:
+            self._fail_unless_cancelled("sandbox_unavailable")
+        except _PREPARATION_ERRORS:
+            self._fail_unless_cancelled("protocol_or_process")
         finally:
             if prepared is not None:
                 prepared.close()
@@ -481,6 +518,12 @@ class CodexDeviceAuthManager:
                             "failed", failure="protocol_or_process"
                         )
                         self._transitions += 1
+
+    def _fail_unless_cancelled(self, failure: DeviceAuthFailure) -> None:
+        with self._lock:
+            if not self._cancelled:
+                self._state = CodexDeviceAuthState("failed", failure=failure)
+                self._transitions += 1
 
     def _spawn(
         self, prepared: CodexAuthCommand, *, flow_owned: bool

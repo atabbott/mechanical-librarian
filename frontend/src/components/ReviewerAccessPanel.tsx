@@ -53,6 +53,9 @@ function DeviceCode({ code }: { code: string }) {
     </p>
   )
 }
+const codexSandboxCopy =
+  'Codex could not start its sandbox on this host. The container log says why.'
+
 const deviceFailureCopy: Readonly<Record<NonNullable<CodexDeviceAuthState['failure']>, string>> = {
   permission_or_profile:
     'The installed Codex sign-in could not be validated. Replace the sign-in and retry.',
@@ -60,6 +63,7 @@ const deviceFailureCopy: Readonly<Record<NonNullable<CodexDeviceAuthState['failu
     'Codex refused or could not finish device sign-in. Restart the sign-in flow.',
   protocol_or_process: 'Codex returned an unexpected sign-in result. Restart the sign-in flow.',
   restart_interrupted: 'A prior sign-in was interrupted. Restart the sign-in flow.',
+  sandbox_unavailable: codexSandboxCopy,
 }
 
 const unmanagedProfileCopy =
@@ -83,6 +87,7 @@ const codexReasonCopy: Readonly<Record<ReviewerReason, string>> = {
   permission_or_process: 'Codex could not complete sign-in. Restart the sign-in flow.',
   protocol_or_process: 'Codex returned an unexpected result. Restart the sign-in flow.',
   restart_interrupted: 'A prior sign-in was interrupted. Restart the sign-in flow.',
+  sandbox_unavailable: codexSandboxCopy,
   not_selected: 'Codex is not selected. Check the sign-in, then use it for cover review.',
   ...reviewerFailureCopy,
 }

@@ -357,7 +357,9 @@ write your own:
 
 Never replace the profile with `seccomp=unconfined` or add `SYS_ADMIN`. If the
 engine refuses user namespaces, Codex is unavailable and everything else keeps
-working.
+working. After a sign-in meets a refused sandbox, setup and Settings say that
+Codex could not start its sandbox, and the container log's
+`reviewer_sandbox_check` line names the check that failed.
 
 On start the entrypoint creates only the private `/data/reviewer`,
 `/data/reviewer/auth` and `/data/reviewer/jobs` directories, and refuses unsafe

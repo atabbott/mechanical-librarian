@@ -95,7 +95,7 @@ covers the claim token and container.
   prices and data use sit in a closed section. Continue and Skip for now sit
   together at the bottom. You set up description advice later, in Settings.
 - Secrets live only in their inputs, each with an accessible reveal control.
-  Setup clears the reviewer key after each attempt. An expired session keeps
+  A refused reviewer key stays in its input. An expired session keeps
   every recorded step.
 
 Before Start a summary lists each answer in step order, and each row reopens

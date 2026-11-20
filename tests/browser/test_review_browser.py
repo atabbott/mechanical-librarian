@@ -7477,8 +7477,11 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
             browser.close()
 
 
-def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -> None:
-    """A long reviewer form must not leave its refusal above a phone viewport."""
+@pytest.mark.parametrize("outcome", ["invalid_key", "csrf", "success"])
+def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone(
+    outcome: str,
+) -> None:
+    """A long reviewer form must not leave its result above a phone viewport."""
 
     class State:
         def read(self, _verifier: str) -> SetupStateDocument:
@@ -7516,12 +7519,16 @@ def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -
         "data_use_caveat": "Cover previews are sent to the selected provider.",
     }
 
+    reads: list[str] = []
+
     def setup_api(route: Any) -> None:
         path = urlparse(route.request.url).path
         if path == "/api/setup/state":
+            # Each read issues a fresh form token, as the server does.
+            reads.append(path)
             route.fulfill(
                 json={
-                    "csrf_token": "synthetic-csrf",
+                    "csrf_token": f"synthetic-csrf-{len(reads)}",
                     "next_step": "reviewer",
                     "completed_steps": [
                         "claim",
@@ -7538,8 +7545,14 @@ def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -
             )
         elif path == "/api/setup/reviewer-access":
             route.fulfill(json=access)
+        elif path == "/api/setup/reviewer/openrouter" and outcome == "success":
+            access["mapping"] = {"engine": "openrouter", "model": "synthetic/vision-1"}
+            route.fulfill(json=access)
         elif path == "/api/setup/reviewer/openrouter":
-            route.fulfill(status=422, json={"detail": {"error": "invalid_key"}})
+            route.fulfill(
+                status=403 if outcome == "csrf" else 422,
+                json={"detail": {"error": outcome}},
+            )
         else:
             route.fulfill(status=404, json={"error": "not_found"})
 
@@ -7560,20 +7573,35 @@ def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -
             page.get_by_label("OpenRouter API key").fill("synthetic-openrouter-key")
             save = page.get_by_role("button", name="Check key and use OpenRouter")
             save.click()
-            alert = page.get_by_role("alert")
-            expect(alert).to_have_text(
-                "OpenRouter rejected this key. Replace it and check it again."
-            )
             key_field = page.get_by_label("OpenRouter API key")
-            expect(key_field).to_be_focused()
-            expect(key_field).to_have_value("")
+            if outcome == "success":
+                # The chosen model is said under the button; Continue is next.
+                result = page.locator("#setup-main").get_by_text(
+                    "Selected: synthetic/vision-1"
+                )
+                proceed = page.get_by_role("button", name="Continue")
+                expect(proceed).to_be_focused()
+                expect(key_field).to_have_value("")
+                expect(result).to_be_in_viewport()
+                expect(proceed).to_be_in_viewport()
+            else:
+                alert = page.get_by_role("alert")
+                expect(alert).to_have_text(
+                    "Your session was refreshed. Press again."
+                    if outcome == "csrf"
+                    else "OpenRouter rejected this key. Replace it and check it again."
+                )
+                # A refusal keeps what was typed (#2011).
+                expect(key_field).to_have_value("synthetic-openrouter-key")
+                expect(save if outcome == "csrf" else key_field).to_be_focused()
+                expect(alert).to_be_in_viewport()
+                expect(save).to_be_in_viewport()
+                assert len(reads) == (2 if outcome == "csrf" else 1)
             assert page.evaluate("document.activeElement !== document.body")
             # The form is long enough at this width that its top is off screen.
             assert page.evaluate(
                 "document.querySelector('#setup-main form').getBoundingClientRect().top < 0"
             )
-            expect(alert).to_be_in_viewport()
-            expect(save).to_be_in_viewport()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             assert page_errors == []
         browser.close()

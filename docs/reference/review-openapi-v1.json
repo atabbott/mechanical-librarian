@@ -1494,8 +1494,8 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "reviewer-access-view-v6",
-            "default": "reviewer-access-view-v6",
+            "const": "reviewer-access-view-v7",
+            "default": "reviewer-access-view-v7",
             "title": "Schema Version",
             "type": "string"
           },
@@ -1716,6 +1716,7 @@
                   "permission_or_process",
                   "protocol_or_process",
                   "restart_interrupted",
+                  "sandbox_unavailable",
                   "not_selected",
                   "invalid_key",
                   "quota_exhausted",
@@ -4090,7 +4091,8 @@
                   "permission_or_profile",
                   "permission_or_process",
                   "protocol_or_process",
-                  "restart_interrupted"
+                  "restart_interrupted",
+                  "sandbox_unavailable"
                 ],
                 "type": "string"
               },

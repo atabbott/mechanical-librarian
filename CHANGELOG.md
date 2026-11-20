@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- In setup, the three "Get a key" links open in a new tab, and Check key and
+  use OpenRouter always leaves its result under the button: the chosen model,
+  or a refusal that keeps the typed key. Sign in with ChatGPT always ends; on a
+  host whose sandbox cannot run, setup and Settings say so and the container
+  log names the failed check (#2011).
 - After you pin a field and take the pin back on a work Automatic had not
   decided yet, turning on Automatic now shows that your earlier decision holds
   the field, with Automatic's choice and Resume automatic handling, on the

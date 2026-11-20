@@ -33,7 +33,7 @@ import { document, savedDocument, view } from './settingsFixtures'
 beforeAll(loadRouteModules)
 
 const reviewerView: ReviewerAccessView = {
-  schema_version: 'reviewer-access-view-v6',
+  schema_version: 'reviewer-access-view-v7',
   taste_mapping: null,
   taste_metadata: null,
   taste_daily_requests: 8,
@@ -1740,6 +1740,12 @@ describe('owner settings route', () => {
       'headroom_below_1_gib',
       true,
       'Less than 1 GB of memory is free. Free some memory or raise the container limit.',
+    ],
+    [
+      'host_unsupported',
+      'sandbox_unavailable',
+      true,
+      'Codex could not start its sandbox on this host. The container log says why.',
     ],
   ] as const)(
     'keeps mapped unhealthy Codex state %s manageable',

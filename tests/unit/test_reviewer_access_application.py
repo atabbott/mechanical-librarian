@@ -244,6 +244,20 @@ def test_generic_read_reports_an_existing_flow_without_credential_work() -> None
             "host_unsupported",
             "headroom_below_1_gib",
         ),
+        (
+            "failed",
+            "sandbox_unavailable",
+            True,
+            "host_unsupported",
+            "sandbox_unavailable",
+        ),
+        (
+            "failed",
+            "sandbox_unavailable",
+            False,
+            "host_unsupported",
+            "headroom_below_1_gib",
+        ),
     ),
 )
 def test_generic_read_reports_terminal_flow_without_credential_work(

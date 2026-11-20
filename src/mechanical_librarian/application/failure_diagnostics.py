@@ -564,6 +564,29 @@ _OWNER_EVENT_FIELDS: dict[str, FieldCheck] = {
 }
 
 
+# Reviewer sandbox and Codex sign-in events (#2011): which contained check
+# failed and how, as closed words and a bounded exit status. Never the
+# command, its output, a version string, a path or an exception message; the
+# sign-in backstop names only the exception's type.
+_REVIEWER_EVENT_FIELDS: dict[str, FieldCheck] = {
+    "event": one_of("reviewer_sandbox_check", "codex_sign_in"),
+    "level": one_of("warning"),
+    "check": one_of("sandbox_version", "sandbox_probe"),
+    "outcome": one_of(
+        "spawn_failed",
+        "timed_out",
+        "resource_refused",
+        "exit_nonzero",
+        "stderr",
+        "version_mismatch",
+        "unexpected",
+    ),
+    "exit_status": bounded_integer(-64, 255),
+    "stderr": one_of("none", "bwrap", "other"),
+    "error": matching(re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")),
+}
+
+
 def emit_provider_events(
     build: Callable[..., Iterable[Mapping[str, object]]], /, **arguments: object
 ) -> None:
@@ -583,6 +606,48 @@ def emit_owner_events(
 ) -> None:
     """`emit_provider_events`' guard, under the owner events' allow-list."""
     _emit_events(_OWNER_EVENT_FIELDS, build, arguments)
+
+
+def emit_reviewer_events(
+    build: Callable[..., Iterable[Mapping[str, object]]], /, **arguments: object
+) -> None:
+    """`emit_provider_events`' guard, under the reviewer events' allow-list."""
+    _emit_events(_REVIEWER_EVENT_FIELDS, build, arguments)
+
+
+def reviewer_sandbox_check_event(
+    *, check: str, outcome: str, exit_status: int | None = None, stderr: bytes = b""
+) -> tuple[dict[str, object]]:
+    """One failed sandbox check: the check, its outcome, the exit status and
+    whether stderr was empty, bubblewrap's own or other. Never the bytes."""
+    return (
+        {
+            "event": "reviewer_sandbox_check",
+            "level": "warning",
+            "check": check,
+            "outcome": outcome,
+            "exit_status": exit_status,
+            "stderr": (
+                "none"
+                if not stderr
+                else "bwrap"
+                if stderr.startswith(b"bwrap: ")
+                else "other"
+            ),
+        },
+    )
+
+
+def codex_sign_in_event(error: BaseException) -> tuple[dict[str, object]]:
+    """A sign-in flow ended by an unexpected exception: its type name only."""
+    return (
+        {
+            "event": "codex_sign_in",
+            "level": "warning",
+            "outcome": "unexpected",
+            "error": type(error).__name__,
+        },
+    )
 
 
 def owner_search_event(
