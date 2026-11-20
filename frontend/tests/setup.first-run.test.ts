@@ -2856,7 +2856,12 @@ it.each([
         expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled(),
       )
     if (remedy) expect(screen.getByText(remedy)).toBeVisible()
-    expect(screen.queryAllByText(remedyCopy)).toHaveLength(remedy ? 1 : 0)
+    // Said once on the card; the live region may repeat it.
+    expect(
+      within(document.querySelector<HTMLElement>('#setup-main') ?? document.body).queryAllByText(
+        remedyCopy,
+      ),
+    ).toHaveLength(remedy ? 1 : 0)
     expect(screen.queryByText(/^Status:/u)).toBeNull()
   },
 )
@@ -3277,13 +3282,23 @@ it('shows the sandbox remedy and stops polling when a sign-in meets a refused sa
   })
   vi.stubGlobal('fetch', fetch)
   runSetup()
-  fireEvent.click(await signInReady())
+  const signIn = await signInReady()
+  vi.mocked(Element.prototype.scrollIntoView).mockClear()
+  fireEvent.click(signIn)
 
-  expect(
-    await screen.findByText(
-      'Codex could not start its sandbox on this host. The container log says why.',
+  const remedy = await screen.findByText(
+    'Codex could not start its sandbox on this host. The container log says why.',
+  )
+  expect(remedy).toBeVisible()
+  // The ending is said, the remedy brought into view, and focus stays in the
+  // card (it has no control left), not on the step heading.
+  await waitFor(() =>
+    expect(document.querySelector('#setup-status')?.textContent).toBe(
+      'Not signed in. Codex could not start its sandbox on this host. The container log says why.',
     ),
-  ).toBeVisible()
+  )
+  await waitFor(() => expect(remedy).toHaveFocus())
+  expect(scrolled(remedy)).toBe(true)
   expect(screen.queryByRole('button', { name: 'Sign in with ChatGPT' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Cancel sign-in' })).toBeNull()
   expect(screen.getByText('Not signed in')).toBeVisible()
@@ -3291,6 +3306,65 @@ it('shows the sandbox remedy and stops polling when a sign-in meets a refused sa
   const reads = fetch.mock.calls.length
   await new Promise((resolve) => setTimeout(resolve, 1200))
   expect(fetch.mock.calls).toHaveLength(reads)
+})
+
+it('moves focus to the redrawn card command when a pressed sign-in ends', async () => {
+  let started = false
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (isRecheck(url, init)) return recheckAs('ready')
+      if (url.endsWith('/codex/device') && init?.method === 'POST') {
+        started = true
+        return response({ state: 'starting' })
+      }
+      if (url.endsWith('/codex/device'))
+        return response({ state: 'usable', failure: null, verification_url: null, user_code: null })
+      if (url.endsWith('/reviewer-access'))
+        return response(reviewerAccess(started ? 'usable' : 'ready'))
+      return response(setupState('reviewer'))
+    }),
+  )
+  runSetup()
+  fireEvent.click(await signInReady())
+  const use = await screen.findByRole('button', { name: 'Use Codex' })
+  await waitFor(() => expect(use).toHaveFocus())
+  await waitFor(() =>
+    expect(document.querySelector('#setup-status')?.textContent).toBe('Signed in'),
+  )
+})
+
+it('says how a resumed sign-in ended without taking focus', async () => {
+  let polls = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/codex/device')) {
+        polls += 1
+        return response({ state: 'failed', failure: 'sandbox_unavailable' })
+      }
+      if (url.endsWith('/reviewer-access'))
+        return response(
+          polls
+            ? reviewerAccess('host_unsupported', 'sandbox_unavailable')
+            : reviewerAccess('waiting'),
+        )
+      return response(setupState('reviewer'))
+    }),
+  )
+  runSetup()
+  const remedy = await screen.findByText(
+    'Codex could not start its sandbox on this host. The container log says why.',
+  )
+  await waitFor(() =>
+    expect(document.querySelector('#setup-status')?.textContent).toContain(
+      'Codex could not start its sandbox on this host.',
+    ),
+  )
+  await reviewerStepSettled()
+  expect(remedy).not.toHaveFocus()
 })
 
 it('blocks sign-in with the sandbox remedy when the automatic check meets a refused sandbox', async () => {
@@ -3969,6 +4043,42 @@ it('folds the chosen OpenRouter card, says it is ready and moves focus to Contin
   expect(key).toHaveFocus()
 })
 
+it('scrolls the Selected line to the top when it and Continue cannot both fit', async () => {
+  let saved = false
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/reviewer-access') return response(chosenOpenRouter(saved))
+      if (url === '/api/setup/reviewer/openrouter') {
+        saved = true
+        return response(chosenOpenRouter(true, true))
+      }
+      return response(setupState('reviewer'))
+    }),
+  )
+  // A short screen with enlarged text: Continue sits far below the result.
+  const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: Element,
+  ) {
+    return new DOMRect(0, this.textContent === 'Continue' ? 2000 : 0, 100, 40)
+  })
+  onTestFinished(() => rects.mockRestore())
+  runSetup()
+  fireEvent.click(await typeOpenRouter('openai/gpt-6-luna'))
+  vi.mocked(Element.prototype.scrollIntoView).mockClear()
+
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toHaveFocus())
+  const line = within(
+    document.querySelector<HTMLElement>('#setup-main') ?? document.body,
+  ).getByText('Selected: GPT-6 Luna')
+  const calls = vi.mocked(Element.prototype.scrollIntoView).mock
+  const index = calls.contexts.indexOf(line)
+  expect(index).toBeGreaterThanOrEqual(0)
+  expect(calls.calls[index]).toEqual([{ block: 'start' }])
+  expect(scrolled(screen.getByRole('button', { name: 'Continue' }))).toBe(false)
+})
+
 it('starts a fresh visit with OpenRouter chosen folded, without a status it cannot prove', async () => {
   vi.stubGlobal(
     'fetch',
@@ -4112,40 +4222,55 @@ it.each([
     'model',
     'That model cannot inspect covers. Choose a model with image input.',
   ],
-  ['quota_exhausted', 502, 'key', 'OpenRouter credits are used up. Add credits, then try again.'],
-  ['rate_limited', 502, 'key', 'OpenRouter is rate limited. Wait, then try again.'],
+  [
+    'quota_exhausted',
+    502,
+    'button',
+    'OpenRouter credits are used up. Add credits, then try again.',
+  ],
+  ['rate_limited', 502, 'button', 'OpenRouter is rate limited. Wait, then try again.'],
   [
     'malformed_response',
     502,
-    'key',
+    'button',
     'OpenRouter’s answer could not be read. Retry later, or choose another model.',
   ],
-  ['timed_out', 502, 'key', 'OpenRouter did not answer in time. Check network access, then retry.'],
+  [
+    'timed_out',
+    502,
+    'button',
+    'OpenRouter did not answer in time. Check network access, then retry.',
+  ],
   [
     'response_too_large',
     502,
-    'key',
+    'button',
     'OpenRouter returned an answer too large to read. Retry later, or choose another model.',
   ],
-  ['unreachable', 502, 'key', 'OpenRouter could not be reached. Check network access, then retry.'],
-  ['access_changed', 409, 'key', 'Reviewer settings changed elsewhere. Reload, then try again.'],
+  [
+    'unreachable',
+    502,
+    'button',
+    'OpenRouter could not be reached. Check network access, then retry.',
+  ],
+  ['access_changed', 409, 'button', 'Reviewer settings changed elsewhere. Reload, then try again.'],
   [
     'reviewer_access_stale',
     409,
-    'key',
+    'button',
     'Reviewer settings changed elsewhere. Reload, then try again.',
   ],
-  ['unavailable', 503, 'key', 'That step was not saved. Wait a moment, then try again.'],
+  ['unavailable', 503, 'button', 'That step was not saved. Wait a moment, then try again.'],
   [
     'session_expired',
     401,
-    'key',
+    'button',
     'Your sign-in expired, so that step was not saved. Reload the page and sign in again.',
   ],
   [
     'network',
     0,
-    'key',
+    'button',
     'No answer came back. Check whether the reviewer change was saved before trying again.',
   ],
 ] as const)(
@@ -4167,17 +4292,29 @@ it.each([
     runSetup()
     const save = await typeOpenRouter()
     vi.mocked(Element.prototype.scrollIntoView).mockClear()
+    save.focus()
     fireEvent.click(save)
 
     const alert = await screen.findByRole('alert')
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(alert).toHaveTextContent(message)
     expect(alert).toBeVisible()
-    // Between the field it is about and the pressed button, which is this one.
-    expect(alert.nextElementSibling).toBe(save)
     expect(save.isConnected).toBe(true)
-    const field = screen.getByLabelText(about === 'key' ? 'OpenRouter API key' : 'Model ID')
-    expect(field).toHaveFocus()
+    const key = screen.getByLabelText('OpenRouter API key')
+    if (about === 'button') {
+      // About no field: under the pressed button, which keeps focus, and the
+      // key is not called invalid.
+      expect(alert.previousElementSibling).toBe(save)
+      expect(save).toHaveFocus()
+      expect(key).not.toHaveAttribute('aria-invalid')
+      expect(screen.getByRole('textbox', { name: 'Model ID' })).not.toHaveAttribute('aria-invalid')
+    } else {
+      // Between the field it is about and the pressed button.
+      expect(alert.nextElementSibling).toBe(save)
+      const field = screen.getByLabelText(about === 'key' ? 'OpenRouter API key' : 'Model ID')
+      expect(field).toHaveFocus()
+      expect(field).toHaveAttribute('aria-invalid', 'true')
+    }
     expect(scrolled(alert)).toBe(true)
     expect(screen.getByLabelText('OpenRouter API key')).toHaveValue('synthetic-key')
     expect(screen.getByRole('textbox', { name: 'Model ID' })).toHaveValue('provider/model')

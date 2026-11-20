@@ -88,7 +88,23 @@ const followCodexSignIn=async(codex,form,failed,focus)=>{
     }while(form.isConnected&&codexActive(device.state));
     if(!form.isConnected)return;
     codexTerminal=device;
-    await render()
+    await render();
+    // Say how it ended, as Cancel does, and bring the remedy into view. A
+    // pressed sign-in moves focus into the card; a resumed one leaves it.
+    const status=main.querySelector('[data-codex-status]');
+    const card=status?.closest('.reviewer-option');
+    const remedy=card?.querySelector('[data-codex-remedy]');
+    announce([status?.textContent,remedy?.textContent].filter(Boolean).join('. ').replace(/\.\. /gu,'. '));
+    requestAnimationFrame(()=>{
+      (remedy||status)?.scrollIntoView?.({block:'nearest'});
+      if(!focus||!card?.isConnected)return;
+      let next=card.querySelector('button:not(:disabled)');
+      if(!next){
+        next=remedy||status;
+        next.tabIndex=-1
+      }
+      next.focus({preventScroll:true})
+    })
   }catch(e){if(form.isConnected)failed(e,null,cancel,true)}
 };
 const renderCodexOption=(form,access,failed)=>{
@@ -121,12 +137,14 @@ const renderCodexOption=(form,access,failed)=>{
   const reasons={profile_not_provisioned:'The Codex profile is missing. Restore the image’s profile or correct the profile path, then restart the service.',profile_unreadable:'The Codex profile cannot be read. Fix the file’s permissions or contents, then restart the service.',profile_contract_mismatch:'The Codex profile does not match the model and limits this version needs. Restore the image’s profile or regenerate it, then restart the service.',host_evidence_unavailable:'Mechanical Librarian cannot read the host’s free memory. Fix the host or container memory reporting before using Codex.',cgroup_limit_below_1_gib:'The container memory limit is below 1 GB. Increase it before using Codex.',headroom_below_1_gib:'Less than 1 GB of memory is free. Free some memory or raise the container limit.',sandbox_unavailable:'Codex could not start its sandbox on this host. The container log says why.'};
   if(blocked){
     const remedy=document.createElement('p');
+    remedy.dataset.codexRemedy='';
     remedy.textContent=reasons[hostBlocked?access.codex.reason:'sandbox_unavailable']||recoveryCopy(access.codex.state);
     codex.append(remedy)
   }
   // The remedy follows the shown result, and leaves once a new sign-in starts.
   const deviceRemedy={permission_or_profile:'Your ChatGPT sign-in could not be checked. Sign in with ChatGPT again.',permission_or_process:'Codex could not finish signing in. Sign in with ChatGPT again.',protocol_or_process:'Codex returned an unexpected sign-in result. Sign in with ChatGPT again.',restart_interrupted:'The last sign-in was interrupted. Sign in with ChatGPT again.'};
   const codexRemedy=document.createElement('p');
+  codexRemedy.dataset.codexRemedy='';
   codexRemedy.textContent=blocked?'':deviceRemedy[codexTerminal?codexTerminal.failure:access.codex.reason]||'';
   if(codexRemedy.textContent)codex.append(codexRemedy);
   if(codexActive(access.codex.state))void followCodexSignIn(codex,form,failed);
@@ -288,9 +306,13 @@ const renderOpenRouterOption=(form,access,failed)=>{
       const next=main.querySelector('.actions .primary');
       announce(chosen?.textContent||'');
       requestAnimationFrame(()=>{
-        chosen?.scrollIntoView?.({block:'nearest'});
-        next?.scrollIntoView?.({block:'nearest'});
-        if(next?.isConnected)next.focus()
+        // As a refusal and its field: when both cannot fit, the result leads.
+        if(chosen&&next&&next.getBoundingClientRect().bottom-chosen.getBoundingClientRect().top>innerHeight)chosen.scrollIntoView?.({block:'start'});
+        else{
+          chosen?.scrollIntoView?.({block:'nearest'});
+          next?.scrollIntoView?.({block:'nearest'})
+        }
+        if(next?.isConnected)next.focus({preventScroll:true})
       })
     }catch(e){
       openrouterChecked=null;
@@ -303,7 +325,9 @@ const renderOpenRouterOption=(form,access,failed)=>{
         toggle.setAttribute('aria-expanded','true');
         others.hidden=false
       }
-      failed(e,aboutModel?model:key,save)
+      // Only a refused key or model marks its field; any other refusal sits
+      // under the button.
+      failed(e,aboutModel?model:refusal(e)==='invalid_key'?key:null,save)
     }
   });
   // Rates and data use are reference detail, read on demand.
