@@ -390,12 +390,14 @@ all. Extra sources are recorded as truncated. Hardcover covers come only from
 edition states one of the library's languages and at least 300 px on its short
 side. An ebook takes a portrait edition cover and an audiobook a square one.
 
-Settings shows a **Cover evidence** switch only for `audible_catalog` (its art
-becomes an audiobook cover source) and `itunes_search` (a matching audiobook
-listing's art is offered as a cover for ebooks and audiobooks). The switch is hidden
-and off while the provider is disabled. In a configuration file it defaults to
-on; guided setup saves `cover_enabled: false` for both, so in store mode their
-covers start off and iTunes is sent no audiobook until its switch is on.
+Settings shows a **Cover evidence** switch for every source that can supply a
+cover: `audible_catalog` (its art becomes an audiobook cover source),
+`itunes_search` (a matching audiobook listing's art is offered as a cover for
+ebooks and audiobooks), `hardcover`, `open_library` and `inventaire`. Guided
+setup saves it on for each of these sources it turns on, and switching one on in
+Settings turns its switch on. You can turn it off. While the source is off, the
+switch is off and cannot be changed. Saved values are shown as they are: covers
+saved off stay off until you switch them on.
 
 The screens show one fixed display name per adapter, never the instance `name`.
 

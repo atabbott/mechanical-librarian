@@ -855,8 +855,7 @@ const SettingsEditor = ({
                                 const item = value.providers.at(index)
                                 if (!item) return
                                 item.enabled = choice === 'on'
-                                if (item.enabled && item.adapter === 'inventaire')
-                                  item.cover_enabled = true
+                                if (item.enabled && hasCoverSwitch(item)) item.cover_enabled = true
                                 if (!item.enabled) {
                                   item.cover_enabled = false
                                   for (const library of value.libraries)

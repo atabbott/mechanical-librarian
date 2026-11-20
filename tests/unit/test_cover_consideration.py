@@ -1418,6 +1418,83 @@ def test_recording_bound_cover_reaches_deterministic_consumer_without_observer(
         assert elected["deterministic_rank"] == 1
 
 
+def _audible_cover_beside_incumbent(*, with_audible: bool) -> list[dict[str, Any]]:
+    """Consider an admitted recording's Audible cover beside an ABS incumbent."""
+    _service, original_document, _dispatches, proposal = _audiobook_case()
+    original = MetadataReport.from_json(original_document)
+    base = asserted_asin_report(provider_duration="58200.000")
+    provider = base.providers[0]
+    candidate = provider.candidates[0]
+    audible = original.cover_sources[0]
+    assert audible.kind is CoverSourceKind.AUDIBLE_CATALOG
+    assert audible.provenance is not None and audible.artifact is not None
+    audible = replace(
+        audible,
+        provenance=replace(
+            audible.provenance,
+            provider=provider.provider,
+            work_identity=candidate.work_identity,
+            edition_identity=candidate.identity,
+        ),
+    )
+    incumbent = _source(1, _preview(1), incumbent=True)
+    assert incumbent.artifact is not None and audible.artifact is not None
+    payloads = {
+        incumbent.artifact.artifact_id: _preview(1),
+        audible.artifact.artifact_id: _preview(41),
+    }
+    previews = {
+        incumbent.artifact.preview_digest: _preview(1),
+        audible.artifact.preview_digest: _preview(41),
+    }
+    service = CoverConsiderationService(
+        _Store(),
+        read_preview=lambda artifact, _variant: payloads[artifact],
+        read_preview_digest=lambda digest: previews[digest],
+        clock=lambda: 10,
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+        cover_sources=(incumbent, audible) if with_audible else (incumbent,),
+    )
+    actual = service.ensure("review_case_" + "e" * 64, report.to_json(), proposal)
+    return cast("list[dict[str, Any]]", actual["candidates"])
+
+
+def test_an_admitted_audible_cover_is_selectable_beside_the_incumbent() -> None:
+    """The Cover field offers Audible's cover, not only the incumbent (#2014).
+
+    Without the Audible source, which is what a stored `cover_enabled: false`
+    leaves, the incumbent is the only candidate and cannot be chosen.
+    """
+    offered = _audible_cover_beside_incumbent(with_audible=True)
+    assert sorted(item["source_kinds"] for item in offered) == [
+        ["abs"],
+        ["audible_catalog"],
+    ]
+    by_kind = {item["source_kinds"][0]: item for item in offered}
+
+    assert by_kind["abs"]["incumbent"] is True
+    assert by_kind["abs"]["state"] == "excluded"
+    assert by_kind["abs"]["selectable"] is False
+    audible = by_kind["audible_catalog"]
+    assert audible["incumbent"] is False
+    assert audible["state"] == "acceptable"
+    assert audible["selectable"] is True
+    assert audible["identity"]["outcome"] == "verified_work_match"
+
+    alone = _audible_cover_beside_incumbent(with_audible=False)
+    assert [(item["source_kinds"], item["state"]) for item in alone] == [
+        (["abs"], "excluded")
+    ]
+    assert alone[0]["selectable"] is False
+
+
 @pytest.mark.parametrize(
     "provider_creators, eligible",
     [(("Ada Author",), True), (("Different Author",), False)],
