@@ -1917,6 +1917,9 @@ describe('owner settings route', () => {
       }
       expect(clear).toBeEnabled()
       expect(screen.getByRole('button', { name: 'Use Codex for cover review' })).toBeDisabled()
+      // A refused sandbox has no sign-in to cancel (#2011).
+      if (reason === 'sandbox_unavailable')
+        expect(screen.queryByRole('button', { name: 'Cancel any active sign-in' })).toBeNull()
       if (expectedReason) {
         expect(screen.getAllByRole('alert')).toHaveLength(1)
         expect(screen.getByRole('alert')).toHaveTextContent(expectedReason)

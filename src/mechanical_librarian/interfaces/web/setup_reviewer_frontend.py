@@ -106,7 +106,7 @@ const followCodexSignIn=async(codex,form,failed,focus)=>{
       }
       next.focus({preventScroll:true})
     })
-  }catch(e){if(form.isConnected)failed(e,null,cancel,true)}
+  }catch(e){if(form.isConnected)failed(e,null,cancel,!focus)}
 };
 const renderCodexOption=(form,access,failed)=>{
   const codex=document.createElement('div');

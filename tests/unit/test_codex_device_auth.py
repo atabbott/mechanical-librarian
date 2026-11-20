@@ -2296,3 +2296,19 @@ def test_recheck_reports_an_unavailable_sandbox(
     assert manager.status() == recorded
     assert _lazy_over(manager).passive_status() == recorded
     assert "Traceback" not in capsys.readouterr().err
+
+
+def test_a_refused_sandbox_survives_cancel_and_another_start(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+
+    def refuse(_staging: Path, _action: str):
+        raise _sandbox_unavailable()
+
+    manager._command_factory = refuse
+    _finish(manager)
+    refused = CodexDeviceAuthState("failed", failure="sandbox_unavailable")
+    assert manager.status() == refused
+
+    assert manager.cancel() == refused
+    assert manager.start() == refused
+    assert manager.status() == refused

@@ -2813,6 +2813,28 @@ const reviewerStepSettled = () =>
     expect(screen.getByRole('heading', { name: 'Cover reviewer (optional)' })).toHaveFocus(),
   )
 
+// A pressed sign-in that loses its answer may still have started, so it says so.
+it('says a pressed sign-in got no answer when its poll loses the connection', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/device') && init?.method === 'POST') return response({ state: 'starting' })
+      if (url.endsWith('/device')) throw new TypeError('Failed to fetch')
+      if (isRecheck(url, init)) return recheckAs('ready')
+      if (url.endsWith('/reviewer-access')) return response(reviewerAccess('ready'))
+      return response(setupState('reviewer'))
+    }),
+  )
+  runSetup()
+  await signInReady()
+  await reviewerStepSettled()
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in with ChatGPT' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'No answer came back. Check whether the reviewer change was saved before trying again.',
+  )
+})
+
 it('moves focus to Cancel sign-in after a pressed start (#1607)', async () => {
   let started = false
   let cancelled = false

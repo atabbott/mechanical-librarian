@@ -300,7 +300,8 @@ function CodexSignIn({
             </button>
           </>
         )}
-        {hostUnsupported && !waiting ? (
+        {/* A refused sandbox has no sign-in to cancel; it stays until a restart. */}
+        {hostUnsupported && !waiting && view.codex.reason !== 'sandbox_unavailable' ? (
           <button
             type="button"
             aria-disabled={mutation.isPending || undefined}

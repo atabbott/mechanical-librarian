@@ -180,7 +180,7 @@ class CodexDeviceAuthManager:
         with self._lock:
             if self._quarantined:
                 return self._state
-            if self._trust_failed:
+            if self._trust_failed or self._sandbox_refused():
                 return self._state
             if self._thread is not None and self._thread.is_alive():
                 return self._state
@@ -210,7 +210,7 @@ class CodexDeviceAuthManager:
         with self._lock:
             if self._quarantined:
                 raise CodexDeviceAuthError("process")
-            if self._trust_failed:
+            if self._trust_failed or self._sandbox_refused():
                 return self._state
             if self._installing:
                 return self._state
@@ -226,6 +226,14 @@ class CodexDeviceAuthManager:
         if process is not None or process_group is not None:
             self._release_retained_process_or_quarantine()
         return CodexDeviceAuthState("cancelled")
+
+    def _sandbox_refused(self) -> bool:
+        # A refused sandbox stays refused until the service restarts, as the
+        # remedy says: neither Cancel nor another start clears it (#2011).
+        return (
+            self._state.state == "failed"
+            and self._state.failure == "sandbox_unavailable"
+        )
 
     def close(self) -> None:
         """Boundedly stop this generation without deleting installed credentials."""
