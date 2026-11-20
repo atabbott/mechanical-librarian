@@ -89,15 +89,16 @@ const followCodexSignIn=async(codex,form,failed,focus)=>{
     if(!form.isConnected)return;
     codexTerminal=device;
     await render();
-    // Say how it ended, as Cancel does, and bring the remedy into view. A
-    // pressed sign-in moves focus into the card; a resumed one leaves it.
+    // Say how it ended, as Cancel does. A pressed sign-in brings the remedy
+    // into view and moves focus into the card; a resumed one moves neither,
+    // so the view stays where the owner is working.
     const status=main.querySelector('[data-codex-status]');
     const card=status?.closest('.reviewer-option');
     const remedy=card?.querySelector('[data-codex-remedy]');
     announce([status?.textContent,remedy?.textContent].filter(Boolean).join('. ').replace(/\.\. /gu,'. '));
     requestAnimationFrame(()=>{
-      (remedy||status)?.scrollIntoView?.({block:'nearest'});
       if(!focus||!card?.isConnected)return;
+      (remedy||status)?.scrollIntoView?.({block:'nearest'});
       let next=card.querySelector('button:not(:disabled)');
       if(!next){
         next=remedy||status;

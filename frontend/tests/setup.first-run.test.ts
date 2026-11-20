@@ -3354,6 +3354,7 @@ it('says how a resumed sign-in ended without taking focus', async () => {
       return response(setupState('reviewer'))
     }),
   )
+  vi.mocked(Element.prototype.scrollIntoView).mockClear()
   runSetup()
   const remedy = await screen.findByText(
     'Codex could not start its sandbox on this host. The container log says why.',
@@ -3365,6 +3366,9 @@ it('says how a resumed sign-in ended without taking focus', async () => {
   )
   await reviewerStepSettled()
   expect(remedy).not.toHaveFocus()
+  // Nobody pressed anything, so the view is not moved to the result.
+  await new Promise((resolve) => requestAnimationFrame(resolve))
+  expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).not.toContain(remedy)
 })
 
 it('blocks sign-in with the sandbox remedy when the automatic check meets a refused sandbox', async () => {
