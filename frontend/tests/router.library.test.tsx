@@ -3455,7 +3455,7 @@ describe('Library route', () => {
       delete baseWork.reviewCaseId
       const recovery =
         status === 'item_oversized'
-          ? 'Raise it in Settings → Background work, then scan this library again.'
+          ? 'Raise it in Settings → Background work, or check this book in Audiobookshelf, then scan this library again.'
           : 'Add its file in Audiobookshelf, then scan this library again.'
       const unread = {
         ...baseWork,
@@ -3519,7 +3519,8 @@ describe('Library route', () => {
         provider: '',
         reason:
           'This book’s details from Audiobookshelf are over the Audiobookshelf response limit.',
-        recovery: 'Raise it in Settings → Background work, then scan this library again.',
+        recovery:
+          'Raise it in Settings → Background work, or check this book in Audiobookshelf, then scan this library again.',
         recoveryAttempt: 0,
         stage: 'extraction' as const,
         status: 'item_oversized' as const,
@@ -3537,7 +3538,7 @@ describe('Library route', () => {
       '/settings?group=background',
     )
     expect(row).toHaveTextContent(
-      'over the Audiobookshelf response limit. Raise it in Settings → Background work, then scan this library again.',
+      'over the Audiobookshelf response limit. Raise it in Settings → Background work, or check this book in Audiobookshelf, then scan this library again.',
     )
   })
 

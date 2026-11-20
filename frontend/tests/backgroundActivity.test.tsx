@@ -735,4 +735,19 @@ describe('BackgroundActivity library reason (#2013)', () => {
     )
     expect(within(popover).getByRole('article')).toHaveTextContent('works checked')
   })
+
+  it('says some works could not finish when a complete library still has failed works (#2013)', async () => {
+    const user = userEvent.setup()
+    const http = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () =>
+        preparation(null, { libraries: [library({ state: 'completed', blocked: 2 })] }),
+      ),
+    }
+    renderActivity(http)
+    const popover = await openPopover(user)
+    const article = within(popover).getByRole('article')
+    expect(article).toHaveTextContent('Complete · some works could not finish')
+    expect(within(article).queryByRole('button', { name: 'Retry' })).toBeNull()
+  })
 })

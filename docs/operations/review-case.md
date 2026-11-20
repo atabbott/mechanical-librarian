@@ -160,7 +160,7 @@ decision, plan, write or deletion.
   enrolled as such a failure: `item_no_media`, `item_unreadable` or
   `item_oversized`, or `stale` for a changed one, which rediscovers. An
   `item_no_media` failure does not end its scan with failures, so the library
-  keeps polling. A library whose discovery fails keeps its reason, shown in
+  keeps polling, but Background activity still marks it as needing you. A library whose discovery fails keeps its reason, shown in
   Background activity. Requesting description
   advice, or resuming preparation while advice waits, starts a scan that also
   retries that library's failed items. Fix the cause and use Retry; never edit

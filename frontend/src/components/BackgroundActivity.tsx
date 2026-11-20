@@ -183,6 +183,10 @@ const LibraryProgress = ({
             text={discoveryFailureLines[item.discovery_failure]}
             onNavigate={onNavigate}
           />
+        ) : item.state === 'completed' && item.blocked > 0 ? (
+          // Books with no file in Audiobookshelf end the scan complete so it
+          // keeps polling, and they still could not finish (#2013).
+          scanStateLabels.completed_with_failures
         ) : (
           scanStateLabels[item.state]
         )}

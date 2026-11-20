@@ -2221,8 +2221,15 @@ class ReviewApplication:
                 item["state"] in {"queued", "discovering", "processing"}
                 for item in libraries
             ),
+            # A library whose only failures are books Audiobookshelf has no
+            # file for ends `completed` so its automatic scans go on (#2013),
+            # but those books still need the owner.
             recovery_required
-            or any(item["state"] == "completed_with_failures" for item in libraries),
+            or any(
+                item["state"] == "completed_with_failures"
+                or (item["state"] == "completed" and cast("int", item["blocked"]) > 0)
+                for item in libraries
+            ),
             connections,
             first_boot,
             first_boot_complete,
