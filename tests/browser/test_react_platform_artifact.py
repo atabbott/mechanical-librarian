@@ -6232,7 +6232,9 @@ _CURATION_LAYOUT = """() => {
     const control = row.querySelector('.settings-field-control > :first-child');
     const label = row.querySelector('.settings-field-title strong');
     const target = control.matches('.cm-segmented') ? control.querySelector('button') : control;
-    return [label.textContent, round(centre(label) - centre(target))];
+    // A row too narrow for both stacks its name above its control.
+    const beside = box(label).right <= box(target).left;
+    return [label.textContent, beside ? round(centre(label) - centre(target)) : 0];
   };
   return {
     lefts: [...new Set(controls.map((node) => round(box(node).left)))].sort((a, b) => a - b),
@@ -6259,8 +6261,9 @@ _UNDER_THE_DRAFT_BAR = """() => {
   if (getComputedStyle(tray).position !== 'sticky') return {sticky: false, hidden: [], end: 0};
   const hidden = [];
   for (const node of document.querySelectorAll('#policy-curation :is(button, a, summary)')) {
-    if (node.offsetParent === null) continue;
+    if (node.offsetParent === null || node.disabled) continue;
     node.focus();
+    if (document.activeElement !== node) continue;
     const control = node.getBoundingClientRect();
     const bar = tray.getBoundingClientRect();
     if (control.bottom > bar.top + 0.5 && control.top < bar.bottom) hidden.push(node.textContent.trim());
@@ -6292,7 +6295,7 @@ def test_policy_curation_sections_share_the_field_grid() -> None:
         failures: list[str] = []
         for scheme in ("light", "dark"):
             page.emulate_media(color_scheme=scheme)
-            for width, height in ((1440, 900), (1280, 800), (390, 844)):
+            for width, height in ((1440, 900), (1280, 800), (1024, 768), (390, 844)):
                 where = f"{scheme} at {width}x{height}"
                 page.set_viewport_size({"width": width, "height": height})
                 page.goto("https://react-platform.invalid/policy?section=curation")

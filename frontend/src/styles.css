@@ -434,14 +434,16 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-settings-footer > p { flex:1 1 14rem; color:var(--soft); }
 .cm-policy-settings-footer > button[aria-disabled='true'] { background:transparent; }
 .cm-policy-settings-footer > button:not([aria-disabled='true']):not(:disabled) { border-color:var(--accent-strong); color:var(--surface); background:var(--accent-strong); font-weight:700; }
+/* While it saves, Save keeps a muted fill, as a running primary command does, until the outcome replaces Unsaved. */
+.cm-policy-route .cm-policy-settings-footer > button[aria-busy='true'] { border-color:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); color:var(--surface); background:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); font-weight:700; }
 .cm-policy-settings > [role='alert'], .cm-policy-settings-editor > [role='alert'] { grid-column:2 / -1; display:grid; justify-items:start; gap:.4rem; }
 .cm-policy-settings > [role='alert'] { grid-column:1 / -1; }
 .cm-policy-settings [role='alert'] p { color:var(--danger); font-weight:650; }
 /* Switching by taste is changed in Taste profile: its value is a link there, drawn like a closed dropdown
    as tall as a segmented track, so its row reads like the others. */
-.cm-policy-settings a.cm-policy-settings-value { display:inline-grid; grid-template-columns:minmax(0,1fr) 18px; align-items:center; gap:.55rem; min-height:calc(46px + .4rem); padding:.4rem .7rem .4rem .8rem; border:1px solid var(--field-line); border-radius:.65rem; color:var(--ink); background:var(--page); font-size:.78rem; font-weight:650; text-decoration:none; }
+.cm-policy-settings a.cm-policy-settings-value { display:inline-grid; grid-template-columns:minmax(0,1fr) 1.125rem; align-items:center; gap:.55rem; min-height:calc(46px + .4rem); padding:.4rem .7rem .4rem .8rem; border:1px solid var(--field-line); border-radius:.65rem; color:var(--ink); background:var(--page); font-size:.78rem; font-weight:650; text-decoration:none; }
 .cm-policy-settings a.cm-policy-settings-value:hover { border-color:var(--accent); background:var(--surface-strong); }
-.cm-policy-settings-value svg { width:18px; fill:none; stroke:var(--soft); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.cm-policy-settings-value svg { width:1.125rem; fill:none; stroke:var(--soft); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
 .cm-policy-mode-control { display:grid; min-width:0; align-self:stretch; align-content:center; gap:.25rem; overflow:hidden; }
 .cm-policy-control-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.15rem .5rem; min-width:0; color:var(--soft); font-size:.75rem; line-height:1.2; }
 .cm-policy-control-heading strong { color:var(--soft); font-size:inherit; }
@@ -598,7 +600,8 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .library-workspace { grid-template-columns:minmax(280px,340px) minmax(0,1fr); }
   .cm-policy-editor { grid-template-columns:220px minmax(0,1fr); }
   .cm-policy-field-list { --policy-columns:minmax(0,1fr) minmax(0,1fr); }
-  .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, .cm-policy-settings-footer, [role='alert']), .cm-policy-settings .settings-field-row.is-wide > * { grid-column:1 / -1; grid-row:auto; }
+  .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, [role='alert'], :has(> .cm-policy-settings-control) > .cm-policy-settings-footer), .cm-policy-settings .settings-field-row.is-wide > * { grid-column:1 / -1; grid-row:auto; }
+  .cm-policy-settings .is-wide > div:first-child { padding-top:0; }
   .cm-policy-field > header { grid-column:1 / -1; }
   .cm-policy-field > header p { max-width:64ch; }
   .cm-finish-tray { grid-template-columns:minmax(0,1fr) auto; }
@@ -615,7 +618,8 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-route .cm-dropdown-trigger > span { overflow:visible; text-overflow:clip; white-space:normal; }
 @container policy-fields (max-width:44rem) {
   .cm-policy-field-list > * { --policy-columns:minmax(0,1fr) minmax(0,1fr); }
-  .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, .cm-policy-settings-footer, [role='alert']), .cm-policy-settings .settings-field-row.is-wide > * { grid-column:1 / -1; grid-row:auto; }
+  .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, [role='alert'], :has(> .cm-policy-settings-control) > .cm-policy-settings-footer), .cm-policy-settings .settings-field-row.is-wide > * { grid-column:1 / -1; grid-row:auto; }
+  .cm-policy-settings .is-wide > div:first-child { padding-top:0; }
   .cm-policy-field > header { grid-column:1 / -1; }
   .cm-policy-field > header p { max-width:64ch; }
 }
