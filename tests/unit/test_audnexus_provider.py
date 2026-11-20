@@ -247,6 +247,48 @@ def test_invalid_taxonomy_type_keeps_the_book_and_valid_siblings(
     assert observation.diagnostics[0].count == 1
 
 
+_RATINGS = {
+    "value": 4.6,
+    "numRatings": 1204,
+    "numReviews": 87,
+    "distribution": {"1": 10, "2": 14, "3": 70, "4": 300, "5": 810},
+    "performanceDistribution": {"1": 8, "2": 12, "3": 60, "4": 290, "5": 834},
+    "storyDistribution": {"1": 11, "2": 15, "3": 74, "4": 310, "5": 794},
+}
+
+
+@pytest.mark.parametrize(
+    ("extra", "rejections"),
+    [
+        ({"ratings": _RATINGS}, 0),
+        ({"ratings": _RATINGS, "unexpectedMember": True}, 1),
+    ],
+    ids=["ratings-only", "ratings-and-unknown-member"],
+)
+def test_a_stated_ratings_summary_is_a_known_member_and_an_unknown_one_is_not(
+    extra: dict[str, object], rejections: int
+) -> None:
+    """The live book record carries `ratings` beside `rating` (#2014).
+
+    Read on 2026-11-20 from two live records, it is a summary with value,
+    numRatings, numReviews and three distributions. It is a known member, so
+    it records no schema rejection; a member the adapter does not know still
+    does.
+    """
+    document = {**payload("audnexus_book"), **extra}
+    _seen, handle = _recorder(book=_json(document))
+    observation = _provider(handle).observe(asin_plan()).observation
+
+    assert observation.status is ProviderStatus.CANDIDATES
+    assert [
+        (item.category, item.stage, item.count) for item in observation.diagnostics
+    ] == (
+        [(d.FailureCategory.SCHEMA_CONSTRUCTION, d.FailureStage.SCHEMA, rejections)]
+        if rejections
+        else []
+    )
+
+
 def test_partial_cast_and_malformed_release_remain_explicit_invalid_claims() -> None:
     book = {
         "asin": _ASIN,
