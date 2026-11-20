@@ -249,6 +249,8 @@ class CodexDeviceAuthManager:
         with self._lock:
             if self._quarantined or self._trust_failed:
                 raise CodexDeviceAuthError("staging")
+            # Clearing removes the credential, not a refused sandbox (#2011).
+            refused = self._sandbox_refused()
         self.close()
         with self._activity_guard(), self._lease_guard():
             self._require_lease()
@@ -270,8 +272,9 @@ class CodexDeviceAuthManager:
                 if directory >= 0:
                     os.close(directory)
         with self._lock:
-            self._state = CodexDeviceAuthState("ready")
-            self._transitions += 1
+            if not refused:
+                self._state = CodexDeviceAuthState("ready")
+                self._transitions += 1
             return self._state
 
     def current_credential_status(self) -> CodexDeviceAuthState:

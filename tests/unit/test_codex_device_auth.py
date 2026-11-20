@@ -2312,3 +2312,6 @@ def test_a_refused_sandbox_survives_cancel_and_another_start(tmp_path: Path) -> 
     assert manager.cancel() == refused
     assert manager.start() == refused
     assert manager.status() == refused
+    # Clearing the credential leaves the refusal standing until a restart.
+    assert manager.clear() == refused
+    assert manager.status() == refused

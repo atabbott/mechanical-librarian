@@ -872,10 +872,16 @@ def test_reviewer_events_carry_only_closed_words_and_bounded_integers(
         lambda: ({"event": "reviewer_sandbox_check", "exit_status": True},)
     )
     emit_reviewer_events(codex_sign_in_event, error=PrivateError("/private/secret"))
+    emit_reviewer_events(codex_sign_in_event, error=ValueError("/private/secret"))
+    # A type whose name is made at run time is never written as its name.
+    dynamic = type("SecretTokenAbc123", (ValueError,), {})
+    emit_reviewer_events(codex_sign_in_event, error=dynamic("/private/secret"))
     emit_reviewer_events(lambda: ({"event": "codex_sign_in", "error": "x" * 2000},))
+    emit_reviewer_events(lambda: ({"event": "codex_sign_in", "error": "PrivateError"},))
 
     written = capsys.readouterr().err
     assert "private" not in written and "secret" not in written
+    assert "Secret" not in written
     assert all(len(line) + 1 <= 1024 for line in written.splitlines())
     assert [json.loads(line) for line in written.splitlines()] == [
         {
@@ -895,10 +901,23 @@ def test_reviewer_events_carry_only_closed_words_and_bounded_integers(
         },
         {"event": "reviewer_sandbox_check", "exit_status": None},
         {
-            "error": "PrivateError",
+            "error": "other",
             "event": "codex_sign_in",
             "level": "warning",
             "outcome": "unexpected",
         },
+        {
+            "error": "ValueError",
+            "event": "codex_sign_in",
+            "level": "warning",
+            "outcome": "unexpected",
+        },
+        {
+            "error": "other",
+            "event": "codex_sign_in",
+            "level": "warning",
+            "outcome": "unexpected",
+        },
+        {"error": None, "event": "codex_sign_in"},
         {"error": None, "event": "codex_sign_in"},
     ]

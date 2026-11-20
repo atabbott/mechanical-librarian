@@ -564,6 +564,25 @@ _OWNER_EVENT_FIELDS: dict[str, FieldCheck] = {
 }
 
 
+# The built-in exception types the sign-in backstop names; any other type,
+# including one whose name is made at run time, is reported as "other".
+_SIGN_IN_ERROR_NAMES = (
+    "ArithmeticError",
+    "AssertionError",
+    "AttributeError",
+    "IndexError",
+    "KeyError",
+    "LookupError",
+    "MemoryError",
+    "NotImplementedError",
+    "RecursionError",
+    "RuntimeError",
+    "TypeError",
+    "UnicodeError",
+    "ValueError",
+)
+
+
 # Reviewer sandbox and Codex sign-in events (#2011): which contained check
 # failed and how, as closed words and a bounded exit status. Never the
 # command, its output, a version string, a path or an exception message; the
@@ -583,7 +602,7 @@ _REVIEWER_EVENT_FIELDS: dict[str, FieldCheck] = {
     ),
     "exit_status": bounded_integer(-64, 255),
     "stderr": one_of("none", "bwrap", "other"),
-    "error": matching(re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")),
+    "error": one_of(*_SIGN_IN_ERROR_NAMES, "other"),
 }
 
 
@@ -645,7 +664,12 @@ def codex_sign_in_event(error: BaseException) -> tuple[dict[str, object]]:
             "event": "codex_sign_in",
             "level": "warning",
             "outcome": "unexpected",
-            "error": type(error).__name__,
+            "error": (
+                type(error).__name__
+                if type(error).__module__ == "builtins"
+                and type(error).__name__ in _SIGN_IN_ERROR_NAMES
+                else "other"
+            ),
         },
     )
 
