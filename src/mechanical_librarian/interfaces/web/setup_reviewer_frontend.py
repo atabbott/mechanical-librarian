@@ -89,7 +89,7 @@ const followCodexSignIn=async(codex,form,failed,focus)=>{
     if(!form.isConnected)return;
     codexTerminal=device;
     await render()
-  }catch(e){if(form.isConnected)failed(e,null,cancel)}
+  }catch(e){if(form.isConnected)failed(e,null,cancel,true)}
 };
 const renderCodexOption=(form,access,failed)=>{
   const codex=document.createElement('div');

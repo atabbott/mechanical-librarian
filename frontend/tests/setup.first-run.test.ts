@@ -2737,6 +2737,22 @@ it('resumes an issued device flow after reload, cancels it, and offers a restart
   ).toHaveLength(0)
 })
 
+// A poll nobody pressed for is not a reviewer change that may have been saved.
+it('says nothing about a saved change when the sign-in poll gets no answer', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/device')) throw new TypeError('Failed to fetch')
+      if (url.endsWith('/reviewer-access')) return response(reviewerAccess('waiting'))
+      return response(setupState('reviewer'))
+    }),
+  )
+  runSetup()
+  expect(await screen.findByRole('alert')).toBeVisible()
+  expect(screen.queryByText(/No answer came back/u)).toBeNull()
+})
+
 // The reviewer step focuses its heading on the next animation frame. A test
 // presses a control only after that, as an owner would; otherwise, under load,
 // the frame can land after the press and take focus from the control.
