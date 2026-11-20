@@ -1,4 +1,4 @@
-"""The refusal a workbench script gives when a database copy's Unicode differs.
+"""The refusal an owner script gives when a database copy's Unicode differs.
 
 Browse facts record the Unicode version they were folded under, and the reader
 refuses a database whose version differs from the running Python's

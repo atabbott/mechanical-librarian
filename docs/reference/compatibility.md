@@ -42,7 +42,7 @@ owner runs it offline, and the changelog says when one ships.
   [Backups and recovery](../operations/backups-and-recovery.md).
 - **Unicode is part of the schema.** Browse facts record the Unicode version
   they were folded under. A database opened by a Python with different Unicode
-  data is refused and needs a clean rebuild. A workbench script reading a copy
+  data is refused and needs a clean rebuild. An owner script reading a copy
   names both Unicode versions and the Python to run it with instead.
 - **Looks wrong flags are part of the schema.** Each report's flags are stored
   with the rule list that derived them (`value-flag-rules-v1`). A database

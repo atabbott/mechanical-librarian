@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import gzip
 import json
 import shutil
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -401,6 +403,30 @@ def test_a_copy_under_another_unicode_version_names_both_and_the_remedy(
     with pytest.raises(SystemExit) as raised:
         measure.inventory(copy, artifacts, cohort)
     assert raised.value.code == refusal
+
+
+def test_a_paid_run_checks_every_script_file_it_executes() -> None:
+    """A sibling module the script imports runs from the checkout (#2018)."""
+    scripts = Path(measure.__file__).parent
+    tree = ast.parse(Path(measure.__file__).read_text())
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if (scripts / f"{alias.name}.py").is_file()
+    } | {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "scripts"
+        for alias in node.names
+    }
+    assert imported == {"database_copy"}
+    assert set(measure.MEASURED_SOURCES) == {
+        Path(measure.__file__).name,
+        "qualify_exact_artifact.py",
+        *(f"{name}.py" for name in imported),
+    }
 
 
 def test_default_inventory_has_zero_external_work(

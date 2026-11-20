@@ -254,13 +254,22 @@ def selection(
     return rows
 
 
+# Every scripts/ file a paid run executes, each checked against the qualified
+# head: this script, the sibling modules it imports and the qualifier it loads.
+MEASURED_SOURCES = (
+    "measure_reviewer_cost.py",
+    "database_copy.py",
+    "qualify_exact_artifact.py",
+)
+
+
 def installed_identity(
     source: str, wheel: Path, receipt: Path, interpreter: Path
 ) -> dict[str, str]:
     import mechanical_librarian
 
     repository = Path(__file__).resolve().parents[1]
-    for name in ("measure_reviewer_cost.py", "qualify_exact_artifact.py"):
+    for name in MEASURED_SOURCES:
         retained = subprocess.run(
             ["git", "-C", str(repository), "show", f"{source}:scripts/{name}"],
             check=True,
