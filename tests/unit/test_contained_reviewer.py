@@ -33,6 +33,9 @@ from mechanical_librarian.adapters.reviewers import (  # noqa: E402
     contained_reviewer as adapter,
 )
 from mechanical_librarian.adapters.reviewers import resource_budget  # noqa: E402
+from mechanical_librarian.adapters.reviewers.codex_device_auth import (  # noqa: E402
+    CodexSandboxUnavailable,
+)
 from mechanical_librarian.application import (  # noqa: E402
     contained_reviewer_contract as contract,
 )
@@ -662,7 +665,9 @@ def test_failure_is_value_free_and_auth_configuration_disables_authority() -> No
     assert 'shell_environment_policy.inherit="none"' in config
 
 
-def test_sandbox_version_is_bound_before_use() -> None:
+def test_sandbox_version_is_bound_before_use(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     with tempfile.TemporaryDirectory() as temporary:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
         sandbox = adapter._BoundArtifact(10, "/proc/self/fd/10")
@@ -670,9 +675,178 @@ def test_sandbox_version_is_bound_before_use() -> None:
         rejected = subprocess.CompletedProcess([], 0, b"bubblewrap 2\n", b"")
         with patch.object(adapter.subprocess, "run", return_value=accepted):
             reviewer._verify_sandbox(sandbox)
+        assert capsys.readouterr().err == ""
         with patch.object(adapter.subprocess, "run", return_value=rejected):
             with pytest.raises(Exception, match="setup"):
                 reviewer._verify_sandbox(sandbox)
+    assert [json.loads(line) for line in capsys.readouterr().err.splitlines()] == [
+        {
+            "event": "reviewer_sandbox_check",
+            "level": "warning",
+            "check": "sandbox_version",
+            "outcome": "version_mismatch",
+            "exit_status": 0,
+            "stderr": "none",
+        }
+    ]
+
+
+_SANDBOX_CHECK_CASES = [
+    (OSError("/private/bwrap"), "spawn_failed", None, "none"),
+    (subprocess.TimeoutExpired(["/private/bwrap"], 30), "timed_out", None, "none"),
+    (
+        resource_budget.ReviewerResourceError("/private"),
+        "resource_refused",
+        None,
+        "none",
+    ),
+    (
+        subprocess.CompletedProcess([], 1, b"", b"bwrap: /private/path refused\n"),
+        "exit_nonzero",
+        1,
+        "bwrap",
+    ),
+    (
+        subprocess.CompletedProcess([], -9, b"", b""),
+        "exit_nonzero",
+        -9,
+        "none",
+    ),
+    (
+        subprocess.CompletedProcess([], 126, b"", b""),
+        "exit_nonzero",
+        126,
+        "none",
+    ),
+    (
+        subprocess.CompletedProcess([], 0, b"1\n", b"warning /private/path\n"),
+        "stderr",
+        0,
+        "other",
+    ),
+    (
+        subprocess.CompletedProcess([], 0, b"codex 9.9 /private\n", b""),
+        "version_mismatch",
+        0,
+        "none",
+    ),
+    (
+        subprocess.CompletedProcess([], 300, b"", b""),
+        "exit_nonzero",
+        None,
+        "none",
+    ),
+]
+
+
+@pytest.mark.parametrize("check", ["sandbox_version", "sandbox_probe"])
+@pytest.mark.parametrize(
+    ("result", "outcome", "exit_status", "stderr"),
+    _SANDBOX_CHECK_CASES,
+    ids=[
+        "spawn",
+        "timeout",
+        "resource",
+        "bwrap-exit",
+        "signal",
+        "broker-126",
+        "stderr",
+        "version",
+        "unbounded-exit",
+    ],
+)
+def test_failed_sandbox_check_writes_one_value_free_line(
+    capsys: pytest.CaptureFixture[str],
+    check: str,
+    result: object,
+    outcome: str,
+    exit_status: int | None,
+    stderr: str,
+) -> None:
+    if check == "sandbox_version" and outcome == "resource_refused":
+        pytest.skip("the version check runs no resource broker")
+    patched = (
+        patch.object(adapter.subprocess, "run")
+        if check == "sandbox_version"
+        else patch.object(adapter, "_run_owned_command")
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        sandbox = adapter._BoundArtifact(10, "/proc/self/fd/10")
+        codex = adapter._BoundArtifact(11, "/proc/self/fd/11")
+        with patched as run, pytest.raises(adapter.ContainedReviewerProcessError):
+            if isinstance(result, BaseException):
+                run.side_effect = result
+            else:
+                run.return_value = result
+            if check == "sandbox_version":
+                reviewer._verify_sandbox(sandbox)
+            else:
+                reviewer._verify_codex(codex, sandbox)
+    written = capsys.readouterr().err
+    assert "private" not in written and "codex 9.9" not in written
+    assert [json.loads(line) for line in written.splitlines()] == [
+        {
+            "event": "reviewer_sandbox_check",
+            "level": "warning",
+            "check": check,
+            "outcome": outcome,
+            "exit_status": exit_status,
+            "stderr": stderr,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("result", "unavailable"),
+    [
+        (subprocess.CompletedProcess([], 1, b"", b"bwrap: synthetic\n"), True),
+        (subprocess.CompletedProcess([], 0, b"codex 2\n", b""), True),
+        (subprocess.TimeoutExpired(["bwrap"], 30), False),
+    ],
+    ids=["refused", "version", "timeout"],
+)
+def test_device_auth_preparation_reports_a_refused_sandbox(
+    result: object, unavailable: bool
+) -> None:
+    @contextmanager
+    def bound(path: Path, _digest: str):
+        yield adapter._BoundArtifact(10, str(path))
+
+    @contextmanager
+    def empty(_reviewer: object):
+        yield 12
+
+    with tempfile.TemporaryDirectory() as temporary:
+        profile = _profile(Path(temporary))
+        with (
+            patch.object(adapter, "_bound_artifact", new=bound),
+            patch.object(
+                adapter.ContainedReviewerAdapter, "_require_private_directory"
+            ),
+            patch.object(adapter.ContainedReviewerAdapter, "_verify_sandbox"),
+            patch.object(adapter.ContainedReviewerAdapter, "_auth_lock", new=empty),
+            patch.object(
+                adapter.ContainedReviewerAdapter, "_empty_auth_config", new=empty
+            ),
+            patch.object(adapter, "_run_owned_command") as run,
+            pytest.raises(
+                (CodexSandboxUnavailable, adapter.ContainedReviewerError)
+            ) as caught,
+        ):
+            if isinstance(result, BaseException):
+                run.side_effect = result
+            else:
+                run.return_value = result
+            adapter.prepare_contained_device_auth_command(
+                profile, profile.auth_store_path, "start"
+            )
+    if unavailable:
+        assert type(caught.value) is CodexSandboxUnavailable
+        assert caught.value.__cause__ is None and caught.value.__suppress_context__
+    else:
+        assert type(caught.value) is adapter.ContainedReviewerProcessError
+        assert str(caught.value) == "setup"
 
 
 def test_root_output_schema_must_describe_an_object() -> None:

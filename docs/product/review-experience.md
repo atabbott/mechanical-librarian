@@ -89,13 +89,14 @@ covers the claim token and container.
   unticked before Continue. Hardcover and Google Books need an API key while
   they are on. Without either, setup says most ebooks will wait for your
   review, and lets you continue.
-- The reviewer step checks an existing Codex sign-in by itself and offers one
+- The reviewer step checks an existing Codex sign-in unasked and offers one
   Sign in with ChatGPT button. OpenRouter starts on the recommended model with
   its cost per 1,000 works; other models wait behind Choose another model, and
-  prices and data use sit in a closed section. Continue and Skip for now sit
-  together at the bottom. You set up description advice later, in Settings.
+  prices and data use sit in a closed section. A chosen model folds the card
+  behind Change model or key. You set up description advice later, in
+  Settings.
 - Secrets live only in their inputs, each with an accessible reveal control.
-  Setup clears the reviewer key after each attempt. An expired session keeps
+  A refused reviewer key stays in its input. An expired session keeps
   every recorded step.
 
 Before Start a summary lists each answer in step order, and each row reopens
@@ -599,8 +600,8 @@ edits ([configuration](../reference/configuration.md),
 [ADR-0058](../architecture/decisions/0058-settings-authority-and-first-boot.md)).
 
 Secrets show only as `Configured · ····xxxx` or `Not configured`. Turning a
-source off keeps its key, turns off its cover evidence and removes it from its
-libraries. Turning it back on does not re-add it.
+source off keeps its key, turns its covers off and removes it from its
+libraries. On again, its covers turn on, not its libraries.
 
 Each library lists its languages by name, the first marked Preferred, with
 buttons to move or remove each and a picker to add one, up to eight.

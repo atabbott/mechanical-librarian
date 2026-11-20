@@ -1666,7 +1666,12 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "Podcast libraries aren’t supported, so they’re not shown." in SETUP_JS
     assert "className='provider-access'" in SETUP_JS
     assert "['inventaire','inventaire']" in SETUP_JS
-    assert "cover_enabled:row.adapter==='inventaire'" in SETUP_JS
+    # Each cover source the step turns on is saved with its covers on (#2014).
+    assert (
+        "cover_enabled:settingsVocabulary.cover_switch_provider_adapters"
+        ".includes(row.adapter)" in SETUP_JS
+    )
+    assert "cover_enabled:row.adapter==='inventaire'" not in SETUP_JS
     assert "Suggested for" not in SETUP_JS
     # The folder step asks only about the libraries whose folder was not found.
     assert (
@@ -1682,7 +1687,7 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "label.className='mount-state'" in SETUP_JS
     assert "mountCopy" not in SETUP_JS
     assert (
-        "const codexState=blocked?access.codex:"
+        "const codexState=hostBlocked?access.codex:"
         "(codexTerminal||access.codex)" in SETUP_JS
     )
     assert "codexTerminal=device;await render()" in SETUP_JS
@@ -2063,6 +2068,92 @@ def test_setup_admits_the_keyless_audiobook_providers_with_no_credential() -> No
     assert state.document.required_secret_fields() == frozenset(
         {"connection.primary.key"}
     )
+
+
+def test_setup_stores_cover_evidence_on_for_every_cover_source() -> None:
+    """The server stores exactly what the providers step now sends (#2014).
+
+    The browser test can only see the request it builds; this posts the same
+    payload, with cover flags read from the one vocabulary list the script
+    uses, and reads back the stored document.
+    """
+    vocabulary = json.loads(
+        (
+            Path(mechanical_librarian.__file__).parent
+            / "interfaces"
+            / "web"
+            / "settings_vocabulary.json"
+        ).read_text(encoding="utf-8")
+    )
+    cover_sources = vocabulary["cover_switch_provider_adapters"]
+    client, state, _connection = _client()
+    login = _claim(client)
+    headers = {
+        "cookie": _session_cookie(login),
+        "origin": "https://setup.invalid",
+        "x-csrf-token": login.json()["csrf_token"],
+    }
+    revision = _reach_sources(client, headers)
+    providers: list[dict[str, object]] = [
+        {
+            "name": name,
+            "adapter": adapter,
+            "enabled": True,
+            "cover_enabled": adapter in cover_sources,
+            "contact_email": (
+                "owner@example.invalid" if adapter == "open_library" else None
+            ),
+            "key": (
+                "provider-key" if adapter in ("hardcover", "google_books") else None
+            ),
+        }
+        for name, adapter in (
+            ("inventaire", "inventaire"),
+            ("open", "open_library"),
+            ("hardcover", "hardcover"),
+            ("google", "google_books"),
+            ("itunes", "itunes_search"),
+            ("audible", "audible_catalog"),
+            ("audnexus", "audnexus"),
+            ("audiosilo", "audiosilo"),
+        )
+    ]
+
+    # Negative control: a source that cannot supply a cover is refused one.
+    refused = client.post(
+        "/api/setup/providers",
+        json={
+            "expected_revision": revision,
+            "providers": [
+                {**item, "cover_enabled": True}
+                if item["adapter"] == "audnexus"
+                else item
+                for item in providers
+            ],
+        },
+        headers=headers,
+    )
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == {"error": "invalid_providers"}
+    assert not state.document.providers
+
+    accepted = client.post(
+        "/api/setup/providers",
+        json={"expected_revision": revision, "providers": providers},
+        headers=headers,
+    )
+
+    assert accepted.status_code == 200
+    assert {item.adapter: item.cover_enabled for item in state.document.providers} == {
+        "inventaire": True,
+        "open_library": True,
+        "hardcover": True,
+        "google_books": False,
+        "itunes_search": True,
+        "audible_catalog": True,
+        "audnexus": False,
+        "audiosilo": False,
+    }
 
 
 def test_setup_providers_step_offers_the_audiobook_providers_without_a_key() -> None:

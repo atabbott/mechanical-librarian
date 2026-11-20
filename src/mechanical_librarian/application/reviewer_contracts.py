@@ -32,6 +32,7 @@ DeviceAuthFailure = Literal[
     "permission_or_process",
     "protocol_or_process",
     "restart_interrupted",
+    "sandbox_unavailable",
 ]
 ReviewerProvisioningReason = Literal[
     "profile_not_provisioned", "profile_unreadable", "profile_contract_mismatch"
@@ -88,6 +89,7 @@ ReviewerStatusReason = Literal[
     "permission_or_process",
     "protocol_or_process",
     "restart_interrupted",
+    "sandbox_unavailable",
     "not_selected",
     OpenRouterPublicFailure,
 ]

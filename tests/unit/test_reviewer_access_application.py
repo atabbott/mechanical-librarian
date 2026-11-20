@@ -244,6 +244,20 @@ def test_generic_read_reports_an_existing_flow_without_credential_work() -> None
             "host_unsupported",
             "headroom_below_1_gib",
         ),
+        (
+            "failed",
+            "sandbox_unavailable",
+            True,
+            "host_unsupported",
+            "sandbox_unavailable",
+        ),
+        (
+            "failed",
+            "sandbox_unavailable",
+            False,
+            "host_unsupported",
+            "headroom_below_1_gib",
+        ),
     ),
 )
 def test_generic_read_reports_terminal_flow_without_credential_work(
@@ -433,6 +447,25 @@ def test_reauthentication_deselects_codex_before_starting_replacement() -> None:
     assert document.revision == 3
     assert document.cover_observation is None
     assert operations.codex_status().state == "waiting"
+
+
+def test_a_refused_sandbox_refuses_start_before_clearing_codex() -> None:
+    # The refusal holds until restart, so starting again must not first
+    # unmap Codex for a sign-in that never runs (#2011).
+    operations, auth, _openrouter, _codex = _operations(auth_state="usable")
+    assert operations.select_codex(expected_revision=1).revision == 2
+    auth.passive_status = lambda: CodexDeviceAuthState(  # type: ignore[method-assign]  # reason: the fake's passive status is the seam this case sets
+        "failed", failure="sandbox_unavailable"
+    )
+
+    with pytest.raises(ReviewerAccessApplicationError) as caught:
+        operations.start_codex(expected_revision=2)
+
+    assert caught.value.code == "host_unsupported"
+    assert auth.start_calls == 0
+    document, _configured = operations._repository.read()
+    assert document.revision == 2
+    assert document.cover_observation is not None
 
 
 def test_explicit_codex_recheck_preserves_closed_result() -> None:

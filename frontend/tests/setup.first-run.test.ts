@@ -1630,7 +1630,59 @@ describe('shipped first-run setup script', () => {
         { name: 'audible', adapter: 'audible_catalog', enabled: true },
         { name: 'audnexus', adapter: 'audnexus', enabled: true },
         { name: 'audiosilo', adapter: 'audiosilo', enabled: true },
-      ].map((value) => ({ ...value, cover_enabled: false, contact_email: null, key: null })),
+      ].map((value) => ({
+        ...value,
+        // Audible and iTunes can supply a cover, so setup saves it on (#2014).
+        cover_enabled: value.adapter === 'audible_catalog' || value.adapter === 'itunes_search',
+        contact_email: null,
+        key: null,
+      })),
+    })
+  })
+
+  it('saves cover evidence on for each cover source it turns on', async () => {
+    let submitted: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(request) === '/api/setup/providers' && init?.method === 'POST') {
+          submitted = jsonBody(init.body)
+          return response(setupState('libraries'))
+        }
+        return response(setupState('providers'))
+      }),
+    )
+    runSetup()
+
+    await screen.findByRole('heading', { name: 'Choose metadata sources' })
+    await untickSources()
+    for (const label of Object.values(settingsVocabulary.provider_labels))
+      fireEvent.click(screen.getByRole('checkbox', { name: label }))
+    fireEvent.input(screen.getByLabelText('Hardcover API key'), {
+      target: { value: 'hardcover-key' },
+    })
+    fireEvent.input(screen.getByLabelText('Google Books API key'), {
+      target: { value: 'google-key' },
+    })
+    fireEvent.input(screen.getByLabelText('Open Library contact email'), {
+      target: { value: 'owner@example.test' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+
+    await waitFor(() => expect(submitted).toBeDefined())
+    const providers = (submitted as { providers: { adapter: string; cover_enabled: boolean }[] })
+      .providers
+    expect(
+      Object.fromEntries(providers.map((value) => [value.adapter, value.cover_enabled])),
+    ).toEqual({
+      audible_catalog: true,
+      hardcover: true,
+      inventaire: true,
+      itunes_search: true,
+      open_library: true,
+      google_books: false,
+      audnexus: false,
+      audiosilo: false,
     })
   })
 
@@ -2138,8 +2190,33 @@ describe('shipped first-run setup script', () => {
     )
     expect(screen.getByRole('link', { name: 'Get a Google Books key' })).toHaveAttribute(
       'href',
-      'https://console.cloud.google.com/apis/credentials',
+      'https://developers.google.com/books/docs/v1/using',
     )
+  })
+
+  it('opens each key link in a new tab', async () => {
+    let step = 'providers'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) =>
+        requestUrl(request) === '/api/setup/reviewer-access'
+          ? response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
+          : response(setupState(step)),
+      ),
+    )
+    runSetup()
+    const links = [
+      await screen.findByRole('link', { name: 'Get a Hardcover key' }),
+      screen.getByRole('link', { name: 'Get a Google Books key' }),
+    ]
+    resetSetupDocument()
+    step = 'reviewer'
+    runSetup()
+    links.push(await screen.findByRole('link', { name: 'Get a key' }))
+    for (const link of links) {
+      expect(link).toHaveAttribute('target', '_blank')
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    }
   })
 
   it('says which folder is still not found after a check that finds nothing', async () => {
@@ -2444,7 +2521,7 @@ describe('shipped first-run setup script', () => {
     expect(screen.getByText('Cover previews are sent to the selected provider.')).toBeVisible()
     const getKey = screen.getByRole('link', { name: 'Get a key' })
     expect(getKey).toHaveAttribute('href', 'https://openrouter.ai/settings/keys')
-    expect(getKey).toHaveAttribute('rel', 'noreferrer')
+    expect(getKey).toHaveAttribute('rel', 'noopener noreferrer')
     expect(getKey).toBeVisible()
     // The link sits right beside the key field, outside its label (#1516).
     const keyInput = screen.getByLabelText('OpenRouter API key')
@@ -2712,6 +2789,22 @@ it('resumes an issued device flow after reload, cancels it, and offers a restart
   ).toHaveLength(0)
 })
 
+// A poll nobody pressed for is not a reviewer change that may have been saved.
+it('says nothing about a saved change when the sign-in poll gets no answer', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/device')) throw new TypeError('Failed to fetch')
+      if (url.endsWith('/reviewer-access')) return response(reviewerAccess('waiting'))
+      return response(setupState('reviewer'))
+    }),
+  )
+  runSetup()
+  expect(await screen.findByRole('alert')).toBeVisible()
+  expect(screen.queryByText(/No answer came back/u)).toBeNull()
+})
+
 // The reviewer step focuses its heading on the next animation frame. A test
 // presses a control only after that, as an owner would; otherwise, under load,
 // the frame can land after the press and take focus from the control.
@@ -2719,6 +2812,28 @@ const reviewerStepSettled = () =>
   waitFor(() =>
     expect(screen.getByRole('heading', { name: 'Cover reviewer (optional)' })).toHaveFocus(),
   )
+
+// A pressed sign-in that loses its answer may still have started, so it says so.
+it('says a pressed sign-in got no answer when its poll loses the connection', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/device') && init?.method === 'POST') return response({ state: 'starting' })
+      if (url.endsWith('/device')) throw new TypeError('Failed to fetch')
+      if (isRecheck(url, init)) return recheckAs('ready')
+      if (url.endsWith('/reviewer-access')) return response(reviewerAccess('ready'))
+      return response(setupState('reviewer'))
+    }),
+  )
+  runSetup()
+  await signInReady()
+  await reviewerStepSettled()
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in with ChatGPT' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'No answer came back. Check whether the reviewer change was saved before trying again.',
+  )
+})
 
 it('moves focus to Cancel sign-in after a pressed start (#1607)', async () => {
   let started = false
@@ -2815,7 +2930,12 @@ it.each([
         expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled(),
       )
     if (remedy) expect(screen.getByText(remedy)).toBeVisible()
-    expect(screen.queryAllByText(remedyCopy)).toHaveLength(remedy ? 1 : 0)
+    // Said once on the card; the live region may repeat it.
+    expect(
+      within(document.querySelector<HTMLElement>('#setup-main') ?? document.body).queryAllByText(
+        remedyCopy,
+      ),
+    ).toHaveLength(remedy ? 1 : 0)
     expect(screen.queryByText(/^Status:/u)).toBeNull()
   },
 )
@@ -3164,6 +3284,235 @@ it('restores a reviewer step whose form token rotated at the top of the fresh fo
   expect(check.isConnected).toBe(false)
   expect(reads).toBe(2)
   await reviewerStepSettled()
+})
+
+it.each([
+  ['Sign in with ChatGPT', 'ready', '/codex/device'],
+  ['Use Codex', 'usable', '/reviewer/selection'],
+  ['Cancel sign-in', 'waiting', '/device/cancel'],
+] as const)(
+  'asks to press %s again under its fresh button when the form token rotated',
+  async (name, codex, path) => {
+    let reads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url.endsWith(path) && init?.method === 'POST')
+          return response({ detail: { error: 'csrf' } }, 403)
+        if (isRecheck(url, init)) return recheckAs(codex)
+        if (url.endsWith('/device'))
+          return response({
+            state: 'waiting',
+            verification_url: 'https://auth.openai.com/codex/device',
+            user_code: 'ABCD-1234',
+          })
+        if (url.endsWith('/reviewer-access')) return response(reviewerAccess(codex))
+        if (url === '/api/setup/state') reads += 1
+        return response(setupState('reviewer', { csrf_token: `token-${String(reads)}` }))
+      }),
+    )
+    runSetup()
+    await reviewerStepSettled()
+    const pressed = await screen.findByRole('button', { name })
+    await waitFor(() => expect(pressed).toBeEnabled())
+    vi.mocked(Element.prototype.scrollIntoView).mockClear()
+    fireEvent.click(pressed)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Your session was refreshed. Press again.')
+    const fresh = screen.getByRole('button', { name })
+    expect(fresh).not.toBe(pressed)
+    expect(alert.previousElementSibling).toBe(fresh)
+    expect(reads).toBe(2)
+    await waitFor(() => expect(fresh).toHaveFocus())
+    expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(alert)
+  },
+)
+
+it('shows the sandbox remedy and stops polling when a sign-in meets a refused sandbox', async () => {
+  let started = false
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (isRecheck(url, init)) return recheckAs('ready')
+    if (url.endsWith('/codex/device') && init?.method === 'POST') {
+      started = true
+      return response({ state: 'starting' })
+    }
+    if (url.endsWith('/codex/device'))
+      return response({
+        state: 'failed',
+        failure: 'sandbox_unavailable',
+        verification_url: null,
+        user_code: null,
+      })
+    if (url.endsWith('/reviewer-access'))
+      return response(
+        started
+          ? reviewerAccess('host_unsupported', 'sandbox_unavailable')
+          : reviewerAccess('ready'),
+      )
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  const signIn = await signInReady()
+  vi.mocked(Element.prototype.scrollIntoView).mockClear()
+  fireEvent.click(signIn)
+
+  const remedy = await screen.findByText(
+    'Codex could not start its sandbox on this host. The container log says why.',
+  )
+  expect(remedy).toBeVisible()
+  // The ending is said, the remedy brought into view, and focus stays in the
+  // card (it has no control left), not on the step heading.
+  await waitFor(() =>
+    expect(document.querySelector('#setup-status')?.textContent).toBe(
+      'Not signed in. Codex could not start its sandbox on this host. The container log says why.',
+    ),
+  )
+  await waitFor(() => expect(remedy).toHaveFocus())
+  expect(scrolled(remedy)).toBe(true)
+  expect(screen.queryByRole('button', { name: 'Sign in with ChatGPT' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Cancel sign-in' })).toBeNull()
+  expect(screen.getByText('Not signed in')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Check key and use OpenRouter' })).toBeEnabled()
+  const reads = fetch.mock.calls.length
+  await new Promise((resolve) => setTimeout(resolve, 1200))
+  expect(fetch.mock.calls).toHaveLength(reads)
+})
+
+it('offers sign-in again once a restarted service no longer reports the refused sandbox', async () => {
+  let started = false
+  let restarted = false
+  let reads = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (isRecheck(url, init)) return recheckAs('ready')
+      if (url.endsWith('/codex/device') && init?.method === 'POST') {
+        started = true
+        return response({ state: 'starting' })
+      }
+      if (url.endsWith('/codex/device'))
+        return response({ state: 'failed', failure: 'sandbox_unavailable' })
+      if (url.endsWith('/reviewer-access'))
+        return response(
+          started && !restarted
+            ? reviewerAccess('host_unsupported', 'sandbox_unavailable')
+            : reviewerAccess('ready'),
+        )
+      if (url === '/api/setup/reviewer/openrouter')
+        return response({ detail: { error: 'csrf' } }, 403)
+      if (url === '/api/setup/state') reads += 1
+      return response(setupState('reviewer', { csrf_token: `token-${String(reads)}` }))
+    }),
+  )
+  runSetup()
+  fireEvent.click(await signInReady())
+  await screen.findByText(
+    'Codex could not start its sandbox on this host. The container log says why.',
+  )
+  // The owner fixes the host and restarts the service with setup still open;
+  // the next drawing reads access that no longer names the sandbox (#2011).
+  restarted = true
+  fireEvent.input(screen.getByLabelText('OpenRouter API key'), {
+    target: { value: 'synthetic-key' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Check key and use OpenRouter' }))
+  await screen.findByText('Your session was refreshed. Press again.')
+
+  expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeVisible()
+  expect(
+    screen.queryByText(
+      'Codex could not start its sandbox on this host. The container log says why.',
+    ),
+  ).toBeNull()
+})
+
+it('moves focus to the redrawn card command when a pressed sign-in ends', async () => {
+  let started = false
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (isRecheck(url, init)) return recheckAs('ready')
+      if (url.endsWith('/codex/device') && init?.method === 'POST') {
+        started = true
+        return response({ state: 'starting' })
+      }
+      if (url.endsWith('/codex/device'))
+        return response({ state: 'usable', failure: null, verification_url: null, user_code: null })
+      if (url.endsWith('/reviewer-access'))
+        return response(reviewerAccess(started ? 'usable' : 'ready'))
+      return response(setupState('reviewer'))
+    }),
+  )
+  runSetup()
+  fireEvent.click(await signInReady())
+  const use = await screen.findByRole('button', { name: 'Use Codex' })
+  await waitFor(() => expect(use).toHaveFocus())
+  await waitFor(() =>
+    expect(document.querySelector('#setup-status')?.textContent).toBe('Signed in'),
+  )
+})
+
+it('says how a resumed sign-in ended without taking focus', async () => {
+  let polls = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url.endsWith('/codex/device')) {
+        polls += 1
+        return response({ state: 'failed', failure: 'sandbox_unavailable' })
+      }
+      if (url.endsWith('/reviewer-access'))
+        return response(
+          polls
+            ? reviewerAccess('host_unsupported', 'sandbox_unavailable')
+            : reviewerAccess('waiting'),
+        )
+      return response(setupState('reviewer'))
+    }),
+  )
+  vi.mocked(Element.prototype.scrollIntoView).mockClear()
+  runSetup()
+  const remedy = await screen.findByText(
+    'Codex could not start its sandbox on this host. The container log says why.',
+  )
+  await waitFor(() =>
+    expect(document.querySelector('#setup-status')?.textContent).toContain(
+      'Codex could not start its sandbox on this host.',
+    ),
+  )
+  await reviewerStepSettled()
+  expect(remedy).not.toHaveFocus()
+  // Nobody pressed anything, so the view is not moved to the result.
+  await new Promise((resolve) => requestAnimationFrame(resolve))
+  expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).not.toContain(remedy)
+})
+
+it('blocks sign-in with the sandbox remedy when the automatic check meets a refused sandbox', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (isRecheck(url, init)) return recheckAs('failed', 'sandbox_unavailable')
+      if (url.endsWith('/reviewer-access')) return response(reviewerAccess('ready'))
+      return response(setupState('reviewer'))
+    }),
+  )
+  runSetup()
+  expect(
+    await screen.findByText(
+      'Codex could not start its sandbox on this host. The container log says why.',
+    ),
+  ).toBeVisible()
+  expect(screen.getByText('Not signed in')).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Sign in with ChatGPT' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Use Codex' })).toBeNull()
 })
 
 it('keeps an issued code in place across polls and copies exactly the code', async () => {
@@ -3658,17 +4007,28 @@ it('keeps validated reviewer prices visible before Continue and on reopen', asyn
   expect(about).not.toHaveAttribute('open')
   about.open = true
   expect(prices).toBeVisible()
-  expect(screen.getByText('GPT-6 Luna: cost not measured.')).toBeVisible()
-  expect(screen.getByText('Selected: GPT-6 Luna')).toBeVisible()
+  // The chosen model's cost stays in view above the folded form.
+  const cost = screen.getByText('GPT-6 Luna: cost not measured.')
+  expect(cost).toBeVisible()
+  expect(cost.nextElementSibling).toBe(screen.getByRole('button', { name: 'Change model or key' }))
+  expect(
+    within(document.querySelector<HTMLElement>('#setup-main') ?? document.body).getByText(
+      'Selected: GPT-6 Luna',
+    ),
+  ).toBeVisible()
   await waitFor(() =>
-    expect(document.querySelector('#setup-status')?.textContent).toBe('OpenRouter selected.'),
+    expect(document.querySelector('#setup-status')?.textContent).toBe('Selected: GPT-6 Luna'),
   )
   expect(advanced).toBe(false)
   expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
   resetSetupDocument()
   runSetup()
   expect(await screen.findByText(rates)).toBeInTheDocument()
-  expect(screen.getByText('Selected: GPT-6 Luna')).toBeVisible()
+  // On reopen the card is drawn the same way: the line under its heading.
+  expect(screen.getByText('Selected: GPT-6 Luna').previousElementSibling).toBe(
+    screen.getByRole('heading', { name: 'OpenRouter' }),
+  )
+  expect(screen.getByRole('button', { name: 'Change model or key' })).toBeVisible()
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
   await waitFor(() => expect(advanced).toBe(true))
 })
@@ -3719,7 +4079,372 @@ it.each([
     expect(document.activeElement).not.toBe(document.body)
     expect(field).toHaveAttribute('aria-invalid', 'true')
     expect(field.getAttribute('aria-describedby')).toContain('setup-error')
-    expect(keyField).toHaveValue('')
+    // What was typed stays for the next press (#2011).
+    expect(keyField).toHaveValue('synthetic-key')
+  },
+)
+
+// The reviewer step's OpenRouter card, with a model typed behind Choose another
+// model and a key, ready for Check key and use OpenRouter.
+const typeOpenRouter = async (model = 'provider/model') => {
+  await reviewerStepSettled()
+  fireEvent.click(screen.getByRole('button', { name: 'Choose another model' }))
+  fireEvent.input(screen.getByRole('textbox', { name: 'Model ID' }), { target: { value: model } })
+  fireEvent.input(screen.getByLabelText('OpenRouter API key'), {
+    target: { value: 'synthetic-key' },
+  })
+  return screen.getByRole('button', { name: 'Check key and use OpenRouter' })
+}
+const scrolled = (element: Element) =>
+  vi.mocked(Element.prototype.scrollIntoView).mock.contexts.includes(element)
+
+// OpenRouter as the chosen reviewer. The check's own answer says usable; a later
+// read of reviewer access says only configured, as the server does.
+const chosenOpenRouter = (saved: boolean, checked = false) => ({
+  ...reviewerAccess('not_provisioned', 'profile_not_provisioned'),
+  mapping: saved ? { engine: 'openrouter', model: 'openai/gpt-6-luna' } : null,
+  openrouter: {
+    state: checked ? 'usable' : saved ? 'configured' : 'unconfigured',
+    model: saved ? 'openai/gpt-6-luna' : null,
+  },
+})
+
+it('folds the chosen OpenRouter card, says it is ready and moves focus to Continue after a check', async () => {
+  let saved = false
+  let refuse = false
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/reviewer-access') return response(chosenOpenRouter(saved))
+      if (url === '/api/setup/reviewer/openrouter') {
+        if (refuse) return response({ detail: { error: 'invalid_key' } }, 422)
+        saved = true
+        return response(chosenOpenRouter(true, true))
+      }
+      return response(setupState('reviewer'))
+    }),
+  )
+  runSetup()
+  fireEvent.click(await typeOpenRouter('openai/gpt-6-luna'))
+  vi.mocked(Element.prototype.scrollIntoView).mockClear()
+
+  const continueButton = screen.getByRole('button', { name: 'Continue' })
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toHaveFocus())
+  expect(continueButton.isConnected).toBe(false)
+  const page = within(document.querySelector<HTMLElement>('#setup-main') ?? document.body)
+  const line = page.getByText('Selected: GPT-6 Luna')
+  expect(line.previousElementSibling).toBe(screen.getByRole('heading', { name: 'OpenRouter' }))
+  expect(line.nextElementSibling).toHaveTextContent('Status: ready to use')
+  expect(line.nextElementSibling?.nextElementSibling).toHaveTextContent(
+    'GPT-6 Luna: cost not measured.',
+  )
+  expect(screen.getAllByText('GPT-6 Luna: cost not measured.')).toHaveLength(1)
+  expect(page.getAllByText(/^Selected: /u)).toHaveLength(1)
+  const change = screen.getByRole('button', { name: 'Change model or key' })
+  expect(change).toHaveAttribute('aria-expanded', 'false')
+  const folded = document.getElementById(change.getAttribute('aria-controls') ?? '')
+  expect(folded).not.toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Check key and use OpenRouter' })).toBeNull()
+  expect(screen.getByLabelText('OpenRouter API key')).not.toBeVisible()
+  expect(scrolled(line)).toBe(true)
+  expect(scrolled(screen.getByRole('button', { name: 'Continue' }))).toBe(true)
+  expect(document.querySelector('#setup-status')?.textContent).toBe('Selected: GPT-6 Luna')
+  expect(screen.getByLabelText('OpenRouter API key')).toHaveValue('')
+  expect(screen.queryByRole('alert')).toBeNull()
+
+  // Opening the toggle restores the form; a refusal there lands under the
+  // button and keeps the key.
+  fireEvent.click(change)
+  expect(change).toHaveAttribute('aria-expanded', 'true')
+  expect(folded).toBeVisible()
+  const key = screen.getByLabelText('OpenRouter API key')
+  fireEvent.input(key, { target: { value: 'replacement-key' } })
+  refuse = true
+  const save = screen.getByRole('button', { name: 'Check key and use OpenRouter' })
+  fireEvent.click(save)
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('OpenRouter rejected this key. Replace it and check it again.')
+  expect(alert.nextElementSibling).toBe(save)
+  expect(key).toHaveValue('replacement-key')
+  expect(key).toHaveFocus()
+})
+
+it('scrolls the Selected line to the top when it and Continue cannot both fit', async () => {
+  let saved = false
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/reviewer-access') return response(chosenOpenRouter(saved))
+      if (url === '/api/setup/reviewer/openrouter') {
+        saved = true
+        return response(chosenOpenRouter(true, true))
+      }
+      return response(setupState('reviewer'))
+    }),
+  )
+  // A short screen with enlarged text: Continue sits far below the result.
+  const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: Element,
+  ) {
+    return new DOMRect(0, this.textContent === 'Continue' ? 2000 : 0, 100, 40)
+  })
+  onTestFinished(() => rects.mockRestore())
+  runSetup()
+  fireEvent.click(await typeOpenRouter('openai/gpt-6-luna'))
+  vi.mocked(Element.prototype.scrollIntoView).mockClear()
+
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toHaveFocus())
+  const line = within(
+    document.querySelector<HTMLElement>('#setup-main') ?? document.body,
+  ).getByText('Selected: GPT-6 Luna')
+  const calls = vi.mocked(Element.prototype.scrollIntoView).mock
+  const index = calls.contexts.indexOf(line)
+  expect(index).toBeGreaterThanOrEqual(0)
+  expect(calls.calls[index]).toEqual([{ block: 'start' }])
+  expect(scrolled(screen.getByRole('button', { name: 'Continue' }))).toBe(false)
+})
+
+it('starts a fresh visit with OpenRouter chosen folded, without a status it cannot prove', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) =>
+      requestUrl(request) === '/api/setup/reviewer-access'
+        ? response(chosenOpenRouter(true))
+        : response(setupState('reviewer')),
+    ),
+  )
+  runSetup()
+  const change = await screen.findByRole('button', { name: 'Change model or key' })
+  expect(change).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.getByText('Selected: GPT-6 Luna')).toBeVisible()
+  expect(screen.queryByText('Status: ready to use')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Check key and use OpenRouter' })).toBeNull()
+  fireEvent.click(change)
+  expect(screen.getByRole('button', { name: 'Check key and use OpenRouter' })).toBeVisible()
+  expect(screen.getByText('GPT-6 Luna: cost not measured.')).toBeVisible()
+  expect(screen.getByLabelText('Model ID')).toHaveValue('openai/gpt-6-luna')
+})
+
+it('opens the folded card under its fresh button when the token rotated after Change model or key', async () => {
+  let reads = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/reviewer-access') return response(chosenOpenRouter(true))
+      if (url === '/api/setup/reviewer/openrouter')
+        return response({ detail: { error: 'csrf' } }, 403)
+      if (url === '/api/setup/state') reads += 1
+      return response(setupState('reviewer', { csrf_token: `token-${String(reads)}` }))
+    }),
+  )
+  runSetup()
+  await reviewerStepSettled()
+  fireEvent.click(screen.getByRole('button', { name: 'Change model or key' }))
+  fireEvent.input(screen.getByLabelText('OpenRouter API key'), {
+    target: { value: 'synthetic-key' },
+  })
+  const pressed = screen.getByRole('button', { name: 'Check key and use OpenRouter' })
+  fireEvent.click(pressed)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('Your session was refreshed. Press again.')
+  const save = screen.getByRole('button', { name: 'Check key and use OpenRouter' })
+  expect(save).not.toBe(pressed)
+  expect(save).toBeVisible()
+  expect(alert.previousElementSibling).toBe(save)
+  expect(screen.getByRole('button', { name: 'Change model or key' })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  )
+  expect(screen.getByLabelText('OpenRouter API key')).toHaveValue('synthetic-key')
+  await waitFor(() => expect(save).toHaveFocus())
+  expect(reads).toBe(2)
+})
+
+it('keeps the model and key and asks to press again under the OpenRouter button when the form token rotated', async () => {
+  let reads = 0
+  const fetch = vi.fn<typeof globalThis.fetch>(async (request) => {
+    const url = requestUrl(request)
+    if (url === '/api/setup/reviewer-access')
+      return response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
+    if (url === '/api/setup/reviewer/openrouter')
+      return response({ detail: { error: 'csrf' } }, 403)
+    if (url === '/api/setup/state') reads += 1
+    return response(setupState('reviewer', { csrf_token: `token-${String(reads)}` }))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  const pressed = await typeOpenRouter()
+  vi.mocked(Element.prototype.scrollIntoView).mockClear()
+  fireEvent.click(pressed)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('Your session was refreshed. Press again.')
+  const save = screen.getByRole('button', { name: 'Check key and use OpenRouter' })
+  expect(save).not.toBe(pressed)
+  expect(alert.previousElementSibling).toBe(save)
+  expect(reads).toBe(2)
+  expect(screen.getByLabelText('OpenRouter API key')).toHaveValue('synthetic-key')
+  expect(screen.getByRole('textbox', { name: 'Model ID' })).toHaveValue('provider/model')
+  expect(screen.getByRole('textbox', { name: 'Model ID' })).toBeVisible()
+  expect(screen.getByText('provider/model: cost not measured.')).toBeVisible()
+  await waitFor(() => expect(save).toHaveFocus())
+  expect(scrolled(save)).toBe(true)
+  expect(scrolled(alert)).toBe(true)
+
+  // Pressed again, the fresh token goes with it.
+  fireEvent.click(save)
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls.filter(
+        ([request]) => requestUrl(request) === '/api/setup/reviewer/openrouter',
+      ),
+    ).toHaveLength(2),
+  )
+  const last = fetch.mock.calls.filter(
+    ([request]) => requestUrl(request) === '/api/setup/reviewer/openrouter',
+  )[1]?.[1]
+  expect(new Headers(last?.headers).get('x-csrf-token')).toBe('token-2')
+  expect(jsonBody(last?.body)).toMatchObject({ api_key: 'synthetic-key', model: 'provider/model' })
+})
+
+it('restores the changed step at the top of the fresh form when the token rotated on a press', async () => {
+  let reads = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/reviewer-access')
+        return response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
+      if (url === '/api/setup/reviewer/openrouter')
+        return response({ detail: { error: 'csrf' } }, 403)
+      if (url === '/api/setup/state') reads += 1
+      return response(setupState(reads > 1 ? 'kick_off' : 'reviewer'))
+    }),
+  )
+  runSetup()
+  const pressed = await typeOpenRouter()
+  vi.mocked(Element.prototype.scrollIntoView).mockClear()
+  fireEvent.click(pressed)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent(
+    'Setup changed in another tab. The latest recorded step has been restored.',
+  )
+  expect(alert.parentElement?.tagName).toBe('FORM')
+  expect(alert.parentElement?.firstElementChild).toBe(alert)
+  expect(screen.queryByLabelText('OpenRouter API key')).toBeNull()
+  await waitFor(() => expect(scrolled(alert)).toBe(true))
+})
+
+it.each([
+  ['invalid_key', 422, 'key', 'OpenRouter rejected this key. Replace it and check it again.'],
+  ['model_unavailable', 422, 'model', 'That model is unavailable. Choose another model.'],
+  [
+    'model_text_only',
+    422,
+    'model',
+    'That model cannot inspect covers. Choose a model with image input.',
+  ],
+  [
+    'quota_exhausted',
+    502,
+    'button',
+    'OpenRouter credits are used up. Add credits, then try again.',
+  ],
+  ['rate_limited', 502, 'button', 'OpenRouter is rate limited. Wait, then try again.'],
+  [
+    'malformed_response',
+    502,
+    'button',
+    'OpenRouter’s answer could not be read. Retry later, or choose another model.',
+  ],
+  [
+    'timed_out',
+    502,
+    'button',
+    'OpenRouter did not answer in time. Check network access, then retry.',
+  ],
+  [
+    'response_too_large',
+    502,
+    'button',
+    'OpenRouter returned an answer too large to read. Retry later, or choose another model.',
+  ],
+  [
+    'unreachable',
+    502,
+    'button',
+    'OpenRouter could not be reached. Check network access, then retry.',
+  ],
+  ['access_changed', 409, 'button', 'Reviewer settings changed elsewhere. Reload, then try again.'],
+  [
+    'reviewer_access_stale',
+    409,
+    'button',
+    'Reviewer settings changed elsewhere. Reload, then try again.',
+  ],
+  ['unavailable', 503, 'button', 'That step was not saved. Wait a moment, then try again.'],
+  [
+    'session_expired',
+    401,
+    'button',
+    'Your sign-in expired, so that step was not saved. Reload the page and sign in again.',
+  ],
+  [
+    'network',
+    0,
+    'button',
+    'No answer came back. Check whether the reviewer change was saved before trying again.',
+  ],
+] as const)(
+  'leaves a visible refusal for each OpenRouter response (%s)',
+  async (code, status, about, message) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/reviewer-access')
+          return response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
+        if (url === '/api/setup/reviewer/openrouter') {
+          if (status === 0) throw new TypeError('Failed to fetch')
+          return response({ detail: { error: code } }, status)
+        }
+        return response(setupState('reviewer'))
+      }),
+    )
+    runSetup()
+    const save = await typeOpenRouter()
+    vi.mocked(Element.prototype.scrollIntoView).mockClear()
+    save.focus()
+    fireEvent.click(save)
+
+    const alert = await screen.findByRole('alert')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(alert).toHaveTextContent(message)
+    expect(alert).toBeVisible()
+    expect(save.isConnected).toBe(true)
+    const key = screen.getByLabelText('OpenRouter API key')
+    if (about === 'button') {
+      // About no field: under the pressed button, which keeps focus, and the
+      // key is not called invalid.
+      expect(alert.previousElementSibling).toBe(save)
+      expect(save).toHaveFocus()
+      expect(key).not.toHaveAttribute('aria-invalid')
+      expect(screen.getByRole('textbox', { name: 'Model ID' })).not.toHaveAttribute('aria-invalid')
+    } else {
+      // Between the field it is about and the pressed button.
+      expect(alert.nextElementSibling).toBe(save)
+      const field = screen.getByLabelText(about === 'key' ? 'OpenRouter API key' : 'Model ID')
+      expect(field).toHaveFocus()
+      expect(field).toHaveAttribute('aria-invalid', 'true')
+    }
+    expect(scrolled(alert)).toBe(true)
+    expect(screen.getByLabelText('OpenRouter API key')).toHaveValue('synthetic-key')
+    expect(screen.getByRole('textbox', { name: 'Model ID' })).toHaveValue('provider/model')
   },
 )
 

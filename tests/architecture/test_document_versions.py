@@ -110,7 +110,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.reviewer_access",
         "REVIEWER_ACCESS_VIEW_SCHEMA",
-        "reviewer-access-view-v6",
+        "reviewer-access-view-v7",
     ),
     (
         "mechanical_librarian.application.review_web",

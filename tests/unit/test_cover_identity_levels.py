@@ -56,7 +56,9 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
-from tests.unit.test_cover_consideration import _Store
+from tests.support.cover_consideration_store import (
+    InMemoryCoverConsiderationStore as _Store,
+)
 from tests.unit.test_cover_identity_listed_edition import (
     _candidate,
     _claim,
