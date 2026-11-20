@@ -435,3 +435,39 @@ def test_current_authority_and_predecessor_refusal_without_history(
             == "No source offered a value that can be used here."
         )
         assert repository._connection.total_changes == 0
+
+
+def test_installed_selected_work_reads_its_find_this_book_view() -> None:
+    """The harness serves the link view the Library reads for a selected work.
+
+    The slow browser qualification selects `fiction-0000` and fails on any
+    5xx answer, so a harness composed without owner search failed only there,
+    in a tier hosted CI does not run (#2029).
+    """
+    with harness._installed_qualification_environment(
+        {"fiction": 1, "history": 1, "science": 1}, 3
+    ) as environment:
+        with environment.running_preparation() as run:
+            run.release_discovery()
+            run.wait_until_terminal()
+            with harness._review_client() as client:
+                assert (
+                    client.post(
+                        environment.origin + "/api/v1/session/login",
+                        headers={"Origin": environment.origin},
+                        json={"password": "synthetic password"},
+                    ).status_code
+                    == 200
+                )
+                response = client.get(
+                    environment.origin + "/api/v1/library/link",
+                    params={
+                        "connection": "primary",
+                        "library": "fiction",
+                        "item": "fiction-0000",
+                    },
+                )
+    assert response.status_code == 200, response.text
+    view = response.json()
+    assert view["schema_version"] == "owner-link-view-v3"
+    assert view["link"] is None
