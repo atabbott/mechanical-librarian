@@ -432,6 +432,7 @@ def test_required_installed_adds_explicit_preparation_nodes_to_fast() -> None:
     installed_only = {
         "test_continuous_review_scale.test_current_authority_and_predecessor_refusal_without_history",
         "test_continuous_review_scale.test_installed_owner_decision_activity_smoke",
+        "test_continuous_review_scale.test_installed_selected_work_reads_its_find_this_book_view",
         "test_continuous_review_scale.test_inventaire_failure_then_authenticated_reprepare_starts_new_run.retrieved",
         "test_continuous_review_scale.test_inventaire_failure_then_authenticated_reprepare_starts_new_run.absent",
         "test_continuous_review_scale.test_inventaire_failure_then_authenticated_reprepare_starts_new_run.unavailable",

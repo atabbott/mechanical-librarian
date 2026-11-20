@@ -3,8 +3,8 @@
 `qualify_installed_pipeline` builds an installed wheel, serves a synthetic
 Audiobookshelf over TLS, reconciles a fresh cohort, then verifies a
 completed-state restart. Two tiers drive it at different sizes -- the
-integration tier at a representative cohort, the slow tier at a thousand
-works -- so it lives here rather than in either tier's module: a test module
+installed tier at small cohorts, the slow tier at two thousand works -- so
+it lives here rather than in either tier's module: a test module
 never imports another test module's fixtures, because that makes one cohort
 a dependency of another (`docs/development/testing-strategy.md`).
 """
@@ -77,8 +77,10 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.bootstrap.composition import (
     _compose_cover_considerations,
+    _compose_owner_search,
     _compose_reviewer_access,
     _load_batch_credentials,
+    _provider_pacers,
     compose_continuous_guarded_application,
     compose_field_effect_activity_projection,
 )
@@ -764,6 +766,16 @@ def _start_deterministic_installed_server(
                 FileOwnerSettingsRepository(
                     settings_projection.document, settings_projection.secrets
                 )
+            ),
+            # The Library reads a selected work's Find this book view; without
+            # owner search that read answers 503 (#2029).
+            owner_search=_compose_owner_search(
+                configuration,
+                web_state_owner,
+                credentials,
+                _provider_pacers(configuration.providers),
+                recovery,
+                "available",
             ),
         )
     except BaseException:
