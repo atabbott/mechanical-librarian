@@ -97,9 +97,17 @@ export const ownerContext = (field: ReviewField, context: ChoiceContextView) =>
         ),
       }
     : context
+const nothingToApplyReasons: ReadonlySet<string> = new Set([
+  ...choiceRequestReasons,
+  'no_safe_bibliographic_combination',
+])
 // An optional choice already says no review is needed, so a condition worded
 // as asking the owner to choose is left off it (#1450). Other conditions still
 // explain the choice, such as a language respelling (#1496, #1557).
+// A field no source offered a different value for has nothing to choose or
+// apply, so a condition asking the owner to choose or saying no combination is
+// safe to apply is left off it; one saying why the current value is kept stays
+// (#1924, #2012).
 export const comparisonNotices = (field: ReviewField) =>
   field.choiceContexts.some((context) =>
     ownerContext(field, context).limitations.some(
@@ -111,7 +119,8 @@ export const comparisonNotices = (field: ReviewField) =>
         (notice) =>
           materialReasonLabel(notice) !== undefined &&
           !restatesReason(field, notice) &&
-          !(field.classification === 'owner_choosable' && choiceRequestReasons.has(notice)),
+          !(field.classification === 'owner_choosable' && choiceRequestReasons.has(notice)) &&
+          !(!offeredAnotherValue(field) && nothingToApplyReasons.has(notice)),
       )
 // A comparison condition in words; differing source tag lists or synopses are
 // named as such rather than as a disagreement.

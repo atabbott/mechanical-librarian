@@ -128,7 +128,7 @@ export function ContextValue({
       </dl>
       <button
         type="button"
-        className="context-evidence-toggle"
+        className="choice-evidence-toggle"
         aria-controls={evidenceId}
         aria-expanded={expanded}
         onClick={toggle}
@@ -312,7 +312,7 @@ export function RecordedOutcome({
   const evidenceToggle = (
     <button
       type="button"
-      className="context-evidence-toggle"
+      className="choice-evidence-toggle"
       aria-controls={evidenceId}
       aria-expanded={expanded}
       onClick={toggle}

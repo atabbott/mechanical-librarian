@@ -1396,7 +1396,7 @@ export default function LibraryPage({
               {detail.data.recordingIdentityBasis ||
               detail.data.recordingAdmissionBasis ||
               detail.data.audiobookReviewScope === 'work' ? (
-                <section aria-label="Recording match">
+                <section className="recording-match" aria-label="Recording match">
                   <h3>Recording match</h3>
                   <RecordingIdentityBasis
                     value={detail.data.recordingIdentityBasis}
