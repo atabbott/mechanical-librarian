@@ -12,6 +12,9 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- The Policy preview reads a field whose sources only repeat its current
+  value as No change under both policies. It no longer lists such a field as
+  left to you with the sources said to disagree, or counts it as affected.
 - A field whose sources only repeat its current value no longer says the
   sources disagree or shows a warning about combining details; it says no
   source offered a different value. Evidence on a field's current or recorded

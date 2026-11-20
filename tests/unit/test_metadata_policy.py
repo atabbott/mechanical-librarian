@@ -297,6 +297,72 @@ def test_preview_uses_bounded_exact_current_pairs_without_effects() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("current", "draft_reads", "changed"),
+    [
+        # Every source gives the current series: nothing differs, nothing is
+        # left to the owner, and the review page says nothing about
+        # disagreement (#2012), so neither does the preview.
+        (("Reading Order", "2"), ("no_op", "target_preserved"), False),
+        # A source offers another series: the draft still leaves it to the
+        # owner as a disagreement.
+        (("Other Order", "1"), ("abstain", "ambiguous_evidence"), True),
+    ],
+    ids=["only-the-current-value", "another-value-offered"],
+)
+def test_preview_reads_a_field_whose_sources_only_repeat_it_as_kept(
+    current: tuple[str, str], draft_reads: tuple[str, str], changed: bool
+) -> None:
+    from mechanical_librarian.domain.proposal_set import (
+        ProposalOutcome,
+        evaluate_report,
+    )
+    from tests.unit.test_bibliographic_bundles import _recording_with_series
+
+    # The title restates the series, so no title/series combination is safe
+    # and Series is an unresolved choice for the title's sake.
+    report = _recording_with_series(
+        "Ember Tide Protocol: Reading Order, Book 2", current
+    )
+    builtin = MetadataPolicyProfile.builtin()
+    active = resolve_policy(builtin, report.target.library)
+    proposal = evaluate_report(report, active.resolved_id, dict(active.destinations))
+    series = next(
+        result for result in proposal.results if result.destination.value == "series"
+    )
+    assert ProposalOutcome.UNRESOLVED_CHOICE is series.outcome
+    assert ("no_safe_bibliographic_combination",) == series.reasons
+    destinations = dict(builtin.destinations)
+    destinations["series"] = "ask"
+    draft = MetadataPolicyProfile.create(
+        "Series asked", dict(builtin.options), destinations
+    )
+
+    class Repository(_PreviewRepository):
+        def current_unapplied_count(self, library: str) -> int:
+            return 1
+
+        def current_policy_impact_pairs(self, library: str, limit: int):
+            return (1, ((report, proposal),))
+
+    library = preview_policy(
+        draft, (report.target.library,), {}, Repository()
+    ).libraries[0]
+    row = next(
+        field
+        for field in library.comparisons[0].fields
+        if field.destination == "series"
+    )
+    assert draft_reads == (row.draft.outcome, row.draft.reason)
+    assert changed is row.changed
+    # The rich preview the page lists reads the same as the comparison.
+    case = next(field for field in library.cases[0].fields if field.field == "series")
+    assert case == row.draft
+    if not changed:
+        assert row.draft.current_value == row.draft.desired_value
+        assert ("no_op", "target_preserved") == (row.active.outcome, row.active.reason)
+
+
 def test_preview_caps_cases_across_libraries_and_uses_pair_snapshot_counts() -> None:
     from mechanical_librarian.domain.metadata_report import (
         MetadataReport,
