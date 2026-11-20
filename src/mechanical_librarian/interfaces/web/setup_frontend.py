@@ -912,7 +912,7 @@ const renderProviders=async()=>{
       error(form,control===invalidProvider.email?'invalid_provider_email':!control.value&&settingsProviderKeyRequired(invalidProvider.adapter)?'missing_provider_key':'invalid_secret',control);
       return
     }
-    const providers=rows.filter(row=>row.enabled.checked).map(row=>({name:row.name,adapter:row.adapter,enabled:true,cover_enabled:row.adapter==='inventaire',contact_email:row.email?.value||null,key:row.key?.value||null}));
+    const providers=rows.filter(row=>row.enabled.checked).map(row=>({name:row.name,adapter:row.adapter,enabled:true,cover_enabled:settingsVocabulary.cover_switch_provider_adapters.includes(row.adapter),contact_email:row.email?.value||null,key:row.key?.value||null}));
     mutate('/api/setup/providers',{expected_revision:state.revision,providers},form,{submitted:next})
   });
   section.append(form);

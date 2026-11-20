@@ -108,6 +108,8 @@ _BOOK_KEYS = frozenset(
         "narrators",
         "publisherName",
         "rating",
+        # A ratings summary the record states and no claim reads (#2014).
+        "ratings",
         "region",
         "releaseDate",
         "runtimeLengthMin",

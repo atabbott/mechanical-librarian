@@ -352,31 +352,60 @@ def _settings_vocabulary() -> dict[str, Any]:
     )
 
 
-def test_only_audible_and_itunes_may_carry_a_cover_switch_in_the_browser() -> None:
-    """The browser list is a subset of what the contract accepts, never more.
+def _cover_provider(adapter: str, *, cover_enabled: bool) -> dict[str, object]:
+    provider: dict[str, object] = {
+        "name": "source",
+        "adapter": adapter,
+        "enabled": True,
+        "cover_enabled": cover_enabled,
+    }
+    if adapter == "open_library":
+        provider["contact_email"] = "owner@example.invalid"
+    return provider
+
+
+def _contract_accepts_cover_evidence(adapter: str) -> bool:
+    # The same provider with covers off is always valid, so a refusal of the
+    # covers-on form is the contract refusing the field, not anything else.
+    _audiobook_document(providers=[_cover_provider(adapter, cover_enabled=False)])
+    try:
+        document = _audiobook_document(
+            providers=[_cover_provider(adapter, cover_enabled=True)]
+        )
+    except ValueError:
+        return False
+    assert document.providers[0].cover_enabled is True
+    return True
+
+
+def test_the_browser_offers_a_cover_switch_on_every_source_that_can_supply_a_cover() -> (
+    None
+):
+    """The browser list is exactly what the contract accepts, both ways.
 
     Settings renders the switch from this list alone, so an adapter that
     reaches it without the contract accepting `cover_enabled=True` would offer
-    the owner a control whose save is refused (#967).
+    the owner a control whose save is refused (#967). The same list is the
+    one guided setup and Settings use to turn cover evidence on (#2014), so
+    an adapter the contract accepts but the list misses would start with its
+    covers off and offer the owner no way to turn them on.
     """
     offered = _settings_vocabulary()["cover_switch_provider_adapters"]
-    assert offered == ["audible_catalog", "itunes_search"]
+    accepted = sorted(
+        adapter
+        for adapter in get_args(ProviderAdapter)
+        if _contract_accepts_cover_evidence(adapter)
+    )
 
-    for adapter in offered:
-        document = _audiobook_document(
-            providers=[
-                {
-                    "name": "audio",
-                    "adapter": adapter,
-                    "enabled": True,
-                    "cover_enabled": True,
-                }
-            ]
-        )
-        assert document.providers[0].cover_enabled is True
-    # The converse is deliberately not asserted: Hardcover, Open Library and
-    # Inventaire accept the field and are still offered no control here.
-    assert not set(offered) & {"hardcover", "open_library", "inventaire"}
+    assert offered == accepted
+    assert offered == [
+        "audible_catalog",
+        "hardcover",
+        "inventaire",
+        "itunes_search",
+        "open_library",
+    ]
+    assert not set(offered) & {"google_books", "audnexus", "audiosilo"}
 
 
 @pytest.mark.parametrize("adapter", ["audible_catalog", "itunes_search"])
