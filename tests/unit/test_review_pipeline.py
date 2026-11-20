@@ -68,6 +68,7 @@ from mechanical_librarian.application.metadata_report import (
     ItemInspectionError,
     MetadataReportError,
     ReportRepository,
+    ReportStorageError,
     TargetNotFoundError,
     UnsupportedMediaError,
 )
@@ -179,8 +180,18 @@ def _proposal_stages(
             "internal_failure",
         ),
         (ItemInspectionError(), "unknown"),
+        (ReportStorageError(busy=True), "transient"),
+        (ReportStorageError(busy=False), "persistence"),
     ),
-    ids=("unsupported", "unreadable", "parser-refused", "internal", "unknown"),
+    ids=(
+        "unsupported",
+        "unreadable",
+        "parser-refused",
+        "internal",
+        "unknown",
+        "report-store-busy",
+        "report-store-failed",
+    ),
 )
 def test_extraction_stage_projects_only_declared_failure_boundaries(
     failure: Exception, code: str
@@ -12714,6 +12725,257 @@ def test_unknown_failure_combined_limits_and_final_encoded_boundary(capsys):
     assert json.loads(capsys.readouterr().err)["exceptions"] == [
         {"module": "unknown", "type": "unknown"}
     ]
+
+
+def _storage_action() -> PipelineAction:
+    return PipelineAction(
+        "work",
+        "scan",
+        "extraction",
+        1,
+        "primary",
+        "fiction",
+        "lib",
+        _PRODUCER,
+        catalogue_generation=1,
+        catalogue_fingerprint="a" * 64,
+        item_id="item",
+        file_identity="file",
+        source_revision=1,
+        source_fingerprint="b" * 64,
+    )
+
+
+def _sqlite_failure(code: object, message: str = "SQL_PRIVATE") -> sqlite3.Error:
+    error = sqlite3.OperationalError(message)
+    error.sqlite_errorcode = code  # type: ignore[assignment]  # reason: the projection must refuse any value a chain carries
+    return error
+
+
+def test_sqlite_error_code_allow_list_covers_every_runtime_error_constant() -> None:
+    from mechanical_librarian.application.review_pipeline import _SQLITE_ERROR_CODES
+
+    # SQLite's 28 documented primary error result names, in code order; the
+    # module also exposes authorizer constants in the same numeric range.
+    primaries = (
+        "ERROR INTERNAL PERM ABORT BUSY LOCKED NOMEM READONLY INTERRUPT IOERR "
+        "CORRUPT NOTFOUND FULL CANTOPEN PROTOCOL EMPTY SCHEMA TOOBIG CONSTRAINT "
+        "MISMATCH MISUSE NOLFS AUTH FORMAT RANGE NOTADB NOTICE WARNING"
+    ).split()
+    assert [getattr(sqlite3, f"SQLITE_{name}") for name in primaries] == list(
+        range(1, 29)
+    )
+    runtime = {
+        name: getattr(sqlite3, name)
+        for name in dir(sqlite3)
+        if any(
+            name == f"SQLITE_{primary}" or name.startswith(f"SQLITE_{primary}_")
+            for primary in primaries
+        )
+    }
+    assert {
+        name: code for name, code in runtime.items() if code not in _SQLITE_ERROR_CODES
+    } == {}
+    assert all(
+        type(code) is int and 1 <= code & 0xFF <= 28 for code in _SQLITE_ERROR_CODES
+    )
+    assert 8714 in _SQLITE_ERROR_CODES  # SQLITE_IOERR_IN_PAGE
+
+
+@pytest.mark.parametrize(
+    ("codes", "expected"),
+    (
+        ((sqlite3.SQLITE_IOERR_SHORT_READ,), 522),
+        ((None, sqlite3.SQLITE_BUSY), sqlite3.SQLITE_BUSY),
+        ((True,), None),
+        (("5",), None),
+        ((5.0,), None),
+        ((99_999,), None),
+        ((0,), None),
+        ((), None),
+    ),
+    ids=(
+        "extended",
+        "inner-cause",
+        "bool",
+        "string",
+        "float",
+        "unlisted",
+        "ok",
+        "no-sqlite",
+    ),
+)
+def test_unknown_failure_carries_only_an_allow_listed_sqlite_code(
+    capsys: pytest.CaptureFixture[str], codes: tuple[object, ...], expected: int | None
+) -> None:
+    from mechanical_librarian.application.review_pipeline import _log_unknown_failure
+
+    error: BaseException = MetadataReportError("PRIVATE_OUTER")
+    outer = error
+    for code in codes:
+        inner = (
+            RuntimeError("PRIVATE_INNER")
+            if code is None
+            else _sqlite_failure(code, "SQL_PRIVATE_SENTINEL")
+        )
+        outer.__cause__ = inner
+        outer = inner
+    _log_unknown_failure(cast(Exception, error), "extraction", _storage_action())
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "PRIVATE" not in output.err
+    payload = json.loads(output.err)
+    assert payload["sqlite_error_code"] == expected
+    assert type(payload["sqlite_error_code"]) in {int, type(None)}
+
+
+def test_unknown_failure_survives_a_raising_sqlite_code_attribute(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from mechanical_librarian.application.review_pipeline import _log_unknown_failure
+
+    class Hostile(sqlite3.OperationalError):
+        @property
+        def sqlite_errorcode(self) -> int:  # type: ignore[override]  # reason: a hostile attribute must not stop the line
+            raise RuntimeError("PRIVATE")
+
+    error = MetadataReportError("report publication failed")
+    error.__cause__ = Hostile("SQL_PRIVATE")
+    _log_unknown_failure(error, "extraction", _storage_action())
+    output = capsys.readouterr().err
+    assert "PRIVATE" not in output
+    assert json.loads(output)["sqlite_error_code"] is None
+    # The chain walk stays bounded at four exceptions, like the identities.
+    chain = [_sqlite_failure(None) for _ in range(4)] + [_sqlite_failure(5)]
+    for left, right in zip(chain[:-1], chain[1:], strict=True):
+        left.__cause__ = right
+    _log_unknown_failure(cast(Exception, chain[0]), "extraction", _storage_action())
+    assert json.loads(capsys.readouterr().err)["sqlite_error_code"] is None
+
+
+def test_storage_failure_event_is_value_free_and_never_raises(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import mechanical_librarian.application.review_pipeline as module
+
+    action = _storage_action()
+    failure = ReportStorageError(busy=True)
+    failure.__cause__ = _sqlite_failure(sqlite3.SQLITE_BUSY, "SQL_PRIVATE_SENTINEL")
+    module._log_storage_failure(action, "transient", "reports", failure)
+    output = capsys.readouterr()
+    assert output.out == "" and "PRIVATE" not in output.err
+    assert json.loads(output.err) == {
+        "attempt": 1,
+        "code": "transient",
+        "event": "preparation_storage_failure",
+        "level": "warning",
+        "recovery_attempt": 0,
+        # A transient settlement rewrites the row to attempt 0 and the next
+        # recovery attempt; the reference names that settled identity.
+        "reference": module.preparation_failure_reference(
+            "work", "extraction", 0, 1, "transient"
+        ),
+        "sqlite_error_code": 5,
+        "store": "reports",
+    }
+
+    class BrokenStream:
+        def write(self, _text: str) -> None:
+            raise OSError("SINK_PRIVATE")
+
+    with patch.object(module.sys, "stderr", BrokenStream()):
+        module._log_storage_failure(action, "persistence", "catalogue", failure)
+    module._log_storage_failure(
+        cast(PipelineAction, object()), "persistence", "catalogue", failure
+    )
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize(
+    ("site", "failure", "code"),
+    (
+        ("open", "busy", "transient"),
+        ("open", "stale", "stale"),
+        ("open", "failed", "persistence"),
+        ("read", "busy", "transient"),
+        ("read", "stale", "stale"),
+        ("read", "failed", "persistence"),
+    ),
+    ids=(
+        "open-busy",
+        "open-stale",
+        "open-failed",
+        "read-busy",
+        "read-stale",
+        "read-failed",
+    ),
+)
+def test_extraction_eligibility_maps_catalogue_storage_failures(
+    capsys: pytest.CaptureFixture[str], site: str, failure: str, code: str
+) -> None:
+    from mechanical_librarian.application.catalogue import (
+        CatalogueBusyError,
+        CatalogueError,
+        CatalogueStaleError,
+    )
+
+    error = {
+        "busy": CatalogueBusyError("catalogue database is busy"),
+        "stale": CatalogueStaleError("catalogue requires refresh"),
+        "failed": CatalogueError("catalogue database is unavailable"),
+    }[failure]
+    closed: list[bool] = []
+
+    class Catalogue:
+        def latest_entry(self, *_arguments: object) -> None:
+            raise error
+
+        def close(self) -> None:
+            closed.append(True)
+
+    def catalogue(create: bool) -> Catalogue:
+        assert create is False
+        if site == "open":
+            raise error
+        return Catalogue()
+
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=cast("Callable[[bool], Any]", catalogue),
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=unreachable,
+        generate_report=unreachable,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+    with pytest.raises(ReviewPipelineError) as raised:
+        stages.extract(
+            cast("ReviewPipelineRepository", object()), _storage_action(), False
+        )
+    assert raised.value.code == code
+    assert raised.value.__cause__ is error
+    assert closed == ([] if site == "open" else [True])
+    err = capsys.readouterr().err
+    if failure == "stale":
+        assert err == ""
+    else:
+        record = json.loads(err)
+        assert (record["event"], record["store"], record["code"]) == (
+            "preparation_storage_failure",
+            "catalogue",
+            code,
+        )
 
 
 @pytest.mark.parametrize("timeout", (False, True))

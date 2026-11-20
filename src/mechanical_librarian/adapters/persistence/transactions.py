@@ -66,6 +66,17 @@ class _SerializationLock:
         self.release()
 
 
+def sqlite_busy(error: sqlite3.Error) -> bool:
+    """Report whether a SQLite failure is busy or locked contention.
+
+    Any extended code whose primary byte is ``SQLITE_BUSY`` (5) or
+    ``SQLITE_LOCKED`` (6) counts. An error built without a SQLite code, or
+    carrying anything but an integer, is never contention (#2024).
+    """
+    code = getattr(error, "sqlite_errorcode", None)
+    return type(code) is int and code & 0xFF in (5, 6)
+
+
 def _deny_sqlite(*_args: object) -> int:
     return sqlite3.SQLITE_DENY
 

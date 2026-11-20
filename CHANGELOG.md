@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- Preparation tries a book up to three times, at least 10 seconds apart, when
+  Mechanical Librarian's catalogue or application database is briefly busy,
+  instead of failing it as Preparation failed. A lasting storage failure now
+  shows Progress could not be saved, and the container log records the SQLite
+  error code (#2024).
 - Choosing a description adviser, changing Book matching or changing the
   policy now prepares the books it affects after a library's newer scan has
   finished, instead of leaving them queued while Activity said Preparation

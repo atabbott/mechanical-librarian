@@ -195,6 +195,88 @@ def preparation_failure_reference(
     return "prep-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
+# SQLite's documented primary (1-28) and extended result codes for errors. Only
+# an integer in this set reaches an event, so the field can never carry a
+# value from the failure itself (#2024).
+# fmt: off
+_SQLITE_ERROR_CODES: frozenset[int] = frozenset(
+    {
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+        23, 24, 25, 26, 27, 28, 257, 261, 262, 264, 266, 267, 270, 275, 279, 283, 284,
+        513, 516, 517, 518, 520, 522, 523, 526, 531, 539, 769, 773, 776, 778, 779, 782,
+        787, 795, 1025, 1032, 1034, 1038, 1043, 1288, 1290, 1294, 1299, 1544, 1546,
+        1550, 1555, 1802, 1811, 2058, 2067, 2314, 2323, 2570, 2579, 2826, 2835, 3082,
+        3091, 3338, 3594, 3850, 4106, 4362, 4618, 4874, 5130, 5386, 5642, 5898, 6154,
+        6410, 6666, 6922, 7178, 7434, 7690, 7946, 8202, 8458, 8714, 8970, 9226,
+    }
+)
+# fmt: on
+
+
+def _sqlite_error_code(error: BaseException) -> int | None:
+    """Return the first allow-listed SQLite code on a bounded exception chain."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen and len(seen) < 4:
+        seen.add(id(current))
+        try:
+            code = getattr(current, "sqlite_errorcode", None)
+        except Exception:
+            code = None
+        if type(code) is int and code in _SQLITE_ERROR_CODES:
+            return code
+        current = (
+            current.__cause__
+            if current.__cause__ is not None
+            else None
+            if current.__suppress_context__
+            else current.__context__
+        )
+    return None
+
+
+def _log_storage_failure(
+    action: PipelineAction, code: str, store: str, error: BaseException
+) -> None:
+    """Record one value-free storage failure the stage mapped to a closed code.
+
+    ``store`` is ``catalogue`` or ``reports``; ``code`` is ``transient`` when the
+    work is retried later and ``persistence`` when it fails (#2024). A failing
+    sink cannot stop the lane.
+    """
+    try:
+        # A transient settlement rewrites the row to attempt 0 and the next
+        # recovery attempt, and status derives a terminal reference from that
+        # row, so the line names the settled identity rather than the claim.
+        settled = (
+            (0, action.recovery_attempt + 1)
+            if code == "transient"
+            else (action.attempt, action.recovery_attempt)
+        )
+        payload = json.dumps(
+            {
+                "event": "preparation_storage_failure",
+                "level": "warning",
+                "code": code,
+                "store": store,
+                "sqlite_error_code": _sqlite_error_code(error),
+                "attempt": action.attempt,
+                "recovery_attempt": action.recovery_attempt,
+                "reference": preparation_failure_reference(
+                    action.action_id,
+                    action.stage,
+                    *settled,
+                    code,
+                ),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        sys.stderr.write(payload + "\n")
+    except Exception:
+        pass
+
+
 def _log_unknown_failure(
     error: Exception, execution_stage: str, owned: PipelineAction
 ) -> None:
@@ -301,6 +383,7 @@ def _log_unknown_failure(
                 "chain_truncated": chain_truncated,
                 "frames_truncated": frames_truncated,
                 "cycle": cycle,
+                "sqlite_error_code": _sqlite_error_code(error),
             },
             sort_keys=True,
             separators=(",", ":"),

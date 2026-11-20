@@ -90,6 +90,7 @@ text, credential or path.
 | `event` | Written when |
 | --- | --- |
 | `preparation_unknown_failure` | An unclassified preparation exception is observed (WARNING). |
+| `preparation_storage_failure` | Extraction could not open or read the catalogue, or could not publish its report (WARNING). `store` is `catalogue` or `reports`; `code` is `transient` when the book is tried again at least 10 seconds later (three tries in all, then it fails as `transient`) or `persistence` when it fails; `sqlite_error_code` is the SQLite error code or null; `attempt` and `recovery_attempt` are the claim's. `reference` matches the work's preparation reference if this attempt ends it. |
 | `preparation_claim_contended` | A preparation claim, or a claimed stage's target-connection check, lost the write lock and will retry (WARNING, `code: contention`). |
 | `preparation_discovery_failed` | A library's discovery stopped (WARNING). `code` is the stored reason. Neither this event nor `preparation_items_unread` names the connection or library; Background activity shows which library it was. |
 | `preparation_items_unread` | A completed discovery left items it could not read (WARNING). `changed`, `no_media`, `oversized` and `unreadable` count them, up to 10,000 each. |
@@ -102,8 +103,11 @@ text, credential or path.
 | `identifier_import` | An identifiers file preview, import or withdrawal finished. `action` is `preview`, `import` or `withdraw`; `outcome` is `previewed`, `recorded`, `replayed`, a refusal code or `failed`; `rows` counts the file's rows and `linked` the links made or withdrawn. Never a path, row, title or item ID. |
 | `provider_request_failed`, `provider_throttled`, `provider_deadline_stop`, `provider_adapter_fault`, `provider_recovery_job`, `provider_response_store` | See [provider logs](#provider-logs). |
 
-`preparation_unknown_failure` holds only validated code identities and
-application frame locations. Match its `reference` to the preparation reference
+`preparation_unknown_failure` holds only validated code identities,
+application frame locations and `sqlite_error_code`: the first SQLite error code
+on the exception chain, such as 5 for a busy database or 11 for a corrupt one,
+or null when there is none. Only SQLite's documented error codes are recorded,
+never the error's text. Match its `reference` to the preparation reference
 in status or support evidence when the failure was recorded, or its
 `restart_reference` to a **Preparation stopped** reference when it was not.
 `observation: before_fail` means the exception was seen, not that an outcome
