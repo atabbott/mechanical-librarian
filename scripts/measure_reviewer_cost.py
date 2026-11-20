@@ -39,6 +39,7 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 )
 from mechanical_librarian.application.cover_observation import observe_cover_packet
 from mechanical_librarian.application.cover_packets import prepare_cover_packet
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.reviewer_contracts import (
     openrouter_cover_profile,
     openrouter_profile,
@@ -62,6 +63,13 @@ from mechanical_librarian.domain.reviewer_cost import (
     ReviewerCostEvidence,
     per_thousand,
 )
+
+# Direct execution puts scripts/ on sys.path; the test import resolves the
+# scripts namespace package.
+try:
+    from scripts import database_copy
+except ImportError:  # pragma: no cover - direct `python scripts/...` execution
+    import database_copy  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
 
 
 def digest(payload: bytes) -> str:
@@ -155,7 +163,13 @@ class FrozenInput:
 def inventory(
     database: Path, artifacts: Path, cohort: Cohort
 ) -> tuple[FrozenInput, ...]:
-    reader = open_shadow_preview_repository(database)
+    try:
+        reader = open_shadow_preview_repository(database)
+    except MetadataReportError as error:
+        refusal = database_copy.unicode_refusal(database)
+        if refusal is None:
+            raise
+        raise SystemExit(refusal) from error
     store = CoverArtifactStore(artifacts, create=False)
     values = []
     try:
@@ -243,13 +257,22 @@ def selection(
     return rows
 
 
+# Every scripts/ file a paid run executes, each checked against the qualified
+# head: this script, the sibling modules it imports and the qualifier it loads.
+MEASURED_SOURCES = (
+    "measure_reviewer_cost.py",
+    "database_copy.py",
+    "qualify_exact_artifact.py",
+)
+
+
 def installed_identity(
     source: str, wheel: Path, receipt: Path, interpreter: Path
 ) -> dict[str, str]:
     import mechanical_librarian
 
     repository = Path(__file__).resolve().parents[1]
-    for name in ("measure_reviewer_cost.py", "qualify_exact_artifact.py"):
+    for name in MEASURED_SOURCES:
         retained = subprocess.run(
             ["git", "-C", str(repository), "show", f"{source}:scripts/{name}"],
             check=True,

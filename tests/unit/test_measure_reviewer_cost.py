@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ast
 import gzip
 import json
+import shutil
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -25,6 +28,7 @@ from tests.support.audiobook_synopsis import recording_synopsis_report
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.cover_producers import _preview, _source
 from tests.support.description_advice import _contained_profile
+from tests.unit.test_database_copy import other_unicode
 
 
 @pytest.fixture
@@ -387,6 +391,42 @@ def test_changed_image_and_duplicate_cohort_refuse(frozen):
     image.write_bytes(b"changed")
     with pytest.raises(MetadataReportError):
         measure.inventory(database, artifacts, cohort)
+
+
+def test_a_copy_under_another_unicode_version_names_both_and_the_remedy(
+    frozen, tmp_path
+) -> None:
+    _inputs, database, artifacts, cohort = frozen
+    copy = tmp_path / "copy.sqlite"
+    shutil.copyfile(database, copy)
+    refusal = other_unicode(copy)
+    with pytest.raises(SystemExit) as raised:
+        measure.inventory(copy, artifacts, cohort)
+    assert raised.value.code == refusal
+
+
+def test_a_paid_run_checks_every_script_file_it_executes() -> None:
+    """A sibling module the script imports runs from the checkout (#2018)."""
+    scripts = Path(measure.__file__).parent
+    tree = ast.parse(Path(measure.__file__).read_text())
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if (scripts / f"{alias.name}.py").is_file()
+    } | {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "scripts"
+        for alias in node.names
+    }
+    assert imported == {"database_copy"}
+    assert set(measure.MEASURED_SOURCES) == {
+        Path(measure.__file__).name,
+        "qualify_exact_artifact.py",
+        *(f"{name}.py" for name in imported),
+    }
 
 
 def test_default_inventory_has_zero_external_work(

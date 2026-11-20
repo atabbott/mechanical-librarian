@@ -21,7 +21,9 @@ ordinary application reads never run it. Settings shows the published results
 - The environment, wheel and JSON receipt from a successful exact-artifact
   qualification of the source checkout (the qualifier's `--wheel-output` and
   `--environment` options). The tool builds, installs and repairs nothing. Run
-  it with that environment's Python, outside the checkout. The wheel,
+  it with that environment's Python, outside the checkout. Qualify under the
+  image's Python (`.python-version`): a copy of the install's database is
+  refused under another Python with different Unicode data. The wheel,
   installed payload, RECORD, origin and receipt must match the full source
   SHA; editable installs are refused.
 

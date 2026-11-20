@@ -93,6 +93,13 @@ from mechanical_librarian.domain.reviewer_access import (
     OpenRouterTaskSelection,
 )
 
+# Direct execution puts scripts/ on sys.path; the test import resolves the
+# scripts namespace package.
+try:
+    from scripts import database_copy
+except ImportError:  # pragma: no cover - direct `python scripts/...` execution
+    import database_copy  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
+
 RESULT_SCHEMA = "cover-observation-smoke-result-v1"
 LABELS_SCHEMA = "cover-owner-labels-v1"
 SCORE_SCHEMA = "cover-observation-label-score-v1"
@@ -300,7 +307,8 @@ def load_population(database: Path, artifacts: Path, limit: int) -> Population:
         reader = open_shadow_preview_repository(database)
     except Exception as error:
         raise SmokeRefused(
-            "This checkout cannot read the database copy. Check out the commit "
+            database_copy.unicode_refusal(database)
+            or "This checkout cannot read the database copy. Check out the commit "
             "your install was built from, or copy the database again with the "
             "app stopped."
         ) from error

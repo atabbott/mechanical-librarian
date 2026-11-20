@@ -30,6 +30,10 @@ keep each grant in step with the code it describes.
 - CI runs `uv lock --check`, locked or frozen uv operations, and `npm ci`.
 - `project.requires-python` is a supported interpreter range, not a pin, and
   automation does not manage it.
+- `.python-version` names the image's Python minor version, so `uv run` in a
+  checkout has the image's Unicode data and the owner scripts can read a copy
+  of the install's database. Automation does not manage it either; a parity
+  test fails until it moves with the `Dockerfile`'s Python.
 - Frontend manifest and lockfile bytes are build provenance, not semantic
   qualification identity ([ADR-0076](../architecture/decisions/0076-dependency-build-provenance.md)).
 

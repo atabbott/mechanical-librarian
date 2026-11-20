@@ -42,7 +42,8 @@ owner runs it offline, and the changelog says when one ships.
   [Backups and recovery](../operations/backups-and-recovery.md).
 - **Unicode is part of the schema.** Browse facts record the Unicode version
   they were folded under. A database opened by a Python with different Unicode
-  data is refused and needs a clean rebuild.
+  data is refused and needs a clean rebuild. An owner script reading a copy
+  names both Unicode versions and the Python to run it with instead.
 - **Looks wrong flags are part of the schema.** Each report's flags are stored
   with the rule list that derived them (`value-flag-rules-v1`). A database
   derived under a different rule list is refused and needs a clean rebuild.
@@ -56,7 +57,7 @@ owner runs it offline, and the changelog says when one ships.
 | --- | --- |
 | Runtime | The single non-root container built from this repository's `Dockerfile` and `compose.yaml`, as described in [Deployment](../operations/deployment.md). There is no published image. |
 | Container engine | Docker Engine 25 or newer with Compose v2.20 or newer. |
-| Python | 3.13, 3.14 or 3.15. The image ships Python 3.15. |
+| Python | 3.13, 3.14 or 3.15. The image ships Python 3.15, and a checkout's `.python-version` pins `uv run` to it. |
 | Audiobookshelf | 2.26.0 or later, with no upper-version promise. Writes are qualified against pinned 2.26.0, 2.36.0, 2.37.1 and 2.37.2 images. Each write destination is checked for capability on the running server; a version number alone is not proof. |
 | Libraries | Explicitly configured Audiobookshelf book libraries holding ebooks (EPUB) or audiobooks. Media is read through read-only mounts and never written. |
 | Metadata providers | The built-in adapters listed in [Configuration](configuration.md): Hardcover, Inventaire, Open Library and Google Books for ebooks; Audible, Audnexus and AudioSilo for audiobooks; iTunes Search for ebook corroboration and audiobook covers. |
