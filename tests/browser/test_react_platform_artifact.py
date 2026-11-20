@@ -6295,7 +6295,13 @@ def test_policy_curation_sections_share_the_field_grid() -> None:
         failures: list[str] = []
         for scheme in ("light", "dark"):
             page.emulate_media(color_scheme=scheme)
-            for width, height in ((1440, 900), (1280, 800), (1024, 768), (390, 844)):
+            for width, height in (
+                (1440, 900),
+                (1280, 800),
+                (1024, 768),
+                (700, 800),
+                (390, 844),
+            ):
                 where = f"{scheme} at {width}x{height}"
                 page.set_viewport_size({"width": width, "height": height})
                 page.goto("https://react-platform.invalid/policy?section=curation")
