@@ -100,7 +100,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_application",
         "REVIEW_PREPARATION_SCHEMA",
-        "review-preparation-v2",
+        "review-preparation-v3",
     ),
     (
         "mechanical_librarian.infrastructure.settings_authority",
@@ -155,7 +155,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_LIBRARY_SCHEMA",
-        "review-library-v12",
+        "review-library-v13",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -301,7 +301,12 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.adapters.persistence.catalogue",
         "CATALOGUE_SCHEMA",
-        "catalogue-v3",
+        "catalogue-v4",
+    ),
+    (
+        "mechanical_librarian.application.operations",
+        "OPERATIONAL_STATUS_SCHEMA",
+        "operational-status-v2",
     ),
     ("scripts.cold_start_report", "COLD_START_REPORT_SCHEMA", "cold-start-report-v10"),
     (

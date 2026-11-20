@@ -128,7 +128,7 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `catalogue-v3` | The catalogue database at `/data/catalogue.sqlite3` ([Catalogue](../operations/catalogue.md)) |
+| `catalogue-v4` | The catalogue database at `/data/catalogue.sqlite3` ([Catalogue](../operations/catalogue.md)) |
 | `audio-inspection-v6` | The isolated audio inspection protocol |
 | `epub-inspection-v3` | The isolated EPUB inspection protocol |
 | `batch-manifest-v5` | Source-only foreground evidence batches ([Ebook evidence batches](../operations/ebook-evidence-batches.md)) |
@@ -145,7 +145,7 @@ exact schemas of their own and no separate version string.
 
 The owner API is served under `/api/v1`, and each response names its version
 in `schema_version`. The main ones are `review-session-v1`,
-`review-library-v12`, `review-preparation-v2`, `review-case-detail-v15`,
+`review-library-v13`, `review-preparation-v3`, `review-case-detail-v15`,
 `review-case-evidence-v6`, `review-report-detail-v7`, `review-case-history-v8`,
 `review-attention-v1` and `continuous-field-activity-v5`. The generated
 [OpenAPI document](review-openapi-v1.json) pins each of them except

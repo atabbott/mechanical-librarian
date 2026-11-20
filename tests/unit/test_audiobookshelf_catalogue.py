@@ -23,6 +23,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
     CatalogueError,
+    CatalogueLibraryError,
     RefreshCurrentCatalogue,
     TargetConnectionError,
     catalogue_fingerprint,
@@ -469,6 +470,109 @@ def test_preparation_discovery_keeps_an_untrimmed_title_out_of_connection_pause(
         assert (action.stage, action.item_id) == ("extraction", "valid")
 
 
+def test_preparation_discovery_records_a_missing_item_and_prepares_the_rest() -> None:
+    """#2013: one item Audiobookshelf marks missing no longer fails discovery."""
+    missing = _item("missing")
+    missing["isMissing"] = True
+    details = {"valid": _item("valid"), "missing": missing}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/libraries":
+            return httpx.Response(
+                200, json={"libraries": [{"id": "library-1", "mediaType": "book"}]}
+            )
+        if request.url.path.endswith("/items"):
+            return httpx.Response(
+                200,
+                json={
+                    "total": 2,
+                    "results": [
+                        {"id": "valid", "libraryId": "library-1", "updatedAt": 1},
+                        {"id": "missing", "libraryId": "library-1", "updatedAt": 1},
+                    ],
+                },
+            )
+        return httpx.Response(200, json=details[request.url.path.rsplit("/", 1)[1]])
+
+    mount = MediaMountConfiguration("media", "/media", "/library", True)
+    library = LibraryConfiguration("books", "primary", "library-1", "book", "media", ())
+    configuration = ApplicationConfiguration(
+        (TargetConnectionConfiguration("primary", "https://abs.invalid", "/token"),),
+        (library,),
+        (mount,),
+        (),
+    )
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="https://abs.invalid"
+        ),
+        mounts={"media": mount},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
+
+    def unreachable(*_arguments: object) -> object:
+        raise AssertionError
+
+    with tempfile.TemporaryDirectory() as directory:
+        catalogue_path = Path(directory) / "catalogue.sqlite"
+        application_path = Path(directory) / "application.sqlite"
+        open_repository(application_path).close()
+        stages = ReviewPipelineStages(
+            configuration=configuration,
+            catalogue=lambda create: open_catalogue(catalogue_path, create=create),
+            catalogue_reader=reader,
+            probe_connection=cast("Callable[..., None]", unreachable),
+            connections=frozenset({"primary"}),
+            repository_factory=lambda: open_repository(application_path),
+            recover_artifacts=cast("Callable[[], None]", unreachable),
+            generate_report=cast("Callable[..., str]", unreachable),
+            create_proposal_set=cast("Callable[..., str]", unreachable),
+            admit_review_case=cast("Callable[..., str]", unreachable),
+            cover_considerations=cast(
+                "Callable[[ReviewPipelineRepository], CoverConsiderationService]",
+                unreachable,
+            ),
+            recovery_observer=cast(ProviderFailureObserver, object()),
+            drain_outbox=cast("Callable[..., None]", unreachable),
+            discovery_lock=threading.Lock(),
+            clock=lambda: 1,
+        )
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(application_path),
+            libraries=(("primary", "books", "library-1", "f" * 64),),
+            discover=stages.discover,
+            extract=cast("Callable[..., tuple[str, bool]]", unreachable),
+            providers=cast(
+                "Callable[[ReviewPipelineRepository, str], tuple[ProviderStatus, ...]]",
+                unreachable,
+            ),
+            propose=cast("Callable[..., str]", unreachable),
+            admit=cast("Callable[..., tuple[str, str | None]]", unreachable),
+            project=cast("Callable[..., bool]", unreachable),
+            clock=lambda: 2,
+        )
+        pipeline.request("primary", "books")
+        assert pipeline.run_next()
+        repository = open_repository(application_path)
+        works = repository._connection.execute(
+            "SELECT item_id,state,failure_code FROM review_preparation_work "
+            "ORDER BY item_id"
+        ).fetchall()
+        progress = repository.review_pipeline_progress("primary", "books")
+        repository.close()
+        assert works == [
+            ("missing", "failed", "item_no_media"),
+            ("valid", "queued", None),
+        ]
+        assert progress is not None
+        assert (progress.state, progress.total, progress.discovery_failure) == (
+            "processing",
+            2,
+            None,
+        )
+
+
 @pytest.mark.parametrize(
     "body",
     (
@@ -490,13 +594,21 @@ def test_strict_stream_json_rejects_duplicates_nonfinite_and_depth(body: bytes) 
         _get(client, "/api/libraries", 65_536, 1)
 
 
-def test_missing_items_and_one_element_plural_remain_unusable() -> None:
-    detail = _item()
-    detail["isMissing"] = True
-    detail["media"] = {
-        "metadata": {"title": "Title", "authors": []},
-        "ebookFiles": [{"ebookFormat": "epub"}],
-    }
+def _page_reader(
+    details: dict[str, object],
+    *,
+    summaries: list[dict[str, object]] | None = None,
+    maximum_bytes: int = 65_536,
+) -> AudiobookshelfCatalogueReader:
+    """A reader over one library whose item details answer from `details`.
+
+    A detail that is an `httpx.Response` is answered as it stands; any other
+    value is answered as JSON. A listed item absent from `details` is a 404.
+    """
+    rows = summaries or [
+        {"id": identifier, "libraryId": "library-1", "updatedAt": 1}
+        for identifier in details
+    ]
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/libraries":
@@ -504,16 +616,290 @@ def test_missing_items_and_one_element_plural_remain_unusable() -> None:
                 200, json={"libraries": [{"id": "library-1", "mediaType": "book"}]}
             )
         if request.url.path.endswith("/items"):
-            return httpx.Response(
+            return httpx.Response(200, json={"total": len(rows), "results": rows})
+        identifier = request.url.path.rsplit("/", 1)[1]
+        if identifier not in details:
+            return httpx.Response(404)
+        value = details[identifier]
+        if isinstance(value, httpx.Response):
+            return value
+        return httpx.Response(200, json=value)
+
+    return AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="https://abs.invalid"
+        ),
+        mounts={},
+        maximum_bytes=maximum_bytes,
+        timeout_seconds=1,
+    )
+
+
+def test_missing_items_and_one_element_plural_remain_unusable() -> None:
+    missing = _item("missing")
+    missing["isMissing"] = True
+    plural = _item("plural")
+    for detail in (missing, plural):
+        detail["media"] = {
+            "metadata": {"title": "Title", "authors": []},
+            "ebookFiles": [{"ebookFormat": "epub"}],
+        }
+    entries = {
+        entry.item_id: entry
+        for entry in _page_reader({"missing": missing, "plural": plural}).read_library(
+            "primary", _library(), 10
+        )
+    }
+    assert (
+        entries["missing"].unread,
+        entries["missing"].classification,
+        entries["missing"].eligible,
+    ) == ("no_media", "needs-attention", False)
+    assert (entries["plural"].unread, entries["plural"].classification) == (
+        None,
+        "needs-attention",
+    )
+
+
+def test_one_unreadable_item_in_a_page_leaves_its_siblings_entries() -> None:
+    """#2013: one item the service cannot give no longer fails the library."""
+    unreadable = _item("unreadable")
+    unreadable["media"]["metadata"]["authors"] = "Ada"
+    entries = _page_reader(
+        {"first": _item("first"), "unreadable": unreadable, "last": _item("last")}
+    ).read_library("primary", _library(), 10)
+    assert [(entry.item_id, entry.unread) for entry in entries] == [
+        ("first", None),
+        ("unreadable", "unreadable"),
+        ("last", None),
+    ]
+    assert (
+        entries[0].classification == entries[2].classification == ("singular-supported")
+    )
+    assert entries[1] == CatalogueEntry(
+        "primary",
+        "books",
+        "library-1",
+        "unreadable",
+        1,
+        "Title",
+        (),
+        False,
+        False,
+        "needs-attention",
+        unread="unreadable",
+    )
+
+
+def _with(identifier: str, **fields: object) -> dict[str, object]:
+    return {**_item(identifier), **fields}
+
+
+@pytest.mark.parametrize(
+    ("detail", "code"),
+    (
+        pytest.param(None, "changed", id="not_found"),
+        pytest.param(
+            httpx.Response(
                 200,
-                json={
-                    "total": 1,
-                    "results": [
-                        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
-                    ],
-                },
+                headers={"content-type": "application/json"},
+                content=b'{"pad":"' + b"x" * 70_000 + b'"}',
+            ),
+            "oversized",
+            id="oversized",
+        ),
+        pytest.param(
+            httpx.Response(
+                200, headers={"content-type": "application/json"}, content=b"{"
+            ),
+            "unreadable",
+            id="json",
+        ),
+        pytest.param(
+            httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                content=b"[" * 101 + b"]" * 101,
+            ),
+            "unreadable",
+            id="depth",
+        ),
+        pytest.param([], "unreadable", id="not_an_object"),
+        pytest.param(_with("item-1", id="other"), "changed", id="identity"),
+        pytest.param(_with("item-1", libraryId="other"), "changed", id="library"),
+        pytest.param(_with("item-1", updatedAt=2), "changed", id="updated"),
+        pytest.param(_with("item-1", isMissing=True), "no_media", id="missing"),
+        pytest.param(_with("item-1", isInvalid=True), "no_media", id="invalid"),
+        pytest.param(_with("item-1", media=[]), "unreadable", id="media"),
+        pytest.param(_with("item-1", media={"metadata": []}), "unreadable", id="meta"),
+        pytest.param(
+            _with("item-1", media={"metadata": {"authors": [{"name": ""}]}}),
+            "unreadable",
+            id="author_name",
+        ),
+        pytest.param(
+            _with("item-1", media={"metadata": {"authors": ["Ada"] * 33}}),
+            "unreadable",
+            id="author_count",
+        ),
+    ),
+)
+def test_each_item_condition_is_recorded_with_its_code(
+    detail: object, code: str
+) -> None:
+    details: dict[str, object] = {} if detail is None else {"item-1": detail}
+    (entry,) = _page_reader(
+        details,
+        summaries=[{"id": "item-1", "libraryId": "library-1", "updatedAt": 1}],
+    ).read_library("primary", _library(), 10)
+    assert (entry.unread, entry.classification, entry.file_identity, entry.mount) == (
+        code,
+        "needs-attention",
+        None,
+        None,
+    )
+    assert (entry.has_audio, entry.has_ebook, entry.eligible) == (False, False, False)
+
+
+@pytest.mark.parametrize(
+    ("detail", "code"),
+    (
+        # A 404 outranks a listing that says the item is missing.
+        pytest.param(None, "changed", id="not_found_beats_missing"),
+        # A changed item outranks the missing flag it now carries.
+        pytest.param(
+            _with("item-1", updatedAt=2, isMissing=True),
+            "changed",
+            id="mismatch_beats_missing",
+        ),
+        # The missing flag outranks a shape that could not be read.
+        pytest.param(
+            _with("item-1", isMissing=True, media=[]),
+            "no_media",
+            id="missing_beats_shape",
+        ),
+    ),
+)
+def test_item_conditions_keep_their_precedence(detail: object, code: str) -> None:
+    details: dict[str, object] = {} if detail is None else {"item-1": detail}
+    (entry,) = _page_reader(
+        details,
+        summaries=[
+            {
+                "id": "item-1",
+                "libraryId": "library-1",
+                "updatedAt": 1,
+                "isMissing": True,
+            }
+        ],
+    ).read_library("primary", _library(), 10)
+    assert entry.unread == code
+
+
+def test_an_unread_item_is_named_from_the_detail_then_the_listing() -> None:
+    from_detail = _with("detail", isMissing=True, updatedAt=4)
+    from_detail["media"] = {
+        "metadata": {"title": "  Detail title  ", "authors": [{"name": "Ada"}]}
+    }
+    entries = _page_reader(
+        {"detail": from_detail},
+        summaries=[
+            {"id": "detail", "libraryId": "library-1", "updatedAt": 4},
+            {
+                "id": "listing",
+                "libraryId": "library-1",
+                "updatedAt": "4",
+                "media": {"metadata": {"title": "Listing title"}},
+            },
+            {"id": "unnamed", "libraryId": "library-1", "updatedAt": 1},
+        ],
+    ).read_library("primary", _library(), 10)
+    assert [
+        (entry.item_id, entry.title, entry.authors, entry.updated_at, entry.unread)
+        for entry in entries
+    ] == [
+        ("detail", "Detail title", ("Ada",), 4, "no_media"),
+        ("listing", "Listing title", (), 0, "changed"),
+        ("unnamed", "Untitled item requiring attention", (), 1, "changed"),
+    ]
+
+
+@pytest.mark.parametrize("status", (401, 403, 500))
+def test_connection_conditions_on_an_item_still_stop_the_library(status: int) -> None:
+    reader = _page_reader(
+        {"item-1": httpx.Response(status)},
+        summaries=[{"id": "item-1", "libraryId": "library-1", "updatedAt": 1}],
+    )
+    with pytest.raises(TargetConnectionError) as raised:
+        reader.read_library("primary", _library(), 10)
+    assert (
+        raised.value.code
+        == {
+            401: "authentication",
+            403: "authorization",
+            500: "unavailable",
+        }[status]
+    )
+
+
+def test_a_non_json_item_answer_still_stops_the_library() -> None:
+    reader = _page_reader(
+        {"item-1": httpx.Response(200, content=b"{}")},
+        summaries=[{"id": "item-1", "libraryId": "library-1", "updatedAt": 1}],
+    )
+    with pytest.raises(TargetConnectionError) as raised:
+        reader.read_library("primary", _library(), 10)
+    assert raised.value.code == "unavailable"
+
+
+def test_a_404_for_the_library_list_is_still_connection_wide() -> None:
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(lambda _: httpx.Response(404)),
+            base_url="https://abs.invalid",
+        ),
+        mounts={},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
+    with pytest.raises(TargetConnectionError) as raised:
+        reader.read_library("primary", _library(), 10)
+    assert type(raised.value) is TargetConnectionError
+    assert raised.value.code == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("listing", "code"),
+    (
+        pytest.param({"libraries": []}, "library_unavailable", id="unavailable"),
+        pytest.param({"libraries": "books"}, "response_unreadable", id="libraries"),
+        pytest.param({"total": 11, "results": []}, "library_too_large", id="cap"),
+        pytest.param({"total": 1, "results": "x"}, "response_unreadable", id="rows"),
+        pytest.param({"total": "1", "results": []}, "response_unreadable", id="total"),
+        pytest.param(
+            {"total": 1, "results": [{"libraryId": "library-1"}]},
+            "response_unreadable",
+            id="no_identity",
+        ),
+        pytest.param({"total": 1, "results": [[]]}, "response_unreadable", id="row"),
+        pytest.param(
+            {"total": 1, "results": [{"id": "x" * 70_000}]},
+            "response_too_large",
+            id="oversized",
+        ),
+    ),
+)
+def test_library_conditions_are_named_for_the_whole_library(
+    listing: dict[str, object], code: str
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/libraries":
+            if "libraries" in listing:
+                return httpx.Response(200, json=listing)
+            return httpx.Response(
+                200, json={"libraries": [{"id": "library-1", "mediaType": "book"}]}
             )
-        return httpx.Response(200, json=detail)
+        return httpx.Response(200, json=listing)
 
     reader = AudiobookshelfCatalogueReader(
         client_factory=lambda _: httpx.Client(
@@ -523,8 +909,9 @@ def test_missing_items_and_one_element_plural_remain_unusable() -> None:
         maximum_bytes=65_536,
         timeout_seconds=1,
     )
-    with pytest.raises(CatalogueError):
+    with pytest.raises(CatalogueLibraryError) as raised:
         reader.read_library("primary", _library(), 10)
+    assert raised.value.code == code
 
 
 def test_path_only_mapping_matches_item_identity_and_enforces_relative_bounds() -> None:

@@ -282,6 +282,7 @@ const library = (
   recorded: 0,
   not_matched: 0,
   rescan_requested: false,
+  discovery_failure: null,
   stages: [],
   ...overrides,
 })

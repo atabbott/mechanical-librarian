@@ -361,7 +361,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     )
             else:
                 self._connection.execute(
-                    "UPDATE review_preparation_scans SET state='queued',"
+                    "UPDATE review_preparation_scans SET state='queued',discovery_failure=NULL,"
                     "library_id=?,producer_fingerprint=?,requested_at=?,updated_at=?,"
                     "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
                     "qualification_epoch=NULL,refresh_count=0,"
@@ -448,7 +448,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
     ) -> PipelineProgress | None:
         try:
             row = self._connection.execute(
-                "SELECT scan_id,state,total,rescan_requested,updated_at FROM review_preparation_scans "
+                "SELECT scan_id,state,total,rescan_requested,updated_at,discovery_failure "
+                "FROM review_preparation_scans "
                 "WHERE connection_name=? AND library_name=? "
                 "ORDER BY requested_at DESC LIMIT 1",
                 (connection, library),
@@ -480,6 +481,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 bool(row[3]),
                 row[4],
                 _stages(counts, 5),
+                discovery_failure=row[5],
             )
         except sqlite3.Error as error:
             raise MetadataReportError(
@@ -519,7 +521,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             )
             rows = self._connection.execute(
                 "SELECT s.scan_id,s.connection_name,s.library_name,s.state,s.total,"
-                "s.rescan_requested,s.updated_at,"
+                "s.rescan_requested,s.updated_at,s.discovery_failure,"
                 "COALESCE(SUM(CASE WHEN w.state IN ('complete','failed','stale') THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_READY_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_BLOCKED_SQL} THEN 1 ELSE 0 END),0),"
@@ -534,7 +536,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "AND selected.library_name=s.library_name "
                 "ORDER BY selected.requested_at DESC,selected.scan_id DESC LIMIT 1) "
                 "GROUP BY s.scan_id,s.connection_name,s.library_name,s.state,s.total,"
-                "s.rescan_requested,s.updated_at",
+                "s.rescan_requested,s.updated_at,s.discovery_failure",
                 tuple(value for library in libraries for value in library),
             ).fetchall()
             # The visible run and the scans it enrolled, in the same read, so
@@ -557,17 +559,18 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     row[1],
                     row[2],
                     row[3],
-                    row[7],
-                    row[4],
                     row[8],
+                    row[4],
                     row[9],
                     row[10],
                     row[11],
+                    row[12],
                     bool(row[5]),
                     row[6],
-                    _stages(row, 12),
+                    _stages(row, 13),
                     None if run is None else run[0],
                     row[0] in enrolled,
+                    row[7],
                 )
                 for row in rows
             }

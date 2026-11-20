@@ -712,3 +712,14 @@ was admitted again, so a write belongs to the episode it landed in.
 follows, and the `human_decisions` `CHECK` admits `follows` on any outcome.
 Every earlier application database is rejected before mutation and needs a
 clean rebuild; no adoption is supplied.
+
+Issue #2013 takes the clean-rebuild branch. `review_preparation_scans` gains
+`discovery_failure`, the closed reason a library's discovery stopped, admitted
+only on a `completed_with_failures` scan, and the `review_preparation_work`
+failure-code `CHECK` admits `item_no_media`, `item_unreadable` and
+`item_oversized` ([ADR-0031](0031-persisted-review-preparation.md)).
+`catalogue-v4` keeps each unread item's reason, so a `catalogue-v3` database
+is refused. `review-preparation-v3`, `review-library-v13` and
+`operational-status-v2` carry the new codes. No report, proposal or decision
+version moves. Every earlier application and catalogue database is rejected
+before mutation and needs a clean rebuild; no adoption is supplied.

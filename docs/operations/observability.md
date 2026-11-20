@@ -20,7 +20,7 @@ The container's own health check reads `/health/ready`; see
 
 ## Operational status
 
-`GET /api/v1/operations/status` (signed in) returns `operational-status-v1`:
+`GET /api/v1/operations/status` (signed in) returns `operational-status-v2`:
 readiness, aggregate counts, bounded stage timing and typed incidents. An
 incident is one of healthy activity, owner action needed, automatic recovery,
 field or category suspension, authentication failure, backup failure or service
@@ -91,6 +91,8 @@ text, credential or path.
 | --- | --- |
 | `preparation_unknown_failure` | An unclassified preparation exception is observed (WARNING). |
 | `preparation_claim_contended` | A preparation claim, or a claimed stage's target-connection check, lost the write lock and will retry (WARNING, `code: contention`). |
+| `preparation_discovery_failed` | A library's discovery stopped (WARNING). `code` is the stored reason; `connection` and `library` are the configured names, or null. |
+| `preparation_items_unread` | A completed discovery left items it could not read (WARNING). `changed`, `no_media`, `oversized` and `unreadable` count them, up to 10,000 each. |
 | `activity_projector` | The background Activity projector stopped. `code` is `stopped`, `released` or `admission_closed` (info), or `unexpected` (WARNING, with the exception type in `error`). Shutdown adds `join_timeout` (WARNING) if the projector's current step outlasts the join bound; closing still waits for that step. |
 | `provider_recovery_schedule` | The review library cannot read the recovery schedule, so it withdraws the retry promise (WARNING, `code: unavailable`). |
 | `owner_password_change` | An owner password change reached the sign-in throttle. `outcome` is `changed` or the refusal code; `sessions_ended` counts the other session rows removed, or is null when nothing changed or their removal failed. Info, or WARNING for `persistence`, `runtime` or a failed removal. |

@@ -1409,6 +1409,7 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
         "blocked": 0,
         "checked": 2,
         "connection": "primary",
+        "discovery_failure": None,
         "library": "fiction",
         "library_id": "lib-1",
         "not_matched": 0,

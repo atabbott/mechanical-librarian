@@ -191,8 +191,8 @@ OWNER_LINK_HISTORY_EVENT_SCHEMA: Final[OwnerLinkHistoryEventSchemaVersion] = (
 
 # v10: a row's link says how it was made, and a file link names no source (#1478);
 # v12: a current description carries its formatted copy (#1995).
-ReviewLibrarySchemaVersion = Literal["review-library-v12"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v12"
+ReviewLibrarySchemaVersion = Literal["review-library-v13"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v13"
 
 ReviewReportDetailSchemaVersion = Literal["review-report-detail-v7"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
@@ -4791,6 +4791,21 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
     "internal_failure": (
         "Preparation stopped before the review was ready.",
         _SCAN_AGAIN,
+    ),
+    # #2013: Audiobookshelf listed the book but could not give it usably.
+    "item_no_media": (
+        "Audiobookshelf has no audio or ebook file for this book.",
+        "Add its file in Audiobookshelf, then scan this library again.",
+    ),
+    "item_unreadable": (
+        "Mechanical Librarian could not read this book’s details from Audiobookshelf.",
+        "Check its title and authors in Audiobookshelf, then scan this library again.",
+    ),
+    "item_oversized": (
+        "This book’s details from Audiobookshelf are over the Audiobookshelf "
+        "response limit.",
+        "Raise the Audiobookshelf response limit in Settings → Background work, "
+        "then scan this library again.",
     ),
     "unknown": (
         "Preparation stopped, and no more detail can be shown.",

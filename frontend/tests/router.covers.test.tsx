@@ -204,6 +204,7 @@ const library0 = {
   library_id: 'books',
   ready: 0,
   rescan_requested: false,
+  discovery_failure: null,
   scan_id: null,
   state: 'idle' as const,
   total: 0,

@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- **Clean rebuild required.** One book Audiobookshelf cannot give, such as a
+  book with no audio or ebook file, no longer stops its whole library: it is
+  listed under Could not finish with its reason and next step, and every other
+  book is prepared. When a whole library cannot be read, Background activity
+  says why (#2013).
 - After you pin a field and take the pin back on a work Automatic had not
   decided yet, turning on Automatic now shows that your earlier decision holds
   the field, with Automatic's choice and Resume automatic handling, on the

@@ -28,6 +28,7 @@ from mechanical_librarian.domain.metadata_report import ProviderStatus
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 
 __all__ = [
+    "DISCOVERY_FAILURE_CODES",
     "PipelineAction",
     "PipelineProgress",
     "ReviewPipelineClaimContention",
@@ -53,6 +54,20 @@ _STAGES = (
 )
 
 _COOPERATIVE_ACTION_DWELL_SECONDS = 0.01
+
+# Why a whole library's discovery stopped (#2013). The scans table's CHECK
+# repeats this list and a read-back test holds the two equal.
+DISCOVERY_FAILURE_CODES = (
+    "library_unavailable",
+    "library_too_large",
+    "response_too_large",
+    "response_unreadable",
+    "catalogue_unavailable",
+    "persistence",
+    "unknown",
+)
+_UNREAD_EVENT_CODES = ("changed", "no_media", "oversized", "unreadable")
+_EVENT_SLUG = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 
 
 _ForegroundResult = TypeVar("_ForegroundResult")
@@ -107,6 +122,66 @@ def _log_claim_contention() -> None:
         )
     except Exception:
         pass
+
+
+def _event_slug(value: object) -> str | None:
+    """A configured slug, or null for anything a slug rule does not admit."""
+    return (
+        value
+        if type(value) is str and _EVENT_SLUG.fullmatch(value) is not None
+        else None
+    )
+
+
+def _write_event(payload: dict[str, object]) -> None:
+    """Write one value-free event line; a failing sink cannot stop the lane."""
+    try:
+        sys.stderr.write(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+        )
+    except Exception:
+        pass
+
+
+def _log_discovery_failure(action: PipelineAction, code: str) -> None:
+    """Record that one library's discovery stopped, and only why (#2013)."""
+    _write_event(
+        {
+            "code": code if code in DISCOVERY_FAILURE_CODES else "unknown",
+            "connection": _event_slug(action.connection),
+            "event": "preparation_discovery_failed",
+            "level": "warning",
+            "library": _event_slug(action.library),
+        }
+    )
+
+
+def _log_unread_items(
+    action: PipelineAction, entries: tuple[CatalogueEntry, ...]
+) -> None:
+    """Count one library's items the service could not give usably (#2013)."""
+    try:
+        counts = dict.fromkeys(_UNREAD_EVENT_CODES, 0)
+        for entry in entries:
+            if (
+                entry.unread in counts
+                and entry.connection == action.connection
+                and entry.library == action.library
+            ):
+                counts[entry.unread] += 1
+    except Exception:
+        return
+    if not any(counts.values()):
+        return
+    _write_event(
+        {
+            **{code: min(count, 10_000) for code, count in counts.items()},
+            "connection": _event_slug(action.connection),
+            "event": "preparation_items_unread",
+            "level": "warning",
+            "library": _event_slug(action.library),
+        }
+    )
 
 
 def preparation_failure_reference(
@@ -366,6 +441,9 @@ class PipelineProgress:
     single-library read leaves both unset.
     """
     in_run: bool = False
+    discovery_failure: str | None = None
+    """Why this library's last discovery stopped, while its scan stands
+    failed; one of `DISCOVERY_FAILURE_CODES` (#2013)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1217,6 +1295,7 @@ class ReviewPreparationPipeline:
                 self._complete_discovery(
                     repository, action, generation, fingerprint, entries
                 )
+                _log_unread_items(action, entries)
                 return None
             if action.stage == "extraction":
                 output_id, checkpoint_committed = self._extract(
@@ -1303,6 +1382,8 @@ class ReviewPreparationPipeline:
                         if isinstance(error, CredentialError)
                         else None,
                     )
+                    if owned.stage == "discovery":
+                        _log_discovery_failure(owned, code)
             except Exception:
                 if self._owned() is None:
                     # Settlement committed before its notification failed.

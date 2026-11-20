@@ -2926,7 +2926,7 @@ describe('ReviewApiClient', () => {
       .mockResolvedValueOnce(
         Response.json(
           preparation({
-            schema_version: 'review-preparation-v2',
+            schema_version: 'review-preparation-v3',
             recovery_required: false,
             paused: false,
           }),
@@ -2939,7 +2939,7 @@ describe('ReviewApiClient', () => {
       state: 'queued',
     })
     await expect(client.preparationAction('pause')).resolves.toMatchObject({
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       paused: false,
     })
@@ -3358,7 +3358,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v12', error: { code: 'busy' } },
+          { schema_version: 'review-library-v13', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3462,7 +3462,7 @@ describe('ReviewApiClient', () => {
       readLibrary({ ...page, schema_version: 'review-library-v11' }),
     ).rejects.toMatchObject(refused('const@/schema_version'))
     await expect(
-      readLibrary({ ...page, schema_version: 'review-library-v12' }),
+      readLibrary({ ...page, schema_version: 'review-library-v13' }),
     ).resolves.toBeDefined()
   })
 

@@ -34,7 +34,8 @@ entry has the connection, library and item identity, display title and
 authors, separate ebook and audio facets, and one classification: `none`,
 `singular-supported` (one EPUB, or one mounted audio file set) or
 `needs-attention`. Only a `singular-supported` entry carries an opaque file
-identity.
+identity. A `needs-attention` entry may be `unread`: listed by the service but
+not given usably, with a closed reason and nothing to prepare.
 
 A generation becomes current only when it is complete; the previous one stays
 readable until then. Eligibility is an observation. It grants no authority to

@@ -135,9 +135,9 @@ if TYPE_CHECKING:
     )
 
 
-ReviewPreparationSchemaVersion = Literal["review-preparation-v2"]
+ReviewPreparationSchemaVersion = Literal["review-preparation-v3"]
 REVIEW_PREPARATION_SCHEMA: Final[ReviewPreparationSchemaVersion] = (
-    "review-preparation-v2"
+    "review-preparation-v3"
 )
 
 _Result = TypeVar("_Result")
@@ -2153,6 +2153,9 @@ class ReviewApplication:
                 "rescan_requested": False
                 if progress is None
                 else progress.rescan_requested,
+                "discovery_failure": None
+                if progress is None
+                else progress.discovery_failure,
                 "stages": []
                 if progress is None
                 else [
@@ -2307,6 +2310,7 @@ class ReviewApplication:
             "recorded": progress.recorded,
             "not_matched": progress.not_matched,
             "rescan_requested": progress.rescan_requested,
+            "discovery_failure": progress.discovery_failure,
             "stages": [
                 {"stage": stage, "count": count} for stage, count in progress.stages
             ],

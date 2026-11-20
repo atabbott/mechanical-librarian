@@ -7,6 +7,7 @@ import type { LibraryWorkView, ProviderOutcomeView } from '../api/http'
 import { BookMark } from '../components/BookMark'
 import { MediaHealth } from '../components/MediaHealth'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
+import { SettingsPathText } from '../components/SettingsPathText'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatRunningTime } from '../dates'
 import { retryInPlace } from '../focusAfterRetry'
@@ -23,6 +24,7 @@ import {
   preparationStageLabels,
   preparationStatusLabels,
   sourceStatusLabel,
+  unreadItemStatuses,
 } from '../labels'
 import { authorLine, reportEvidenceUrl } from '../libraryWork'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
@@ -254,12 +256,14 @@ export function WorkSummary({ work }: { work: LibraryWorkView }) {
         <aside className="comparison-notice" aria-label="Preparation condition">
           <p>
             <strong>
-              {preparationStatusLabels[work.preparation.status]}{' '}
-              {preparationStageLabels[work.preparation.stage]}
+              {preparationStatusLabels[work.preparation.status]}
+              {unreadItemStatuses.has(work.preparation.status)
+                ? null
+                : ` ${preparationStageLabels[work.preparation.stage]}`}
             </strong>
           </p>
           <p>
-            {work.preparation.reason} {work.preparation.recovery}
+            {work.preparation.reason} <SettingsPathText text={work.preparation.recovery} />
           </p>
         </aside>
       ) : null}

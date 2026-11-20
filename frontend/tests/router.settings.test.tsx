@@ -3993,7 +3993,7 @@ describe('library languages in Settings (#1466)', () => {
 describe('settings provider throttling (#1282)', () => {
   const throttled = (retry: 'available' | 'managed_by_file' = 'available'): PreparationView => ({
     ...idlePreparation,
-    schema_version: 'review-preparation-v2',
+    schema_version: 'review-preparation-v3',
     recovery_required: false,
     active: false,
     actionable: false,
