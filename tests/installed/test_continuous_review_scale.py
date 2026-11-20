@@ -14,6 +14,7 @@ from tests.support.continuous_review_scale import (
 from tests.support.inventaire_preparation import InventairePreparationFixture
 from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 
+from mechanical_librarian.application.review_web import OWNER_LINK_VIEW_SCHEMA
 from mechanical_librarian.domain.cover_evidence import CoverSourceState
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -469,5 +470,5 @@ def test_installed_selected_work_reads_its_find_this_book_view() -> None:
                 )
     assert response.status_code == 200, response.text
     view = response.json()
-    assert view["schema_version"] == "owner-link-view-v3"
+    assert view["schema_version"] == OWNER_LINK_VIEW_SCHEMA
     assert view["link"] is None
