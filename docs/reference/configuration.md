@@ -397,7 +397,7 @@ ebooks and audiobooks), `hardcover`, `open_library` and `inventaire`. Guided
 setup saves it on for each of these sources it turns on, and switching one on in
 Settings turns its switch on. You can turn it off. While the source is off, the
 switch is off and cannot be changed. Saved values are shown as they are: covers
-saved off stay off until you switch them on.
+saved off stay off until you switch them on, or turn the source off and on again.
 
 The screens show one fixed display name per adapter, never the instance `name`.
 

@@ -599,8 +599,8 @@ edits ([configuration](../reference/configuration.md),
 [ADR-0058](../architecture/decisions/0058-settings-authority-and-first-boot.md)).
 
 Secrets show only as `Configured · ····xxxx` or `Not configured`. Turning a
-source off keeps its key, turns off its cover evidence and removes it from its
-libraries. On again, only its cover evidence returns.
+source off keeps its key, turns its covers off and removes it from its
+libraries. On again, its covers turn on, not its libraries.
 
 Each library lists its languages by name, the first marked Preferred, with
 buttons to move or remove each and a picker to add one, up to eight.
