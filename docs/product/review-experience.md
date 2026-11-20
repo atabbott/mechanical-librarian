@@ -591,7 +591,7 @@ indirect ones too. While anything is unsaved, a bottom tray shared with Policy
 lists before and after values and offers Discard all and Save settings. A tray
 taller than a third of the window scrolls with the page. Save settings checks
 every value and goes to the first that needs fixing. "Settings saved and
-in use." appears once, at the page's end, so nothing moves. If
+in use." appears once, above the page's end and the tray, so nothing moves. If
 settings changed elsewhere, saving loads them under your draft. An edit to a
 value changed in both places takes the newer value, and the tray counts these.
 In a file-managed deployment the page names `/data/config.json` and offers no
@@ -600,7 +600,7 @@ edits ([configuration](../reference/configuration.md),
 
 Secrets show only as `Configured · ····xxxx` or `Not configured`. Turning a
 source off keeps its key, turns off its cover evidence and removes it from its
-libraries. Turning it on turns on any cover evidence, not its libraries.
+libraries. On again, only its cover evidence returns.
 
 Each library lists its languages by name, the first marked Preferred, with
 buttons to move or remove each and a picker to add one, up to eight.
