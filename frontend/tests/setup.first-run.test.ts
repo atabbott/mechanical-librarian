@@ -3790,8 +3790,10 @@ it('keeps validated reviewer prices visible before Continue and on reopen', asyn
   expect(about).not.toHaveAttribute('open')
   about.open = true
   expect(prices).toBeVisible()
-  // The cost line folds with the form; the chosen model is said instead.
-  expect(screen.getByText('GPT-6 Luna: cost not measured.')).not.toBeVisible()
+  // The chosen model's cost stays in view above the folded form.
+  const cost = screen.getByText('GPT-6 Luna: cost not measured.')
+  expect(cost).toBeVisible()
+  expect(cost.nextElementSibling).toBe(screen.getByRole('button', { name: 'Change model or key' }))
   expect(
     within(document.querySelector<HTMLElement>('#setup-main') ?? document.body).getByText(
       'Selected: GPT-6 Luna',
@@ -3917,6 +3919,10 @@ it('folds the chosen OpenRouter card, says it is ready and moves focus to Contin
   const line = page.getByText('Selected: GPT-6 Luna')
   expect(line.previousElementSibling).toBe(screen.getByRole('heading', { name: 'OpenRouter' }))
   expect(line.nextElementSibling).toHaveTextContent('Status: ready to use')
+  expect(line.nextElementSibling?.nextElementSibling).toHaveTextContent(
+    'GPT-6 Luna: cost not measured.',
+  )
+  expect(screen.getAllByText('GPT-6 Luna: cost not measured.')).toHaveLength(1)
   expect(page.getAllByText(/^Selected: /u)).toHaveLength(1)
   const change = screen.getByRole('button', { name: 'Change model or key' })
   expect(change).toHaveAttribute('aria-expanded', 'false')

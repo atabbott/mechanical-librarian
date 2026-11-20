@@ -333,6 +333,8 @@ const renderOpenRouterOption=(form,access,failed)=>{
       ready.textContent='Status: ready to use';
       router.append(ready)
     }
+    // The chosen model's cost stays in view, above the toggle.
+    router.append(cost);
     const fold=button('Change model or key');
     fold.type='button';
     fold.setAttribute('aria-expanded','false');
