@@ -32,6 +32,7 @@ from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtif
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_shadow_preview_repository,
 )
+from mechanical_librarian.adapters.persistence.schema import BrowseFactUnicodeError
 from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterReviewer
 from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewRequest,
@@ -62,6 +63,13 @@ from mechanical_librarian.domain.reviewer_cost import (
     ReviewerCostEvidence,
     per_thousand,
 )
+
+# Direct execution puts scripts/ on sys.path; the test import resolves the
+# scripts namespace package.
+try:
+    from scripts import database_copy
+except ImportError:  # pragma: no cover - direct `python scripts/...` execution
+    import database_copy  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
 
 
 def digest(payload: bytes) -> str:
@@ -155,7 +163,10 @@ class FrozenInput:
 def inventory(
     database: Path, artifacts: Path, cohort: Cohort
 ) -> tuple[FrozenInput, ...]:
-    reader = open_shadow_preview_repository(database)
+    try:
+        reader = open_shadow_preview_repository(database)
+    except BrowseFactUnicodeError as error:
+        raise SystemExit(database_copy.unicode_refusal(error)) from error
     store = CoverArtifactStore(artifacts, create=False)
     values = []
     try:

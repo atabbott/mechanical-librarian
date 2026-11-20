@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import shutil
 from typing import Any
 
 import httpx
@@ -25,6 +26,7 @@ from tests.support.audiobook_synopsis import recording_synopsis_report
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.cover_producers import _preview, _source
 from tests.support.description_advice import _contained_profile
+from tests.unit.test_database_copy import other_unicode
 
 
 @pytest.fixture
@@ -387,6 +389,18 @@ def test_changed_image_and_duplicate_cohort_refuse(frozen):
     image.write_bytes(b"changed")
     with pytest.raises(MetadataReportError):
         measure.inventory(database, artifacts, cohort)
+
+
+def test_a_copy_under_another_unicode_version_names_both_and_the_remedy(
+    frozen, tmp_path
+) -> None:
+    _inputs, database, artifacts, cohort = frozen
+    copy = tmp_path / "copy.sqlite"
+    shutil.copyfile(database, copy)
+    refusal = other_unicode(copy)
+    with pytest.raises(SystemExit) as raised:
+        measure.inventory(copy, artifacts, cohort)
+    assert raised.value.code == refusal
 
 
 def test_default_inventory_has_zero_external_work(

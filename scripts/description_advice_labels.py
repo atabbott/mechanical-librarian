@@ -48,6 +48,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteShadowPreviewRepository,
     open_shadow_preview_repository,
 )
+from mechanical_librarian.adapters.persistence.schema import BrowseFactUnicodeError
 from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewRequest,
     canonical_json,
@@ -85,10 +86,12 @@ from mechanical_librarian.infrastructure.configuration import load_configuration
 # scripts namespace package.
 try:
     from scripts import admission_rule_ledger as ledger
+    from scripts import database_copy
     from scripts import hardcover_series_sample as series_sample
     from scripts import relaxation_label_sample as relaxation_sample
 except ImportError:  # pragma: no cover - direct `python scripts/...` execution
     import admission_rule_ledger as ledger  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
+    import database_copy  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
     import hardcover_series_sample as series_sample  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
     import relaxation_label_sample as relaxation_sample  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
 
@@ -949,6 +952,8 @@ def _open(database: Path) -> SQLiteShadowPreviewRepository:
         raise SystemExit(relaxation_sample._WAL)
     try:
         return open_shadow_preview_repository(database)
+    except BrowseFactUnicodeError as error:
+        raise SystemExit(database_copy.unicode_refusal(error)) from error
     except Exception as error:
         raise SystemExit(series_sample._UNREADABLE) from error
 

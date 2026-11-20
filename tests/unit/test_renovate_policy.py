@@ -267,6 +267,33 @@ def test_native_managed_toolchain_declarations_agree(
     assert len(set(values)) == 1
 
 
+def test_uv_python_pin_is_the_image_python_minor_version() -> None:
+    """`uv run` in a checkout picks the image's Python and so its Unicode data.
+
+    The owner scripts read a copy of the install's database, which records the
+    Unicode version its browse facts were folded under (#2018). Renovate does
+    not manage `.python-version`, so a new Python minor fails here until the
+    pin moves with the `Dockerfile`.
+    """
+    pin = (ROOT / ".python-version").read_text(encoding="ascii")
+    assert re.fullmatch(r"[0-9]+\.[0-9]+\n", pin)
+    images = re.findall(
+        r"^FROM python:([0-9]+\.[0-9]+)\.[0-9]+-",
+        (ROOT / "Dockerfile").read_text(),
+        re.MULTILINE,
+    )
+    assert len(images) == 2
+    assert set(images) == {pin.strip()}
+    requires = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"][
+        "requires-python"
+    ]
+    bounds = re.fullmatch(r">=([0-9]+)\.([0-9]+),<([0-9]+)\.([0-9]+)", requires)
+    assert bounds is not None
+    floor_major, floor_minor, ceiling_major, ceiling_minor = map(int, bounds.groups())
+    major, minor = map(int, pin.split("."))
+    assert (floor_major, floor_minor) <= (major, minor) < (ceiling_major, ceiling_minor)
+
+
 def _custom_manager(dep_name: str) -> dict[str, object]:
     (manager,) = [
         manager

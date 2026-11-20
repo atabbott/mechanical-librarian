@@ -37,8 +37,9 @@ tests/               # unit, integration, architecture, installed, browser and s
 
 ## Your first pull request
 
-You need Python 3.13, 3.14 or 3.15 and [uv](https://docs.astral.sh/uv/); Node and npm
-only for frontend work. Run the formatting, lint, type and fast test commands
+You need [uv](https://docs.astral.sh/uv/), which runs the checkout on the image's
+Python, 3.15, from `.python-version`; 3.13 and 3.14 also work. You need Node
+and npm only for frontend work. Run the formatting, lint, type and fast test commands
 below, open a pull request that closes an issue, and CI does the rest. The
 slice and tracker rules in the process documents govern maintainer delivery;
 for an outside contribution, a clear issue and a focused pull request are

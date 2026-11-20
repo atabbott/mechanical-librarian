@@ -71,6 +71,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.adapters.persistence.reviewer_access import (
     ReviewerAccessStore,
 )
+from mechanical_librarian.adapters.persistence.schema import BrowseFactUnicodeError
 from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterReviewer
 from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewerError,
@@ -92,6 +93,13 @@ from mechanical_librarian.domain.reviewer_access import (
     CodexTaskSelection,
     OpenRouterTaskSelection,
 )
+
+# Direct execution puts scripts/ on sys.path; the test import resolves the
+# scripts namespace package.
+try:
+    from scripts import database_copy
+except ImportError:  # pragma: no cover - direct `python scripts/...` execution
+    import database_copy  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
 
 RESULT_SCHEMA = "cover-observation-smoke-result-v1"
 LABELS_SCHEMA = "cover-owner-labels-v1"
@@ -298,6 +306,8 @@ def load_population(database: Path, artifacts: Path, limit: int) -> Population:
         connection.close()
     try:
         reader = open_shadow_preview_repository(database)
+    except BrowseFactUnicodeError as error:
+        raise SmokeRefused(database_copy.unicode_refusal(error)) from error
     except Exception as error:
         raise SmokeRefused(
             "This checkout cannot read the database copy. Check out the commit "

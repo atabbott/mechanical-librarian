@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- A checkout now pins Python 3.15, the image's version, so `uv run` reads a
+  copy of the install's database with the same Unicode data. When a script
+  still runs under another Python, the description advice labels, cover
+  observation smoke and reviewer cost tools name both Unicode versions and the
+  Python to run with, instead of asking for a copy you already have (#2018).
 - In setup, the three "Get a key" links open in a new tab. After Check key and
   use OpenRouter the card shows the chosen model with the form folded, or a
   refusal under the button that keeps the typed key. Sign in with ChatGPT
