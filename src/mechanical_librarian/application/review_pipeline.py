@@ -67,7 +67,6 @@ DISCOVERY_FAILURE_CODES = (
     "unknown",
 )
 _UNREAD_EVENT_CODES = ("changed", "no_media", "oversized", "unreadable")
-_EVENT_SLUG = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 
 
 _ForegroundResult = TypeVar("_ForegroundResult")
@@ -124,15 +123,6 @@ def _log_claim_contention() -> None:
         pass
 
 
-def _event_slug(value: object) -> str | None:
-    """A configured slug, or null for anything a slug rule does not admit."""
-    return (
-        value
-        if type(value) is str and _EVENT_SLUG.fullmatch(value) is not None
-        else None
-    )
-
-
 def _write_event(payload: dict[str, object]) -> None:
     """Write one value-free event line; a failing sink cannot stop the lane."""
     try:
@@ -148,10 +138,8 @@ def _log_discovery_failure(action: PipelineAction, code: str) -> None:
     _write_event(
         {
             "code": code if code in DISCOVERY_FAILURE_CODES else "unknown",
-            "connection": _event_slug(action.connection),
             "event": "preparation_discovery_failed",
             "level": "warning",
-            "library": _event_slug(action.library),
         }
     )
 
@@ -176,10 +164,8 @@ def _log_unread_items(
     _write_event(
         {
             **{code: min(count, 10_000) for code, count in counts.items()},
-            "connection": _event_slug(action.connection),
             "event": "preparation_items_unread",
             "level": "warning",
-            "library": _event_slug(action.library),
         }
     )
 

@@ -13435,10 +13435,8 @@ def test_a_library_that_cannot_be_read_stores_and_shows_why(
     assert events == [
         {
             "code": code,
-            "connection": "primary",
             "event": "preparation_discovery_failed",
             "level": "warning",
-            "library": "fiction",
         }
     ]
 
@@ -13542,17 +13540,18 @@ def test_unread_item_event_counts_each_reason_without_values(
     _log_unread_items(action, entries)
     line = capsys.readouterr().err
     assert line == (
-        '{"changed":1,"connection":"primary","event":"preparation_items_unread",'
-        '"level":"warning","library":"fiction","no_media":3,"oversized":0,'
-        '"unreadable":0}\n'
+        '{"changed":1,"event":"preparation_items_unread","level":"warning",'
+        '"no_media":3,"oversized":0,"unreadable":0}\n'
     )
     _log_unread_items(action, (_entry("readable", "1" * 64),))
     assert capsys.readouterr().err == ""
+    # Configured names are owner text, not a closed vocabulary, so no
+    # event carries one, whatever its shape.
     _log_unread_items(
-        replace(action, library="Not A Slug"),
-        (replace(_unread("missing", "no_media"), library="Not A Slug"),),
+        replace(action, library="medical-library"),
+        (replace(_unread("missing", "no_media"), library="medical-library"),),
     )
-    assert json.loads(capsys.readouterr().err)["library"] is None
+    assert "medical-library" not in capsys.readouterr().err
 
 
 def test_discovery_events_swallow_a_failing_sink() -> None:
@@ -13597,6 +13596,5 @@ def test_discovery_failure_event_names_only_closed_values(
     )
     _log_discovery_failure(action, "something else")
     assert capsys.readouterr().err == (
-        '{"code":"unknown","connection":null,"event":"preparation_discovery_failed",'
-        '"level":"warning","library":"fiction"}\n'
+        '{"code":"unknown","event":"preparation_discovery_failed","level":"warning"}\n'
     )

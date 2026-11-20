@@ -191,6 +191,13 @@ class AudiobookshelfCatalogueReader:
                 return _entry(connection, library, mount, summary, detail)
             except _UnreadItem as error:
                 code = error.code
+            # A detail for another item or library says nothing about this
+            # one, so only the listing names it then.
+            if (
+                detail.get("id") != summary["id"]
+                or detail.get("libraryId") != library.library_id
+            ):
+                detail = None
         return _unread_entry(connection, library, summary, detail, code)
 
     def probe_connection(

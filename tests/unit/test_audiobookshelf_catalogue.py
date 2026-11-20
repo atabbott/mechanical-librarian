@@ -824,6 +824,39 @@ def test_an_unread_item_is_named_from_the_detail_then_the_listing() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "identity",
+    (
+        pytest.param({"id": "other-item"}, id="another_item"),
+        pytest.param({"libraryId": "library-2"}, id="another_library"),
+    ),
+)
+def test_a_detail_for_another_item_never_names_the_listed_one(
+    identity: dict[str, object],
+) -> None:
+    other = _with("item-1", **identity)
+    other["media"] = {
+        "metadata": {"title": "Another book", "authors": [{"name": "Someone Else"}]}
+    }
+    (entry,) = _page_reader(
+        {"item-1": other},
+        summaries=[
+            {
+                "id": "item-1",
+                "libraryId": "library-1",
+                "updatedAt": 1,
+                "media": {"metadata": {"title": "Listed book"}},
+            }
+        ],
+    ).read_library("primary", _library(), 10)
+    assert (entry.item_id, entry.title, entry.authors, entry.unread) == (
+        "item-1",
+        "Listed book",
+        (),
+        "changed",
+    )
+
+
 @pytest.mark.parametrize("status", (401, 403, 500))
 def test_connection_conditions_on_an_item_still_stop_the_library(status: int) -> None:
     reader = _page_reader(
