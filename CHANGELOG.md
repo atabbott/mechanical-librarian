@@ -12,6 +12,10 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- Policy › Curation's Current covers, Description advice and Book matching
+  now line up with the policy fields: one width, one control column, labels
+  level with their controls and one heading and text size. Each Save sits
+  inside its section and looks ready only when something changed (#2015).
 - A checkout now pins Python 3.15, the image's version, so `uv run` reads a
   copy of the install's database with the same Unicode data. When a script
   still runs under another Python, the description advice labels, cover

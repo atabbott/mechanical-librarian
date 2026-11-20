@@ -29,16 +29,19 @@ export const DescriptionAdviceSettings = ({ http }: { http: ReviewHttp }) => {
   return (
     <section
       id="description-advice"
-      className="description-advice-settings"
+      className="cm-policy-settings"
       aria-labelledby="description-advice-heading"
     >
-      <h3 id="description-advice-heading" tabIndex={-1}>
-        Description advice
-      </h3>
-      <p>
-        An adviser can rewrite or combine source descriptions. Its text is always marked as advice.
-      </p>
-      <a href="/settings?group=reviewer">Choose the description adviser</a>
+      <div className="cm-policy-settings-intro">
+        <h3 id="description-advice-heading" tabIndex={-1}>
+          Description advice
+        </h3>
+        <p>
+          An adviser can rewrite or combine source descriptions. Its text is always marked as
+          advice.
+        </p>
+        <a href="/settings?group=reviewer">Choose the description adviser</a>
+      </div>
       {query.isPending ? (
         <p role="status">Loading description preferences…</p>
       ) : query.error instanceof BuildMismatchError ? (
@@ -151,53 +154,55 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
   // A pending or settled save keeps Save focusable; it ignores the press.
   const saveHeld = mutation.isPending || reload.isPending || !changed || staleLead !== null
   return (
-    <div>
-      {/* No release records a qualified adviser yet (ADR-0099 Decision 10); the
-          first record changes this line to name the advisers that write. */}
-      <p>
-        Ready advice is only suggested until a release shows, from your decisions, that the adviser
-        is right often enough.
-      </p>
-      {locked ? <p>These preferences are set in the deployment configuration.</p> : null}
-      <div className="description-advice-fields">
-        {(Object.keys(labels) as (keyof Preferences)[]).map((name) => (
-          <FieldRow
-            key={name}
-            group
-            title={labels[name]}
-            changed={draft[name] !== base.description_advice[name]}
-          >
-            <SegmentedControl
-              label={labels[name]}
-              options={offOn}
-              value={draft[name] ? 'on' : 'off'}
-              disabled={locked || mutation.isPending || reload.isPending || stale}
-              onChange={(choice) => {
-                setDraft({ ...draft, [name]: choice === 'on' })
-                setUnconfirmed(false)
-                mutation.reset()
-              }}
-            />
-          </FieldRow>
-        ))}
+    <div className="cm-policy-settings-editor">
+      <div className="cm-policy-settings-note">
+        {/* No release records a qualified adviser yet (ADR-0099 Decision 10); the
+            first record changes this line to name the advisers that write. */}
+        <p>
+          Ready advice is only suggested until a release shows, from your decisions, that the
+          adviser is right often enough.
+        </p>
+        {locked ? <p>These preferences are set in the deployment configuration.</p> : null}
       </div>
-      <button
-        disabled={locked || stale}
-        aria-disabled={saveHeld || undefined}
-        aria-busy={mutation.isPending || undefined}
-        onClick={() => {
-          if (!saveHeld) mutation.mutate()
-        }}
-      >
-        {mutation.isPending ? 'Saving description preferences…' : 'Save description preferences'}
-      </button>
-      <p role="status">
-        {mutation.isSuccess
-          ? 'Description preferences saved.'
-          : changed
-            ? 'Unsaved. Activating the policy does not save them.'
-            : ''}
-      </p>
+      {(Object.keys(labels) as (keyof Preferences)[]).map((name) => (
+        <FieldRow
+          key={name}
+          group
+          title={labels[name]}
+          changed={draft[name] !== base.description_advice[name]}
+        >
+          <SegmentedControl
+            label={labels[name]}
+            options={offOn}
+            value={draft[name] ? 'on' : 'off'}
+            disabled={locked || mutation.isPending || reload.isPending || stale}
+            onChange={(choice) => {
+              setDraft({ ...draft, [name]: choice === 'on' })
+              setUnconfirmed(false)
+              mutation.reset()
+            }}
+          />
+        </FieldRow>
+      ))}
+      <div className="cm-policy-settings-footer">
+        <button
+          disabled={locked || stale}
+          aria-disabled={saveHeld || undefined}
+          aria-busy={mutation.isPending || undefined}
+          onClick={() => {
+            if (!saveHeld) mutation.mutate()
+          }}
+        >
+          {mutation.isPending ? 'Saving description preferences…' : 'Save description preferences'}
+        </button>
+        <p role="status">
+          {mutation.isSuccess
+            ? 'Description preferences saved.'
+            : changed
+              ? 'Unsaved. Activating the policy does not save them.'
+              : ''}
+        </p>
+      </div>
       {staleLead !== null ? (
         <StaleBuildRead key="stale" lead={staleLead} ref={reloadButton} />
       ) : mutation.isError || stale || unconfirmed ? (

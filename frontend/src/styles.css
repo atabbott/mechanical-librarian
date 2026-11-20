@@ -355,7 +355,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 /* The rail is bounded by the window and scrolls itself. The sticky finish
    tray sits under the chapter column only, so the rail can take the window's
    whole height and the tray never floats across its safety controls. */
-.cm-policy-sidebar { --policy-sidebar-room:calc(100dvh - var(--sticky-top) - .75rem); position:sticky; top:var(--sticky-top); display:grid; align-content:start; min-height:min(570px,var(--policy-sidebar-room)); max-height:var(--policy-sidebar-room); overflow:auto; padding:0; border:0; border-right:1px solid var(--line); border-radius:1rem 0 0 1rem; background:var(--surface-strong); }
+.cm-policy-sidebar { --policy-sidebar-room:calc(100dvh - var(--sticky-top) - .75rem); position:sticky; top:var(--sticky-top); display:grid; align-content:start; min-height:var(--policy-sidebar-room); max-height:var(--policy-sidebar-room); overflow:auto; padding:0; border:0; border-right:1px solid var(--line); border-radius:1rem 0 0 1rem; background:var(--surface-strong); }
 /* On a screen too short to keep the masthead, the sidebar flows with the page
    too: a column bounded above the tray would leave its header no room. */
 html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; min-height:0; max-height:none; overflow:visible; }
@@ -376,13 +376,14 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-route :is(h1, h2, .cm-policy-sidebar nav strong, .cm-policy-field > header strong, .cm-policy-representation > span, .cm-policy-control-heading strong, .cm-finish-summary strong, .cm-policy-impact > b) { overflow-wrap:normal; }
 .cm-change-count { flex:none; display:grid; width:26px; height:26px; place-items:center; border:1px solid var(--line-strong); border-radius:50%; color:var(--soft); font-size:.75rem; }
 [aria-current='page'] > .cm-change-count { border-color:var(--accent-strong); color:var(--surface); background:var(--accent-strong); }
-.cm-policy-mode { margin:auto .65rem .65rem; padding:.7rem .55rem; border-top:1px solid var(--line); }
+/* Automatic active lines up with the chapters above it: the same inset and text size as a chapter's name (#2015). */
+.cm-policy-mode { margin:auto .45rem .65rem; padding:.7rem calc(.6rem + 1px); border-top:1px solid var(--line); }
 .cm-policy-mode summary { display:flex; flex-wrap:nowrap; align-items:center; gap:.25rem .55rem; color:var(--accent-strong); cursor:pointer; list-style:none; }
 .cm-policy-mode summary::-webkit-details-marker { display:none; }
 /* The chevron keeps 2px from the edge: turned 45°, its 7.5px box reaches 1.55px past each side. */
 .cm-policy-mode summary::after { flex:none; width:6px; height:6px; margin-inline-end:2px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; content:''; transform:translateY(-2px) rotate(45deg); transition:transform 160ms ease-out; }
 .cm-policy-mode[open] summary::after { transform:translateY(2px) rotate(225deg); }
-.cm-policy-mode summary strong { flex:1 1 auto; min-width:0; color:var(--ink); font-size:.76rem; }
+.cm-policy-mode summary strong { flex:1 1 auto; min-width:0; color:var(--ink); font-size:.875rem; }
 .cm-policy-mode > div { display:grid; gap:.4rem; padding-top:.5rem; }
 .cm-policy-mode p, .cm-policy-mode small { margin:0; color:var(--soft); font-size:.75rem; line-height:1.4; }
 .cm-policy-safety-actions { display:grid; gap:.3rem; }
@@ -391,14 +392,61 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-content > header { display:grid; align-content:center; min-height:4.9rem; padding:.95rem 1.35rem .8rem; }
 .cm-policy-content > header > div { max-width:62ch; }
 .cm-policy-content > header h2 { margin:0 0 .18rem; font:700 1.6rem/1.15 Georgia,serif; }
-.cm-policy-field-list { display:grid; border-top:1px solid var(--line); }
-.cm-policy-field { display:grid; grid-template-columns:minmax(190px,1.1fr) minmax(250px,1fr) minmax(170px,.8fr); align-items:center; gap:.75rem; margin:0; padding:.75rem 1.35rem; border:0; border-bottom:1px solid var(--line); transition:background 160ms ease-out; }
+.cm-policy-field-list { --policy-columns:minmax(190px,1.1fr) minmax(250px,1fr) minmax(170px,.8fr); --policy-pad-block:.75rem; --policy-pad-inline:1.35rem; display:grid; border-top:1px solid var(--line); }
+.cm-policy-field { display:grid; grid-template-columns:var(--policy-columns); align-items:center; gap:.75rem; margin:0; padding:var(--policy-pad-block) var(--policy-pad-inline); border:0; border-bottom:1px solid var(--line); transition:background 160ms ease-out; }
 .cm-policy-field.is-changed { background:var(--notice-soft); }
 .cm-policy-field:focus-within:not(.is-changed) { background:color-mix(in srgb,var(--accent-soft) 24%,transparent); }
 .cm-policy-field > header { display:grid; align-content:center; gap:.3rem; min-width:0; }
 .cm-policy-field > header > span { display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; }
 .cm-policy-field > header strong { font:700 1rem/1.25 Georgia,serif; }
 .cm-policy-field > header p { max-width:44ch; margin:0; color:var(--soft); font-size:.75rem; line-height:1.35; }
+/* Curation's owner settings (#2015): Current covers, Description advice and
+   Book matching sit on the policy field grid, so their labels share the field
+   names' column and their controls start at the Setting column, with one
+   heading and one text size per level. Each section is that grid; its rows
+   and its footer bleed to the field rows' edges. */
+.cm-policy-settings { display:grid; grid-template-columns:var(--policy-columns); align-items:start; gap:.5rem .75rem; min-width:0; padding:var(--policy-pad-block) var(--policy-pad-inline); border-bottom:1px solid var(--line); }
+.cm-policy-settings > *, .cm-policy-settings-editor > * { grid-column:1 / -1; min-width:0; }
+.cm-policy-settings-editor { display:contents; }
+.cm-policy-settings-intro, .cm-policy-settings :is(.cm-policy-settings-note, .cm-policy-settings-intro) { grid-column:1; display:grid; align-content:start; gap:.3rem; }
+.cm-policy-settings h3 { margin:0; font:700 1rem/1.25 Georgia,serif; scroll-margin-top:6rem; overflow-wrap:normal; }
+.cm-policy-settings :is(p, a, [role='status']) { margin:0; font-size:.75rem; line-height:1.35; }
+.cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note) p, .cm-policy-settings .settings-field-row > div > p { max-width:64ch; color:var(--soft); }
+.cm-policy-settings-intro > a { justify-self:start; font-weight:700; text-underline-offset:3px; }
+/* A row's label shares its control's first baseline, so the two first lines
+   stay level at any text size and when the label wraps. */
+.cm-policy-settings .settings-field-row { grid-column:1 / -1; grid-template-columns:var(--policy-columns); align-items:first baseline; gap:.3rem .75rem; margin-inline:calc(-1 * var(--policy-pad-inline)); padding:.6rem var(--policy-pad-inline); border-bottom:0; border-top:1px solid color-mix(in srgb,var(--line) 70%,transparent); }
+.cm-policy-settings .settings-field-row > div:first-child { grid-column:1; }
+.cm-policy-settings .settings-field-title strong { font-size:.875rem; font-weight:650; line-height:1.25rem; }
+.cm-policy-settings .settings-field-control { grid-column:2; }
+.cm-policy-settings .is-wide > .settings-field-control, .cm-policy-settings-control { grid-column:2 / -1; }
+.cm-policy-settings .settings-field-control > p, .cm-policy-settings-control > p { color:var(--soft); }
+/* Book matching has one control: it sits beside the section's heading, level
+   with it, as a field's Setting sits beside the field's name. */
+.cm-policy-settings-control { grid-row:1; display:grid; align-self:first baseline; align-content:start; gap:.4rem; container-type:inline-size; }
+.cm-policy-settings:has(.cm-policy-settings-control) > .cm-policy-settings-intro { align-self:first baseline; }
+.cm-policy-settings .is-wide .settings-field-control { container-type:inline-size; }
+@container (max-width:30rem) {
+  .cm-policy-settings-control .cm-segmented, .cm-policy-settings .is-wide .cm-segmented { grid-template-columns:minmax(0,1fr); }
+}
+/* Save sits under the controls it saves, inside the section, with its status beside it. */
+.cm-policy-settings-footer { grid-column:2 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .85rem; margin-top:.25rem; }
+/* An empty status line stays rendered, so a screen reader hears it fill, but takes no room. */
+.cm-policy-settings-footer > p:empty { flex:0 0 0; }
+.cm-policy-settings-footer > p { flex:1 1 14rem; color:var(--soft); }
+.cm-policy-settings-footer > button[aria-disabled='true'] { background:transparent; }
+.cm-policy-settings-footer > button:not([aria-disabled='true']):not(:disabled) { border-color:var(--accent-strong); color:var(--surface); background:var(--accent-strong); font-weight:700; }
+/* While it saves, Save keeps a muted fill, as a running primary command does, until the outcome replaces Unsaved. */
+.cm-policy-route .cm-policy-settings-footer > button[aria-busy='true'] { border-color:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); color:var(--surface); background:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); font-weight:700; }
+.cm-policy-settings > [role='alert'], .cm-policy-settings-editor > [role='alert'] { grid-column:2 / -1; display:grid; justify-items:start; gap:.4rem; }
+.cm-policy-settings-editor > .stale-build-read { grid-column:2 / -1; margin:0; }
+.cm-policy-settings > [role='alert'] { grid-column:1 / -1; }
+.cm-policy-settings [role='alert'] p { color:var(--danger); font-weight:650; }
+/* Switching by taste is changed in Taste profile: its value is a link there, drawn like a closed dropdown
+   as tall as a segmented track, so its row reads like the others. */
+.cm-policy-settings a.cm-policy-settings-value { display:inline-grid; grid-template-columns:minmax(0,1fr) 1.125rem; align-items:center; gap:.55rem; min-height:calc(46px + .4rem); padding:.4rem .7rem .4rem .8rem; border:1px solid var(--field-line); border-radius:.65rem; color:var(--ink); background:var(--page); font-size:.78rem; font-weight:650; text-decoration:none; }
+.cm-policy-settings a.cm-policy-settings-value:hover { border-color:var(--accent); background:var(--surface-strong); }
+.cm-policy-settings-value svg { width:1.125rem; fill:none; stroke:var(--soft); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
 .cm-policy-mode-control { display:grid; min-width:0; align-self:stretch; align-content:center; gap:.25rem; overflow:hidden; }
 .cm-policy-control-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.15rem .5rem; min-width:0; color:var(--soft); font-size:.75rem; line-height:1.2; }
 .cm-policy-control-heading strong { color:var(--soft); font-size:inherit; }
@@ -554,7 +602,8 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 @media (max-width:1024px) {
   .library-workspace { grid-template-columns:minmax(280px,340px) minmax(0,1fr); }
   .cm-policy-editor { grid-template-columns:220px minmax(0,1fr); }
-  .cm-policy-field { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .cm-policy-field-list { --policy-columns:minmax(0,1fr) minmax(0,1fr); }
+  .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, [role='alert'], .stale-build-read, :has(> .cm-policy-settings-control) > .cm-policy-settings-footer), .cm-policy-settings .settings-field-row.is-wide > * { grid-column:1 / -1; grid-row:auto; }
   .cm-policy-field > header { grid-column:1 / -1; }
   .cm-policy-field > header p { max-width:64ch; }
   .cm-finish-tray { grid-template-columns:minmax(0,1fr) auto; }
@@ -570,12 +619,15 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-field-list { container:policy-fields / inline-size; }
 .cm-policy-route .cm-dropdown-trigger > span { overflow:visible; text-overflow:clip; white-space:normal; }
 @container policy-fields (max-width:44rem) {
-  .cm-policy-field { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .cm-policy-field-list > * { --policy-columns:minmax(0,1fr) minmax(0,1fr); }
+  .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, [role='alert'], .stale-build-read, :has(> .cm-policy-settings-control) > .cm-policy-settings-footer), .cm-policy-settings .settings-field-row.is-wide > * { grid-column:1 / -1; grid-row:auto; }
   .cm-policy-field > header { grid-column:1 / -1; }
   .cm-policy-field > header p { max-width:64ch; }
 }
 @container policy-fields (max-width:28rem) {
-  .cm-policy-field { grid-template-columns:minmax(0,1fr); gap:.7rem; padding:.85rem 1rem; }
+  .cm-policy-field-list > * { --policy-columns:minmax(0,1fr); --policy-pad-block:.85rem; --policy-pad-inline:1rem; }
+  .cm-policy-field { gap:.7rem; }
+  .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, .cm-policy-settings-footer, [role='alert'], .stale-build-read), .cm-policy-settings .settings-field-row > *, .cm-policy-settings .is-wide > * { grid-column:1 / -1; grid-row:auto; }
   .cm-policy-field > header { grid-column:1; }
   .cm-policy-field > header p { max-width:52ch; }
 }
@@ -589,7 +641,7 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-policy-sidebar > header small { grid-column:2; grid-row:1; max-width:22ch; text-align:right; }
   .cm-policy-sidebar nav { grid-template-columns:repeat(4,minmax(0,1fr)); gap:.35rem; }
   .cm-policy-sidebar nav button { min-height:52px; }
-  .cm-policy-mode { margin:.15rem .65rem .65rem; }
+  .cm-policy-mode { margin:.15rem .45rem .65rem; }
   .cm-finish-tray:not(.settings-tray) { position:static; }
   .settings-change-review { max-height:min(30vh,14rem); }
 }
@@ -624,12 +676,15 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-policy-sidebar nav { grid-template-columns:repeat(auto-fit,minmax(min(100%,9.5rem),1fr)); padding:.45rem; }
   .cm-policy-sidebar nav button { min-height:52px; padding:.5rem .55rem; }
   .cm-policy-sidebar nav button .cm-change-count { width:24px; height:24px; }
-  .cm-policy-mode { margin:.1rem .55rem .55rem; padding:.65rem .45rem; }
+  .cm-policy-mode { margin:.1rem .45rem .55rem; padding:.65rem calc(.55rem + 1px); }
   .cm-policy-content > header { padding:.8rem 1rem .65rem; }
   .cm-policy-content > header h2 { font-size:1.35rem; }
-  .cm-policy-field { grid-template-columns:minmax(0,1fr); gap:.7rem; padding:.85rem 1rem; }
+  /* Set on the rows too, so it beats the container query's value on them. */
+  .cm-policy-field-list, .cm-policy-field-list > * { --policy-columns:minmax(0,1fr); --policy-pad-block:.85rem; --policy-pad-inline:1rem; }
+  .cm-policy-field { gap:.7rem; }
   .cm-policy-field > header { grid-column:1; }
   .cm-policy-field > header p { max-width:52ch; }
+  .cm-policy-settings :is(.cm-policy-settings-intro, .cm-policy-settings-note, .cm-policy-settings-control, .cm-policy-settings-footer, [role='alert'], .stale-build-read), .cm-policy-settings .settings-field-row > *, .cm-policy-settings .is-wide > * { grid-column:1 / -1; grid-row:auto; }
   .cm-policy-mode-control, .cm-policy-representation { gap:.3rem; }
   .cm-finish-tray { grid-template-columns:minmax(0,1fr); gap:.65rem; margin:.5rem; padding:.75rem; }
   .cm-finish-summary, .cm-policy-finish-message { gap:.18rem; }
@@ -1479,32 +1534,6 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 
 .description-advice-text { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.55; max-height:28rem; overflow:auto; }
 
-.description-advice-settings,
-.matching-settings {
-  display: grid;
-  gap: 0.75rem;
-  min-width: 0;
-  padding: 1.25rem;
-  border-bottom: 1px solid var(--line);
-}
-.description-advice-settings h3,
-.matching-settings h3 {
-  margin: 0;
-  scroll-margin-top: 6rem;
-}
-.description-advice-settings p,
-.matching-settings p {
-  max-width: 75ch;
-  margin: 0.5rem 0;
-}
-/* Book matching's three levels run strict to wide; where they cannot sit in
-   one row they stack one per row, so the order still reads top to bottom. */
-.matching-settings { container-type: inline-size; }
-@container (max-width: 34rem) {
-  .matching-settings .cm-segmented { grid-template-columns: minmax(0, 1fr); }
-}
-.description-advice-fields { display:grid; max-width:52rem; border:1px solid var(--line); border-radius:.65rem; overflow:hidden; }
-.description-advice-fields .settings-field-row:last-child { border-bottom:0; }
 
 .settings-reviewer { container-type:inline-size; }
 /* The pinned Codex model name (gpt-5.6-sol) fits at 390px and 200% text; OpenRouter names stay wrappable (#1372). */

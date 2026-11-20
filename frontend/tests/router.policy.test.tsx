@@ -4116,10 +4116,15 @@ it.each([
   }))
   const { router } = renderRoute('/policy?section=curation', http)
   const region = await screen.findByRole('region', { name: 'Current covers' })
-  const link = await within(region).findByRole('link', { name: 'Switching by taste' })
+  // The value is the link, in the control column; the row's name is plain
+  // text like the other rows' names, and names the link with it (#2015).
+  const link = await within(region).findByRole('link', { name: `Switching by taste ${label}` })
   expect(link).toHaveAttribute('href', '/library?lens=all&view=covers&tab=taste#taste-switching')
+  expect(link).toHaveTextContent(label)
+  expect(link.closest('.settings-field-control')).not.toBeNull()
   const row = link.closest('.settings-field-row')
   expect(row).toHaveTextContent(`Switching by taste${label}`)
+  expect(within(region).getAllByRole('link')).toEqual([link])
   // The row follows the three choices, before the edition's cover.
   const protection = within(region).getByRole('group', { name: 'Replace a current cover' })
   expect(protection.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -4176,7 +4181,7 @@ it('names Suggest only for Switching by taste while Never is stored with Automat
   }))
   renderRoute('/policy?section=curation', http)
   const region = await screen.findByRole('region', { name: 'Current covers' })
-  const link = await within(region).findByRole('link', { name: 'Switching by taste' })
+  const link = await within(region).findByRole('link', { name: 'Switching by taste Suggest only' })
   expect(link.closest('.settings-field-row')).toHaveTextContent('Switching by tasteSuggest only')
 })
 

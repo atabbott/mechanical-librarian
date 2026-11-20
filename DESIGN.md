@@ -540,7 +540,7 @@ event. At compact widths both surfaces preserve document order rather than
 compressing their desktop columns. A Policy field says what Automatic does on
 ebooks and on audiobooks ("Not offered." for one that has nothing), unless
 neither does, when the setting's "Automatic not offered" says it once; its
-disclosures sit side by side as underlined links. Activity's six counts sit in
+disclosures sit side by side as underlined links. Curation's own settings (Current covers, Description advice and Book matching) sit on the same field grid: each row's name is level with its control's first line, controls start at the Setting column, and the section's Save sits under its controls, quiet until something changed. Activity's six counts sit in
 two rows of three beside its status (fewer a row when enlarged text leaves no
 room), its status pill is level with the title, the ledger heading shares a row
 with its date range, and the pager appears only when there is more than one
