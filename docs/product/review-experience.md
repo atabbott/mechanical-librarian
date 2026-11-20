@@ -156,13 +156,13 @@ finish". A rate in works a minute appears only while running.
 
 The masthead's background-work icon fills while libraries are prepared and
 marks what needs you. Its popover shows each library's scan state and works
-checked, marks a library outside the current run, and offers Scan now and
-Pause. Pause stops new scans. Source lookups already waiting keep their schedule. The popover fits the window
-below the masthead, and scrolls inside itself if needed. `Escape` closes it
+checked, or why it stopped, marks a library outside the current run, and offers
+Scan now and Pause. Pause stops new scans. Waiting source lookups keep their schedule. The popover fits the window
+below the masthead and scrolls inside itself if needed. `Escape` closes it
 and returns focus to its trigger. The popover disables a pending command
 instead of removing it, so focus stays put and a second press sends nothing.
 When no answer confirms a command's result, the popover shows the refreshed
-state, says no answer came back and does not offer to try again.
+state, says no answer came back and offers no retry.
 
 These controls retry different things:
 
@@ -182,12 +182,12 @@ refused key is never retried on its own: fix it, then use Retry now. An entry
 that needs an API key added or checked links to Settings › Metadata sources. A
 file-managed deployment shows the file instruction instead of Retry now.
 
-A work whose preparation could not finish stays in Library as a row that does
-not open, marked Could not finish. It keeps its title while the catalogue
-matches. Each failure code has one reason and one next step. The next
-step is a change you make followed by a scan, an automatic retry, or a new
-scan of the library. A new scan queues a failed book again from the step that
-failed. That retry rereads what earlier steps saved. So when saved data could
+A work whose preparation could not finish, including one Audiobookshelf could
+not give, stays in Library as a row that does not open, marked Could not
+finish. It keeps its title while the catalogue matches. Each failure code has
+one reason and one next step. The next step is your change and a scan, an
+automatic retry, or a new scan. A new scan queues a failed book again from the
+step that failed. That retry rereads what earlier steps saved. So when saved data could
 not be read, the row says "Library has no step that fixes this." The row
 shows its reason, next step and a copyable reference, never a stage code, path
 or raw source response. Once the catalogue no longer matches, the row reads

@@ -415,9 +415,24 @@ assert (
 )
 
 
+# Every producer before #2013 recorded no unread item as a failed work, and
+# kept no reason a library's discovery stopped.
+WITHOUT_UNREAD_REVIEW_WORK_SQL = persistence_schema._REVIEW_WORK_SQL.replace(
+    "'item_no_media','item_unreadable','item_oversized',", ""
+)
+assert WITHOUT_UNREAD_REVIEW_WORK_SQL.count("item_no_media") == 0
+PRIOR_REVIEW_SCANS_SQL = (
+    persistence_schema._REVIEW_SCANS_SQL[
+        : persistence_schema._REVIEW_SCANS_SQL.index(", discovery_failure ")
+    ]
+    + ")"
+)
+assert PRIOR_REVIEW_SCANS_SQL.endswith("rescan_requested IN (0,1)))")
+
+
 # Every producer before #1451 kept no re-search mark on a preparation work,
 # and every one before #1363 no refresh request.
-PRIOR_REVIEW_WORK_SQL = persistence_schema._REVIEW_WORK_SQL.replace(
+PRIOR_REVIEW_WORK_SQL = WITHOUT_UNREAD_REVIEW_WORK_SQL.replace(
     "research_not_before INTEGER CHECK(research_not_before IS NULL OR "
     "research_not_before>=0), ",
     "",

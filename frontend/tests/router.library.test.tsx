@@ -209,6 +209,7 @@ const connectedPreparation: PreparationView = {
       library_id: 'books',
       ready: 0,
       rescan_requested: false,
+      discovery_failure: null,
       scan_id: null,
       state: 'idle' as const,
       total: 0,
@@ -773,7 +774,7 @@ const terminalPreparation = (
   updatedAt = 101,
 ): PreparationView & { presentation: NonNullable<PreparationView['presentation']> } => ({
   ...idlePreparation,
-  schema_version: 'review-preparation-v2',
+  schema_version: 'review-preparation-v3',
   recovery_required: false,
   active: false,
   actionable: true,
@@ -960,7 +961,7 @@ describe('Library route', () => {
     const updates = createLiveStream()
     const confirmed: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2' as const,
+      schema_version: 'review-preparation-v3' as const,
       recovery_required: false,
       active: true,
       actionable: false,
@@ -2364,7 +2365,7 @@ describe('Library route', () => {
     const updates = createLiveStream()
     const confirmed: PreparationView = {
       ...idlePreparation,
-      schema_version: 'review-preparation-v2',
+      schema_version: 'review-preparation-v3',
       recovery_required: false,
       active: true,
       actionable: false,
@@ -2457,7 +2458,7 @@ describe('Library route', () => {
       ...createHttp(),
       getPreparation: vi.fn(async () => ({
         ...idlePreparation,
-        schema_version: 'review-preparation-v2' as const,
+        schema_version: 'review-preparation-v3' as const,
         recovery_required: false,
         active: false,
         actionable: false,
@@ -2501,6 +2502,7 @@ describe('Library route', () => {
             library_id: 'books',
             ready: 0,
             rescan_requested: false,
+            discovery_failure: null,
             scan_id: null,
             state: 'completed' as const,
             total: 1,
@@ -3439,6 +3441,105 @@ describe('Library route', () => {
     expect(within(health).getByText('Audio could not be read')).toBeVisible()
     expect(within(health).getByText('Read from track_4')).toBeVisible()
     expect(row).not.toContainElement(health)
+  })
+
+  it.each([
+    ['item_no_media', 'No file in Audiobookshelf'],
+    ['item_oversized', 'Details too large'],
+  ] as const)(
+    'labels %s without a stage phrase, since nothing was read (#2013)',
+    async (status, label) => {
+      const firstWork = library.works[0]
+      if (!firstWork) throw new Error('library fixture requires one work')
+      const baseWork = { ...firstWork }
+      delete baseWork.reviewCaseId
+      const recovery =
+        status === 'item_oversized'
+          ? 'Raise it in Settings → Background work, or check this book in Audiobookshelf, then scan this library again.'
+          : 'Add its file in Audiobookshelf, then scan this library again.'
+      const unread = {
+        ...baseWork,
+        id: 'library_work_unread',
+        workId: 'library_work_unread',
+        title: 'Unread book',
+        attentionCount: 0,
+        attention: 'preparation_failed' as const,
+        detailUrl: null,
+        detailKind: null,
+        preparation: {
+          attempt: 0,
+          checkGivenUp: false,
+          diagnosticReference: 'prep-0123456789abcdef',
+          mediaHealth: [],
+          provider: '',
+          reason: 'Audiobookshelf has no audio or ebook file for this book.',
+          recovery,
+          recoveryAttempt: 0,
+          stage: 'extraction' as const,
+          status,
+        },
+      }
+      renderRoute('/library?lens=all&work=library_work_unread', {
+        ...createHttp(),
+        getLibrary: vi.fn(async () => ({ ...library, works: [...library.works, unread] })),
+      })
+      const condition = await screen.findByRole('complementary', {
+        name: 'Preparation condition',
+      })
+      expect(within(condition).getByText(label, { selector: 'strong' })).toBeVisible()
+      expect(condition).not.toHaveTextContent('while reading the file')
+      expect(condition).toHaveTextContent(recovery)
+      if (status === 'item_oversized') {
+        expect(
+          within(condition).getByRole('link', { name: 'Settings → Background work' }),
+        ).toHaveAttribute('href', '/settings?group=background')
+      }
+    },
+  )
+
+  it('links the settings an inert could-not-finish row names (#2013)', async () => {
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const baseWork = { ...firstWork }
+    delete baseWork.reviewCaseId
+    const unread = {
+      ...baseWork,
+      id: 'library_work_oversized',
+      workId: 'library_work_oversized',
+      title: 'Oversized book',
+      attentionCount: 0,
+      attention: 'preparation_failed' as const,
+      detailUrl: null,
+      detailKind: null,
+      preparation: {
+        attempt: 0,
+        checkGivenUp: false,
+        diagnosticReference: 'prep-0123456789abcdef',
+        mediaHealth: [],
+        provider: '',
+        reason:
+          'This book’s details from Audiobookshelf are over the Audiobookshelf response limit.',
+        recovery:
+          'Raise it in Settings → Background work, or check this book in Audiobookshelf, then scan this library again.',
+        recoveryAttempt: 0,
+        stage: 'extraction' as const,
+        status: 'item_oversized' as const,
+      },
+    }
+    renderRoute('/library?lens=all', {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({ ...library, works: [...library.works, unread] })),
+    })
+    const title = await screen.findByText('Oversized book', { selector: 'strong' })
+    const row = title.closest('article')
+    if (!row) throw new Error('the unread work renders as an inert row')
+    expect(within(row).getByRole('link', { name: 'Settings → Background work' })).toHaveAttribute(
+      'href',
+      '/settings?group=background',
+    )
+    expect(row).toHaveTextContent(
+      'over the Audiobookshelf response limit. Raise it in Settings → Background work, or check this book in Audiobookshelf, then scan this library again.',
+    )
   })
 
   it('keeps a current case selectable while exposing its terminal preparation diagnostic', async () => {
@@ -14002,7 +14103,7 @@ describe('Library route', () => {
       ...createHttp(),
       getPreparation: vi.fn(async () => ({
         ...idlePreparation,
-        schema_version: 'review-preparation-v2' as const,
+        schema_version: 'review-preparation-v3' as const,
         recovery_required: false,
         active: true,
         actionable: false,
@@ -14021,6 +14122,7 @@ describe('Library route', () => {
             recorded: 0,
             not_matched: 0,
             rescan_requested: false,
+            discovery_failure: null,
             stages: [],
           },
         ],
@@ -14116,7 +14218,7 @@ describe('Library route', () => {
       ...createHttp(),
       getPreparation: vi.fn(async () => ({
         ...idlePreparation,
-        schema_version: 'review-preparation-v2' as const,
+        schema_version: 'review-preparation-v3' as const,
         recovery_required: false,
         active: false,
         actionable: false,
@@ -16378,7 +16480,7 @@ describe('library provider throttling notice (#1282)', () => {
     retry: ProviderThrottlingView['retry'] = 'available',
   ): PreparationView => ({
     ...idlePreparation,
-    schema_version: 'review-preparation-v2',
+    schema_version: 'review-preparation-v3',
     recovery_required: false,
     active: false,
     actionable: false,
@@ -16605,6 +16707,7 @@ describe('library provider throttling notice (#1282)', () => {
             recorded: 0,
             not_matched: 0,
             rescan_requested: false,
+            discovery_failure: null,
             stages: [],
           },
         ],

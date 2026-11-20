@@ -334,7 +334,7 @@ export const permissionReadiness = (data: ActivityView, backupReady: boolean | n
 // An idle preparation view with every field the decoder requires. A case
 // spreads it and states only the fields it reads.
 export const idlePreparation: PreparationView = {
-  schema_version: 'review-preparation-v2',
+  schema_version: 'review-preparation-v3',
   recovery_required: false,
   active: false,
   actionable: false,

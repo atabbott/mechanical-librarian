@@ -428,6 +428,9 @@ export const PREPARATION_FAILURE_STATUSES = [
   'missing_required_input',
   'malformed_retained_data',
   'internal_failure',
+  'item_no_media',
+  'item_unreadable',
+  'item_oversized',
   'unknown',
 ] as const
 export type PreparationFailureStatus = (typeof PREPARATION_FAILURE_STATUSES)[number]

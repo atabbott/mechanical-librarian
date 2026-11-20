@@ -43,7 +43,9 @@ from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 from tests.support.metadata_report_schemas import (
     PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL,
     PRIOR_REVIEW_CASE_EPISODES_SQL,
+    PRIOR_REVIEW_SCANS_SQL,
     WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL,
+    WITHOUT_UNREAD_REVIEW_WORK_SQL,
 )
 
 ITEM = OwnerLinkItem("abs", "Books", "item-1")
@@ -752,6 +754,9 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
             f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v5'"
         ),
     )
+    # Nor did it record an unread item or a discovery reason (#2013).
+    monkeypatch.setattr(schema, "_REVIEW_WORK_SQL", WITHOUT_UNREAD_REVIEW_WORK_SQL)
+    monkeypatch.setattr(schema, "_REVIEW_SCANS_SQL", PRIOR_REVIEW_SCANS_SQL)
     # Nor did it record an unidentified retirement (#1953).
     monkeypatch.setattr(
         schema,

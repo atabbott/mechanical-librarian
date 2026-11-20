@@ -108,6 +108,11 @@ def _delete_preparation_work_rows(
         "DELETE FROM review_preparation_presentation WHERE row_id=? AND work_outcome IS NULL",
         ((row_id,) for row_id in row_ids),
     )
+    _renumber_completions(connection, run_id)
+
+
+def _renumber_completions(connection: sqlite3.Connection, run_id: str) -> None:
+    """Number the run's remaining completions from one and count them again."""
     completed = connection.execute(
         "SELECT row_id,completion_sequence FROM review_preparation_presentation "
         "WHERE row_kind='work' AND run_id=? AND completion_sequence IS NOT NULL "
@@ -128,6 +133,70 @@ def _delete_preparation_work_rows(
         "WHERE row_id='run' AND run_id=?",
         (len(completed), run_id, run_id),
     )
+
+
+def release_moved_preparation_work(connection: sqlite3.Connection) -> None:
+    """Keep each presentation work row on its work's scan and ordinal (#2023).
+
+    A rediscovery can renumber a work, and a library's latest scan takes over
+    the works an older scan holds or deletes the ones its listing dropped. A
+    renumbered row follows its work. A row whose work moved to another scan is
+    deleted with both halves of its recovery witness, whatever it completed:
+    its enrollment is the older scan's. The run keeps the passage and failures
+    it observed but no longer counts a moved work as ready, so the work is
+    counted once if the run enrols it again under its new scan. A row whose
+    work was deleted keeps only what it completed, as it does in a live run,
+    even when the run has finished. Runs inside the caller's transaction.
+    """
+    rows = connection.execute(
+        "SELECT presentation.row_id,presentation.run_id,"
+        "presentation.scan_id<>work.scan_id,presentation.work_outcome,"
+        "work.work_id,work.ordinal "
+        "FROM review_preparation_presentation AS presentation "
+        "LEFT JOIN review_preparation_work AS work ON work.work_id=presentation.work_id "
+        "WHERE presentation.row_kind='work' AND (presentation.scan_id<>work.scan_id "
+        "OR presentation.ordinal<>work.ordinal OR (work.work_id IS NULL AND ("
+        "presentation.work_outcome IS NULL "
+        "OR presentation.recovery_high_water_stage IS NOT NULL "
+        "OR presentation.current_work_state<>CASE presentation.work_outcome "
+        "WHEN 'ready' THEN 'complete' ELSE 'failed' END)))"
+    ).fetchall()
+    if not rows:
+        return
+    run_id = cast(str, rows[0][1])
+    _delete_preparation_work_rows(
+        connection,
+        run_id,
+        tuple(row[0] for row in rows if row[4] is None),
+    )
+    connection.executemany(
+        "UPDATE review_preparation_presentation SET ordinal=? WHERE row_id=?",
+        (
+            (ordinal, row_id)
+            for row_id, _run_id, moved, _outcome, work_id, ordinal in rows
+            if work_id is not None and not moved
+        ),
+    )
+    moved_rows = [row for row in rows if row[4] is not None and row[2]]
+    if not moved_rows:
+        return
+    _completion_sequence_count(connection, run_id)
+    connection.executemany(
+        "UPDATE review_preparation_work SET presentation_recovery_cycle_id=NULL,"
+        "presentation_recovery_stage=NULL,presentation_recovery_outcome=NULL "
+        "WHERE work_id=?",
+        ((row[4],) for row in moved_rows),
+    )
+    connection.executemany(
+        "DELETE FROM review_preparation_presentation WHERE row_id=?",
+        ((row[0],) for row in moved_rows),
+    )
+    connection.execute(
+        "UPDATE review_preparation_presentation SET ready=ready-? "
+        "WHERE row_id='run' AND run_id=?",
+        (sum(row[3] == "ready" for row in moved_rows), run_id),
+    )
+    _renumber_completions(connection, run_id)
 
 
 def deferred_preparation_enrollment_id(connection: str, library: str) -> str:

@@ -245,6 +245,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
         PRIOR_HUMAN_DECISIONS_SQL,
         PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
         PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
+        PRIOR_REVIEW_SCANS_SQL,
         PRIOR_REVIEW_TRANSITIONS_SQL,
         PRIOR_REVIEW_WORK_SQL,
     )
@@ -317,6 +318,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
             schema, "_ATTENTION_FACT_SOURCE_SQL", PRIOR_ATTENTION_FACT_SOURCE_SQL
         )
         old_schema.setattr(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
+        old_schema.setattr(schema, "_REVIEW_SCANS_SQL", PRIOR_REVIEW_SCANS_SQL)
         old_schema.setattr(
             schema, "_CURRENT_REVIEW_PACKAGES_SQL", PRIOR_CURRENT_REVIEW_PACKAGES_SQL
         )

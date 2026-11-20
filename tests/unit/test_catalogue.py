@@ -827,3 +827,83 @@ def test_schema_admission_still_refuses_a_changed_schema() -> None:
             patch.stopall()
         with pytest.raises(CatalogueError):
             open_catalogue(path, admission=admission)
+
+
+def _unread(item: str = "unread-1", code: str = "no_media") -> CatalogueEntry:
+    return CatalogueEntry(
+        "primary",
+        "books",
+        "library-id",
+        item,
+        1,
+        "Title",
+        (),
+        False,
+        False,
+        "needs-attention",
+        unread=code,
+    )
+
+
+def test_an_unread_entry_round_trips_and_its_check_is_closed() -> None:
+    """An item the service could not give keeps its reason (#2013)."""
+    stored = (_entry(), _unread(), _unread("unread-2", "changed"))
+    assert _unread().source_fingerprint != _unread(code="unreadable").source_fingerprint
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_catalogue(Path(directory) / "catalogue.sqlite", create=True)
+        repository.acquire_refresh()
+        repository.publish("a" * 64, stored)
+        assert repository.inspect("a" * 64) == stored
+        for statement in (
+            "UPDATE catalogue_entries SET unread='no_media' WHERE item_id='item-1'",
+            "UPDATE catalogue_entries SET unread='gone' WHERE item_id='unread-1'",
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                repository._connection.execute(statement)
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    "fields",
+    (
+        {"unread": "gone"},
+        {"classification": "none"},
+        {"file_identity": "a" * 64},
+        {"mount": "books"},
+    ),
+)
+def test_an_unread_entry_has_nothing_to_prepare(fields: dict[str, object]) -> None:
+    with pytest.raises(CatalogueError):
+        replace(_unread(), **fields)
+
+
+def test_a_catalogue_v3_main_without_unread_reasons_is_refused_unchanged(
+    tmp_path: Path,
+) -> None:
+    """The catalogue-v3 shape, rebuilt here from the current DDL without its
+    `unread` column, fails schema validation and is left as it was (#2013)."""
+    from mechanical_librarian.adapters.persistence import catalogue as module
+
+    unread = (
+        " unread TEXT CHECK(unread IS NULL OR (classification='needs-attention' "
+        "AND unread IN ('no_media','unreadable','oversized','changed'))),"
+    )
+    assert unread in module._SQL[3]
+    statements = [
+        sql.replace(module.CATALOGUE_SCHEMA, "catalogue-v3").replace(unread, "")
+        for sql in module._SQL
+    ]
+    path = tmp_path / "catalogue.sqlite"
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript("".join(statements))
+        connection.execute(
+            "INSERT INTO catalogue_schema(version) VALUES('catalogue-v3')"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    before = path.read_bytes()
+    with pytest.raises(CatalogueError):
+        open_catalogue(path)
+    assert path.read_bytes() == before

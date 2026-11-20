@@ -3801,7 +3801,7 @@ it('keeps history usable during checking and discards a late result after close 
 
 const pausedConnection = (state: 'paused' | 'recovered'): PreparationView => ({
   ...idlePreparation,
-  schema_version: 'review-preparation-v2',
+  schema_version: 'review-preparation-v3',
   recovery_required: false,
   active: false,
   actionable: false,
@@ -5397,7 +5397,7 @@ describe('owner language in Activity (#1286)', () => {
       getActivity: vi.fn(async () => activity()),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: false,
         actionable: false,

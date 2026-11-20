@@ -27,6 +27,7 @@ from mechanical_librarian.application.batch import (
 from mechanical_librarian.application.catalogue import (
     CatalogueBusyError,
     CatalogueError,
+    CatalogueLibraryError,
     CatalogueReader,
     CatalogueRepository,
     CatalogueStaleError,
@@ -258,8 +259,12 @@ class ReviewPipelineStages:
                 return snapshot.generation, snapshot.fingerprint, snapshot.entries
             except TargetConnectionError:
                 raise
+            except CatalogueLibraryError as error:
+                # The library itself could not be read; its reason is kept
+                # and shown (#2013).
+                raise ReviewPipelineError(error.code) from error
             except CatalogueError as error:
-                raise ReviewPipelineError("transient") from error
+                raise ReviewPipelineError("catalogue_unavailable") from error
             finally:
                 repository.close()
 

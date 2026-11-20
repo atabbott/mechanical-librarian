@@ -886,6 +886,24 @@ def test_first_boot_presentation_survives_first_ready_until_terminal_measurement
     view = application.preparation()
     assert view.first_boot_complete is True
     assert view.first_boot_works == 7
+    assert view.actionable is True
+
+    # #2013: books with no file in Audiobookshelf leave the scan `completed`
+    # so it keeps polling, and they still mark that the owner is needed.
+    preparation.progress = PipelineProgress(
+        pipeline_scan_id("primary", "Books", first_boot=True),
+        "primary",
+        "Books",
+        "completed",
+        7,
+        7,
+        5,
+        2,
+        0,
+        0,
+        False,
+    )
+    assert application.preparation().actionable is True
 
     preparation.progress = PipelineProgress(
         pipeline_scan_id("primary", "Books"),
@@ -900,7 +918,9 @@ def test_first_boot_presentation_survives_first_ready_until_terminal_measurement
         0,
         False,
     )
-    assert application.preparation().first_boot is False
+    view = application.preparation()
+    assert view.first_boot is False
+    assert view.actionable is False
 
 
 def test_first_boot_status_length_mismatch_keeps_typed_persistence_error(
