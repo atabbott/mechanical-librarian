@@ -661,7 +661,7 @@ describe('BackgroundActivity library reason (#2013)', () => {
     ],
     [
       'response_too_large',
-      'An answer from Audiobookshelf was over the Audiobookshelf response limit. Raise it in Settings → Background work.',
+      'An answer from Audiobookshelf was over the Audiobookshelf response limit. Raise it in Settings → Background work, or check this library in Audiobookshelf, then scan it again.',
     ],
     [
       'response_unreadable',
