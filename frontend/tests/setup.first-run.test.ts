@@ -1630,7 +1630,59 @@ describe('shipped first-run setup script', () => {
         { name: 'audible', adapter: 'audible_catalog', enabled: true },
         { name: 'audnexus', adapter: 'audnexus', enabled: true },
         { name: 'audiosilo', adapter: 'audiosilo', enabled: true },
-      ].map((value) => ({ ...value, cover_enabled: false, contact_email: null, key: null })),
+      ].map((value) => ({
+        ...value,
+        // Audible and iTunes can supply a cover, so setup saves it on (#2014).
+        cover_enabled: value.adapter === 'audible_catalog' || value.adapter === 'itunes_search',
+        contact_email: null,
+        key: null,
+      })),
+    })
+  })
+
+  it('saves cover evidence on for each cover source it turns on', async () => {
+    let submitted: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(request) === '/api/setup/providers' && init?.method === 'POST') {
+          submitted = jsonBody(init.body)
+          return response(setupState('libraries'))
+        }
+        return response(setupState('providers'))
+      }),
+    )
+    runSetup()
+
+    await screen.findByRole('heading', { name: 'Choose metadata sources' })
+    await untickSources()
+    for (const label of Object.values(settingsVocabulary.provider_labels))
+      fireEvent.click(screen.getByRole('checkbox', { name: label }))
+    fireEvent.input(screen.getByLabelText('Hardcover API key'), {
+      target: { value: 'hardcover-key' },
+    })
+    fireEvent.input(screen.getByLabelText('Google Books API key'), {
+      target: { value: 'google-key' },
+    })
+    fireEvent.input(screen.getByLabelText('Open Library contact email'), {
+      target: { value: 'owner@example.test' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+
+    await waitFor(() => expect(submitted).toBeDefined())
+    const providers = (submitted as { providers: { adapter: string; cover_enabled: boolean }[] })
+      .providers
+    expect(
+      Object.fromEntries(providers.map((value) => [value.adapter, value.cover_enabled])),
+    ).toEqual({
+      audible_catalog: true,
+      hardcover: true,
+      inventaire: true,
+      itunes_search: true,
+      open_library: true,
+      google_books: false,
+      audnexus: false,
+      audiosilo: false,
     })
   })
 

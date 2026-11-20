@@ -26,11 +26,17 @@ type AudibleMarketplace = Extract<
   { adapter: 'audible_catalog' }
 >['marketplaces'][number]
 type Provider = Document['providers'][number]
-// Only the two adapters that state a cover asset of their own carry the
-// switch. The JSON list is the one place that set is written; the `Extract`
-// below is its compile-time restatement, and a Python test holds the two
-// together against the settings contract that accepts the field.
-type CoverSwitchProvider = Extract<Provider, { adapter: 'audible_catalog' | 'itunes_search' }>
+// Every adapter whose settings contract accepts cover evidence carries the
+// switch, and #2014 turns it on when the source is switched on. The JSON list
+// is the one place that set is written; the `Extract` below is its
+// compile-time restatement, and a Python test holds the two together against
+// the settings contract that accepts the field.
+type CoverSwitchProvider = Extract<
+  Provider,
+  {
+    adapter: 'audible_catalog' | 'hardcover' | 'inventaire' | 'itunes_search' | 'open_library'
+  }
+>
 const coverSwitchAdapters: readonly string[] = settingsVocabulary.cover_switch_provider_adapters
 export const hasCoverSwitch = (provider: Provider): provider is CoverSwitchProvider =>
   coverSwitchAdapters.includes(provider.adapter)
@@ -478,9 +484,11 @@ export const rebase = (base: unknown, draft: unknown, latest: unknown): [unknown
 }
 
 // Credential-bearing capabilities start disabled. Inventaire is keyless and
-// #883 defaults both its evidence lanes on, including after owner re-enable.
-// The four audiobook adapters are keyless (ADR-0061), and Audible's
-// marketplace order stays with the configuration file, so neither appears.
+// #883 defaults both its evidence lanes on. Every other source starts off with
+// its covers off; switching a cover source on in Settings turns its cover
+// evidence on (#2014), including after owner re-enable. The four audiobook
+// adapters are keyless (ADR-0061), and Audible's marketplace order stays with
+// the configuration file, so neither appears.
 export const newProvider = (
   capability: SettingsView['provider_capabilities'][number],
 ): Document['providers'][number] => {

@@ -423,8 +423,13 @@ def test_sequence_only_duplication_is_also_withheld() -> None:
     ).reasons
 
 
-def _recording_with_series(title: str) -> MetadataReport:
-    """Two audiobook authorities giving the recording's own series, with title."""
+def _recording_with_series(
+    title: str, current: tuple[str, str] = ("Reading Order", "2")
+) -> MetadataReport:
+    """Two audiobook authorities giving a series, with title.
+
+    The series is the recording's own unless `current` names another.
+    """
     claims = audio_local_claims()
     series = ("Reading Order", "2")
     return MetadataReport.create(
@@ -436,7 +441,7 @@ def _recording_with_series(title: str) -> MetadataReport:
                 TargetField(
                     TargetDestination.SERIES,
                     TargetFieldState.VALUE,
-                    (TargetSeries(*series),),
+                    (TargetSeries(*current),),
                 )
                 if field.destination is TargetDestination.SERIES
                 else field

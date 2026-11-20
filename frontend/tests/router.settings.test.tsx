@@ -200,6 +200,9 @@ describe('owner settings route', () => {
     await user.click(await screen.findByRole('button', { name: 'Add Audible' }))
     await user.click(screen.getByRole('button', { name: 'Add iTunes' }))
     await user.click(segment('Use Audible', 'On'))
+    // Switching a cover source on turns its cover evidence on (#2014).
+    expect(segment('Audible cover evidence', 'On')).toHaveAttribute('aria-pressed', 'true')
+    expect(segment('iTunes cover evidence', 'Off')).toHaveAttribute('aria-pressed', 'true')
 
     // Keyless: no key, no email, and nothing to configure but enablement.
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
@@ -216,7 +219,7 @@ describe('owner settings route', () => {
     expect(savedRequest?.document.providers).toEqual([
       {
         adapter: 'audible_catalog',
-        cover_enabled: false,
+        cover_enabled: true,
         enabled: true,
         marketplaces: ['us', 'uk', 'de', 'fr', 'au', 'in', 'ca', 'jp', 'it', 'es'],
         name: 'audible_catalog',
@@ -277,6 +280,146 @@ describe('owner settings route', () => {
     expect(segment('Use Inventaire', 'On')).toHaveAttribute('aria-pressed', 'true')
   })
 
+  // Every source a settings document can hold, switched off with its covers
+  // off, as an install set up before #2014 may have stored them.
+  const offProviders: SettingsView['document']['providers'] = [
+    { adapter: 'hardcover', cover_enabled: false, enabled: false, name: 'hardcover' },
+    {
+      adapter: 'open_library',
+      contact_email: 'owner@example.invalid',
+      cover_enabled: false,
+      enabled: false,
+      name: 'open-library',
+    },
+    { adapter: 'inventaire', cover_enabled: false, enabled: false, name: 'inventaire' },
+    {
+      adapter: 'audible_catalog',
+      cover_enabled: false,
+      enabled: false,
+      marketplaces: ['us', 'uk', 'de', 'fr', 'au', 'in', 'ca', 'jp', 'it', 'es'],
+      name: 'audible',
+    },
+    { adapter: 'itunes_search', cover_enabled: false, enabled: false, name: 'itunes' },
+    { adapter: 'google_books', cover_enabled: false, enabled: false, name: 'google' },
+    { adapter: 'audnexus', cover_enabled: false, enabled: false, name: 'audnexus' },
+    { adapter: 'audiosilo', cover_enabled: false, enabled: false, name: 'audiosilo' },
+  ]
+  const offView = (providers = offProviders): SettingsView => ({
+    ...view(),
+    document: { ...document, providers, libraries: [] },
+    secrets: [
+      ...view().secrets,
+      { configured: true, field_id: 'provider.google.key', indicator: 'Configured · ····gook' },
+    ],
+  })
+
+  it.each([
+    ['Hardcover', 'hardcover'],
+    ['Open Library', 'open-library'],
+    ['Inventaire', 'inventaire'],
+    ['Audible', 'audible'],
+    ['iTunes', 'itunes'],
+  ])(
+    'turns %s cover evidence on when the source is switched on, and lets the owner turn it off',
+    async (label, name) => {
+      const user = userEvent.setup()
+      const http = createHttp()
+      const saved: SettingsWrite[] = []
+      http.getSettings = vi.fn(async () => offView())
+      http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+        saved.push(request)
+        return { ...offView(), document: savedDocument(request.document) }
+      })
+      renderRoute('/settings?group=providers', http)
+
+      await screen.findByRole('group', { name: `Use ${label}` })
+      expect(segment(`${label} cover evidence`, 'Off')).toBeDisabled()
+      await user.click(segment(`Use ${label}`, 'On'))
+      expect(segment(`${label} cover evidence`, 'On')).toHaveAttribute('aria-pressed', 'true')
+      await user.click(screen.getByRole('button', { name: 'Review changes' }))
+      expect(screen.getByRole('list')).toHaveTextContent(`${label} cover evidence`)
+      await user.click(screen.getByRole('button', { name: 'Save settings' }))
+      await waitFor(() => expect(saved).toHaveLength(1))
+      expect(saved[0]?.document.providers.find((item) => item.name === name)).toMatchObject({
+        cover_enabled: true,
+        enabled: true,
+      })
+      expect(await screen.findByText('Settings saved and in use.')).toBeVisible()
+
+      await user.click(segment(`${label} cover evidence`, 'Off'))
+      expect(segment(`${label} cover evidence`, 'Off')).toHaveAttribute('aria-pressed', 'true')
+      await user.click(screen.getByRole('button', { name: 'Save settings' }))
+      await waitFor(() => expect(saved).toHaveLength(2))
+      expect(saved[1]?.document.providers.find((item) => item.name === name)).toMatchObject({
+        cover_enabled: false,
+        enabled: true,
+      })
+    },
+  )
+
+  it('offers no cover evidence for a source that cannot supply a cover', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let savedRequest: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => offView())
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      savedRequest = request
+      return { ...offView(), document: savedDocument(request.document) }
+    })
+    renderRoute('/settings?group=providers', http)
+
+    await screen.findByRole('group', { name: 'Use Google Books' })
+    for (const label of ['Google Books', 'Audnexus', 'AudioSilo']) {
+      await user.click(segment(`Use ${label}`, 'On'))
+      expect(screen.queryByRole('group', { name: `${label} cover evidence` })).toBeNull()
+    }
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(
+      savedRequest?.document.providers
+        .filter((item) => ['google', 'audnexus', 'audiosilo'].includes(item.name))
+        .map(({ cover_enabled, enabled, name }) => ({ cover_enabled, enabled, name })),
+    ).toEqual([
+      { cover_enabled: false, enabled: true, name: 'google' },
+      { cover_enabled: false, enabled: true, name: 'audnexus' },
+      { cover_enabled: false, enabled: true, name: 'audiosilo' },
+    ])
+  })
+
+  it('shows covers saved off as Off and saves them untouched', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    // An install set up before #2014: its cover sources are on, covers off.
+    const stored = offProviders.map((item) =>
+      ['hardcover', 'open-library', 'audible', 'itunes'].includes(item.name)
+        ? { ...item, enabled: true }
+        : item,
+    )
+    let savedRequest: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => offView(stored))
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      savedRequest = request
+      return { ...offView(stored), document: savedDocument(request.document) }
+    })
+    renderRoute('/settings', http)
+
+    // An unrelated edit, so there is something to save.
+    const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    await user.type(endpoint, '/edited')
+    await user.click(screen.getByRole('button', { name: /Metadata sources/ }))
+    for (const label of ['Hardcover', 'Open Library', 'Audible', 'iTunes']) {
+      expect(segment(`Use ${label}`, 'On')).toHaveAttribute('aria-pressed', 'true')
+      expect(segment(`${label} cover evidence`, 'Off')).toHaveAttribute('aria-pressed', 'true')
+      expect(segment(`${label} cover evidence`, 'Off')).toBeEnabled()
+    }
+    expect(screen.getByText('1 unsaved change')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(savedRequest?.document.providers).toEqual(stored)
+  })
+
   it('keeps the primary shell intact and saves a redacted replacement with revision CAS', async () => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -296,8 +439,10 @@ describe('owner settings route', () => {
     expect(screen.getByRole('textbox', { name: 'Contact email' })).toHaveAccessibleDescription(
       /Sent to Open Library with each lookup, as it asks/,
     )
-    expect(screen.queryByText('Cover evidence')).not.toBeInTheDocument()
-    expect(screen.queryByRole('group', { name: /cover evidence/i })).not.toBeInTheDocument()
+    // Every source that can supply a cover shows its saved cover evidence.
+    for (const label of ['Hardcover', 'Open Library'])
+      expect(segment(`${label} cover evidence`, 'On')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByText('Cover evidence')).toHaveLength(2)
     await user.click(screen.getByRole('button', { name: 'Replace Hardcover API key' }))
     await user.type(screen.getByLabelText('Replacement Hardcover API key'), 'new-secret-abcd')
     await user.click(screen.getByRole('button', { name: 'Review changes' }))
@@ -2072,9 +2217,11 @@ describe('owner settings route', () => {
     await user.click(screen.getByRole('button', { name: 'Confirm clear Hardcover API key' }))
     await user.click(screen.getByRole('button', { name: /Appearance/ }))
     await user.click(segment('Motion', 'Always reduced'))
-    expect(screen.getByText('4 unsaved changes')).toBeVisible()
+    // Turning Hardcover off also turns its saved cover evidence off.
+    expect(screen.getByText('5 unsaved changes')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Review changes' }))
     const review = screen.getByRole('list')
+    expect(review).toHaveTextContent('Hardcover cover evidence')
     expect(review).toHaveTextContent('Hardcover API key')
     expect(review).toHaveTextContent('Will be cleared')
     expect(review).not.toHaveTextContent('abcd')

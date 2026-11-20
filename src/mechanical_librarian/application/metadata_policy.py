@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import RLock
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
@@ -35,6 +35,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import (
+    ProposalAssessment,
     ProposalSet,
     canonical_target_fields,
     evaluate_report,
@@ -673,6 +674,43 @@ def _outcome_comparisons(
     )
 
 
+def _kept_without_alternative(
+    preview: RichMetadataPreview, proposal: ProposalSet
+) -> RichMetadataPreview:
+    """Read an abstention over sources that only repeat the current value as kept.
+
+    A result left unresolved for another field's sake, such as a series kept
+    while its title has no safe combination, abstains as ambiguous evidence
+    even when every value offered is the current one. The review page says
+    nothing about disagreement for such a field (#2012), so the preview reads
+    it as the current value kept, the way Automatic reads it, and the field
+    is not counted as affected. The compiled preview and stored outcomes are
+    unchanged.
+    """
+    results = {result.destination: result for result in proposal.results}
+
+    def owner_reading(field: RichFieldPreview) -> RichFieldPreview:
+        result = results.get(RICH_PREVIEW_DESTINATIONS[field.field])
+        if (
+            field.outcome != "abstain"
+            or field.reason != "ambiguous_evidence"
+            or result is None
+            or any(
+                alternative.assessment is not ProposalAssessment.PRESERVES_TARGET
+                for alternative in result.alternatives
+            )
+        ):
+            return field
+        return replace(
+            field,
+            outcome="no_op",
+            desired_value=field.current_value,
+            reason="target_preserved",
+        )
+
+    return replace(preview, fields=tuple(map(owner_reading, preview.fields)))
+
+
 def _library_impact(
     captured: PolicyPreviewLibraryCapture,
     active: ResolvedMetadataPolicy,
@@ -712,11 +750,15 @@ def _library_impact(
         for report, _ in pairs
     )
     active_cases = tuple(
-        compile_rich_metadata_preview(active, report, compiled[0])
+        _kept_without_alternative(
+            compile_rich_metadata_preview(active, report, compiled[0]), compiled[0]
+        )
         for (report, _), compiled in zip(pairs, compiled_pairs, strict=True)
     )
     cases = tuple(
-        compile_rich_metadata_preview(resolved, report, compiled[1])
+        _kept_without_alternative(
+            compile_rich_metadata_preview(resolved, report, compiled[1]), compiled[1]
+        )
         for (report, _), compiled in zip(pairs, compiled_pairs, strict=True)
     )
     covers = captured.covers or (None,) * len(pairs)
