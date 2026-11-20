@@ -17,6 +17,11 @@ brackets are GitHub issues.
   refusal under the button that keeps the typed key. Sign in with ChatGPT
   always ends; on a host whose sandbox cannot run, setup and Settings say so
   and the container log names the failed check (#2011).
+- A field whose sources only repeat its current value no longer says the
+  sources disagree or shows a warning about combining details; it says no
+  source offered a different value. Evidence on a field's current or recorded
+  value is the same link the choices use, and the spacing above and inside
+  Recording match is even (#2012).
 - After you pin a field and take the pin back on a work Automatic had not
   decided yet, turning on Automatic now shows that your earlier decision holds
   the field, with Automatic's choice and Resume automatic handling, on the
