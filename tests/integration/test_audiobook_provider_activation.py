@@ -908,7 +908,9 @@ def test_an_admitted_audible_recording_offers_its_cover_as_a_selectable_candidat
     from mechanical_librarian.application.metadata_report import (
         admitted_audiobook_identity,
     )
-    from tests.unit.test_cover_consideration import _Store
+    from tests.support.cover_consideration_store import (
+        InMemoryCoverConsiderationStore,
+    )
 
     def fetch(url: str, **_kwargs: object) -> RemoteCover:
         return RemoteCover(url, "image/jpeg", _one_design_two_authorities()[url])
@@ -930,7 +932,7 @@ def test_an_admitted_audible_recording_offers_its_cover_as_a_selectable_candidat
             if source.artifact is not None
         }
         service = CoverConsiderationService(
-            _Store(),
+            InMemoryCoverConsiderationStore(),
             read_preview=lambda artifact, _variant: artifacts.read_preview_digest(
                 by_artifact[artifact]
             ),

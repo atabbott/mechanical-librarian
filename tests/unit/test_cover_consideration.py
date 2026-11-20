@@ -60,6 +60,9 @@ from mechanical_librarian.domain.proposal_set import work_route_cover_sources
 from mechanical_librarian.domain.reviewer_access import ReviewerEngine
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.support.audiobook_reports import asserted_asin_report
+from tests.support.cover_consideration_store import (
+    InMemoryCoverConsiderationStore as _Store,
+)
 from tests.support.hardcover_work_route import (
     WORK,
     hardcover_work_report,
@@ -157,44 +160,6 @@ def test_failed_dynamic_dispatch_preserves_current_owner_identity(case: _Case) -
     assert projected["reviewer_engine"] == "openrouter"
     assert projected["reviewer_model"] == "example/vision"
     assert projected["reviewer_access_revision"] == 7
-
-
-class _Store:
-    def __init__(self) -> None:
-        self.current: dict[str, str] = {}
-        self.events: list[dict[str, object]] = []
-
-    def current_cover_consideration(self, review_case_id: str, replay_digest: str):
-        document = self.current.get(review_case_id)
-        if document is None or json.loads(document)["replay_digest"] != replay_digest:
-            return None
-        return document
-
-    def current_cover_consideration_document(self, review_case_id: str):
-        return self.current.get(review_case_id)
-
-    def latest_cover_consideration_document(self, review_case_id: str):
-        return self.current.get(review_case_id)
-
-    def record_cover_consideration(self, document: str, **values):
-        review_case_id = values["review_case_id"]
-        previous = self.current.get(review_case_id)
-        if previous is not None:
-            self.events.append(
-                {"kind": "superseded", "occurred_at": values["occurred_at"]}
-            )
-        self.current[review_case_id] = document
-        self.events.append(
-            {
-                "kind": values.get("preparation_kind", "automatic_prepared"),
-                "occurred_at": values["occurred_at"],
-            }
-        )
-        return document
-
-    def cover_consideration_history(self, review_case_id, limit=50):
-        del review_case_id
-        return tuple(reversed(self.events[-limit:]))
 
 
 class _Case:

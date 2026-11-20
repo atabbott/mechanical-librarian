@@ -12,6 +12,13 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- Guided setup, and switching a source on in Settings, now turn on cover
+  evidence for Audible, iTunes, Hardcover, Open Library and Inventaire, so
+  their covers are offered for each book. Settings shows the Cover evidence
+  switch for all five so you can turn any of them off. Covers already saved
+  off stay off until you change them (#2014).
+- Audnexus lookups no longer report a dropped field for its ratings summary,
+  which no choice uses (#2014).
 - After you pin a field and take the pin back on a work Automatic had not
   decided yet, turning on Automatic now shows that your earlier decision holds
   the field, with Automatic's choice and Resume automatic handling, on the
