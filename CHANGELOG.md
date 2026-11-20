@@ -12,6 +12,12 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- Choosing a description adviser, changing Book matching or changing the
+  policy now prepares the books it affects even after a library's newer scan
+  has finished, instead of leaving them queued while Activity said
+  Preparation idle. A library with a book that could not finish now shows
+  Preparation needs attention and is not scanned automatically again until
+  you use Retry or Scan now on that library (#2023).
 - **Clean rebuild required.** One book Audiobookshelf cannot give, such as a
   book with no audio or ebook file, no longer stops its whole library: it is
   listed under Could not finish with its reason and next step, and every other

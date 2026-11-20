@@ -53,6 +53,7 @@ from mechanical_librarian.adapters.persistence.proposal_sets import (
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
+    _LIBRARY_LATEST_SCAN_SQL,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _validate_review_browse_row,
@@ -109,15 +110,17 @@ _UNRETURNED_CASES_SQL = (
 
 # A work read again for a transition (ADR-0034) waits for a fresh listing of
 # its library, so the next scan finds its written title and authors already
-# listed and extracts it once. Its idle scan is queued for discovery with the
-# standard reset. A processing scan counts as idle when nothing in it is in
-# flight and every queued work belongs to this transition: an earlier work of
-# the same cohort reopened it. A discovering or busy scan is left as it is.
+# listed and extracts it once. Its library's latest scan, which the restart
+# put it on (#2023), is queued for discovery with the standard reset when
+# idle. A processing scan counts as idle when nothing in it is in flight and
+# every queued work belongs to this transition: an earlier work of the same
+# cohort reopened it. A discovering or busy scan is left as it is.
 _REQUEUE_SCAN_FOR_DISCOVERY_SQL = (
-    "UPDATE review_preparation_scans SET state='queued',discovery_failure=NULL,requested_at=?,updated_at=?,"
+    "UPDATE review_preparation_scans SET state='queued',discovery_failure=NULL,"
+    "requested_at=?,updated_at=MAX(?,updated_at+1),"
     "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
     "qualification_epoch=NULL,refresh_count=0,rescan_requested=0 "
-    "WHERE scan_id=(SELECT scan_id FROM review_preparation_work WHERE work_id=?) "
+    "WHERE scan_id=" + _LIBRARY_LATEST_SCAN_SQL + " "
     "AND (state IN ('completed','completed_with_failures') OR (state='processing' "
     "AND NOT EXISTS(SELECT 1 FROM review_preparation_work w "
     "WHERE w.scan_id=review_preparation_scans.scan_id AND w.work_id<>? "
@@ -1068,10 +1071,15 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 )
             # A queued scan has yet to discover its library: it keeps waiting
             # for that discovery rather than skipping it.
+            # Only a reopen moves the time past the close: every work of the
+            # cohort runs this, and an open scan keeps the activation's time.
             self._connection.execute(
-                "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,updated_at=? "
-                "WHERE scan_id=? AND state<>'queued'",
-                (activated_at, work[1]),
+                "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,"
+                "updated_at=CASE WHEN state IN ('completed','completed_with_failures') "
+                "THEN MAX(?,updated_at+1) ELSE ? END WHERE scan_id="
+                + _LIBRARY_LATEST_SCAN_SQL
+                + " AND state<>'queued'",
+                (activated_at, activated_at, work[0]),
             )
         self._connection.execute(
             "INSERT INTO metadata_policy_transition_items(transition_id,connection_name,library_name,item_id,report_id,work_id,state,failure_code,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -1201,9 +1209,10 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 # Pending work is claimed only from a processing scan, and an
                 # idle claim may already have closed this one (#1369).
                 self._connection.execute(
-                    "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,updated_at=? "
-                    "WHERE scan_id=(SELECT scan_id FROM review_preparation_work WHERE work_id=?) "
-                    "AND state IN ('completed','completed_with_failures')",
+                    "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,"
+                    "updated_at=MAX(?,updated_at+1) WHERE scan_id="
+                    + _LIBRARY_LATEST_SCAN_SQL
+                    + " AND state IN ('completed','completed_with_failures')",
                     (retried_at, work_id),
                 )
             self._refresh_metadata_policy_transition(transition_id, retried_at)

@@ -13509,7 +13509,7 @@ def test_a_retried_failed_stage_clears_the_stored_discovery_reason(
         _retry_failed_stage,
     )
 
-    _retry_failed_stage(repository._connection, work.action_id, work.scan_id, 16)
+    _retry_failed_stage(repository._connection, work.action_id, 16)
     repository._connection.commit()
     scan = repository._connection.execute(
         "SELECT state,discovery_failure FROM review_preparation_scans"

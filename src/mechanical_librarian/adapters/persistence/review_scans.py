@@ -31,6 +31,9 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_run_state,
     refresh_preparation_work,
 )
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    recover_stranded_preparation_work,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _NOT_MATCHED_PACKAGE_SQL,
 )
@@ -837,6 +840,14 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     f"WHERE connection_name NOT IN ({placeholders})",
                     configured_connections,
                 )
+            latest = self._connection.execute(
+                "SELECT MAX(updated_at) FROM ("
+                "SELECT COALESCE(MAX(updated_at),0) AS updated_at FROM review_preparation_scans "
+                "UNION ALL SELECT COALESCE(MAX(updated_at),0) FROM review_preparation_work)"
+            ).fetchone()[0]
+            # Queued work a closed scan left behind joins its library's
+            # latest scan before a library is retired or rebound (#2023).
+            recover_stranded_preparation_work(self._connection, latest)
             configured_scopes = {
                 (connection, library) for connection, library, *_ in producers
             }
@@ -889,11 +900,6 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                         "WHERE scan_id=?",
                         (library_id, producer_fingerprint, row[0]),
                     )
-            latest = self._connection.execute(
-                "SELECT MAX(updated_at) FROM ("
-                "SELECT COALESCE(MAX(updated_at),0) AS updated_at FROM review_preparation_scans "
-                "UNION ALL SELECT COALESCE(MAX(updated_at),0) FROM review_preparation_work)"
-            ).fetchone()[0]
             refresh_preparation_presentation(self._connection, latest)
             transaction.commit()
         except BaseException as error:

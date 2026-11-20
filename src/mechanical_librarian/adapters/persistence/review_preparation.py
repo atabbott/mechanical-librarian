@@ -61,11 +61,13 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_presentation,
     refresh_preparation_run_state,
     refresh_preparation_work,
+    release_moved_preparation_work,
     reopen_preparation_projection,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _LANDED_LAST_SQL,
     _LATEST_VERIFIED_WRITE_SQL,
+    _LIBRARY_LATEST_SCAN_SQL,
     _active_generation_automatic_sql,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
@@ -158,6 +160,102 @@ _MATCHING_CONSIDERATION_SQL = (
 _MATCHING_LEVEL_SQL = "json_extract(consideration.document,'$.work_identity_level')"
 
 
+# Reopen the latest scan of a work's library for the work queued again in
+# it (#2023). The strict increase orders the reopen after the close its
+# finished enrollment recorded, even within the same second. Binds the time
+# and the work id.
+_REOPEN_LATEST_SCAN_SQL = (
+    "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,"
+    "updated_at=MAX(?,updated_at+1) WHERE scan_id="
+    + _LIBRARY_LATEST_SCAN_SQL
+    + " AND state IN ('completed','completed_with_failures')"
+)
+
+
+def _join_latest_scan(
+    connection: sqlite3.Connection, work_ids: tuple[str, ...]
+) -> None:
+    """Put each work queued again on its library's latest scan (#2023).
+
+    A work left on an older scan would wait under a scan nothing claims from
+    once the latest replaced it, so it moves, and its presentation row follows.
+    Where the latest scan is still queued, its discovery takes the work over
+    as well. Runs inside the caller's transaction, before the caller reopens
+    the latest scan.
+    """
+    moved = 0
+    for work_id in work_ids:
+        moved += connection.execute(
+            "UPDATE review_preparation_work SET scan_id="
+            + _LIBRARY_LATEST_SCAN_SQL
+            + " WHERE work_id=? AND scan_id IS NOT "
+            + _LIBRARY_LATEST_SCAN_SQL,
+            (work_id, work_id, work_id),
+        ).rowcount
+    if moved:
+        release_moved_preparation_work(connection)
+
+
+# Each library whose latest scan could run queued or delayed work it does
+# not: an older scan of the library holds such work, or the latest scan is
+# closed over such work of its own. A queued or discovering latest scan is
+# left to its discovery, which takes the work over, and a failed discovery
+# leaves its library's work unclaimable (ADR-0031). The scan table is read
+# first, so a library with nothing stranded costs one probe per scan.
+_STRANDED_LIBRARY_SQL = (
+    "SELECT s.scan_id,s.connection_name,s.library_name FROM review_preparation_scans s "
+    "WHERE s.state IN ('processing','completed','completed_with_failures') "
+    "AND s.discovery_failure IS NULL AND s.scan_id=(SELECT latest.scan_id "
+    "FROM review_preparation_scans latest "
+    "WHERE latest.connection_name=s.connection_name "
+    "AND latest.library_name=s.library_name "
+    "ORDER BY latest.requested_at DESC,latest.scan_id DESC LIMIT 1) "
+    "AND (EXISTS(SELECT 1 FROM review_preparation_scans older "
+    "CROSS JOIN review_preparation_work w ON w.scan_id=older.scan_id "
+    "WHERE older.connection_name=s.connection_name "
+    "AND older.library_name=s.library_name AND older.scan_id<>s.scan_id "
+    "AND +w.state IN ('queued','delayed')) "
+    "OR (s.state<>'processing' AND EXISTS(SELECT 1 FROM review_preparation_work w "
+    "INDEXED BY review_preparation_work_aged_claim "
+    "WHERE w.state IN ('queued','delayed') AND w.library_name=s.library_name "
+    "AND w.connection_name=s.connection_name))) "
+    "ORDER BY s.scan_id"
+)
+
+
+def recover_stranded_preparation_work(
+    connection: sqlite3.Connection, updated_at: int
+) -> None:
+    """Give queued work a scan that can claim it again (#2023).
+
+    Each library's queued and delayed work moves to its latest scan, which is
+    reopened when closed over it, so the scan cannot close while its library
+    still has queued work and Activity shows the library preparing. Running
+    work is left to finish. Runs inside the claim pass's and startup
+    recovery's transactions.
+    """
+    moved = 0
+    for scan_id, connection_name, library_name in connection.execute(
+        _STRANDED_LIBRARY_SQL
+    ).fetchall():
+        moved += connection.execute(
+            "UPDATE review_preparation_work SET scan_id=? "
+            "WHERE connection_name=? AND library_name=? AND scan_id<>? "
+            "AND state IN ('queued','delayed')",
+            (scan_id, connection_name, library_name, scan_id),
+        ).rowcount
+        connection.execute(
+            "UPDATE review_preparation_scans SET state='processing',"
+            "discovery_failure=NULL,updated_at=MAX(?,updated_at+1) "
+            "WHERE scan_id=? AND state IN ('completed','completed_with_failures') "
+            "AND EXISTS(SELECT 1 FROM review_preparation_work w "
+            "WHERE w.scan_id=? AND w.state IN ('queued','delayed'))",
+            (updated_at, scan_id, scan_id),
+        )
+    if moved:
+        release_moved_preparation_work(connection)
+
+
 def requeue_projection_work(
     connection: sqlite3.Connection,
     rows: list[tuple[str, str]],
@@ -165,18 +263,16 @@ def requeue_projection_work(
     trigger: PreparationTrigger,
 ) -> None:
     """Project the named current case works again, in the caller's transaction."""
-    for work_id, scan_id in rows:
+    for work_id, _scan_id in rows:
         connection.execute(
             "UPDATE review_preparation_work SET stage='projection',state='queued',"
             "attempt=0,recovery_attempt=0,retry_not_before=0,failure_code=NULL,"
             "failure_root=NULL,outcome=NULL,updated_at=? WHERE work_id=?",
             (updated_at, work_id),
         )
-        connection.execute(
-            "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,updated_at=? "
-            "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
-            (updated_at, scan_id),
-        )
+    _join_latest_scan(connection, tuple(row[0] for row in rows))
+    for work_id, _scan_id in rows:
+        connection.execute(_REOPEN_LATEST_SCAN_SQL, (updated_at, work_id))
     if rows:
         reopen_preparation_projection(
             connection, tuple(row[0] for row in rows), updated_at, trigger
@@ -261,7 +357,7 @@ def request_matching_check(
         ):
             projections.append((work_id, scan_id))
         elif state == "failed" and stage in _STORED_DATA_STAGES:
-            _retry_failed_stage(connection, work_id, scan_id, updated_at)
+            _retry_failed_stage(connection, work_id, updated_at)
         else:
             connection.execute(
                 "UPDATE review_preparation_work SET stage='projection',state='queued',"
@@ -284,7 +380,7 @@ _STORED_DATA_STAGES = frozenset({"provider", "proposal", "admission"})
 
 
 def _retry_failed_stage(
-    connection: sqlite3.Connection, work_id: str, scan_id: str, updated_at: int
+    connection: sqlite3.Connection, work_id: str, updated_at: int
 ) -> None:
     connection.execute(
         "UPDATE review_preparation_work SET state='queued',attempt=0,"
@@ -292,11 +388,8 @@ def _retry_failed_stage(
         "updated_at=? WHERE work_id=?",
         (updated_at, work_id),
     )
-    connection.execute(
-        "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,updated_at=? "
-        "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
-        (updated_at, scan_id),
-    )
+    _join_latest_scan(connection, (work_id,))
+    connection.execute(_REOPEN_LATEST_SCAN_SQL, (updated_at, work_id))
 
 
 def matching_check_given_up(
@@ -608,6 +701,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "WHERE state='delayed' AND retry_not_before<=?",
                 (claimed_at, claimed_at),
             )
+            # Before any scan settles below, in this transaction (#2023).
+            recover_stranded_preparation_work(self._connection, claimed_at)
             scan = self._connection.execute(
                 "SELECT scan_id,connection_name,library_name,library_id,producer_fingerprint "
                 "FROM review_preparation_scans WHERE state='queued' "
@@ -939,7 +1034,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         ):
             raise MetadataReportError("provider retry staging is invalid")
         row = self._connection.execute(
-            "SELECT work_id,scan_id FROM review_preparation_work WHERE connection_name=? "
+            "SELECT work_id FROM review_preparation_work WHERE connection_name=? "
             "AND library_name=? AND item_id=? AND file_identity=? "
             "AND report_id=? AND state IN ('complete','failed','stale')",
             (
@@ -972,11 +1067,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             != 1
         ):
             raise MetadataReportError("provider retry staging changed")
-        self._connection.execute(
-            "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,updated_at=? "
-            "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
-            (staged_at, row[1]),
-        )
+        _join_latest_scan(self._connection, (row[0],))
+        self._connection.execute(_REOPEN_LATEST_SCAN_SQL, (staged_at, row[0]))
         return cast(str, row[0])
 
     def mark_owner_link_work_fresh(self, report: MetadataReport) -> None:
@@ -1159,9 +1251,12 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     completed_at,
                     cover_policy_reference,
                 )
+            # This scan takes over every work of its library (#2023): each
+            # one is now on it or goes.
             for work_id, item_id in self._connection.execute(
-                "SELECT work_id,item_id FROM review_preparation_work WHERE scan_id=?",
-                (action.scan_id,),
+                "SELECT work_id,item_id FROM review_preparation_work "
+                "WHERE connection_name=? AND library_name=?",
+                (action.connection, action.library),
             ).fetchall():
                 if item_id not in kept_items:
                     self._release_transition_items(work_id, completed_at)
@@ -1188,6 +1283,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             self._record_unread_items(
                 action, generation, fingerprint, len(eligible), unread, completed_at
             )
+            release_moved_preparation_work(self._connection)
             record_preparation_names(
                 self._connection, action.scan_id, selected, completed_at
             )
@@ -1238,7 +1334,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "producer_fingerprint,catalogue_generation,catalogue_fingerprint,"
                 "stage,state,failure_code,updated_at"
                 ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'extraction',?,?,?) "
-                "ON CONFLICT(work_id) DO UPDATE SET ordinal=excluded.ordinal,"
+                "ON CONFLICT(work_id) DO UPDATE SET scan_id=excluded.scan_id,"
+                "ordinal=excluded.ordinal,"
                 "library_id=excluded.library_id,file_identity=excluded.file_identity,"
                 "source_revision=excluded.source_revision,"
                 "source_fingerprint=excluded.source_fingerprint,"
@@ -1419,7 +1516,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             "report_id,proposal_set_id,review_case_id,failure_code,failure_root,outcome,"
             "research_not_before,updated_at"
             ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(work_id) DO UPDATE SET ordinal=excluded.ordinal,"
+            "ON CONFLICT(work_id) DO UPDATE SET scan_id=excluded.scan_id,"
+            "ordinal=excluded.ordinal,"
             "library_id=excluded.library_id,file_identity=excluded.file_identity,"
             "source_revision=excluded.source_revision,"
             "source_fingerprint=excluded.source_fingerprint,"
@@ -2573,6 +2671,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             self._restart_metadata_policy_work(
                 row[0], "proposal", current_report_id, updated_at
             )
+        _join_latest_scan(self._connection, (row[0],))
+        self._connection.execute(_REOPEN_LATEST_SCAN_SQL, (updated_at, row[0]))
 
     def _requeue_title_projections(self, updated_at: int) -> None:
         """Reconsider completed current titles inside the safety recovery transaction."""
@@ -2666,4 +2766,5 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 work_id,
             ),
         )
+        _join_latest_scan(self._connection, (work_id,))
         return restart_stage

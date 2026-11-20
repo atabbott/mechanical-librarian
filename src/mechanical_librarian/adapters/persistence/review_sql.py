@@ -497,6 +497,15 @@ _CURRENT_REVIEW_CASE_COUNT_SQL = (
     + "WHERE COALESCE(c.outcome,'')<>'tombstoned'"
     + _REVIEW_SEARCH_SQL
 )
+# The latest scan of a work's library, the one a work queued again joins
+# (#2023): the work's own scan may be an older one the latest replaced.
+# Binds the work id.
+_LIBRARY_LATEST_SCAN_SQL = (
+    "(SELECT latest.scan_id FROM review_preparation_scans latest "
+    "JOIN review_preparation_work keyed ON keyed.connection_name=latest.connection_name "
+    "AND keyed.library_name=latest.library_name WHERE keyed.work_id=? "
+    "ORDER BY latest.requested_at DESC,latest.scan_id DESC LIMIT 1)"
+)
 _LATEST_PREPARATION_WORK_SQL = (
     "SELECT work_id,stage,attempt,recovery_attempt,state,failure_code,failure_root "
     "FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? "
