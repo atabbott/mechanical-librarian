@@ -6213,6 +6213,134 @@ def test_policy_tray_beside_the_rail_keeps_its_actions_inside_the_editor() -> No
         assert failures == [], "\n".join(failures)
 
 
+# Policy › Curation's geometry (#2015): where each control and Save start,
+# the right edge of every row, each settings row's name against its control's
+# first line, the type of headings and explaining text, Save's look, and
+# whether any control is under the floating draft bar.
+_CURATION_LAYOUT = """() => {
+  const list = document.querySelector('#policy-curation .cm-policy-field-list');
+  const rows = [...list.querySelectorAll(':scope > :is(.cm-policy-field, .cm-policy-settings)')];
+  const box = (node) => node.getBoundingClientRect();
+  const round = (value) => Math.round(value);
+  const centre = (node) => { const b = box(node); return b.top + b.height / 2; };
+  const font = (node) => { const s = getComputedStyle(node); return [s.fontFamily, s.fontSize, s.fontWeight].join(' '); };
+  const asin = rows.find((row) => row.getAttribute('aria-label') === 'ASIN');
+  const sections = rows.filter((row) => row.matches('.cm-policy-settings'));
+  const controls = [...list.querySelectorAll(
+    '.cm-segmented, .cm-dropdown-trigger, .cm-policy-settings-value, .cm-policy-settings-footer > button')];
+  const firstLine = (row) => {
+    const control = row.querySelector('.settings-field-control > :first-child');
+    const label = row.querySelector('.settings-field-title strong');
+    const target = control.matches('.cm-segmented') ? control.querySelector('button') : control;
+    return [label.textContent, round(centre(label) - centre(target))];
+  };
+  return {
+    lefts: [...new Set(controls.map((node) => round(box(node).left)))].sort((a, b) => a - b),
+    settingLeft: round(box(asin.querySelector('.cm-segmented')).left),
+    rights: [...new Set(rows.map((row) => round(box(row).right)))],
+    offsets: sections.flatMap((section) => [...section.querySelectorAll('.settings-field-row')].map(firstLine)),
+    headings: [...new Set([font(asin.querySelector('header strong')),
+      ...sections.map((section) => font(section.querySelector('h3')))])],
+    text: [...new Set([getComputedStyle(asin.querySelector('header p')).fontSize,
+      ...sections.flatMap((section) => [...section.querySelectorAll('p')]
+        .filter((node) => node.textContent.trim())
+        .map((node) => getComputedStyle(node).fontSize))])],
+    saves: sections.map((section) => {
+      const save = section.querySelector('.cm-policy-settings-footer > button');
+      const inside = box(save).bottom <= box(section).bottom && box(save).top >= box(section).top;
+      return [save.textContent, inside, getComputedStyle(save).backgroundColor];
+    }),
+    accent: getComputedStyle(document.querySelector('.cm-segmented button[aria-pressed="true"]')).backgroundColor,
+  };
+}"""
+
+_UNDER_THE_DRAFT_BAR = """() => {
+  const tray = document.querySelector('.cm-finish-tray');
+  if (getComputedStyle(tray).position !== 'sticky') return {sticky: false, hidden: [], end: 0};
+  const hidden = [];
+  for (const node of document.querySelectorAll('#policy-curation :is(button, a, summary)')) {
+    if (node.offsetParent === null) continue;
+    node.focus();
+    const control = node.getBoundingClientRect();
+    const bar = tray.getBoundingClientRect();
+    if (control.bottom > bar.top + 0.5 && control.top < bar.bottom) hidden.push(node.textContent.trim());
+  }
+  window.scrollTo(0, document.scrollingElement.scrollHeight);
+  const rows = document.querySelectorAll(
+    '#policy-curation .cm-policy-field-list > :is(.cm-policy-field, .cm-policy-settings)');
+  const last = rows[rows.length - 1].getBoundingClientRect();
+  return {sticky: true, hidden, end: Math.round(tray.getBoundingClientRect().top - last.bottom)};
+}"""
+
+
+def test_policy_curation_sections_share_the_field_grid() -> None:
+    """Current covers, Description advice and Book matching sit on the policy
+    field grid: every control and Save start at the Setting column (or the
+    Option column's dropdowns), every row ends at one right edge, each row's
+    name is level with its control's first line, one heading style and one
+    explaining size serve every section and ASIN, Save sits inside its
+    section and fills in only once there is something to save, and no control
+    is left under the floating draft bar. On a phone everything starts at one
+    edge (#2015)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        failures: list[str] = []
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            for width, height in ((1440, 900), (1280, 800), (390, 844)):
+                where = f"{scheme} at {width}x{height}"
+                page.set_viewport_size({"width": width, "height": height})
+                page.goto("https://react-platform.invalid/policy?section=curation")
+                region = page.get_by_role("region", name="Book matching")
+                region.get_by_role("button", name="Save book matching").wait_for()
+                page.evaluate(_TWO_FRAMES)
+                found = page.evaluate(_CURATION_LAYOUT)
+                phone = width < 761
+                lefts = found["lefts"]
+                if (
+                    (len(lefts) != 1)
+                    if phone
+                    else (lefts[0] != found["settingLeft"] or len(lefts) != 2)
+                ):
+                    failures.append(f"{where}: controls start at {lefts}")
+                if len(found["rights"]) != 1:
+                    failures.append(f"{where}: rows end at {found['rights']}")
+                if not phone:
+                    failures += [
+                        f"{where}: {name} is {offset}px off its control's first line"
+                        for name, offset in found["offsets"]
+                        if abs(offset) > 2
+                    ]
+                if len(found["headings"]) != 1 or len(found["text"]) != 1:
+                    failures.append(
+                        f"{where}: type {found['headings']} {found['text']}"
+                    )
+                for name, inside, background in found["saves"]:
+                    if not inside or background == found["accent"]:
+                        failures.append(
+                            f"{where}: {name} {inside} {background} at rest"
+                        )
+                # A change fills its section's Save in, and only that one.
+                region.get_by_role("button", name="Same title and every author").click()
+                changed = page.evaluate(_CURATION_LAYOUT)["saves"]
+                filled = [
+                    name
+                    for name, _, background in changed
+                    if background == found["accent"]
+                ]
+                if filled != ["Save book matching"]:
+                    failures.append(f"{where}: filled after a change {filled}")
+                bar = page.evaluate(_UNDER_THE_DRAFT_BAR)
+                if bar["hidden"] or bar["end"] < 0:
+                    failures.append(f"{where}: under the draft bar {bar}")
+        assert failures == [], "\n".join(failures)
+
+
 def test_activity_paging_keeps_the_focused_control_in_view() -> None:
     """Moving to the next Activity page or changing the page size from the
     keyboard keeps the control that has focus in view, clear of the masthead,

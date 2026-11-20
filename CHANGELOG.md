@@ -12,6 +12,10 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- Policy › Curation's Current covers, Description advice and Book matching
+  now line up with the policy fields: one width, one control column, labels
+  level with their controls and one heading and text size. Each Save sits
+  inside its section and looks ready only when something changed (#2015).
 - In setup, the three "Get a key" links open in a new tab. After Check key and
   use OpenRouter the card shows the chosen model with the form folded, or a
   refusal under the button that keeps the typed key. Sign in with ChatGPT

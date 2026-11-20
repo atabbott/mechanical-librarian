@@ -28,7 +28,9 @@ export const FieldInput = ({
 )
 
 // One labelled setting: its name and a short consequence on the left, and the
-// control on the right edge shared by every row on the page.
+// control on the right edge shared by every row on the page. `wide` marks a
+// control whose choices need the room of more than one control column, as
+// Policy's grid gives it (#2015).
 export const FieldRow = ({
   title,
   description,
@@ -38,6 +40,7 @@ export const FieldRow = ({
   fieldId,
   error,
   group = false,
+  wide = false,
   children,
 }: {
   title: string
@@ -48,9 +51,10 @@ export const FieldRow = ({
   fieldId?: string | undefined
   error?: string | undefined
   group?: boolean
+  wide?: boolean
   children: ReactNode
 }) => (
-  <div className={`settings-field-row${changed ? ' is-changed' : ''}`}>
+  <div className={`settings-field-row${changed ? ' is-changed' : ''}${wide ? ' is-wide' : ''}`}>
     <div>
       {managed ? <span className="settings-effect">Managed by your deployment</span> : null}
       <span className="settings-field-title">

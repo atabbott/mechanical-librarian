@@ -52,14 +52,12 @@ export const CurrentCoverSettings = ({ http }: { http: ReviewHttp }) => {
   })
   const settingsRetry = useRef<HTMLButtonElement>(null)
   return (
-    <section
-      id="current-covers"
-      className="description-advice-settings"
-      aria-labelledby={headingId}
-    >
-      <h3 id={headingId} tabIndex={-1}>
-        Current covers
-      </h3>
+    <section id="current-covers" className="cm-policy-settings" aria-labelledby={headingId}>
+      <div className="cm-policy-settings-intro">
+        <h3 id={headingId} tabIndex={-1}>
+          Current covers
+        </h3>
+      </div>
       {query.isPending ? (
         <p role="status">Loading cover settings…</p>
       ) : query.error instanceof BuildMismatchError ? (
@@ -175,83 +173,93 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
     mutation.reset()
   }
   return (
-    <div>
-      {locked ? <p>These settings are managed by deployment configuration.</p> : null}
-      <div className="description-advice-fields">
-        <FieldRow
-          group
-          title="Replace a current cover"
-          changed={draft.current_protection !== base.cover_preferences.current_protection}
-        >
-          <SegmentedControl
-            label="Replace a current cover"
-            options={protections}
-            value={draft.current_protection}
-            disabled={editing}
-            describedBy="current-covers-protection"
-            onChange={(choice) => edit({ ...draft, current_protection: choice })}
-          />
-          <p id="current-covers-protection">{protectionLines[draft.current_protection]}</p>
-        </FieldRow>
-        {/* Taste profile's Switching, which it changes (#1372 PR 5, G1). */}
-        <div className="settings-field-row current-covers-switching">
-          <div>
-            <span className="settings-field-title">
-              <Link
-                to="/library"
-                search={{ lens: 'all', view: 'covers', tab: 'taste' }}
-                hash={tasteSwitchingId}
-              >
-                Switching by taste
-              </Link>
-            </span>
-          </div>
-          <div className="settings-field-control">
-            <span>
+    <div className="cm-policy-settings-editor">
+      {locked ? (
+        <div className="cm-policy-settings-note">
+          <p>These settings are managed by deployment configuration.</p>
+        </div>
+      ) : null}
+      <FieldRow
+        group
+        wide
+        title="Replace a current cover"
+        changed={draft.current_protection !== base.cover_preferences.current_protection}
+      >
+        <SegmentedControl
+          label="Replace a current cover"
+          options={protections}
+          value={draft.current_protection}
+          disabled={editing}
+          describedBy="current-covers-protection"
+          onChange={(choice) => edit({ ...draft, current_protection: choice })}
+        />
+        <p id="current-covers-protection">{protectionLines[draft.current_protection]}</p>
+      </FieldRow>
+      {/* Taste profile's Switching, which it changes (#1372 PR 5, G1): its
+          value is a link there, in the control column like the other rows'
+          controls, named by the row and the value (#2015). */}
+      <div className="settings-field-row">
+        <div>
+          <span className="settings-field-title">
+            <strong id="current-covers-switching">Switching by taste</strong>
+          </span>
+        </div>
+        <div className="settings-field-control">
+          <Link
+            className="cm-policy-settings-value"
+            to="/library"
+            search={{ lens: 'all', view: 'covers', tab: 'taste' }}
+            hash={tasteSwitchingId}
+            aria-labelledby="current-covers-switching current-covers-switching-value"
+          >
+            <span id="current-covers-switching-value">
               {/* Under Never, Suggest only is in force whatever is stored. */}
               {base.cover_preferences.taste_switching === 'automatic' &&
               base.cover_preferences.current_protection !== 'proposals_only'
                 ? 'Automatic'
                 : 'Suggest only'}
             </span>
-          </div>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m9 6 6 6-6 6" />
+            </svg>
+          </Link>
         </div>
-        <FieldRow
-          group
-          title="Prefer the edition's cover"
-          changed={draft.prefer_edition !== base.cover_preferences.prefer_edition}
-        >
-          <SegmentedControl
-            label="Prefer the edition's cover"
-            options={offOn}
-            value={draft.prefer_edition ? 'on' : 'off'}
-            disabled={editing}
-            onChange={(choice) => edit({ ...draft, prefer_edition: choice === 'on' })}
-          />
-          {draft.prefer_edition ? (
-            <p>
-              A cover from this book's edition is suggested over a cover of the book in general.
-            </p>
-          ) : null}
-        </FieldRow>
       </div>
-      <button
-        disabled={locked || stale}
-        aria-disabled={saveHeld || undefined}
-        aria-busy={mutation.isPending || undefined}
-        onClick={() => {
-          if (!saveHeld) mutation.mutate()
-        }}
+      <FieldRow
+        group
+        title="Prefer the edition's cover"
+        changed={draft.prefer_edition !== base.cover_preferences.prefer_edition}
       >
-        {mutation.isPending ? 'Saving cover settings…' : 'Save cover settings'}
-      </button>
-      <p role="status">
-        {mutation.isSuccess
-          ? 'Cover settings saved.'
-          : changed
-            ? 'Unsaved. These save with their own button, not with the policy.'
-            : 'Saved with their own button, not with the policy.'}
-      </p>
+        <SegmentedControl
+          label="Prefer the edition's cover"
+          options={offOn}
+          value={draft.prefer_edition ? 'on' : 'off'}
+          disabled={editing}
+          onChange={(choice) => edit({ ...draft, prefer_edition: choice === 'on' })}
+        />
+        {draft.prefer_edition ? (
+          <p>A cover from this book's edition is suggested over a cover of the book in general.</p>
+        ) : null}
+      </FieldRow>
+      <div className="cm-policy-settings-footer">
+        <button
+          disabled={locked || stale}
+          aria-disabled={saveHeld || undefined}
+          aria-busy={mutation.isPending || undefined}
+          onClick={() => {
+            if (!saveHeld) mutation.mutate()
+          }}
+        >
+          {mutation.isPending ? 'Saving cover settings…' : 'Save cover settings'}
+        </button>
+        <p role="status">
+          {mutation.isSuccess
+            ? 'Cover settings saved.'
+            : changed
+              ? 'Unsaved. These save with their own button, not with the policy.'
+              : 'Saved with their own button, not with the policy.'}
+        </p>
+      </div>
       {staleLead !== null ? (
         <StaleBuildRead key="stale" lead={staleLead} ref={reloadButton} />
       ) : mutation.isError || stale || unconfirmed ? (

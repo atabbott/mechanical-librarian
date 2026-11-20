@@ -32,16 +32,18 @@ export const MatchingSettings = ({ http }: { http: ReviewHttp }) => {
   return (
     <section
       id="book-matching"
-      className="matching-settings"
+      className="cm-policy-settings"
       aria-labelledby="book-matching-heading"
     >
-      <h3 id="book-matching-heading" tabIndex={-1}>
-        Book matching
-      </h3>
-      <p>
-        Which source records count as the same book when you review. Edition details, such as ISBN,
-        publisher and narrators, always need a confirmed match.
-      </p>
+      <div className="cm-policy-settings-intro">
+        <h3 id="book-matching-heading" tabIndex={-1}>
+          Book matching
+        </h3>
+        <p>
+          Which source records count as the same book when you review. Edition details, such as
+          ISBN, publisher and narrators, always need a confirmed match.
+        </p>
+      </div>
       {query.isPending ? (
         <p role="status">Loading book matching…</p>
       ) : query.error instanceof BuildMismatchError ? (
@@ -175,43 +177,52 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
     mutation.isPending || reload.isPending || !(changed || retryable) || staleLead !== null
   const check = checkLine(view, levelChanged)
   return (
-    <div>
-      {locked ? <p>Book matching is set in the deployment configuration.</p> : null}
-      <SegmentedControl
-        label="Book matching"
-        options={options}
-        value={draft}
-        disabled={locked || mutation.isPending || reload.isPending || stale}
-        onChange={(choice) => {
-          setDraft(choice)
-          setUnconfirmed(false)
-          mutation.reset()
-        }}
-      />
-      {draft === 'identifier' ? null : (
-        <p>
-          A field that needs you also offers values from these records, and covers from them say
-          “Same title and author”. Mechanical Librarian does not choose them for you.
+    <div className="cm-policy-settings-editor">
+      {locked ? (
+        <div className="cm-policy-settings-note">
+          <p>Book matching is set in the deployment configuration.</p>
+        </div>
+      ) : null}
+      {/* Its one control sits beside the heading, as a field's Setting does. */}
+      <div className="cm-policy-settings-control">
+        <SegmentedControl
+          label="Book matching"
+          options={options}
+          value={draft}
+          disabled={locked || mutation.isPending || reload.isPending || stale}
+          onChange={(choice) => {
+            setDraft(choice)
+            setUnconfirmed(false)
+            mutation.reset()
+          }}
+        />
+        {draft === 'identifier' ? null : (
+          <p>
+            A field that needs you also offers values from these records, and covers from them say
+            “Same title and author”. Mechanical Librarian does not choose them for you.
+          </p>
+        )}
+      </div>
+      <div className="cm-policy-settings-footer">
+        <button
+          disabled={locked || stale}
+          aria-disabled={saveHeld || undefined}
+          aria-busy={mutation.isPending || undefined}
+          onClick={() => {
+            if (!saveHeld) mutation.mutate()
+          }}
+        >
+          {mutation.isPending ? 'Saving book matching…' : 'Save book matching'}
+        </button>
+        <p role="status">
+          {mutation.isSuccess && !changed
+            ? 'Book matching saved.'
+            : changed
+              ? 'Unsaved. Activating the policy does not save it.'
+              : ''}
         </p>
-      )}
-      <button
-        disabled={locked || stale}
-        aria-disabled={saveHeld || undefined}
-        aria-busy={mutation.isPending || undefined}
-        onClick={() => {
-          if (!saveHeld) mutation.mutate()
-        }}
-      >
-        {mutation.isPending ? 'Saving book matching…' : 'Save book matching'}
-      </button>
-      <p role="status">
-        {mutation.isSuccess && !changed
-          ? 'Book matching saved.'
-          : changed
-            ? 'Unsaved. Activating the policy does not save it.'
-            : ''}
-      </p>
-      <p role="status">{check}</p>
+        <p role="status">{check}</p>
+      </div>
       {staleLead !== null ? (
         <StaleBuildRead key="stale" lead={staleLead} ref={reloadButton} />
       ) : mutation.isError || stale || unconfirmed ? (
