@@ -114,7 +114,7 @@ _UNRETURNED_CASES_SQL = (
 # flight and every queued work belongs to this transition: an earlier work of
 # the same cohort reopened it. A discovering or busy scan is left as it is.
 _REQUEUE_SCAN_FOR_DISCOVERY_SQL = (
-    "UPDATE review_preparation_scans SET state='queued',requested_at=?,updated_at=?,"
+    "UPDATE review_preparation_scans SET state='queued',discovery_failure=NULL,requested_at=?,updated_at=?,"
     "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
     "qualification_epoch=NULL,refresh_count=0,rescan_requested=0 "
     "WHERE scan_id=(SELECT scan_id FROM review_preparation_work WHERE work_id=?) "
@@ -1069,7 +1069,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             # A queued scan has yet to discover its library: it keeps waiting
             # for that discovery rather than skipping it.
             self._connection.execute(
-                "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+                "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,updated_at=? "
                 "WHERE scan_id=? AND state<>'queued'",
                 (activated_at, work[1]),
             )
@@ -1201,7 +1201,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 # Pending work is claimed only from a processing scan, and an
                 # idle claim may already have closed this one (#1369).
                 self._connection.execute(
-                    "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+                    "UPDATE review_preparation_scans SET state='processing',discovery_failure=NULL,updated_at=? "
                     "WHERE scan_id=(SELECT scan_id FROM review_preparation_work WHERE work_id=?) "
                     "AND state IN ('completed','completed_with_failures')",
                     (retried_at, work_id),

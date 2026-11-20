@@ -1685,6 +1685,9 @@ class _PreparationFailure(_ClosedModel):
         "missing_required_input",
         "malformed_retained_data",
         "internal_failure",
+        "item_no_media",
+        "item_unreadable",
+        "item_oversized",
         "unknown",
     ]
 
@@ -2691,6 +2694,19 @@ class _PreparationProgress(_ClosedModel):
     recorded: _Count
     not_matched: _Count
     rescan_requested: bool
+    # Why this library's last discovery stopped (#2013); null otherwise.
+    discovery_failure: (
+        Literal[
+            "library_unavailable",
+            "library_too_large",
+            "response_too_large",
+            "response_unreadable",
+            "catalogue_unavailable",
+            "persistence",
+            "unknown",
+        ]
+        | None
+    )
     stages: list[_PreparationStage] = Field(default_factory=list, max_length=10)
 
 
@@ -3294,6 +3310,9 @@ class _OperationalIncident(_ClosedModel):
             "missing_required_input",
             "malformed_retained_data",
             "internal_failure",
+            "item_no_media",
+            "item_unreadable",
+            "item_oversized",
             "unknown",
         ]
         | None

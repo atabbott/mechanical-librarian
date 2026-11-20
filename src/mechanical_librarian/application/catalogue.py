@@ -21,6 +21,33 @@ class CatalogueError(RuntimeError):
     """Value-free catalogue operation failure."""
 
 
+class CatalogueLibraryError(CatalogueError):
+    """A whole library could not be read, named by one closed condition.
+
+    The adapter raises it only for conditions of the library itself, never of
+    one item, so discovery can store and show why the library stopped.
+    """
+
+    def __init__(self, code: str) -> None:
+        if code not in _LIBRARY_ERROR_MESSAGES:
+            raise CatalogueError("catalogue library condition is invalid")
+        self.code = code
+        super().__init__(_LIBRARY_ERROR_MESSAGES[code])
+
+
+# The earlier messages are kept, so a log or test reading one reads the same.
+_LIBRARY_ERROR_MESSAGES = {
+    "library_unavailable": "configured library is unavailable",
+    "library_too_large": "catalogue limit exceeded",
+    "response_too_large": "catalogue response is oversized",
+    "response_unreadable": "catalogue response is invalid",
+}
+
+
+# Why an item the service lists could not be read into a usable entry (#2013).
+UNREAD_CODES = frozenset(("no_media", "unreadable", "oversized", "changed"))
+
+
 class CatalogueBusyError(CatalogueError):
     pass
 
@@ -65,8 +92,18 @@ class CatalogueEntry:
     # only to match an identifiers file's path rows (#1478). Not part of the
     # source fingerprint: a path is never preparation input.
     item_path: str | None = None
+    # Why the service could not give this listed item usably (#2013): it is
+    # present, never absent, and needs attention without anything to prepare.
+    unread: str | None = None
 
     def __post_init__(self) -> None:
+        if self.unread is not None and (
+            self.unread not in UNREAD_CODES
+            or self.classification != "needs-attention"
+            or self.file_identity is not None
+            or self.mount is not None
+        ):
+            raise CatalogueError("catalogue unread entry is invalid")
         if self.source_fingerprint is None:
             value = Fingerprint.from_canonical_value(
                 {
@@ -82,6 +119,9 @@ class CatalogueEntry:
                         "file_identity": self.file_identity,
                         "has_audio": self.has_audio,
                         "has_ebook": self.has_ebook,
+                        # Present only on an unread entry, so every other
+                        # default fingerprint keeps its exact earlier value.
+                        **({} if self.unread is None else {"unread": self.unread}),
                     },
                 },
                 schema=SchemaVersion("review-source-v1"),
@@ -298,9 +338,11 @@ __all__ = [
     "CatalogueBusyError",
     "CatalogueEntry",
     "CatalogueError",
+    "CatalogueLibraryError",
     "CatalogueReader",
     "CatalogueRepository",
     "CatalogueStaleError",
     "RefreshCurrentCatalogue",
+    "UNREAD_CODES",
     "catalogue_fingerprint",
 ]

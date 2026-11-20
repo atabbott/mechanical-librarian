@@ -13,6 +13,7 @@ import type {
 } from '../api/http'
 import { BookMark } from '../components/BookMark'
 import { MediaHealth } from '../components/MediaHealth'
+import { SettingsPathText } from '../components/SettingsPathText'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { linkTone, rowLinkPhrase } from '../findThisBook'
 import { retryInPlace } from '../focusAfterRetry'
@@ -388,7 +389,15 @@ const LibraryWorkRow = ({
               {preparation.checkGivenUp ? (
                 <GivenUpCopy />
               ) : (
-                `${preparation.reason} ${preparation.recovery}`
+                <>
+                  {preparation.reason}{' '}
+                  {/* A link may sit in an inert row, never inside the row's button. */}
+                  {terminalFailure ? (
+                    <SettingsPathText text={preparation.recovery} />
+                  ) : (
+                    preparation.recovery
+                  )}
+                </>
               )}{' '}
               Reference: <code>{preparation.diagnosticReference}</code>
             </span>

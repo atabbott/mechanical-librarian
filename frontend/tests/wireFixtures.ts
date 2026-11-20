@@ -342,6 +342,7 @@ export const scanProgress = (overrides: Overrides = {}) => ({
   blocked: 0,
   checked: 0,
   connection: 'primary',
+  discovery_failure: null,
   library: 'Books',
   library_id: 'books',
   not_matched: 0,
@@ -390,7 +391,7 @@ export const preparation = (overrides: Overrides = {}) => ({
   presentation: null,
   provider_throttling: null,
   recovery_required: false,
-  schema_version: 'review-preparation-v2',
+  schema_version: 'review-preparation-v3',
   ...overrides,
 })
 
@@ -438,7 +439,7 @@ export const library = (overrides: Overrides = {}) => ({
   page: 1,
   previous_cursor: null,
   query: null,
-  schema_version: 'review-library-v12',
+  schema_version: 'review-library-v13',
   ...overrides,
 })
 

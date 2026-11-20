@@ -3243,7 +3243,7 @@ it.each([
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         ...idlePreparation,
-        schema_version: 'review-preparation-v2',
+        schema_version: 'review-preparation-v3',
         recovery_required: false,
         active: recovered,
         actionable: false,

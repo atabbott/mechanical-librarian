@@ -893,7 +893,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             )
             if scan[0] == "completed_with_failures":
                 requeued = self._connection.execute(
-                    "UPDATE review_preparation_scans SET state='queued',"
+                    "UPDATE review_preparation_scans SET state='queued',discovery_failure=NULL,"
                     "requested_at=?,updated_at=MAX(?,?),"
                     "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
                     "qualification_epoch=NULL,refresh_count=0,rescan_requested=0 WHERE scan_id=? "

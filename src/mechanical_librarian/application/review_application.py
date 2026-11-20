@@ -135,9 +135,9 @@ if TYPE_CHECKING:
     )
 
 
-ReviewPreparationSchemaVersion = Literal["review-preparation-v2"]
+ReviewPreparationSchemaVersion = Literal["review-preparation-v3"]
 REVIEW_PREPARATION_SCHEMA: Final[ReviewPreparationSchemaVersion] = (
-    "review-preparation-v2"
+    "review-preparation-v3"
 )
 
 _Result = TypeVar("_Result")
@@ -2153,6 +2153,9 @@ class ReviewApplication:
                 "rescan_requested": False
                 if progress is None
                 else progress.rescan_requested,
+                "discovery_failure": None
+                if progress is None
+                else progress.discovery_failure,
                 "stages": []
                 if progress is None
                 else [
@@ -2218,8 +2221,15 @@ class ReviewApplication:
                 item["state"] in {"queued", "discovering", "processing"}
                 for item in libraries
             ),
+            # A library whose only failures are books Audiobookshelf has no
+            # file for ends `completed` so its automatic scans go on (#2013),
+            # but those books still need the owner.
             recovery_required
-            or any(item["state"] == "completed_with_failures" for item in libraries),
+            or any(
+                item["state"] == "completed_with_failures"
+                or (item["state"] == "completed" and cast("int", item["blocked"]) > 0)
+                for item in libraries
+            ),
             connections,
             first_boot,
             first_boot_complete,
@@ -2307,6 +2317,7 @@ class ReviewApplication:
             "recorded": progress.recorded,
             "not_matched": progress.not_matched,
             "rescan_requested": progress.rescan_requested,
+            "discovery_failure": progress.discovery_failure,
             "stages": [
                 {"stage": stage, "count": count} for stage, count in progress.stages
             ],

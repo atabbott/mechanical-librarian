@@ -144,7 +144,9 @@ decision, plan, write or deletion.
 - **New libraries.** A library added in Settings joins scans once the new
   runtime is published, and waits visibly while preparation is paused.
 - **Absences.** Missing or ineligible items retire current lineages only if
-  the whole scan completes and a confirming discovery agrees. The catalogue
+  the whole scan completes and a confirming discovery agrees. An item
+  Audiobookshelf lists but cannot give is present, never absent
+  ([catalogue](catalogue.md#items-that-cannot-be-read)). The catalogue
   baseline builds one library at a time, so an unavailable library does not
   block healthy ones.
 - **Drift.** An item that disappears, or a file that appears during
@@ -154,10 +156,16 @@ decision, plan, write or deletion.
   other evidence or delaying other work
   ([provider recovery](provider-recovery.md)).
 - **Failures.** An item that fails before a package exists appears in Library
-  only, with recovery guidance and no automatic retry. Requesting description
-  advice, or resuming preparation while advice waits, starts a scan that also
-  retries that library's failed items. Fix the cause and use Retry; never edit
-  SQLite.
+  only, with recovery guidance and no automatic retry. An unread item is
+  enrolled as such a failure: `item_no_media`, `item_unreadable` or
+  `item_oversized`, or `stale` for a changed one, which rediscovers. An
+  `item_no_media` failure does not end its scan with failures, so the library
+  keeps polling and Background activity still says it needs attention; adding
+  the file in Audiobookshelf and the next scan recover it. A library whose
+  discovery fails keeps its reason, shown in Background activity. Requesting
+  description advice, or resuming preparation while advice waits, starts a scan
+  that also retries that library's failed items. Fix the cause and use Retry;
+  never edit SQLite.
 - **Pause** stops new admissions without cancelling committed work.
 
 A target connection failure (TLS, authentication, authorization or

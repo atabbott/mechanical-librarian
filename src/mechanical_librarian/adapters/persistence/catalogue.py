@@ -26,18 +26,18 @@ from mechanical_librarian.application.catalogue import (
     CatalogueStaleError,
 )
 
-CATALOGUE_SCHEMA: Final = "catalogue-v3"
+CATALOGUE_SCHEMA: Final = "catalogue-v4"
 
 _SQL = (
     f"CREATE TABLE catalogue_schema (version TEXT PRIMARY KEY CHECK (version = '{CATALOGUE_SCHEMA}'));",
     "CREATE TABLE catalogue_generations (generation INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL CHECK(length(fingerprint)=64), current INTEGER NOT NULL CHECK(current IN (0,1)), CHECK(current = 0 OR generation > 0));",
     "CREATE UNIQUE INDEX catalogue_one_current ON catalogue_generations(current) WHERE current = 1;",
-    "CREATE TABLE catalogue_entries (generation INTEGER NOT NULL REFERENCES catalogue_generations(generation), connection TEXT NOT NULL, library TEXT NOT NULL, library_id TEXT NOT NULL, item_id TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL, authors TEXT NOT NULL, has_ebook INTEGER NOT NULL CHECK(has_ebook IN (0,1)), has_audio INTEGER NOT NULL CHECK(has_audio IN (0,1)), classification TEXT NOT NULL CHECK(classification IN ('none','singular-supported','needs-attention')), file_identity TEXT, service_path TEXT, format TEXT, mount TEXT, source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), item_path TEXT CHECK(item_path IS NULL OR length(item_path)>0), PRIMARY KEY(generation, connection, library, item_id));",
+    "CREATE TABLE catalogue_entries (generation INTEGER NOT NULL REFERENCES catalogue_generations(generation), connection TEXT NOT NULL, library TEXT NOT NULL, library_id TEXT NOT NULL, item_id TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL, authors TEXT NOT NULL, has_ebook INTEGER NOT NULL CHECK(has_ebook IN (0,1)), has_audio INTEGER NOT NULL CHECK(has_audio IN (0,1)), classification TEXT NOT NULL CHECK(classification IN ('none','singular-supported','needs-attention')), file_identity TEXT, service_path TEXT, format TEXT, mount TEXT, source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), item_path TEXT CHECK(item_path IS NULL OR length(item_path)>0), unread TEXT CHECK(unread IS NULL OR (classification='needs-attention' AND unread IN ('no_media','unreadable','oversized','changed'))), PRIMARY KEY(generation, connection, library, item_id));",
 )
 _ENTRY_COLUMNS: Final = (
     "connection,library,library_id,item_id,updated_at,title,authors,has_ebook,"
     "has_audio,classification,file_identity,service_path,format,mount,"
-    "source_fingerprint,item_path"
+    "source_fingerprint,item_path,unread"
 )
 
 
@@ -60,6 +60,7 @@ def _entry(value: tuple[Any, ...]) -> CatalogueEntry:
         value[13],
         value[14],
         value[15],
+        value[16],
     )
 
 
@@ -275,7 +276,7 @@ class SQLiteCatalogueRepository:
                 (generation, fingerprint),
             )
             self._connection.executemany(
-                "INSERT INTO catalogue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO catalogue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     (
                         generation,
@@ -297,6 +298,7 @@ class SQLiteCatalogueRepository:
                         item.mount,
                         item.source_fingerprint,
                         item.item_path,
+                        item.unread,
                     )
                     for item in entries
                 ],

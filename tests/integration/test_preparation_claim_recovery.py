@@ -2020,8 +2020,21 @@ def test_guard_busy_retries_without_unknown_and_every_other_failure_settles_unkn
         # value-free diagnostic.
         assert contentions == [] and waits == []
         assert guard_calls == [action]
-        (line,) = err.splitlines()
+        line, *settled = err.splitlines()
         record = json.loads(line)
+        # A discovery that settles says, value-free, why its library stopped
+        # (#2013); no other stage writes a second line.
+        assert [json.loads(value) for value in settled] == (
+            [
+                {
+                    "code": "unknown",
+                    "event": "preparation_discovery_failed",
+                    "level": "warning",
+                }
+            ]
+            if stage == "discovery"
+            else []
+        )
         assert record["event"] == "preparation_unknown_failure"
         assert record["code"] == "unknown"
         assert record["execution_stage"] == record["owned_stage"] == stage

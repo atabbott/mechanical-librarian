@@ -28,6 +28,7 @@ from mechanical_librarian.application.field_effects import (
     CapabilityObservation,
     TargetServiceUnavailable,
 )
+from mechanical_librarian.application.review_pipeline import DISCOVERY_FAILURE_CODES
 from mechanical_librarian.application.reviewer_access import (
     CodexDescriptionDisclosure,
     OpenRouterRecommendation,
@@ -549,6 +550,14 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
             ("_SelectedDescriptionAdvice", "/properties/formatted/anyOf/0"),
         )
     ),
+    # Why a library's discovery stopped is the pipeline's closed list (#2013).
+    (
+        "S101",
+        "_PreparationProgress",
+        "/properties/discovery_failure/anyOf/0",
+        "enum",
+        DISCOVERY_FAILURE_CODES,
+    ),
 )
 
 
@@ -728,6 +737,7 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     (app._CoverCandidate, "deterministic_rank_key", [1, 2], "too_short"),
     (app._CoverIdentity, "outcome", "match", "literal_error"),
     (app._PreparationProgress, "state", "paused", "literal_error"),
+    (app._PreparationProgress, "discovery_failure", "transient", "literal_error"),
     (app._PreparationActiveBook, "stage", "s" * 65, "string_too_long"),
     (app._CodexDeviceAuthResponse, "user_code", "ABC-1234", "string_pattern_mismatch"),
     (CodexDescriptionDisclosure, "model", "", "string_too_short"),

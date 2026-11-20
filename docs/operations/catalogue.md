@@ -59,6 +59,25 @@ the same inputs. Disagreement or path traversal makes the item ineligible or
 fails before any write gate. This parsing grants no media access or write
 authority.
 
+## Items that cannot be read
+
+An item Audiobookshelf lists but cannot give usably is kept as an unread
+entry: present, needing attention, with nothing to prepare. Its `unread` code
+says why: `no_media` (Audiobookshelf marks it missing or invalid, for example
+a book with no audio or ebook file), `unreadable` (its details are not valid
+JSON or fail the media, metadata or author checks), `oversized` (its details exceed
+`target_response_bytes`), or `changed` (its identity or `updatedAt` moved
+between the list and the detail, or the detail answered 404). It is named from
+its detail's title, else the list's title, else `Untitled item requiring
+attention`. Every other item in the library is still read.
+
+A whole library fails only for conditions of the library itself, each with a
+closed code: `library_unavailable` (no such book library),
+`library_too_large` (past the 10,000-item cap), `response_too_large` or
+`response_unreadable` (the library list or a page). A 401, 403, other non-200
+status (except an item's 404), non-JSON answer or transport error on any request stays a
+[connection failure](#connection-failures).
+
 ## Privacy
 
 List output carries `eligible`, `ineligible`, `ebook` or `audio` facets and
