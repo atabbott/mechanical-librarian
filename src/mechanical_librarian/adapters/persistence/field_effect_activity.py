@@ -84,6 +84,7 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
     stored_level_offer_documents,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _AUTOMATIC_SAFETY_ROW_SQL,
     _LANDED_IN_EPISODE_SQL,
     _LANDED_LAST_SQL,
     _LANDED_SQL,
@@ -116,6 +117,7 @@ from mechanical_librarian.domain.activity_records import (
     report_work_labels,
 )
 from mechanical_librarian.domain.automatic_decision import (
+    AUTOMATIC_POSTURE,
     AutomaticDecision,
     AutomaticDecisionError,
     automatic_safety_category,
@@ -4968,7 +4970,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             posture = self._connection.execute(
                 "SELECT posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
-            if posture is not None and posture[0] != "automatic":
+            if posture is not None and posture[0] != AUTOMATIC_POSTURE:
                 notes.update((event_id, "held_back") for event_id in planned)
         if owner_planned:
             # A row names its plan or one of the plan's events; the note holds
@@ -6055,10 +6057,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 raise FieldEffectError("authority")
             if authority.origin == "automatic_policy":
                 automatic = json.loads(decision[0])
-                safety = self._connection.execute(
-                    "SELECT paused,global_suspension,category_suspensions_document "
-                    "FROM automatic_safety_state WHERE singleton=1"
-                ).fetchone()
+                safety = self._connection.execute(_AUTOMATIC_SAFETY_ROW_SQL).fetchone()
+                # Parsed before paused is tested, so a malformed document
+                # raises even while paused, unlike the shared row predicate.
                 suspended = {} if safety is None else dict(json.loads(safety[2]))
                 if (
                     safety is None
@@ -6085,10 +6086,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         """Return only bounded codes and scopes; never persisted effect values."""
         try:
             signals: list[dict[str, object]] = []
-            safety = self._connection.execute(
-                "SELECT paused,global_suspension,category_suspensions_document "
-                "FROM automatic_safety_state WHERE singleton=1"
-            ).fetchone()
+            safety = self._connection.execute(_AUTOMATIC_SAFETY_ROW_SQL).fetchone()
             if safety is None:
                 raise FieldEffectError("persistence")
             if safety[0]:

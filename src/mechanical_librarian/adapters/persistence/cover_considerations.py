@@ -30,6 +30,9 @@ from mechanical_librarian.adapters.persistence.retained_covers import (
     release_kept_retained_covers,
     retained_cover_store_has_room,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _AUTOMATIC_SAFETY_ROW_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -53,6 +56,10 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
     AudiobookQualificationError,
     identity_for_effect,
     qualification_manifest_sha256,
+)
+from mechanical_librarian.domain.automatic_decision import (
+    AUTOMATIC_POSTURE,
+    automatic_safety_row_permits,
 )
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.cover_qualification_policy import (
@@ -622,7 +629,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             "AND r.library_name=? WHERE s.singleton=1",
             (library_name,),
         ).fetchone()
-        if state is None or state[1] != "automatic":
+        if state is None or state[1] != AUTOMATIC_POSTURE:
             return None
         resolved = ResolvedMetadataPolicy.from_data(json.loads(state[2]))
         if (
@@ -630,16 +637,8 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             or dict(resolved.options).get("cover_order") != "fixed_source_order"
         ):
             return None
-        safety = self._connection.execute(
-            "SELECT paused,global_suspension,category_suspensions_document "
-            "FROM automatic_safety_state WHERE singleton=1"
-        ).fetchone()
-        if (
-            safety is None
-            or safety[0]
-            or safety[1] is not None
-            or "cover_order" in dict(json.loads(safety[2]))
-        ):
+        safety = self._connection.execute(_AUTOMATIC_SAFETY_ROW_SQL).fetchone()
+        if safety is None or not automatic_safety_row_permits(safety, "cover_order"):
             return None
         return value, policy_report, case, report, lineage, resolved, int(state[0])
 
