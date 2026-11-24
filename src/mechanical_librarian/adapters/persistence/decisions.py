@@ -12,7 +12,7 @@ the other side to delegate to.
 
 Every seam arrives as a callable resolved through the composing repository at
 call time. `_record_automatic_outcomes` is substituted on the composing
-repository *instance* by two authority-failure tests which drive it through
+repository *instance* by tests which drive it through
 `persist_shadow_outcome`; that caller stays on the composing repository, so its
 delegating stub is what those tests replace.
 
