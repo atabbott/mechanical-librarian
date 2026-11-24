@@ -5,6 +5,9 @@
 - Owners: project maintainers
 - Supersedes: none
 - Superseded by: none
+- Amended by: [ADR-0108](0108-ledger-and-derived-state.md) (proposed: a carried
+  copy of a written or settled answer takes a new application value,
+  `settled`, on both media; `recorded_only` keeps its F45 meaning)
 
 ## Context
 

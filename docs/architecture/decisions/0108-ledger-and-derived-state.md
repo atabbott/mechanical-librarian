@@ -7,10 +7,13 @@
 - Owners: project maintainers
 - Issues: #2037 (this record); built by #2036 (C0, merged), #2038 (C2),
   #2039 (C3), #2040 (C4'), #2041 (C6)
-- Amends: ADR-0013 (superseded from the cutover), ADR-0085 (manual holds
+- Amends: ADR-0013 (superseded for the application database from the
+  cutover; every other store, report, configuration and document schema
+  keeps it), ADR-0085 (manual holds
   replaced by the record, including Amendments 1 to 6), ADR-0096 (carried
   answers under Book matching), and ADR-0014, ADR-0034, ADR-0039, ADR-0049,
-  ADR-0057, ADR-0059, ADR-0082, ADR-0084, ADR-0087, ADR-0095 and ADR-0105 as
+  ADR-0057, ADR-0059, ADR-0071, ADR-0082, ADR-0084, ADR-0087, ADR-0095 and
+  ADR-0105 as
   the table
   in [Effect on other decisions](#effect-on-other-decisions) says
 - Supersedes: none until the cutover
@@ -28,6 +31,7 @@ decision cards on 2026-11-24:
 | Approve one record of your answers replacing holds in C2? | Yes, covers included | 09:11:21 |
 | Build ledger migrations before 1.0? | Yes, before 1.0 | 09:11:31 |
 | File the stage issues now and start C0? | Yes, file and start C0 | 09:12:02 |
+| Keep Activity's automatic records across a regeneration? | No, keep them (superseded by the next answer) | 09:11:49 |
 | When should Activity start keeping automatic records across upgrades? | Later, as its own change | 10:41 |
 
 Earlier, on 2026-11-15, the owner answered that a later reading asks a field
@@ -46,9 +50,9 @@ in store mode the settings and secrets, and repeats first-run setup
 marks about 100 entries **Clean rebuild required** in the pre-release period.
 Most of them changed only state the product recomputes from the library and
 its providers: reports, proposals, cases, automatic decisions and their
-indexes and facts. Stored provider answers already survive a clean rebuild
-in their own store (ADR-0101), so the expensive part of re-reading a library
-is no longer lost; the owner's own state still is. ADR-0013 deferred an
+indexes and facts. Stored provider answers can survive a clean rebuild in
+their own store when the owner keeps it (ADR-0101), so the expensive part of
+re-reading a library need not be lost; the owner's own state still is. ADR-0013 deferred an
 upgrade promise to the first production release, and 1.0 cannot make one
 while every change discards the owner's answers.
 
@@ -77,7 +81,8 @@ The application database is divided into a **ledger** and **derived state**.
   empty, and preparation rebuilds it. A paid artefact keyed to a derived
   identity, such as a judge verdict on one cover comparison, is derived: it
   cannot outlive the comparison it judges, and the cap that bounds its cost
-  is ledger.
+  is ledger. This qualifier is added by this record, beyond the approved
+  design's criterion, for the cover taste tables that landed after it.
 
 Both partitions stay in the one file, so every transaction that writes both
 today (recording a decision, admitting a case, persisting a preview outcome,
@@ -149,8 +154,9 @@ their events, `cover_automatic_held`, `cover_taste_judgements`,
 `cover_taste_verdicts`, description advice attempts and candidates,
 preparation state, browse and attention facts, `metadata_report_value_flags`,
 `library_visit` (its positions are row ids of derived tables) and
-`browse_fact_identity`. The one view, `review_attention_refresh`, is derived,
-and so is any trigger whose body writes a derived object, including the
+`browse_fact_identity`. Of the two views, `review_attention_refresh` is
+derived and `current_owner_links`, over `owner_links` alone, is ledger. Any
+trigger whose body writes a derived object, including the
 attention triggers on ledger tables. A later table is classified by the same
 criterion in the change that adds it.
 
@@ -165,8 +171,9 @@ regeneration and so fail closed; the provider-response store (ADR-0101),
 which a regeneration never touches; and the catalogue. The artifact store is
 referenced by digest from both partitions. Its sweep also keeps the bytes of
 every owner cover pointer's selection, of each work's latest written owner
-selection, and of every non-terminal cover plan's desired value, and stops
-keeping unwritten owner selections of earlier epochs and automatic history.
+selection, of every cover answer the record holds, and of every non-terminal
+cover plan's desired value, and stops keeping other unwritten owner
+selections of earlier epochs and automatic history.
 
 ### Identity across a regeneration
 
@@ -218,7 +225,8 @@ a policy change, a regeneration and `--retire-pending` never clear it.
   ledger fact;
 - `previous_answer_id`, the answer a withdrawal restores;
 - `carry_eligible`, false once a withdrawal restored this row, a
-  `matching_changed` row superseded it, or `--retire-pending` retired its plan;
+  `matching_changed` row superseded it, `--retire-pending` retired its plan,
+  or the question check closed a failed Resume over it;
 - `open_resume_id`, the open Resume request or null;
 - `pin_fingerprint`, set by `pin` and cleared by `unpin`.
 
@@ -253,14 +261,18 @@ open while a pin reads changed (ADR-0105 Amendment 1).
 the record. The automatic cover mint returns when the record holds a cover
 answer for the work, beside today's owner-pointer test, and the cover arm of
 the planning query and the apply-time check read the record as well, so
-Automatic never replaces an owner's cover while the record holds it. Cover
-Resume (ADR-0085 Amendment 3) is restated over the record: it is offered where
-the derived `cover_automatic_held` mark shows the measured stage would switch
-but for the owner; its request and completion are `owner_field_events`; and
-completion clears the record row and releases the owner pointer the record
-names before admission of the current comparison runs again. Who is offered
-cover Resume is unchanged: a cover chosen in To decide still never shows it
-and is never switched. Covers are not carried by the question check.
+Automatic never replaces an owner's cover while the record holds it. A cover
+row also keeps whether its answer took the cover over from Automatic (an
+automatic cover decision on its case, or a record answer that had already
+done so), which is where a cover hold is set today. Cover Resume (ADR-0085
+Amendment 3) is restated over the record: it is offered only on such a row,
+where the derived `cover_automatic_held` mark shows the measured stage would
+switch but for the owner; its request and completion are `owner_field_events`; and
+completion clears the record row and releases the work's owner pointer,
+whether it names the record's selection or one a regeneration repointed it
+to, before admission of the current comparison runs again. Who is offered
+cover Resume is therefore unchanged: a cover chosen in To decide still never
+shows it and is never switched. Covers are not carried by the question check.
 
 **Ported rules.** The hold rules that landed before the cutover become rules
 over the record in C2, with no behaviour the owner sees dropped: every answer
@@ -280,14 +292,18 @@ no case-scoped rule of their own.
   safety conditions pass for that site (`AUTOMATIC_SITE_CONDITIONS`, C0). A
   field answered in Preview, while paused, under Ask me, or carried while
   Automatic was off can therefore always be handed back. Resume is not offered
-  while a pin is in force.
+  while a pin is in force, as ADR-0085 Amendment 2 shipped (r7.2 N16 had
+  Resume unpin first; the shipped rule stands). C2 declares the Resume offer
+  as a site in that map.
 - **Request.** Writes `resume_requested` with `over_ordinal`, sets
   `open_resume_id`, requeues the projection of the work's current case and
   starts a scan.
-- **During a Resume** the automatic mint's conflict test and automatic
-  description admission ignore owner rows for the destination at or below
-  `over_ordinal`, and valueless cause rows at any ordinal, so the requeued
-  projection records Automatic's decision.
+- **During and after a Resume** the automatic mint's conflict test and
+  automatic description admission ignore owner rows for the destination at or
+  below the open or latest completed request's `over_ordinal`, and valueless
+  cause rows at any ordinal, so the requeued projection records Automatic's
+  decision and a later return to an earlier case is not blocked by an answer
+  the owner handed back.
 - **Completion**, after the requested scan succeeds: if the record's ordinal is
   at or below `over_ordinal`, one transaction revokes the authority of every
   owner answer the request covers (closing a `planned` or `retryable` plan of
@@ -303,10 +319,14 @@ no case-scoped rule of their own.
   record closes it `resume_superseded`.
 - **Failure.** A requested scan that ends with failures writes
   `resume_failed` and leaves the record and the request; a later successful
-  run still completes it. A request whose latest event is `resume_failed` does
-  not count as open for the question check or for Attention.
+  run of the same case still completes it. A request whose latest event is
+  `resume_failed` does not count as open for Attention, so the field is asked
+  rather than hidden while scans keep failing, and the question check's step 0
+  closes it at the next case without carrying.
 - **The owner's arm after Resume.** The planning query plans an owner's row,
-  human or authored description, only while the record names it. After
+  human or authored description, only while the record names it. A carried
+  row also takes the automatic arm's package join, so it plans only once its
+  case is published. After
   completion an unwritten owner answer can no longer plan beside re-armed
   Automatic, and a replaced, restored or withdrawn answer never plans.
 
@@ -316,25 +336,38 @@ no case-scoped rule of their own.
 `(review_case_id, episode)` differs from the record answer's (a new case, a
 return to an earlier case in a new episode, within a release or after a
 regeneration), inside the projection's transaction after its automatic block
-and on every path out of it, including Preview and the early returns. A
-refused or never-run check is retried at startup, dormant start and scan
+and on every path out of it, including Preview and the early returns. The
+case is staged there, not yet published, so a carried row is recorded under
+the staged-currentness guard the automatic mint uses, in place of the
+current-case checks of an owner's request; mint and carry commit together.
+A refused or never-run check is retried at startup, dormant start and scan
 start, and when a deferring plan reaches a terminal state. Each answer, case
 and episode gets one `carry_outcomes` row; a requeued projection of the same
-case does not repeat it.
+case does not repeat it. `resume_pending` and `deferred` are provisional and
+replaced by the retry's outcome; every other outcome is final.
 
 **The question.** `decision_question` (`decision-question-v1`) is the offer
 digest's document without proposal ids, split in two halves: the **offer
 part**, every offered alternative's value and lineage rule for the whole
 title, subtitle and series group; and the **target part**, the
 Audiobookshelf state and value of the answered destination only (with the
-subtitle where the answer's plan writes it as a companion). Because the title,
+subtitle where the answer's plan writes it as a companion, or, for an answer
+not yet planned, where the planner's bundle rule would write it at the
+check). Because the title,
 subtitle and series group is one question, a title answer is asked again when
 only the series offer changed.
 
 **Steps**, for each text field and the description with a record row:
 
 0. A Resume is open: no carry; outcome `resume_pending`, run again when the
-   request closes without completing.
+   request closes without completing. A request whose latest event is
+   `resume_failed` is not open: instead, the owner's last instruction for the
+   field was to hand it back, so nothing carries and nothing plans. The
+   request closes `resume_superseded`, the record loses carry eligibility,
+   and the outcome is `asked_again`, so the field is asked in Attention and
+   Resume is offered again. This is the design thread's ruling on the record
+   (2026-11-24), replacing r7.2's "a carry … in between supersedes it"; the
+   owner may overturn it.
 1. Not carry-eligible: outcome `asked_again`.
 2. The answer's plan is in flight (`planned`, `claimed`, `applying`,
    `reconciling`, `retryable`): outcome `deferred`, resolved by the retry.
@@ -348,11 +381,16 @@ only the series offer changed.
    the ordinary recording steps. An unwritten `accept` or `owner_entered` is
    carried with its original's application, so it plans under the consent
    current when it plans and every guard. A written or settled answer, and
-   every `keep_current` and `reject`, is carried as `recorded_only`: it settles
-   Attention and plans nothing. The carried row replaces the record's answer
-   and ordinal, takes the new case's halves, names its root original
-   (`carried_from`) as `previous_answer_id`, and keeps carry eligibility.
-   Outcome `carried`.
+   every `keep_current` and `reject`, is carried with a new application value,
+   `settled`, admitted on both media and only on a carried row: it settles
+   Attention and plans nothing. It is not ADR-0071's `recorded_only`, which
+   stays F45 history that only an audiobook case may carry, with its own
+   historical reason. The carried row replaces the record's answer and
+   ordinal, and the record takes the new case's `(review_case_id, episode)`
+   and halves, so later projections of that case do not run the check again.
+   It names its root original (`carried_from`) as `previous_answer_id`, keeps
+   carry eligibility, and an agreeing automatic authority on the new case is
+   closed as a replacement closes it today. Outcome `carried`.
 5. Otherwise (a different question, a field absent or not actionable, an
    unwritten corrective `keep_current`, an authored description, or a
    constructor refusal): no carry, the record stays, and the outcome is
@@ -372,7 +410,8 @@ granted, on a later case or episode of the same book asking the same
 question, within a release as after a regeneration. That is the one exception
 to "an owner decision is a request with session, CSRF, Origin, target
 fingerprint, case currentness and idempotency key" and to "preparation creates
-no owner decision" ([security](../security.md#owner-decisions)).
+no owner decision" ([security](../security.md#owner-decisions),
+[publication](../security.md#publication)).
 
 ### Attention
 
@@ -380,7 +419,7 @@ no owner decision" ([security](../security.md#owner-decisions)).
   decision, settles a field only when the record holds no answer for the work
   and destination, or holds one with a Resume open.
 - Everything else that settles a field today still does: the case episode's
-  latest human row that is not a withdrawal (carried and `recorded_only` rows
+  latest human row that is not a withdrawal (carried rows, `settled` ones
   included), an authored description, and the owner cover pointer. An owner
   row at or below the latest completed Resume's `over_ordinal` no longer
   settles the field, and the case page does not show it as the field's
@@ -390,10 +429,11 @@ no owner decision" ([security](../security.md#owner-decisions)).
 - **New reason `asked_again`:** the record holds an answer, the case episode's
   latest human row for the field is absent or a withdrawal, and either the
   latest outcome is `question_changed`, `target_changed`, `asked_again` or
-  `invalid`, or the record is not carry-eligible. The field shows the earlier
+  `invalid`, or the record is not carry-eligible. A pinned field never takes
+  this reason; it is asked with the pin's own. The field shows the earlier
   answer and why it is asked: the choices changed, the value in
-  Audiobookshelf changed, the owner asked to be asked again, or the planned
-  change was retired. This reason is distinct from Activity's existing
+  Audiobookshelf changed, the owner asked to be asked again, a Resume the
+  owner asked for did not finish, or the planned change was retired. This reason is distinct from Activity's existing
   `asked_again` note, which marks an answer that lapsed when a work came back
   to an earlier case in a new episode; under the record that lapse happens
   only when the question check asks again, and C3 words the note to match.
@@ -401,12 +441,13 @@ no owner decision" ([security](../security.md#owner-decisions)).
 | Situation on the new case | Asked? | Automatic writes? |
 | --- | --- | --- |
 | Same question, answer unwritten | no (carried) | no; the owner's value writes once under consent |
-| Same question, answer written or a refusal | no (carried, recorded only) | no |
+| Same question, answer written or a refusal | no (carried as `settled`) | no |
 | Choices changed, field set to Automatic | yes, `asked_again` | no, until Resume |
 | Choices changed, field under Ask me or in Preview | yes | no |
 | Value changed in Audiobookshelf | yes | no, until Resume |
 | Withdrawn, retired, or Book matching changed it | yes | no, until Resume |
 | Resume requested | no | Automatic's decision plans once Resume completes |
+| Resume failed, then a new case | yes, `asked_again`; Resume offered again | no; the owner's earlier answer is not written |
 | Resume completed, no automatic decision on the case | yes, with the field's own reason | on the next case |
 
 ### Withdrawal and carry eligibility
@@ -426,9 +467,15 @@ no owner decision" ([security](../security.md#owner-decisions)).
   follows `carried_from` to the original's plans.
 - **Withdrawing another answer** leaves the record alone; a withdrawal after a
   completed Resume finds it empty and leaves it empty.
-- **A withdrawal is still refused** beside an automatic decision on its case,
-  and the mint still skips a case with a human row outside a Resume, so no
-  case-scoped withdrawal rule remains.
+- **A withdrawal is refused beside an automatic decision** on its case only
+  where that decision settles the field under [Attention](#attention): when
+  the record holds no answer for the destination, or holds one with a Resume
+  open. Beside a record answer an automatic decision plans nothing, so it does
+  not refuse the withdrawal. This matters on a new case, where the question
+  check runs after the automatic block, so a field set to Automatic can hold
+  both Automatic's decision and the carried row; the owner can still withdraw
+  the carried row before it writes. No other case-scoped withdrawal rule
+  remains.
 
 ### Readers
 
@@ -515,8 +562,8 @@ a provider, and is composed with no network client.
    it to `/data/regeneration-backup/epoch-<n>.sqlite3` (directory `0700`, file
    `0600`, an unsafe existing entry refused), replacing any earlier copy. Crash
    recovery and first-boot detection ignore that directory. The artifact sweep
-   does nothing while it holds a copy, for every caller, so the copy and the
-   artifacts stay a pair. The owner restores it with the previous release,
+   does nothing, and retained-cover removals wait, while it holds a copy, for
+   every caller, so the copy and the artifacts stay a pair. The owner restores it with the previous release,
    setting the provider-recovery store aside (the provider-response store
    stays), or deletes the directory once satisfied.
 6. **One transaction**, `BEGIN EXCLUSIVE`, foreign keys on,
@@ -536,8 +583,9 @@ a provider, and is composed with no network client.
       singletons, and ask every configured library to scan;
    4. `foreign_key_check` empty and `quick_check` passing, or roll back;
    5. one append-only `derived_regenerations` row: epochs and versions before
-      and after, build, times, the backup's digest and the counts of every
-      list and every step;
+      and after, build, times, the backup's digest, `decision_ordinal_hwm`
+      (the owner-answer counter's value, so a decision at or below it is of
+      an earlier epoch) and the counts of every list and every step;
    6. commit.
 
    A crash anywhere rolls the transaction back and the next run starts again.
@@ -633,14 +681,15 @@ rejected.
 
 | Decision | Effect |
 | --- | --- |
-| ADR-0013 | Superseded from the C4' cutover, which changes no rule before it. Its exact-current rule becomes this record's startup table, its derived-only adoption route is retired by `regenerate-derived`, its exclusion of "canonical row conversion, general migration machinery" is lifted for the ledger migrations above, and its deferral of post-release migration to #57 is answered by C6. |
-| ADR-0085 | From C2 the record replaces manual holds: "Holds follow the work" and the hold carry at admission, the release token, the released-row rules of "Neutral or deferred", and Amendments 1 to 6 are restated over the record as described above. Withdrawal restores only an answer from an earlier case or episode. Owner-entered values, withdrawal, reselection and their refusals are unchanged. |
+| ADR-0013 | Superseded for the application database from the C4' cutover, which changes no rule before it; every other store, and every report, configuration and internal document schema, keeps ADR-0013, its qualification bridge and its provider-evidence rules. Its exact-current rule becomes this record's startup table, its derived-only adoption route is retired by `regenerate-derived`, its exclusion of "canonical row conversion, general migration machinery" is lifted for the ledger migrations above, and its deferral of post-release migration to #57 is answered by C6. |
+| ADR-0085 | From C2 the record replaces manual holds: "Holds follow the work" and the hold carry at admission, the release token, the released-row rules of "Neutral or deferred", and Amendments 1 to 6 are restated over the record as described above. Withdrawal restores only an answer from an earlier case or episode. Owner-entered values, withdrawal, reselection and their refusals are unchanged, except that an automatic decision refuses a withdrawal only where it settles the field (beside no record answer, or one with a Resume open). |
 | ADR-0096 | A carried answer keeps its original's `cause`, so a later Book matching change can supersede it with `matching_changed` (which clears its carry eligibility), and a carried `matching_changed` row is never formed because valueless rows are not carried. Retained validation of a terminal decision does not re-check its offer digest against level offers a regeneration dropped; a current case's decisions keep the check. Level storage stays derived. |
 | ADR-0014 | Case identity binds the derived epoch through the proposal set. |
 | ADR-0034 | The transition header, with its settled counts, is ledger; a regeneration never runs while a transition is `processing`. |
 | ADR-0039 | A regeneration revokes every authority through the existing revocation, superseding ready and connection-stale plans with `authority_superseded`. |
 | ADR-0049, ADR-0059 | The owner cover selections and pointer are ledger and suppress automatic cover, together with the record; at a regeneration an unwritten owner choice is repointed to the latest written one or cleared. Automatic selections and pointers are derived. |
 | ADR-0057 | One file, two partitions; no shared job primitive. |
+| ADR-0071 | A carried copy of a written or settled answer takes a new application value, `settled`, admitted on both media and only on a carried row; it plans nothing and reads as the owner's carried answer. F45's `recorded_only` keeps its meaning, its audiobook-only admission and its historical reason. |
 | ADR-0082 | Activity reads ledger copies; the rows above are lost at a regeneration. |
 | ADR-0084 | Attention triggers on ledger tables are derived objects. |
 | ADR-0087 | Automatic decisions are derived; nothing decodes an old qualification digest. |
@@ -770,7 +819,8 @@ admission, evaluation, planning query and planner:
   answers given in Preview, while paused and under Ask me) write nothing
   automatically on any later read; genres; an unwritten answer written exactly
   once and Automatic's after Resume; Resume on a field that abstains; Resume
-  during a re-read; withdrawal in each order; `--retire-pending`; a plan in
+  during a re-read; Resume, then a failed scan, then a same-question re-read
+  plans nothing, shows the field as asked and closes the request superseded; withdrawal in each order; `--retire-pending`; a plan in
   flight across a re-read; every row of the Attention table, set to Automatic
   and in Preview; a return to an earlier case; a group target; description
   advice for both owner sources; covers; and the owner state across a
