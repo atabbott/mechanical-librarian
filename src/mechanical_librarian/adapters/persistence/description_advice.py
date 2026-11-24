@@ -1015,7 +1015,14 @@ def validate_description_history(connection: sqlite3.Connection) -> None:
         AuthoredDescriptionDecision,
     )
 
-    def validate_binding(document: str) -> DescriptionAdviceBinding:
+    def validate_binding(
+        document: str, *, case_required: bool = True
+    ) -> DescriptionAdviceBinding:
+        """The binding is canonical and, where its case is there, names it.
+
+        Only the owner's decision, which is ledger, may outlive its case
+        (ADR-0108); every derived row's case must be there.
+        """
         binding = DescriptionAdviceBinding.model_validate_json(document)
         case = connection.execute(
             "SELECT report_id,proposal_set_id,document FROM review_cases WHERE review_case_id=?",
@@ -1023,9 +1030,15 @@ def validate_description_history(connection: sqlite3.Connection) -> None:
         ).fetchone()
         if (
             description_document(binding.model_dump()) != document
-            or case is None
-            or case[:2] != (binding.report_id, binding.proposal_set_id)
-            or json.loads(case[2])["target_fingerprint"] != binding.target_fingerprint
+            or (case is None and case_required)
+            or (
+                case is not None
+                and (
+                    case[:2] != (binding.report_id, binding.proposal_set_id)
+                    or json.loads(case[2])["target_fingerprint"]
+                    != binding.target_fingerprint
+                )
+            )
         ):
             raise ValueError("invalid description binding")
         return binding
@@ -1121,7 +1134,10 @@ def validate_description_history(connection: sqlite3.Connection) -> None:
         ),
     ):
         decision = AuthoredDescriptionDecision.from_json(document)
-        validate_binding(description_document(decision.binding.model_dump()))
+        validate_binding(
+            description_document(decision.binding.model_dump()),
+            case_required=origin != "human",
+        )
         if (
             decision.decision_id,
             decision.review_case_id,
@@ -1132,8 +1148,8 @@ def validate_description_history(connection: sqlite3.Connection) -> None:
             raise ValueError("invalid description decision")
         if origin == "human":
             # The copies are its own: the candidate is the one it names and
-            # the work its case's. Until #2038 relaxes provenance, the case
-            # and the candidate must be there, as their keys required.
+            # the work its case's. The case and the candidate are derived:
+            # while each is there, the copy must equal it (ADR-0108).
             copied = DescriptionAdviceCandidate.from_json(candidate_document)
             target = connection.execute(
                 "SELECT json_array(json_extract(document,'$.target.connection'),"
@@ -1148,8 +1164,8 @@ def validate_description_history(connection: sqlite3.Connection) -> None:
             ).fetchone()
             if (
                 copied.candidate_id != candidate_id
-                or target != (work,)
-                or named != (candidate_document,)
+                or target not in {None, (work,)}
+                or named not in {None, (candidate_document,)}
             ):
                 raise ValueError("invalid description decision")
 

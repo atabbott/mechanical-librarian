@@ -66,6 +66,8 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
     _CURRENT_LIBRARY_FROM_SQL,
     _CURRENT_REVIEW_FROM_SQL,
+    _OWNER_SELECTION_COPIES,
+    _OWNER_SELECTION_COPY_JOIN_SQL,
 )
 from mechanical_librarian.application.cover_consideration import (
     cover_consideration_currentness_document,
@@ -3043,6 +3045,8 @@ def _validate_schema_contents_without_review_field_facts(
     _validate_metadata_policy_documents(connection)
     _validate_cover_selection_authorities(connection)
     _validate_field_effect_state(connection)
+    if connection.execute(_OWNER_ITEM_KEY_DISAGREES_SQL).fetchone():
+        raise MetadataReportError("database is unavailable or incompatible")
     validate_preparation_presentation(connection)
     try:
         _validate_owner_settings_content(connection)
@@ -3056,8 +3060,50 @@ def _validate_schema_contents_without_review_field_facts(
         _validate_provider_recovery_outbox_row(row)
 
 
+# An owner's decision keeps its work's key, so it still names its work once
+# its case is gone; every ledger row that names the decision names the same
+# work (ADR-0108).
+_OWNER_ITEM_KEY_DISAGREES_SQL = (
+    " UNION ALL ".join(
+        f"SELECT 1 FROM {decisions} decision JOIN {table} named "
+        "ON named.decision_id=decision.decision_id "
+        f"WHERE (named.connection_name,named.library_name,named.{item}) "
+        "IS NOT (decision.connection_name,decision.library_name,decision.item_id)"
+        for decisions, table, item in (
+            ("human_decisions", "human_decision_events", "item_id"),
+            ("human_decisions", "owner_cover_selections", "item_id"),
+            ("human_decisions", "field_effects", "work_id"),
+            ("human_decisions", "field_effect_no_changes", "work_id"),
+            ("owner_authored_descriptions", "field_effects", "work_id"),
+            ("owner_authored_descriptions", "field_effect_no_changes", "work_id"),
+        )
+    )
+    + " LIMIT 1"
+)
+# An owner selection whose copy disagrees with its comparison, or with its
+# report's facts, while they are there (ADR-0108).
+_OWNER_SELECTION_COPY_DISAGREES_SQL = (
+    "SELECT 1 FROM owner_cover_selections selection "
+    + _OWNER_SELECTION_COPY_JOIN_SQL
+    + " WHERE consideration.consideration_id IS NOT NULL AND ("
+    + " OR ".join(
+        f"selection.{column} IS NOT {sql}"
+        if column != "report_format"
+        else f"(facts.report_id IS NOT NULL AND selection.{column} IS NOT {sql})"
+        for column, sql in _OWNER_SELECTION_COPIES
+    )
+    + ") LIMIT 1"
+)
+
+
 def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> None:
-    """Require append-only cover authority rows to equal their canonical facts."""
+    """Require append-only cover authority rows to equal their canonical facts.
+
+    The owner's selections are ledger: each is checked against its own
+    decision always, and against the comparison, case and report it was made
+    over while they are there. Automatic's selections and pointers are
+    derived, and checked in full (ADR-0108).
+    """
     try:
         selections: dict[str, tuple[str, str, str, dict[str, object]]] = {}
         selection_decision_ids: dict[str, str] = {}
@@ -3089,29 +3135,12 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
             ):
                 raise ValueError
             decision_document = cast(str, document["decision_document"])
-            consideration_row = connection.execute(
-                "SELECT consideration.document,consideration.review_case_id,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM cover_considerations consideration LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
-                "WHERE consideration.consideration_id=?",
-                (row[6],),
-            ).fetchone()
-            if consideration_row is None:
-                raise ValueError
-            expanded_document = expand_cover_consideration(
-                consideration_row[0], *consideration_row[2:]
-            )
-            consideration = json.loads(expanded_document)
-            case_row = connection.execute(
-                "SELECT document FROM review_cases WHERE review_case_id=?",
-                (consideration_row[1],),
-            ).fetchone()
-            if case_row is None:
-                raise ValueError
-            case = ReviewCase.from_json(case_row[0])
-            target = case.target
-            expected_artifact = None
-            expected_rank = None
-            owner_facts: dict[str, object] = {}
+            comparison = _selection_comparison(connection, row[6])
             if row[4] == "automatic":
+                if comparison is None:
+                    raise ValueError
+                expanded_document, review_case_id, case = comparison
+                consideration = json.loads(expanded_document)
                 automatic_decision = CoverAutomaticDecision.from_json(decision_document)
                 candidate = next(
                     (
@@ -3125,7 +3154,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 if (
                     automatic_decision.decision_id != row[5]
                     or automatic_decision.consideration_id != row[6]
-                    or automatic_decision.review_case_id != consideration_row[1]
+                    or automatic_decision.review_case_id != review_case_id
                     or automatic_decision.occurred_at != row[8]
                     or candidate is None
                     or candidate.get("artifact_id") != automatic_decision.artifact_id
@@ -3135,21 +3164,15 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                     != list(automatic_decision.rank_key)
                 ):
                     raise ValueError
-                expected_artifact = automatic_decision.artifact_id
-                expected_rank = list(automatic_decision.rank_key)
+                expected_artifact: object = automatic_decision.artifact_id
+                expected_rank: object = list(automatic_decision.rank_key)
+                owner_facts: dict[str, object] = {}
+                target: object = case.target
             else:
-                candidate, owner_facts = _owner_selection_facts(
-                    connection,
-                    row,
-                    document,
-                    consideration,
-                    cast(str, consideration_row[1]),
-                    expanded_document,
-                    case,
+                expected_artifact, expected_rank, owner_facts = _owner_selection_facts(
+                    connection, row, document, comparison
                 )
-                if candidate is not None:
-                    expected_artifact = candidate.get("artifact_id")
-                    expected_rank = candidate.get("deterministic_rank_key")
+                target = owner_facts["target"]
             expected_selection_id = (
                 "cover_selection_"
                 + hashlib.sha256(decision_document.encode("utf-8")).hexdigest()
@@ -3173,8 +3196,9 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
             if (
                 row[0] != expected_selection_id
                 or row[9] != expected_document
+                or type(target) is not dict
                 or (row[1], row[2], row[3])
-                != (target["connection"], target["library"], target["item"])
+                != (target.get("connection"), target.get("library"), target.get("item"))
             ):
                 raise ValueError
             selections[row[0]] = (row[1], row[2], row[3], document)
@@ -3189,21 +3213,28 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
             item_id,
             document,
         ) in selections.items():
+            # Automatic's predecessor is derived as it is, so it is there; an
+            # owner's may have been Automatic's, which a regeneration takes.
             predecessor = document.get("supersedes_selection_id")
             if predecessor is not None and (
-                predecessor not in selections
-                or selections[predecessor][:3]
-                != (connection_name, library_name, item_id)
-                or predecessor == selection_id
+                predecessor == selection_id
+                or (
+                    predecessor not in selections
+                    and selection_id in automatic_supersessions
+                )
+                or (
+                    predecessor in selections
+                    and selections[predecessor][:3]
+                    != (connection_name, library_name, item_id)
+                )
             ):
                 raise ValueError
-            expected_predecessor_decision_id = (
-                None if predecessor is None else selection_decision_ids[predecessor]
-            )
-            if (
-                selection_id in automatic_supersessions
-                and automatic_supersessions[selection_id]
-                != expected_predecessor_decision_id
+            if selection_id in automatic_supersessions and automatic_supersessions[
+                selection_id
+            ] != (
+                None
+                if predecessor is None
+                else selection_decision_ids[cast(str, predecessor)]
             ):
                 raise ValueError
         # Each pointer names a selection of its own kind for its work, and
@@ -3222,6 +3253,10 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 ):
                     raise ValueError
                 pointed.add(row[:3])
+        # An owner's choice copies what the taste profile counts it by; each
+        # copy equals its comparison and report while they are there.
+        if connection.execute(_OWNER_SELECTION_COPY_DISAGREES_SQL).fetchone():
+            raise ValueError
     except (
         AutomaticDecisionError,
         HumanDecisionError,
@@ -3233,34 +3268,88 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
         raise MetadataReportError("database is unavailable or incompatible") from error
 
 
+def _selection_comparison(
+    connection: sqlite3.Connection, consideration_id: str
+) -> tuple[str, str, ReviewCase] | None:
+    """The expanded comparison a cover selection names, its case id and its
+    case; None when the comparison is not there. A comparison whose case is
+    not there is refused: both are derived, and go together."""
+    consideration_row = connection.execute(
+        "SELECT consideration.document,consideration.review_case_id,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM cover_considerations consideration LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
+        "WHERE consideration.consideration_id=?",
+        (consideration_id,),
+    ).fetchone()
+    if consideration_row is None:
+        return None
+    expanded_document = expand_cover_consideration(
+        consideration_row[0], *consideration_row[2:]
+    )
+    case_row = connection.execute(
+        "SELECT document FROM review_cases WHERE review_case_id=?",
+        (consideration_row[1],),
+    ).fetchone()
+    if case_row is None:
+        raise ValueError
+    return expanded_document, consideration_row[1], ReviewCase.from_json(case_row[0])
+
+
 def _owner_selection_facts(
     connection: sqlite3.Connection,
     row: tuple[Any, ...],
     document: dict[str, object],
-    consideration: dict[str, Any],
-    review_case_id: str,
-    expanded_document: str,
-    case: ReviewCase,
-) -> tuple[dict[str, Any] | None, dict[str, object]]:
-    """The candidate one owner selection row names, and its owner facts.
+    comparison: tuple[str, str, ReviewCase] | None,
+) -> tuple[object, object, dict[str, object]]:
+    """The chosen artifact, rank key and owner facts one owner selection row
+    must hold.
 
     Accept names one manually eligible candidate; keep names the current
     cover, or nothing when the comparison could not read it (#1865); reject
-    names nothing. Raise ``ValueError`` for any other row.
+    names nothing. The decision and the confirmation are ledger and always
+    checked. The comparison and its case are derived: while they are there,
+    every fact is theirs; once a regeneration took them, the facts only they
+    could give stand as copied (ADR-0108). Raise ``ValueError`` for any other
+    row.
     """
     decision_document = cast(str, document["decision_document"])
     human_decision = HumanDecision.from_json(decision_document)
     human = connection.execute(
-        "SELECT document FROM human_decisions WHERE decision_id=?",
+        "SELECT document,target_field_document FROM human_decisions "
+        "WHERE decision_id=?",
         (row[5],),
     ).fetchone()
     if (
         human_decision.decision_id != row[5]
         or human_decision.destination != "cover"
-        or human_decision.review_case_id != review_case_id
         or human_decision.occurred_at != row[8]
-        or human != (decision_document,)
+        or human is None
+        or human[0] != decision_document
     ):
+        raise ValueError
+    confirmation = validate_cover_confirmation(document.get("confirmation"))
+    # The target is the decision's case's, so its cover field is the one the
+    # decision copied.
+    target = document.get("target")
+    fields = target.get("fields") if type(target) is dict else None
+    if confirmation["expected_selection_id"] != row[7] or (
+        type(fields) is not list
+        or _canonical_json(
+            next(
+                (
+                    field
+                    for field in fields
+                    if type(field) is dict and field.get("destination") == "cover"
+                ),
+                None,
+            )
+        )
+        != human[1]
+    ):
+        raise ValueError
+    if comparison is None:
+        return _owner_selection_copies(human_decision, confirmation, document)
+    expanded_document, review_case_id, case = comparison
+    consideration = json.loads(expanded_document)
+    if human_decision.review_case_id != review_case_id:
         raise ValueError
     candidate = next(
         (
@@ -3285,9 +3374,6 @@ def _owner_selection_facts(
         human_decision.outcome == "keep_current" and keeps_unread_cover(consideration)
     ):
         raise ValueError
-    confirmation = validate_cover_confirmation(document.get("confirmation"))
-    if confirmation["expected_selection_id"] != row[7]:
-        raise ValueError
     if human_decision.outcome == "accept" and (
         candidate is None
         or not manual_cover_eligible(candidate)
@@ -3300,17 +3386,82 @@ def _owner_selection_facts(
     candidate_kind, retained_plan_id = owner_cover_selection_kind(
         human_decision.outcome, candidate
     )
-    return candidate, {
-        "candidate_kind": candidate_kind,
-        "retained_plan_id": retained_plan_id,
-        "confirmation": confirmation,
-        "observed_identity": None if candidate is None else candidate["identity"],
-        "candidate_reference": None if candidate is None else candidate["reference"],
-        "original_sha256": None if candidate is None else candidate["original_sha256"],
-        "preview_sha256": None if candidate is None else candidate["preview_sha256"],
-        "consideration_digest": hashlib.sha256(expanded_document.encode()).hexdigest(),
-        "target": dict(case.target),
-    }
+    return (
+        None if candidate is None else candidate.get("artifact_id"),
+        None if candidate is None else candidate.get("deterministic_rank_key"),
+        {
+            "candidate_kind": candidate_kind,
+            "retained_plan_id": retained_plan_id,
+            "confirmation": confirmation,
+            "observed_identity": None if candidate is None else candidate["identity"],
+            "candidate_reference": None
+            if candidate is None
+            else candidate["reference"],
+            "original_sha256": None
+            if candidate is None
+            else candidate["original_sha256"],
+            "preview_sha256": None
+            if candidate is None
+            else candidate["preview_sha256"],
+            "consideration_digest": hashlib.sha256(
+                expanded_document.encode()
+            ).hexdigest(),
+            "target": dict(case.target),
+        },
+    )
+
+
+def _owner_selection_copies(
+    human_decision: HumanDecision,
+    confirmation: dict[str, object],
+    document: dict[str, object],
+) -> tuple[object, object, dict[str, object]]:
+    """An owner selection's facts once its comparison is gone.
+
+    What the decision settles is checked: a reject names no cover, only an
+    accept names a kind, a retained original with its plan, and an accept
+    names the cover it chose. The rest
+    stands as copied: the observed identity, the cover's reference, digests
+    and rank key and the comparison's digest are accepted gaps (ADR-0108).
+    """
+    chosen = human_decision.selected_value
+    accepted = human_decision.outcome == "accept"
+    rejected = human_decision.outcome == "reject"
+    kind = (document.get("candidate_kind"), document.get("retained_plan_id"))
+    if (
+        (rejected and chosen is not None)
+        or (accepted and (type(chosen) is not dict or chosen.get("kind") != "cover"))
+        or (
+            accepted
+            and kind != ("candidate", None)
+            and (kind[0] != "retained" or type(kind[1]) is not str)
+        )
+    ):
+        raise ValueError
+    return (
+        cast(dict[str, object], chosen)["value"]
+        if accepted
+        else None
+        if rejected
+        else document.get("candidate_artifact_id"),
+        None if rejected else document.get("rank_key"),
+        {
+            **{
+                key: None if rejected else document.get(key)
+                for key in (
+                    "observed_identity",
+                    "candidate_reference",
+                    "original_sha256",
+                    "preview_sha256",
+                )
+            },
+            "candidate_kind": kind[0] if accepted else None,
+            "retained_plan_id": kind[1] if accepted else None,
+            "confirmation": confirmation,
+            "consideration_digest": document.get("consideration_digest"),
+            "target": document.get("target"),
+        },
+    )
 
 
 def _validate_review_field_facts(connection: sqlite3.Connection) -> None:

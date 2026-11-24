@@ -141,6 +141,7 @@ from tests.support.field_effects import (
 from tests.support.field_effects import (
     effects as effects,
 )
+from tests.support.ledger_partition import reopen_without_derived_rows
 from tests.support.proposal_evidence import (
     _target_work_candidate,
     _target_work_report,
@@ -6042,6 +6043,32 @@ def test_audiobook_pair_happy_pair_scheduler_reopen_and_activity(audiobook_pair)
     assert any(
         x["value"] == "Both title and subtitle confirmed" for x in event["evidence"]
     )
+
+
+def test_audiobook_pair_live_plan_keeps_its_decisions_through_a_regeneration(
+    audiobook_pair, tmp_path
+):
+    """A pair still to write is refused without the decisions it was planned
+    from, since a regeneration revokes it first; once verified, the pair
+    stands without them (ADR-0108)."""
+    lane = ContinuousGuardedApplication(
+        audiobook_pair.repo,
+        {("primary", "audio"): audiobook_pair.service},
+        {("primary", "audio"): audiobook_pair.env.capabilities},
+        audiobook_pair.authority,
+        (("primary", "audio"),),
+        audiobook_pair.env.clock,
+        lambda *_: None,
+    )
+    assert lane.schedule() == 1
+    (plan_id,) = audiobook_pair.repo._connection.execute(
+        "SELECT plan_id FROM field_effects"
+    ).fetchone()
+    with pytest.raises(MetadataReportError):
+        reopen_without_derived_rows(audiobook_pair.repo, tmp_path / "planned")
+    assert audiobook_pair.service.apply(plan_id).state == "verified"
+    decoded = reopen_without_derived_rows(audiobook_pair.repo, tmp_path / "verified")
+    assert decoded["field_effects"] == 1
 
 
 def test_audiobook_pair_keep_on_the_companion_subtitle_writes_it_back(

@@ -51,6 +51,7 @@ from mechanical_librarian.interfaces.web.app import REVIEW_TASTE_PROFILE_SCHEMA
 from tests.support.cover_selections import ALL_COVER_SELECTIONS
 from tests.support.cover_taste import record_owner_cover_decisions
 from tests.support.ledger_copies import assert_ledger_copies
+from tests.support.ledger_partition import reopen_without_derived_rows
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
@@ -200,6 +201,9 @@ def test_a_profile_is_written_from_owner_choices_and_shown(tmp_path) -> None:
         checked = assert_ledger_copies(built.repository)
         assert checked["taste_decision"] > 0
         assert checked["taste_eligible"] > 0
+        assert reopen_without_derived_rows(built.repository, tmp_path / "regenerated")[
+            "owner_cover_selections.transport_sha256"
+        ]
         built.service.wake(NOW)
         [client] = built.openrouter
         [request] = client.requests

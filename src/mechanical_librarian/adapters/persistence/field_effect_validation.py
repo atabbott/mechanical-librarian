@@ -16,9 +16,6 @@ from typing import Final, cast
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
     expand_cover_consideration,
 )
-from mechanical_librarian.adapters.persistence.review_sql import (
-    _authored_description_sql,
-)
 from mechanical_librarian.adapters.providers.visible_text import read_description
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.audiobook_corroboration import (
@@ -61,6 +58,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectNoChange,
     FieldEffectOperation,
+    FieldEffectPlan,
     authority_to_data,
     field_value_version,
     project_decision_value,
@@ -903,13 +901,13 @@ def _cover_automatic_decision_value(
 def _validate_owner_no_change(
     connection: sqlite3.Connection,
     record: FieldEffectNoChange,
-    row: tuple[str, str] | sqlite3.Row,
+    row: tuple[str, str | None] | sqlite3.Row,
 ) -> None:
     """An owner's accept recorded with nothing to write (ADR-0105) names the
     verified write it follows, and that write, the accept and the row hold
-    one value."""
+    one value. The accept's case is derived: while it is there, the row
+    names its report and work (ADR-0108)."""
     human = HumanDecision.from_json(row[0])
-    case = ReviewCase.from_json(row[1])
     if (
         record.origin != "human"
         or human.outcome != "accept"
@@ -918,13 +916,18 @@ def _validate_owner_no_change(
         or human.destination != record.destination
         or human.target_fingerprint != record.target_fingerprint
         or human.occurred_at != record.occurred_at
-        or case.report_id != record.report_id
-        or case.target.get("connection") != record.connection
-        or case.target.get("library") != record.library
-        or case.target.get("item") != record.work_id
         or human.follows is None
     ):
         raise FieldEffectError("persistence")
+    if row[1] is not None:
+        case = ReviewCase.from_json(row[1])
+        if (
+            case.report_id != record.report_id
+            or case.target.get("connection") != record.connection
+            or case.target.get("library") != record.library
+            or case.target.get("item") != record.work_id
+        ):
+            raise FieldEffectError("persistence")
     followed = connection.execute(
         "SELECT document FROM field_effects WHERE decision_id=? "
         "AND state='verified' ORDER BY rowid LIMIT 1",
@@ -955,231 +958,349 @@ def _validate_owner_no_change(
         raise FieldEffectError("persistence")
 
 
-def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
-    """Fail closed on any non-canonical field-effect envelope or row mismatch."""
-    try:
-        for row in connection.execute(
-            "SELECT decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id FROM field_effect_no_changes"
-        ).fetchall():
-            record = FieldEffectNoChange.create(
-                decision_id=row[0],
-                review_case_id=row[1],
-                report_id=row[2],
-                connection=row[3],
-                library=row[4],
-                work_id=row[5],
-                destination=row[6],
-                target_fingerprint=row[7],
-                target_version=row[8],
-                occurred_at=row[10],
-                origin=row[9],
-            )
-            if row[9] != record.origin or row[11] != record.event_id:
-                raise FieldEffectError("persistence")
-            authored_row = connection.execute(
-                _authored_description_sql(
-                    "SELECT d.document,c.document,r.document FROM {table} d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id JOIN metadata_reports r ON r.report_id=? WHERE d.decision_id=?"
-                ),
-                (record.report_id, record.decision_id) * 2,
-            ).fetchone()
-            if authored_row is not None:
-                authored = AuthoredDescriptionDecision.from_json(authored_row[0])
-                candidate = DescriptionAdviceCandidate.from_json(authored_row[1])
-                authored_report = MetadataReport.from_json(authored_row[2])
-                authored_target = next(
-                    field
-                    for field in authored_report.target.fields
-                    if field.destination is TargetDestination.DESCRIPTION
-                )
-                before = (
-                    authored_target.value
-                    if authored_target.state.value == "value"
-                    else None
-                )
-                # The advice is compared as it is written: its visible text,
-                # by the same reading the write uses (#1995). Text the reader
-                # refuses was never recordable.
-                advised = read_description(candidate.output.description)[0]
-                if (
-                    type(advised) is not str
-                    or authored.review_case_id != record.review_case_id
-                    or authored.report_id != record.report_id
-                    or authored.target_fingerprint != record.target_fingerprint
-                    or authored.origin != record.origin
-                    or authored_report.target.connection != record.connection
-                    or authored_report.target.library != record.library
-                    or authored_report.target.item != record.work_id
-                    or record.destination != "description"
-                    or not values_match(
-                        TargetDestination.DESCRIPTION,
-                        before,
-                        advised,
-                    )
-                    or record.target_version
-                    != field_value_version("description", before)
-                ):
-                    raise FieldEffectError("persistence")
-                continue
-            human_row = connection.execute(
-                "SELECT h.document,c.document FROM human_decisions h "
-                "JOIN review_cases c ON c.review_case_id=h.review_case_id "
-                "WHERE h.decision_id=?",
-                (record.decision_id,),
-            ).fetchone()
-            if human_row is not None:
-                _validate_owner_no_change(connection, record, human_row)
-                continue
-            decision_row = connection.execute(
-                "SELECT document FROM automatic_decisions WHERE decision_id=? "
-                "UNION ALL SELECT json_extract(document,'$.decision_document') "
-                "FROM automatic_cover_selections WHERE decision_id=?",
-                (record.decision_id, record.decision_id),
-            ).fetchone()
-            case_row = connection.execute(
-                "SELECT document FROM review_cases WHERE review_case_id=?",
-                (record.review_case_id,),
-            ).fetchone()
+def _validate_automatic_no_change(
+    connection: sqlite3.Connection, record: FieldEffectNoChange, decision_document: str
+) -> None:
+    """Automatic's no-change row agrees with the decision it names and with
+    the case, report, proposals and outcome set that decision was made from.
+
+    All of them are derived: a row whose decision is there is checked in full.
+    """
+    case_row = connection.execute(
+        "SELECT document FROM review_cases WHERE review_case_id=?",
+        (record.review_case_id,),
+    ).fetchone()
+    report_row = connection.execute(
+        "SELECT document FROM metadata_reports WHERE report_id=?",
+        (record.report_id,),
+    ).fetchone()
+    if case_row is None or report_row is None:
+        raise FieldEffectError("persistence")
+    decision = parse_automatic_authority(decision_document)
+    case = ReviewCase.from_json(case_row[0])
+    report = MetadataReport.from_json(report_row[0])
+    proposal_row = connection.execute(
+        "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+        (decision.proposal_set_id,),
+    ).fetchone()
+    # The outcome set of the decision's own generation: leaving
+    # Automatic with the policy unchanged projects the same case again
+    # under a new generation (#1568).
+    outcome_row = connection.execute(
+        "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
+        "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
+        "AND json_extract(document,'$.policy_generation')=?",
+        (
+            decision.review_case_id,
+            decision.report_id,
+            decision.proposal_set_id,
+            decision.resolved_policy_id,
+            decision.policy_generation if type(decision) is AutomaticDecision else None,
+        ),
+    ).fetchone()
+    if proposal_row is None or (
+        type(decision) is AutomaticDecision and outcome_row is None
+    ):
+        raise FieldEffectError("persistence")
+    proposal_set = ProposalSet.from_json(proposal_row[0])
+    source_outcome = (
+        None
+        if type(decision) is CoverAutomaticDecision
+        else ShadowOutcomeSet.from_json(outcome_row[0])
+    )
+    if (
+        decision.destination != record.destination
+        or decision.target_fingerprint != record.target_fingerprint
+        or report.target.connection != record.connection
+        or report.target.library != record.library
+        or report.target.item != record.work_id
+    ):
+        raise FieldEffectError("persistence")
+    # TargetFacts always serialises "fields" as a list of field objects.
+    target = next(
+        (
+            value
+            for value in cast("list[object]", case.target.get("fields", ()))
+            if type(value) is dict and value.get("destination") == record.destination
+        ),
+        None,
+    )
+    proposal = next(
+        (
+            value
+            for value in case.proposals
+            if value.get("proposal_id") == decision.proposal_id
+            and value.get("destination") == record.destination
+        ),
+        None,
+    )
+    result = proposal.get("result") if type(proposal) is dict else None
+    alternatives = result.get("alternatives") if type(result) is dict else None
+    if type(target) is not dict or target.get("state") not in {
+        "value",
+        "null",
+        "empty",
+        "missing",
+    }:
+        raise FieldEffectError("persistence")
+    pre_value = target.get("value") if target["state"] == "value" else None
+    if type(decision) is CoverAutomaticDecision:
+        consideration_row = connection.execute(
+            "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
+            "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+            "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
+            "WHERE current.review_case_id=? AND current.consideration_id=?",
+            (decision.review_case_id, decision.consideration_id),
+        ).fetchone()
+        if consideration_row is None:
+            raise FieldEffectError("persistence")
+        value = _cover_automatic_decision_value(
+            connection,
+            decision,
+            case,
+            report,
+            proposal_set,
+            expand_cover_consideration(*consideration_row),
+        )
+    else:
+        if source_outcome is None:
+            raise FieldEffectError("persistence")
+        value = _automatic_decision_value(
+            cast(AutomaticDecision, decision),
+            case,
+            report,
+            proposal_set,
+            source_outcome,
+        )
+    if decision.outcome == "keep_current":
+        if value is not None:
+            raise FieldEffectError("persistence")
+        desired = pre_value
+    else:
+        selected = next(
+            (
+                value
+                for value in alternatives or ()
+                if type(value) is dict
+                and value.get("alternative_id") == decision.candidate_id
+            ),
+            None,
+        )
+        if type(selected) is not dict:
+            raise FieldEffectError("persistence")
+        desired = project_decision_value(record.destination, value)
+    explicit_absence_preservation = (
+        type(decision) is AutomaticDecision
+        and decision.destination == "explicit"
+        and decision.policy_category == "explicit"
+        and decision.policy_option == "adult_product:audiobook_explicit_preserve"
+        and decision.outcome == "keep_current"
+        and pre_value is None
+        and desired is None
+    )
+    if (
+        not explicit_absence_preservation
+        and not values_match(TargetDestination(record.destination), pre_value, desired)
+    ) or record.target_version != field_value_version(record.destination, pre_value):
+        raise FieldEffectError("persistence")
+
+
+def _validate_authored_no_change(
+    record: FieldEffectNoChange,
+    authored: AuthoredDescriptionDecision,
+    candidate: DescriptionAdviceCandidate,
+    report: MetadataReport | None,
+) -> None:
+    """An authored description's no-change row holds its decision's facts
+    and, while the report it was compared against is there, the advice is
+    the value that report showed."""
+    # The advice is compared as it is written: its visible text, by the same
+    # reading the write uses (#1995). Text the reader refuses was never
+    # recordable.
+    advised = read_description(candidate.output.description)[0]
+    if (
+        type(advised) is not str
+        or authored.review_case_id != record.review_case_id
+        or authored.report_id != record.report_id
+        or authored.target_fingerprint != record.target_fingerprint
+        or authored.origin != record.origin
+        or record.destination != "description"
+    ):
+        raise FieldEffectError("persistence")
+    if report is None:
+        return
+    target = next(
+        field
+        for field in report.target.fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    before = target.value if target.state.value == "value" else None
+    if (
+        report.target.connection != record.connection
+        or report.target.library != record.library
+        or report.target.item != record.work_id
+        or not values_match(TargetDestination.DESCRIPTION, before, advised)
+        or record.target_version != field_value_version("description", before)
+    ):
+        raise FieldEffectError("persistence")
+
+
+def _validate_no_changes(connection: sqlite3.Connection) -> None:
+    """Each no-change row is canonical and agrees with the decision it names.
+
+    An owner's decision is ledger and must be there: the row is checked
+    against it always, and against its case and report while they are there.
+    Automatic's decision is derived: where it is there the row is checked
+    against it in full, and where a regeneration took it the row stands on
+    its own shape (ADR-0108).
+    """
+    for row in connection.execute(
+        "SELECT decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id FROM field_effect_no_changes"
+    ).fetchall():
+        record = FieldEffectNoChange.create(
+            decision_id=row[0],
+            review_case_id=row[1],
+            report_id=row[2],
+            connection=row[3],
+            library=row[4],
+            work_id=row[5],
+            destination=row[6],
+            target_fingerprint=row[7],
+            target_version=row[8],
+            occurred_at=row[10],
+            origin=row[9],
+        )
+        if row[9] != record.origin or row[11] != record.event_id:
+            raise FieldEffectError("persistence")
+        # The owner's authored description keeps the candidate it chose;
+        # Automatic's names the candidate row, which must then be there.
+        authored_row = connection.execute(
+            "SELECT document,candidate_document FROM owner_authored_descriptions "
+            "WHERE decision_id=? UNION ALL SELECT d.document,c.document "
+            "FROM automatic_description_decisions d LEFT JOIN "
+            "description_advice_candidates c ON c.candidate_id=d.candidate_id "
+            "WHERE d.decision_id=?",
+            (record.decision_id,) * 2,
+        ).fetchone()
+        if authored_row is not None:
             report_row = connection.execute(
                 "SELECT document FROM metadata_reports WHERE report_id=?",
                 (record.report_id,),
             ).fetchone()
-            if decision_row is None or case_row is None or report_row is None:
-                raise FieldEffectError("persistence")
-            decision = parse_automatic_authority(decision_row[0])
-            case = ReviewCase.from_json(case_row[0])
-            report = MetadataReport.from_json(report_row[0])
-            proposal_row = connection.execute(
-                "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
-                (decision.proposal_set_id,),
-            ).fetchone()
-            # The outcome set of the decision's own generation: leaving
-            # Automatic with the policy unchanged projects the same case again
-            # under a new generation (#1568).
-            outcome_row = connection.execute(
-                "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
-                "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
-                "AND json_extract(document,'$.policy_generation')=?",
-                (
-                    decision.review_case_id,
-                    decision.report_id,
-                    decision.proposal_set_id,
-                    decision.resolved_policy_id,
-                    decision.policy_generation
-                    if type(decision) is AutomaticDecision
-                    else None,
-                ),
-            ).fetchone()
-            if proposal_row is None or (
-                type(decision) is AutomaticDecision and outcome_row is None
+            if record.origin != "human" and (
+                authored_row[1] is None or report_row is None
             ):
                 raise FieldEffectError("persistence")
-            proposal_set = ProposalSet.from_json(proposal_row[0])
-            source_outcome = (
-                None
-                if type(decision) is CoverAutomaticDecision
-                else ShadowOutcomeSet.from_json(outcome_row[0])
+            _validate_authored_no_change(
+                record,
+                AuthoredDescriptionDecision.from_json(authored_row[0]),
+                DescriptionAdviceCandidate.from_json(authored_row[1]),
+                None if report_row is None else MetadataReport.from_json(report_row[0]),
             )
-            if (
-                decision.destination != record.destination
-                or decision.target_fingerprint != record.target_fingerprint
-                or report.target.connection != record.connection
-                or report.target.library != record.library
-                or report.target.item != record.work_id
-            ):
-                raise FieldEffectError("persistence")
-            # TargetFacts always serialises "fields" as a list of field objects.
-            target = next(
-                (
-                    value
-                    for value in cast("list[object]", case.target.get("fields", ()))
-                    if type(value) is dict
-                    and value.get("destination") == record.destination
-                ),
-                None,
-            )
-            proposal = next(
-                (
-                    value
-                    for value in case.proposals
-                    if value.get("proposal_id") == decision.proposal_id
-                    and value.get("destination") == record.destination
-                ),
-                None,
-            )
-            result = proposal.get("result") if type(proposal) is dict else None
-            alternatives = result.get("alternatives") if type(result) is dict else None
-            if type(target) is not dict or target.get("state") not in {
-                "value",
-                "null",
-                "empty",
-                "missing",
-            }:
-                raise FieldEffectError("persistence")
-            pre_value = target.get("value") if target["state"] == "value" else None
-            if type(decision) is CoverAutomaticDecision:
-                consideration_row = connection.execute(
-                    "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
-                    "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
-                    "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
-                    "WHERE current.review_case_id=? AND current.consideration_id=?",
-                    (decision.review_case_id, decision.consideration_id),
-                ).fetchone()
-                if consideration_row is None:
-                    raise FieldEffectError("persistence")
-                value = _cover_automatic_decision_value(
-                    connection,
-                    decision,
-                    case,
-                    report,
-                    proposal_set,
-                    expand_cover_consideration(*consideration_row),
-                )
-            else:
-                if source_outcome is None:
-                    raise FieldEffectError("persistence")
-                value = _automatic_decision_value(
-                    cast(AutomaticDecision, decision),
-                    case,
-                    report,
-                    proposal_set,
-                    source_outcome,
-                )
-            if decision.outcome == "keep_current":
-                if value is not None:
-                    raise FieldEffectError("persistence")
-                desired = pre_value
-            else:
-                selected = next(
-                    (
-                        value
-                        for value in alternatives or ()
-                        if type(value) is dict
-                        and value.get("alternative_id") == decision.candidate_id
-                    ),
-                    None,
-                )
-                if type(selected) is not dict:
-                    raise FieldEffectError("persistence")
-                desired = project_decision_value(record.destination, value)
-            explicit_absence_preservation = (
-                type(decision) is AutomaticDecision
-                and decision.destination == "explicit"
-                and decision.policy_category == "explicit"
-                and decision.policy_option
-                == "adult_product:audiobook_explicit_preserve"
-                and decision.outcome == "keep_current"
-                and pre_value is None
-                and desired is None
-            )
-            if (
-                not explicit_absence_preservation
-                and not values_match(
-                    TargetDestination(record.destination), pre_value, desired
-                )
-            ) or record.target_version != field_value_version(
-                record.destination, pre_value
-            ):
-                raise FieldEffectError("persistence")
+            continue
+        human_row = connection.execute(
+            "SELECT h.document,c.document FROM human_decisions h "
+            "LEFT JOIN review_cases c ON c.review_case_id=h.review_case_id "
+            "WHERE h.decision_id=?",
+            (record.decision_id,),
+        ).fetchone()
+        if human_row is not None:
+            _validate_owner_no_change(connection, record, human_row)
+            continue
+        decision_row = connection.execute(
+            "SELECT document FROM automatic_decisions WHERE decision_id=? "
+            "UNION ALL SELECT json_extract(document,'$.decision_document') "
+            "FROM automatic_cover_selections WHERE decision_id=?",
+            (record.decision_id, record.decision_id),
+        ).fetchone()
+        if decision_row is not None:
+            _validate_automatic_no_change(connection, record, decision_row[0])
+        elif record.origin == "human":
+            raise FieldEffectError("persistence")
+
+
+def _validate_companion_decisions(
+    connection: sqlite3.Connection,
+    operation: FieldEffectOperation,
+    companion: FieldEffectPlan,
+    bundle_id: str,
+) -> None:
+    """A title plan with its subtitle companion holds what its two automatic
+    decisions chose from their case, report, proposals and outcome set."""
+    plan = operation.plan
+    # Its decisions are derived. A live plan keeps every check,
+    # since a regeneration revokes it first; an ended one is
+    # checked against each decision that is there (ADR-0108).
+    live = operation.state not in TERMINAL_STATES or (
+        operation.state,
+        operation.failure,
+    ) == ("stale", "connection")
+    for member in (plan, companion):
+        decision_row = connection.execute(
+            "SELECT document FROM automatic_decisions WHERE decision_id=?",
+            (member.authority.decision_id,),
+        ).fetchone()
+        if decision_row is None:
+            if live:
+                raise FieldEffectError("invalid_operation")
+            continue
+        decision = AutomaticDecision.from_json(decision_row[0])
+        case_row = connection.execute(
+            "SELECT document FROM review_cases WHERE review_case_id=?",
+            (decision.review_case_id,),
+        ).fetchone()
+        report_row = connection.execute(
+            "SELECT document FROM metadata_reports WHERE report_id=?",
+            (decision.report_id,),
+        ).fetchone()
+        proposal_row = connection.execute(
+            "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+            (decision.proposal_set_id,),
+        ).fetchone()
+        outcome_row = connection.execute(
+            "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
+            "AND json_extract(document,'$.policy_generation')=?",
+            (
+                decision.review_case_id,
+                decision.report_id,
+                decision.proposal_set_id,
+                decision.resolved_policy_id,
+                decision.policy_generation,
+            ),
+        ).fetchone()
+        if any(
+            row is None for row in (case_row, report_row, proposal_row, outcome_row)
+        ):
+            raise FieldEffectError("invalid_operation")
+        report = MetadataReport.from_json(report_row[0])
+        value = _automatic_decision_value(
+            decision,
+            ReviewCase.from_json(case_row[0]),
+            report,
+            ProposalSet.from_json(proposal_row[0]),
+            ShadowOutcomeSet.from_json(outcome_row[0]),
+        )
+        target_field = canonical_target_fields(report.target.fields)[
+            TargetDestination(member.destination)
+        ]
+        previous = (
+            target_field.value if target_field.state is TargetFieldState.VALUE else None
+        )
+        if (
+            decision.bundle_id != bundle_id
+            or member.pre_value != previous
+            or member.desired_value != project_decision_value(member.destination, value)
+            or member.target_version
+            != field_value_version(member.destination, previous)
+            or member.dependency_digests != (report.target.fingerprint,)
+        ):
+            raise FieldEffectError("invalid_operation")
+
+
+def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
+    """Fail closed on any non-canonical field-effect envelope or row mismatch."""
+    try:
+        _validate_no_changes(connection)
         control = connection.execute(
             "SELECT singleton,paused,updated_at FROM field_effect_control"
         ).fetchall()
@@ -1407,68 +1528,9 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             ):
                 raise FieldEffectError("invalid_operation")
             if companion is not None and plan.subtitle_companion is not None:
-                for member in (plan, companion):
-                    decision_row = connection.execute(
-                        "SELECT document FROM automatic_decisions WHERE decision_id=?",
-                        (member.authority.decision_id,),
-                    ).fetchone()
-                    if decision_row is None:
-                        raise FieldEffectError("invalid_operation")
-                    decision = AutomaticDecision.from_json(decision_row[0])
-                    case_row = connection.execute(
-                        "SELECT document FROM review_cases WHERE review_case_id=?",
-                        (decision.review_case_id,),
-                    ).fetchone()
-                    report_row = connection.execute(
-                        "SELECT document FROM metadata_reports WHERE report_id=?",
-                        (decision.report_id,),
-                    ).fetchone()
-                    proposal_row = connection.execute(
-                        "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
-                        (decision.proposal_set_id,),
-                    ).fetchone()
-                    outcome_row = connection.execute(
-                        "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
-                        "AND json_extract(document,'$.policy_generation')=?",
-                        (
-                            decision.review_case_id,
-                            decision.report_id,
-                            decision.proposal_set_id,
-                            decision.resolved_policy_id,
-                            decision.policy_generation,
-                        ),
-                    ).fetchone()
-                    if any(
-                        row is None
-                        for row in (case_row, report_row, proposal_row, outcome_row)
-                    ):
-                        raise FieldEffectError("invalid_operation")
-                    report = MetadataReport.from_json(report_row[0])
-                    value = _automatic_decision_value(
-                        decision,
-                        ReviewCase.from_json(case_row[0]),
-                        report,
-                        ProposalSet.from_json(proposal_row[0]),
-                        ShadowOutcomeSet.from_json(outcome_row[0]),
-                    )
-                    target_field = canonical_target_fields(report.target.fields)[
-                        TargetDestination(member.destination)
-                    ]
-                    previous = (
-                        target_field.value
-                        if target_field.state is TargetFieldState.VALUE
-                        else None
-                    )
-                    if (
-                        decision.bundle_id != plan.subtitle_companion.bundle_id
-                        or member.pre_value != previous
-                        or member.desired_value
-                        != project_decision_value(member.destination, value)
-                        or member.target_version
-                        != field_value_version(member.destination, previous)
-                        or member.dependency_digests != (report.target.fingerprint,)
-                    ):
-                        raise FieldEffectError("invalid_operation")
+                _validate_companion_decisions(
+                    connection, operation, companion, plan.subtitle_companion.bundle_id
+                )
             operations[plan.plan_id] = operation
 
         event = closed_document(

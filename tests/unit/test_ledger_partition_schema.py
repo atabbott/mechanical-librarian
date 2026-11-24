@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -22,9 +23,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.review_preparation import (
     request_matching_check,
 )
-from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from tests.support.activity_seed import seed_activity
+from tests.support.cover_taste import record_owner_cover_decisions
 from tests.support.description_advice import _prepared
 from tests.support.genre_reports import (
     OFFERED_DESCRIPTION_COPY,
@@ -32,6 +33,15 @@ from tests.support.genre_reports import (
     genre_report,
 )
 from tests.support.ledger_copies import assert_ledger_copies
+from tests.support.ledger_partition import (
+    UNTIL_C2B,
+    copied_store,
+    opens,
+    regenerate,
+    reopen_without_derived_rows,
+    rewrite,
+    rewrite_no_change,
+)
 from tests.support.owner_values import OwnerStore
 
 DERIVED_TABLES = frozenset(
@@ -339,28 +349,337 @@ def test_an_owner_authored_description_is_a_ledger_row_with_its_copies(
                 ("automatic_decision_" + "0" * 64,),
             )
         checked = assert_ledger_copies(repository)
+        decoded = reopen_without_derived_rows(repository, tmp_path / "regen")
     finally:
         repository.close()
     assert checked["activity_owner_description"] == 1
     assert checked["history_owner_description"] == 1
+    assert decoded["owner_authored_descriptions.candidate_document"] == 1
 
 
-def test_open_refuses_an_owner_authored_description_whose_copy_disagrees(
+@pytest.mark.parametrize(
+    ("assignment", "regenerated_opens"),
+    [
+        # The chosen candidate is addressed by its content, so its copy
+        # verifies itself with or without the candidate row.
+        (
+            "candidate_document=json_set(candidate_document,'$.model','another-model')",
+            False,
+        ),
+        ("item_id='another-book'", True),
+    ],
+)
+def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
+    tmp_path: Path, assignment: str, regenerated_opens: bool
+) -> None:
+    """While the candidate and the case are there, the copy and the work must
+    equal them; once a regeneration took them, the work stands as copied."""
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    try:
+        store.admit(candidate.candidate_id, binding, "human", "b" * 64, 11)
+        path = copied_store(repository, tmp_path / "changed")
+    finally:
+        repository.close()
+    rewrite(path, f"UPDATE owner_authored_descriptions SET {assignment}")
+    assert not opens(path)
+    regenerate(path)
+    assert opens(path) is regenerated_opens
+
+
+# What open validation cannot check once the derived rows a copy was made
+# from are gone (ADR-0108). Each entry names a ledger edit that, on a store
+# whose derived partition was regenerated, still opens. A check added for one
+# of them, or a gap added, changes this list deliberately.
+ACCEPTED_GAPS = (
+    "display_title",
+    "target_field_document",
+    "preview_digest",
+    "original_digest",
+    "transport_digest",
+    "observed_identity",
+    "rank_key",
+    "consideration_digest",
+    "taste_copies",
+    "absent_cover_predecessor",
+    "item_key_without_ledger_reference",
+)
+_OTHER_DIGEST = "0" * 64
+
+
+def _regenerated(path: Path, root: Path) -> Path:
+    """A regenerated copy of the store at ``path``, under a new ``root``."""
+    root.mkdir(mode=0o700)
+    copy = root / "copy.sqlite3"
+    shutil.copyfile(path, copy)
+    return copy
+
+
+@pytest.fixture
+def owner_cover(tmp_path: Path) -> Iterator[Path]:
+    """A copy of a store holding one owner cover choice made through the
+    real decision command, with its comparison and report."""
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        record_owner_cover_decisions(tmp_path, repository, 1)
+        yield copied_store(repository, tmp_path / "store")
+    finally:
+        repository.close()
+
+
+def test_a_regenerated_store_opens_and_every_ledger_row_decodes(
     tmp_path: Path,
 ) -> None:
-    repository, store, binding, candidate, _ = _prepared(tmp_path)
-    store.admit(candidate.candidate_id, binding, "human", "b" * 64, 11)
-    connection = repository._connection
-    (guard,) = connection.execute(
-        "SELECT sql FROM sqlite_schema WHERE name='owner_authored_descriptions_no_update'"
-    ).fetchone()
-    connection.execute("DROP TRIGGER owner_authored_descriptions_no_update")
-    connection.execute(
-        "UPDATE owner_authored_descriptions SET candidate_document=json_set("
-        "candidate_document,'$.model','another-model')"
+    """Every derived row deleted, the store opens unchanged and each ledger
+    document decodes: owner decisions and their events, the writes of both
+    origins and their events, and the policy (ADR-0108)."""
+    seeded = seed_activity(tmp_path)
+    try:
+        decoded = reopen_without_derived_rows(seeded.repository, tmp_path / "regen")
+    finally:
+        seeded.repository.close()
+    for table in (
+        "human_decisions",
+        "human_decision_events",
+        "field_effects",
+        "field_effect_events",
+        "field_effect_authorities",
+        "field_effect_consents",
+        "metadata_policy_transitions",
+        "metadata_policy_resolutions",
+    ):
+        assert decoded[table] > 0, table
+    assert decoded["human_decisions.display_title"] == decoded["human_decisions"]
+    assert (
+        decoded["human_decisions.target_field_document"] == decoded["human_decisions"]
     )
-    connection.execute(guard)
-    connection.commit()
-    repository.close()
-    with pytest.raises(MetadataReportError):
-        open_repository(tmp_path / "reports.sqlite", create=False)
+
+
+def test_only_the_manual_holds_still_reference_derived_state() -> None:
+    """A regeneration deletes exactly the ledger rows that still point into
+    derived state, which C2b removes with the holds themselves."""
+    assert {table for table, _, _ in KNOWN_LEDGER_TO_DERIVED_KEYS} == UNTIL_C2B
+
+
+def test_an_owner_cover_choice_stands_without_its_comparison(
+    owner_cover: Path, tmp_path: Path
+) -> None:
+    regenerated = _regenerated(owner_cover, tmp_path / "regen")
+    regenerate(regenerated)
+    assert opens(owner_cover)
+    assert opens(regenerated)
+    connection = sqlite3.connect(regenerated)
+    try:
+        assert connection.execute(
+            "SELECT count(*),count(width),count(report_format) "
+            "FROM owner_cover_selections"
+        ).fetchone() == (1, 1, 1)
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "transport_sha256='" + _OTHER_DIGEST + "'",
+        "width=width+1",
+        "height=height+1",
+        "offered_arts=offered_arts+1",
+        "report_format='mp3'",
+        "document=json_set(document,'$.consideration_digest','" + _OTHER_DIGEST + "')",
+        "document=json_set(document,'$.preview_sha256','" + _OTHER_DIGEST + "')",
+        "document=json_set(document,'$.original_sha256','" + _OTHER_DIGEST + "')",
+        "document=json_set(document,'$.rank_key',json('[0]'))",
+        "document=json_set(document,'$.observed_identity',json('null'))",
+    ],
+)
+def test_an_owner_cover_copy_agrees_with_its_comparison_while_it_is_there(
+    owner_cover: Path, tmp_path: Path, assignment: str
+) -> None:
+    """Present, the comparison and report each copy was read from must
+    agree with it; once a regeneration took them, the copy stands."""
+    rewrite(owner_cover, f"UPDATE owner_cover_selections SET {assignment}")
+    assert not opens(owner_cover)
+    regenerate(owner_cover)
+    assert opens(owner_cover)
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        # The cover the accept chose is the decision's, not the comparison's.
+        "document=json_set(document,'$.candidate_artifact_id','cover_"
+        + _OTHER_DIGEST
+        + "')",
+        "document=json_set(document,'$.confirmation.expected_selection_id',"
+        "'cover_selection_" + _OTHER_DIGEST + "')",
+        "document=json_set(document,'$.candidate_kind',json('null'))",
+        # The target's cover field is the one the decision copied.
+        "document=json_set(document,'$.target.fields[15].value','"
+        + _OTHER_DIGEST
+        + "')",
+        "document=json_set(document,'$.target.item','item-9')",
+        "document=json_set(document,'$.decision_document',"
+        "json_set(json_extract(document,'$.decision_document'),"
+        "'$.occurred_at',201))",
+    ],
+)
+def test_an_owner_cover_choice_agrees_with_its_decision_always(
+    owner_cover: Path, tmp_path: Path, assignment: str
+) -> None:
+    rewrite(owner_cover, f"UPDATE owner_cover_selections SET {assignment}")
+    assert not opens(owner_cover)
+    regenerate(owner_cover)
+    assert not opens(owner_cover)
+
+
+def test_an_owner_no_change_agrees_with_its_case_while_it_is_there(
+    tmp_path: Path,
+) -> None:
+    """An owner's accept of the value already written names its case's
+    report while that case is there; regenerated, the row stands."""
+    genres = {"kind": "list", "value": ["Fantasy"]}
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        first = store.decide("accept", genres, destination="genres")
+        store.write(first)
+        assert store.repository.clear_field_effect_manual_hold(
+            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        )
+        store.decide("accept", genres, destination="genres")
+        decoded = reopen_without_derived_rows(store.repository, tmp_path / "regen")
+        path = copied_store(store.repository, tmp_path / "changed")
+    finally:
+        store.close()
+    assert decoded["field_effect_no_changes.display_title"] == 1
+    rewrite_no_change(path, "report_id", "report_" + _OTHER_DIGEST)
+    assert not opens(path)
+    regenerate(path)
+    assert opens(path)
+    # The accept it names is ledger, and must hold the row's value always.
+    rewrite_no_change(path, "target_version", _OTHER_DIGEST)
+    assert not opens(path)
+
+
+@pytest.mark.parametrize("moved", ["decision", "decision_and_events"])
+def test_every_ledger_row_naming_an_owner_decision_names_its_work(
+    tmp_path: Path, moved: str
+) -> None:
+    """A decision moved to another work, alone or with its events, disagrees
+    with the plan, no-change row and events that name it: open refuses with
+    or without the derived rows."""
+    genres = {"kind": "list", "value": ["Fantasy"]}
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        first = store.decide("accept", genres, destination="genres")
+        store.write(first)
+        assert store.repository.clear_field_effect_manual_hold(
+            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        )
+        settled = store.decide("accept", genres, destination="genres")
+        path = copied_store(store.repository, tmp_path / "changed")
+    finally:
+        store.close()
+    tables = ("human_decisions",) + (
+        ("human_decision_events",) if moved == "decision_and_events" else ()
+    )
+    for decision_id in (first.decision_id, settled.decision_id):
+        for table in tables:
+            rewrite(
+                path,
+                f"UPDATE {table} SET item_id='another-book' WHERE decision_id=?",
+                (decision_id,),
+            )
+        assert not opens(path)
+        regenerate(path)
+        assert not opens(path)
+
+
+def test_an_owner_cover_choice_names_its_decisions_work(
+    owner_cover: Path,
+) -> None:
+    for table in ("human_decisions", "human_decision_events"):
+        rewrite(owner_cover, f"UPDATE {table} SET item_id='item-9'")
+    regenerate(owner_cover)
+    assert not opens(owner_cover)
+
+
+def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) -> None:
+    """Each listed gap is a ledger copy that, its derived rows gone, open
+    cannot check; this test edits each and the store still opens."""
+    (tmp_path / "seed").mkdir(mode=0o700)
+    seeded = seed_activity(tmp_path / "seed")
+    try:
+        activity = copied_store(seeded.repository, tmp_path / "activity")
+    finally:
+        seeded.repository.close()
+    (tmp_path / "advice").mkdir(mode=0o700)
+    repository, store, binding, candidate, _ = _prepared(tmp_path / "advice")
+    try:
+        store.admit(candidate.candidate_id, binding, "human", "b" * 64, 11)
+        advice = copied_store(repository, tmp_path / "advice-store")
+    finally:
+        repository.close()
+    selection = "UPDATE owner_cover_selections SET "
+    gaps = {
+        "display_title": (
+            activity,
+            "UPDATE human_decisions SET display_title='Another title'",
+        ),
+        "target_field_document": (
+            activity,
+            "UPDATE human_decisions SET target_field_document='null'",
+        ),
+        "preview_digest": (
+            owner_cover,
+            selection + "document=json_set(document,'$.preview_sha256','"
+            f"{_OTHER_DIGEST}')",
+        ),
+        "original_digest": (
+            owner_cover,
+            selection + "document=json_set(document,'$.original_sha256','"
+            f"{_OTHER_DIGEST}')",
+        ),
+        "transport_digest": (
+            owner_cover,
+            selection + f"transport_sha256='{_OTHER_DIGEST}'",
+        ),
+        "observed_identity": (
+            owner_cover,
+            selection + "document=json_set(document,'$.observed_identity',"
+            "json('null'))",
+        ),
+        "rank_key": (
+            owner_cover,
+            selection + "document=json_set(document,'$.rank_key',json('[0]'))",
+        ),
+        "consideration_digest": (
+            owner_cover,
+            selection + "document=json_set(document,'$.consideration_digest','"
+            f"{_OTHER_DIGEST}')",
+        ),
+        "taste_copies": (
+            owner_cover,
+            selection + "width=1,height=1,offered_arts=1,report_format='mp3'",
+        ),
+        # An owner's choice may supersede one of Automatic's, which a
+        # regeneration takes; so its predecessor may be absent.
+        "absent_cover_predecessor": (
+            owner_cover,
+            selection + "supersedes_selection_id='cover_selection_"
+            f"{_OTHER_DIGEST}',document=json_set(document,"
+            f"'$.supersedes_selection_id','cover_selection_{_OTHER_DIGEST}',"
+            "'$.confirmation.expected_selection_id','cover_selection_"
+            f"{_OTHER_DIGEST}')",
+        ),
+        # No plan or no-change row names this authored description yet.
+        "item_key_without_ledger_reference": (
+            advice,
+            "UPDATE owner_authored_descriptions SET item_id='another-book'",
+        ),
+    }
+    assert tuple(gaps) == ACCEPTED_GAPS
+    for name, (path, sql) in gaps.items():
+        changed = _regenerated(path, tmp_path / name)
+        regenerate(changed)
+        rewrite(changed, sql)
+        assert opens(changed), name

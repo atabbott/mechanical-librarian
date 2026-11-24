@@ -33,6 +33,42 @@ def _authored_description_sql(select: str) -> str:
 # The display title Activity reads for a report, the first target field's
 # value, copied onto the ledger rows that name the report (ADR-0108). Each
 # binds the report or the case whose report it is.
+# An owner's cover choice copies the facts the taste profile counts it by: the
+# chosen offer's digest and size, the comparison's art count and the report's
+# format (ADR-0108). Each copy reads `selection`, `consideration` and `facts`
+# as the join below names them, so the writer and open validation read alike.
+_OFFERED_COPY_SQL = (
+    "(SELECT json_extract(offered.value,'$.{key}') "
+    "FROM json_each(consideration.document,'$.candidates') offered "
+    "WHERE json_extract(offered.value,'$.reference')="
+    "json_extract(selection.document,'$.candidate_reference') "
+    "AND json_extract(offered.value,'$.candidate_kind')='candidate' "
+    "AND json_type(offered.value,'$.{key}')='{kind}' "
+    "ORDER BY offered.key LIMIT 1)"
+)
+_OWNER_SELECTION_COPIES = (
+    *(
+        (key, _OFFERED_COPY_SQL.format(key=key, kind=kind))
+        for key, kind in (
+            ("transport_sha256", "text"),
+            ("width", "integer"),
+            ("height", "integer"),
+        )
+    ),
+    (
+        "offered_arts",
+        "CASE WHEN json_type(consideration.currentness_document,"
+        "'$.cover_stage.arts')='integer' THEN json_extract("
+        "consideration.currentness_document,'$.cover_stage.arts') END",
+    ),
+    ("report_format", "CASE WHEN typeof(facts.format)='text' THEN facts.format END"),
+)
+_OWNER_SELECTION_COPY_JOIN_SQL = (
+    "LEFT JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=selection.consideration_id "
+    "LEFT JOIN metadata_report_browse_facts facts "
+    "ON facts.report_id=consideration.report_id"
+)
 _REPORT_TITLE_SQL = (
     "(SELECT json_extract(document,'$.target.fields[0].value') "
     "FROM metadata_reports WHERE report_id=?)"

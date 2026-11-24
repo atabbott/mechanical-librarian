@@ -65,6 +65,7 @@ from tests.integration.test_leaving_automatic_posture import (
     _prepared,
 )
 from tests.support.ledger_copies import assert_ledger_copies
+from tests.support.ledger_partition import reopen_without_derived_rows
 from tests.support.owner_values import OwnerStore
 from tests.unit import test_identity_refused_retention as retained
 from tests.unit.test_cover_packets import _source
@@ -368,6 +369,12 @@ def test_level_change_reasks_only_changed_offer(tmp_path: Path, case: str) -> No
         # The valueless row Book matching appended carries its case's copies
         # as the owner's own did (ADR-0108).
         assert assert_ledger_copies(store.repository)["history_target_field"] == 2
+        assert (
+            reopen_without_derived_rows(store.repository, tmp_path / "regenerated")[
+                "human_decisions"
+            ]
+            == 2
+        )
     finally:
         store.close()
 

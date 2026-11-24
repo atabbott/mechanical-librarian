@@ -89,6 +89,7 @@ from tests.support.cover_producers import adapter_cover_value
 from tests.support.cover_selections import ALL_COVER_POINTERS, ALL_COVER_SELECTIONS
 from tests.support.field_effects import CAPABILITY, Clock
 from tests.support.ledger_copies import assert_ledger_copies
+from tests.support.ledger_partition import reopen_without_derived_rows
 from tests.unit.test_cover_packets import _preview, _report, _source
 from tests.unit.test_shadow_outcome_persistence import (
     _measured_record,
@@ -607,6 +608,9 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
                 assert_ledger_copies(reopened)["activity_field_effect_automatic_cover"]
                 > 0
             )
+            assert reopen_without_derived_rows(reopened, root / "regenerated")[
+                "field_effects.display_title"
+            ]
         finally:
             reopened.close()
 
@@ -1304,6 +1308,9 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         assert checked["activity_field_effect_human"] > 0
         assert checked["activity_human_decision"] > 0
         assert checked["taste_owner_selection"] > 0
+        assert reopen_without_derived_rows(repository, root / "regenerated")[
+            "owner_cover_selections"
+        ]
         repository.close()
 
 

@@ -31,6 +31,13 @@ from tests.support.description_advice import (
     qualify_description_advice,
 )
 from tests.support.ledger_copies import assert_ledger_copies
+from tests.support.ledger_partition import (
+    copied_store,
+    opens,
+    regenerate,
+    reopen_without_derived_rows,
+    rewrite_no_change,
+)
 from tests.unit.test_reviewer_access_application import _Auth
 
 
@@ -212,6 +219,10 @@ def test_real_service_candidate_admits_through_persisted_authority(
         assert_ledger_copies(repository)["activity_field_effect_automatic_description"]
         > 0
     )
+    # Its ledger stands without the derived rows it was made against.
+    assert reopen_without_derived_rows(repository, tmp_path / "regenerated")[
+        "field_effects.display_title"
+    ]
 
     repository.close()
     reopened = open_repository(tmp_path / "reports.sqlite", create=False)
@@ -554,6 +565,19 @@ def test_authored_same_text_uses_no_change_and_has_permanent_history(
     assert selected["decision"]["decision_id"] == decision.decision_id
     # Its copy is the title Activity shows for it now (ADR-0108).
     assert assert_ledger_copies(repository)["activity_no_change_" + origin] == 1
+    assert (
+        reopen_without_derived_rows(repository, tmp_path / "regenerated")[
+            "field_effect_no_changes.display_title"
+        ]
+        == 1
+    )
+    # While its report is there, the row's version is the report's; once a
+    # regeneration took the report, the row stands.
+    path = copied_store(repository, tmp_path / "changed")
+    rewrite_no_change(path, "target_version", "0" * 64)
+    assert not opens(path)
+    regenerate(path)
+    assert opens(path)
     repository.close()
     reopened = open_repository(tmp_path / "reports.sqlite", create=False)
     reopened.close()

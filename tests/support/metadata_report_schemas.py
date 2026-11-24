@@ -541,6 +541,10 @@ def set_pre_2038_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     """Undo #2038's schema change for a reconstructed earlier producer."""
     for name, sql in PRE_2038_SCHEMA.items():
         monkeypatch.setattr(persistence_schema, name, sql)
+    # Its rows carried no item key, so its open had none to compare.
+    monkeypatch.setattr(
+        persistence_schema, "_OWNER_ITEM_KEY_DISAGREES_SQL", "SELECT 1 WHERE 0"
+    )
 
 
 # Nor did it keep the owner's preparation controls apart from scheduling: one

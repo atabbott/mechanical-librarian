@@ -32,6 +32,8 @@ from mechanical_librarian.adapters.persistence.retained_covers import (
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _AUTOMATIC_SAFETY_ROW_SQL,
+    _OWNER_SELECTION_COPIES,
+    _OWNER_SELECTION_COPY_JOIN_SQL,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -121,15 +123,6 @@ _CURRENT_SELECTION_DOCUMENT_SQL = " UNION ALL ".join(
 # chooses as its eligibility reads them (ADR-0108): the offered candidate's
 # transport digest and size, the comparison's art count and the report's
 # file format.
-_OFFERED_COPY_SQL = (
-    "(SELECT json_extract(offered.value,'$.{key}') "
-    "FROM json_each(consideration.document,'$.candidates') offered "
-    "WHERE json_extract(offered.value,'$.reference')="
-    "json_extract(selection.document,'$.candidate_reference') "
-    "AND json_extract(offered.value,'$.candidate_kind')='candidate' "
-    "AND json_type(offered.value,'$.{key}')='{kind}' "
-    "ORDER BY offered.key LIMIT 1)"
-)
 _OWNER_SELECTION_INSERT_SQL = (
     "INSERT INTO owner_cover_selections(selection_id,connection_name,"
     "library_name,item_id,decision_id,consideration_id,supersedes_selection_id,"
@@ -137,22 +130,9 @@ _OWNER_SELECTION_INSERT_SQL = (
     "report_format) WITH selection(selection_id,connection_name,library_name,"
     "item_id,decision_id,consideration_id,supersedes_selection_id,occurred_at,"
     "document) AS (VALUES(?,?,?,?,?,?,?,?,?)) SELECT selection.*,"
-    + ",".join(
-        _OFFERED_COPY_SQL.format(key=key, kind=kind)
-        for key, kind in (
-            ("transport_sha256", "text"),
-            ("width", "integer"),
-            ("height", "integer"),
-        )
-    )
-    + ",CASE WHEN json_type(consideration.currentness_document,"
-    "'$.cover_stage.arts')='integer' THEN json_extract("
-    "consideration.currentness_document,'$.cover_stage.arts') END,"
-    "CASE WHEN typeof(facts.format)='text' THEN facts.format END "
-    "FROM selection LEFT JOIN cover_considerations consideration "
-    "ON consideration.consideration_id=selection.consideration_id "
-    "LEFT JOIN metadata_report_browse_facts facts "
-    "ON facts.report_id=consideration.report_id"
+    + ",".join(sql for _, sql in _OWNER_SELECTION_COPIES)
+    + " FROM selection "
+    + _OWNER_SELECTION_COPY_JOIN_SQL
 )
 
 
