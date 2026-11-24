@@ -425,7 +425,10 @@ no owner decision" ([security](../security.md#owner-decisions),
   settles the field, and the case page does not show it as the field's
   decision.
 - A field also counts as settled while its latest carry outcome for the case
-  and episode is `resume_pending` or `deferred`.
+  and episode is `resume_pending` or `deferred`, and while the record holds a
+  `pin_fingerprint` equal to the library's current value for the
+  destination, on any case or episode. A pin that reads changed asks with the
+  pin's own reason.
 - **New reason `asked_again`:** the record holds an answer, the case episode's
   latest human row for the field is absent or a withdrawal, and either the
   latest outcome is `question_changed`, `target_changed`, `asked_again` or
@@ -474,8 +477,12 @@ no owner decision" ([security](../security.md#owner-decisions),
   not refuse the withdrawal. This matters on a new case, where the question
   check runs after the automatic block, so a field set to Automatic can hold
   both Automatic's decision and the carried row; the owner can still withdraw
-  the carried row before it writes. No other case-scoped withdrawal rule
-  remains.
+  the carried row before it writes. A withdrawal that deletes the record
+  also revokes, in its transaction, the authority of an automatic decision
+  already on its case for the destination, so that decision does not start
+  to settle or plan; the case's latest row is then the withdrawal, so
+  Automatic decides the field from the book's next case or episode. No other
+  case-scoped withdrawal rule remains.
 
 ### Readers
 
@@ -524,15 +531,19 @@ a provider, and is composed with no network client.
    never lent to a dependent. The ledger must be exact (format version, every
    object, canonical documents); before C6 a ledger mismatch refuses as clean
    rebuild required, after C6 the migration chain runs first. `quick_check`
-   and a foreign-key check of every ledger table must pass. An already exact
-   derived partition refuses with nothing to do. The volume must hold the
+   and a foreign-key check of every ledger table must pass. It refuses with
+   nothing to do only when no ledger migration is pending and the derived
+   partition is already exact; a pending ledger migration with a current
+   derived partition still runs. The volume must hold the
    retained backup plus three file sizes (the rollback journal and crash
    recovery's copies of the file and journal).
-2. **The gate, from ledger rows only.** It refuses while any of these exists:
-   a plan `planned`, `claimed`, `stale` for its connection, or `retryable` with
-   no `applying` event; a plan `applying` or `reconciling`; a plan `retryable`
-   after an `applying` event; an open Resume request; the active policy
-   generation's transition still `processing`. It names, per blocking item,
+2. **The gate, from ledger rows only.** It always refuses while a plan is
+   `applying` or `reconciling`, or `retryable` after an `applying` event.
+   Without `--retire-pending` it also refuses while a plan is `planned`,
+   `claimed`, `stale` for its connection, or `retryable` with no `applying`
+   event, a Resume request is open, or the active policy generation's
+   transition is still `processing`; with the flag, step 4 retires these
+   instead. It names, per blocking item,
    the reasons it can compute offline (writes paused, a destination or
    connection suspended, preparation paused, the library no longer
    configured), and otherwise says to start the previous image and read
@@ -606,8 +617,11 @@ a later change keeps them (owner, 2026-11-24, "Later, as its own change"), as
 a clean rebuild loses them today. That covers Automatic's decision rows, the
 policy recorded and unchanged rows, ISBN refusals, cover safeguards,
 description advice attempts, "automatic pipeline unavailable", safety
-superseded, and policy transition item detail. Every write plan, its events,
-no-change rows and owner rows survive, with the display copies above. The
+superseded, and policy transition item detail. Every write plan, its events
+and owner rows survive, with the display copies above, and so do all
+no-change rows, Automatic's (`automatic_policy`) included: they are ledger
+audit under the criterion above, so Activity keeps its "no change required"
+rows. The owner's deferral covers only the derived rows listed here. The
 cover taste judge runs again, within the ledger's daily cap, for the current
 comparisons, so until it has, Automatic switches no cover by taste.
 
