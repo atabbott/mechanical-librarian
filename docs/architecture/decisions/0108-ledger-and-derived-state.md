@@ -370,7 +370,9 @@ only the series offer changed.
    owner may overturn it.
 1. Not carry-eligible: outcome `asked_again`.
 2. The answer's plan is in flight (`planned`, `claimed`, `applying`,
-   `reconciling`, `retryable`): outcome `deferred`, resolved by the retry.
+   `reconciling`, `retryable`, or `stale` for its connection, which ADR-0039
+   restores when the connection returns): outcome `deferred`, resolved by the
+   retry.
 3. **Same question?** The new case's offer part must equal `offer_digest`, and
    its target part must equal the expected target: the answer's own value if
    it was written (a verified plan or a no-change row for it or its carry
@@ -395,7 +397,12 @@ only the series offer changed.
    unwritten corrective `keep_current`, an authored description, or a
    constructor refusal): no carry, the record stays, and the outcome is
    `question_changed`, `target_changed`, `asked_again` or `invalid`. The field
-   is asked again.
+   is asked again. An authored description is not carried (the approved
+   design keeps its own rule): its text is a candidate that description
+   advice produced for a request bound to its case, and `decision_question`
+   defines no offer part for advice candidates, so the check cannot tell that
+   a later case asks the same question. The record still keeps Automatic from writing the
+   description until the owner chooses again or uses Resume.
 
 A pinned field compares the library's value with `pin_fingerprint` instead of
 the question, and is not carried. A carried row's idempotency digest is derived from its root
@@ -529,9 +536,12 @@ a provider, and is composed with no network client.
    passed to all three validation points of the open, so a killed old server's
    journal is recovered against the ledger alone, and derived admission is
    never lent to a dependent. The ledger must be exact (format version, every
-   object, canonical documents); before C6 a ledger mismatch refuses as clean
-   rebuild required, after C6 the migration chain runs first. `quick_check`
-   and a foreign-key check of every ledger table must pass. It refuses with
+   object, canonical documents). Before C6 a ledger mismatch refuses as clean
+   rebuild required. After C6 admission also accepts a ledger at an earlier
+   version that this build's chain reaches, validated at that version without
+   changing it; the migration itself runs only in step 6, after the retained
+   backup. `integrity_check` and a foreign-key check of every ledger table
+   must pass. It refuses with
    nothing to do only when no ledger migration is pending and the derived
    partition is already exact; a pending ledger migration with a current
    derived partition still runs. The volume must hold the
@@ -569,7 +579,7 @@ a provider, and is composed with no network client.
    the flag.
 5. **Retained backup.** Before the transaction, under the held lock, it fills a
    private scratch copy with `VACUUM INTO`, syncs it, verifies it with
-   `quick_check` and a digest of every table against the source, and renames
+   `integrity_check` and a digest of every table against the source, and renames
    it to `/data/regeneration-backup/epoch-<n>.sqlite3` (directory `0700`, file
    `0600`, an unsafe existing entry refused), replacing any earlier copy. Crash
    recovery and first-boot detection ignore that directory. The artifact sweep
@@ -581,7 +591,8 @@ a provider, and is composed with no network client.
    `secure_delete=FAST`:
    1. drop every object that is not in the build's ledger list, triggers and
       views first, then children before parents;
-   2. ledger writes, from ledger rows only: with the flag, the retirements of
+   2. ledger writes, from ledger rows only: first any pending ledger
+      migration (see [Ledger format and migrations](#ledger-format-and-migrations)); then, with the flag, the retirements of
       step 4, and every record whose answer's plan the run retires loses carry
       eligibility and gets a `retired` event; every current authority is
       revoked through the existing revocation; each owner cover pointer that
@@ -592,7 +603,8 @@ a provider, and is composed with no network client.
       and schema digest;
    3. recreate every derived object from the build's DDL, seed the derived
       singletons, and ask every configured library to scan;
-   4. `foreign_key_check` empty and `quick_check` passing, or roll back;
+   4. `foreign_key_check` empty and `integrity_check` passing (it also checks
+      index contents, which `quick_check` does not), or roll back;
    5. one append-only `derived_regenerations` row: epochs and versions before
       and after, build, times, the backup's digest, `decision_ordinal_hwm`
       (the owner-answer counter's value, so a decision at or below it is of
