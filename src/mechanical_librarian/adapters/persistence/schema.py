@@ -3148,6 +3148,8 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
         selections: dict[str, tuple[str, str, str, dict[str, object]]] = {}
         selection_decision_ids: dict[str, str] = {}
         automatic_supersessions: dict[str, str | None] = {}
+        # Owner selections whose comparison a regeneration took.
+        uncompared: set[str] = set()
         for row in connection.execute(
             " UNION ALL ".join(
                 "SELECT selection_id,connection_name,library_name,item_id,"
@@ -3213,6 +3215,8 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                     connection, row, document, comparison
                 )
                 target = owner_facts["target"]
+                if comparison is None:
+                    uncompared.add(row[0])
             expected_selection_id = (
                 "cover_selection_"
                 + hashlib.sha256(decision_document.encode("utf-8")).hexdigest()
@@ -3254,14 +3258,12 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
             document,
         ) in selections.items():
             # Automatic's predecessor is derived as it is, so it is there; an
-            # owner's may have been Automatic's, which a regeneration takes.
+            # owner's may have been Automatic's, which a regeneration takes
+            # with the comparison the owner's choice was made over.
             predecessor = document.get("supersedes_selection_id")
             if predecessor is not None and (
                 predecessor == selection_id
-                or (
-                    predecessor not in selections
-                    and selection_id in automatic_supersessions
-                )
+                or (predecessor not in selections and selection_id not in uncompared)
                 or (
                     predecessor in selections
                     and selections[predecessor][:3]

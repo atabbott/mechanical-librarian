@@ -440,6 +440,14 @@ ACCEPTED_GAPS = (
     "item_key_without_ledger_reference",
 )
 _OTHER_DIGEST = "0" * 64
+# An owner cover choice made to supersede a selection that is not there.
+_SUPERSEDES_ABSENT = (
+    "UPDATE owner_cover_selections SET supersedes_selection_id='cover_selection_"
+    f"{_OTHER_DIGEST}',document=json_set(document,"
+    f"'$.supersedes_selection_id','cover_selection_{_OTHER_DIGEST}',"
+    "'$.confirmation.expected_selection_id','cover_selection_"
+    f"{_OTHER_DIGEST}')"
+)
 
 
 def _regenerated(path: Path, root: Path) -> Path:
@@ -566,6 +574,18 @@ def test_an_owner_cover_choice_agrees_with_its_decision_always(
     assert not opens(owner_cover)
     regenerate(owner_cover)
     assert not opens(owner_cover)
+
+
+def test_an_owner_cover_choice_names_a_present_predecessor_while_compared(
+    owner_cover: Path,
+) -> None:
+    """A regeneration takes Automatic's selection with the comparison an
+    owner's choice was made over, never one without the other: while the
+    comparison is there, the selection it superseded is there too."""
+    rewrite(owner_cover, _SUPERSEDES_ABSENT)
+    assert not opens(owner_cover)
+    regenerate(owner_cover)
+    assert opens(owner_cover)
 
 
 def test_an_owner_no_change_agrees_with_its_case_while_it_is_there(
@@ -703,14 +723,7 @@ def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) ->
         ),
         # An owner's choice may supersede one of Automatic's, which a
         # regeneration takes; so its predecessor may be absent.
-        "absent_cover_predecessor": (
-            owner_cover,
-            selection + "supersedes_selection_id='cover_selection_"
-            f"{_OTHER_DIGEST}',document=json_set(document,"
-            f"'$.supersedes_selection_id','cover_selection_{_OTHER_DIGEST}',"
-            "'$.confirmation.expected_selection_id','cover_selection_"
-            f"{_OTHER_DIGEST}')",
-        ),
+        "absent_cover_predecessor": (owner_cover, _SUPERSEDES_ABSENT),
         # No plan or no-change row names this authored description yet.
         "item_key_without_ledger_reference": (
             advice,
