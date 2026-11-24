@@ -69,12 +69,15 @@ _OWNER_SELECTION_COPY_JOIN_SQL = (
     "LEFT JOIN metadata_report_browse_facts facts "
     "ON facts.report_id=consideration.report_id"
 )
+# The display title a ledger row copies from the report it names as `report`:
+# the writers below and open validation read the same text (ADR-0108).
+_REPORT_TITLE_VALUE_SQL = "json_extract(report.document,'$.target.fields[0].value')"
 _REPORT_TITLE_SQL = (
-    "(SELECT json_extract(document,'$.target.fields[0].value') "
-    "FROM metadata_reports WHERE report_id=?)"
+    "(SELECT " + _REPORT_TITLE_VALUE_SQL + " "
+    "FROM metadata_reports report WHERE report_id=?)"
 )
 _CASE_TITLE_SQL = (
-    "(SELECT json_extract(report.document,'$.target.fields[0].value') "
+    "(SELECT " + _REPORT_TITLE_VALUE_SQL + " "
     "FROM review_cases review JOIN metadata_reports report "
     "ON report.report_id=review.report_id WHERE review.review_case_id=?)"
 )
@@ -95,7 +98,7 @@ _PLAN_REPORT_JOIN_SQL = (
 )
 # The title Activity shows for a plan's rows, binding its decision id.
 _PLAN_TITLE_SQL = (
-    "(SELECT json_extract(report.document,'$.target.fields[0].value') "
+    "(SELECT " + _REPORT_TITLE_VALUE_SQL + " "
     "FROM (SELECT ? AS decision_id) effect" + _PLAN_REPORT_JOIN_SQL + ")"
 )
 # When the work was last written: its latest verified effect, of any origin

@@ -78,6 +78,8 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
     _OWNER_SELECTION_COPIES,
     _OWNER_SELECTION_COPY_JOIN_SQL,
+    _PLAN_REPORT_JOIN_SQL,
+    _REPORT_TITLE_VALUE_SQL,
 )
 from mechanical_librarian.application.cover_consideration import (
     cover_consideration_currentness_document,
@@ -3084,7 +3086,9 @@ def _validate_schema_contents_without_review_field_facts(
     _validate_metadata_policy_documents(connection)
     _validate_cover_selection_authorities(connection)
     _validate_field_effect_state(connection)
-    if connection.execute(_OWNER_ITEM_KEY_DISAGREES_SQL).fetchone():
+    if connection.execute(_OWNER_ITEM_KEY_DISAGREES_SQL).fetchone() or (
+        connection.execute(_LEDGER_COPY_DISAGREES_SQL).fetchone()
+    ):
         raise MetadataReportError("database is unavailable or incompatible")
     validate_owner_field_answers(connection)
     validate_preparation_presentation(connection)
@@ -3119,6 +3123,49 @@ _OWNER_ITEM_KEY_DISAGREES_SQL = (
         )
     )
     + " LIMIT 1"
+)
+# A ledger copy that disagrees with the derived row it was copied from while
+# that row is there (ADR-0108). Cases, reports and decisions never change, so
+# each copy equals them for as long as they exist: an owner decision's work,
+# title and target field are its case's; an authored description's title its
+# case's; a plan's and a no-change row's title the report they name; and a
+# transition's settled counts its items'.
+_CASE_TARGET_SQL = "json_extract(review.document,'$.target.{}')"
+_LEDGER_COPY_DISAGREES_SQL = (
+    "SELECT 1 FROM human_decisions decision JOIN review_cases review "
+    "ON review.review_case_id=decision.review_case_id "
+    "JOIN metadata_reports report ON report.report_id=review.report_id "
+    "WHERE (decision.connection_name,decision.library_name,decision.item_id) IS NOT ("
+    + ",".join(
+        _CASE_TARGET_SQL.format(key) for key in ("connection", "library", "item")
+    )
+    + ") OR decision.display_title IS NOT "
+    + _REPORT_TITLE_VALUE_SQL
+    # The target's field for the destination, the first that names it, as
+    # `decision_copies` reads it; json() renders both texts alike.
+    + " OR json(decision.target_field_document) IS NOT COALESCE((SELECT "
+    "json(field.value) FROM json_each(review.document,'$.target.fields') field "
+    "WHERE json_extract(field.value,'$.destination') IS decision.destination "
+    "ORDER BY field.key LIMIT 1),'null') "
+    "UNION ALL SELECT 1 FROM owner_authored_descriptions authored "
+    "JOIN review_cases review ON review.review_case_id=authored.review_case_id "
+    "JOIN metadata_reports report ON report.report_id=review.report_id "
+    "WHERE authored.display_title IS NOT "
+    + _REPORT_TITLE_VALUE_SQL
+    + " UNION ALL SELECT 1 FROM field_effect_no_changes named "
+    "JOIN metadata_reports report ON report.report_id=named.report_id "
+    "WHERE named.display_title IS NOT "
+    + _REPORT_TITLE_VALUE_SQL
+    + " UNION ALL SELECT 1 FROM field_effects effect"
+    + _PLAN_REPORT_JOIN_SQL
+    + " WHERE report.report_id IS NOT NULL AND effect.display_title IS NOT "
+    + _REPORT_TITLE_VALUE_SQL
+    + " UNION ALL SELECT 1 FROM metadata_policy_transitions transition "
+    "JOIN (SELECT transition_id,sum(state='complete') AS completed,"
+    "sum(state='failed') AS failed FROM metadata_policy_transition_items "
+    "GROUP BY transition_id) item ON item.transition_id=transition.transition_id "
+    "WHERE (transition.completed,transition.failed) IS NOT (item.completed,item.failed)"
+    " LIMIT 1"
 )
 # An owner selection whose copy disagrees with its comparison, or with its
 # report's facts, while they are there (ADR-0108).

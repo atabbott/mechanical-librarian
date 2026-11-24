@@ -367,6 +367,7 @@ def test_an_owner_authored_description_is_a_ledger_row_with_its_copies(
             False,
         ),
         ("item_id='another-book'", True),
+        ("display_title='Another title'", True),
     ],
 )
 def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
@@ -381,9 +382,9 @@ def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
     finally:
         repository.close()
     rewrite(path, f"UPDATE owner_authored_descriptions SET {assignment}")
-    if assignment.startswith("item_id"):
-        # The record of the owner's answers copies the work too, so an edit
-        # that stands once regenerated moves both (ADR-0108).
+    if not assignment.startswith("candidate_document"):
+        # The record of the owner's answers copies the work and the title
+        # too, so an edit that stands once regenerated moves both (ADR-0108).
         rewrite(path, f"UPDATE owner_field_answers SET {assignment}")
     assert not opens(path)
     regenerate(path)
@@ -417,6 +418,96 @@ def test_a_case_chosen_description_names_a_decision_of_one_half(
         repository.close()
     for sql in edits:
         rewrite(path, sql)
+    assert not opens(path)
+    regenerate(path)
+    assert opens(path)
+
+
+# The owner decision of the seeded Activity store that no plan or no-change
+# row names, so only its case and the record it may be the answer of hold it.
+_UNWRITTEN = (
+    "(SELECT decision_id FROM human_decisions decision WHERE NOT EXISTS("
+    "SELECT 1 FROM field_effects WHERE decision_id=decision.decision_id) "
+    "AND NOT EXISTS(SELECT 1 FROM field_effect_no_changes "
+    "WHERE decision_id=decision.decision_id) ORDER BY ordinal LIMIT 1)"
+)
+# Each copy moved wherever the ledger holds it, so only the case or the
+# transition's items, while they are there, can tell (ADR-0108).
+_CASE_AND_ITEM_COPIES = {
+    "decision_item_key": (
+        *(
+            f"UPDATE {table} SET item_id='another-book' WHERE {column}={_UNWRITTEN}"
+            for table, column in (
+                ("human_decision_events", "decision_id"),
+                ("owner_field_answers", "answer_id"),
+                ("human_decisions", "decision_id"),
+            )
+        ),
+    ),
+    "display_title": (
+        f"UPDATE owner_field_answers SET display_title='Another title' "
+        f"WHERE answer_id={_UNWRITTEN}",
+        f"UPDATE human_decisions SET display_title='Another title' "
+        f"WHERE decision_id={_UNWRITTEN}",
+    ),
+    "target_field_document": (
+        "UPDATE human_decisions SET target_field_document=CASE "
+        "target_field_document WHEN 'null' THEN '{}' ELSE 'null' END "
+        f"WHERE decision_id={_UNWRITTEN}",
+    ),
+    "transition_counts": (
+        "UPDATE metadata_policy_transitions SET completed=completed+1,"
+        "failed=failed-1 WHERE failed>0",
+    ),
+}
+
+
+@pytest.fixture
+def activity(tmp_path: Path) -> Path:
+    """A copy of the seeded Activity store, with its derived rows."""
+    (tmp_path / "seed").mkdir(mode=0o700)
+    seeded = seed_activity(tmp_path / "seed")
+    try:
+        return copied_store(seeded.repository, tmp_path / "activity")
+    finally:
+        seeded.repository.close()
+
+
+@pytest.mark.parametrize("copy", sorted(_CASE_AND_ITEM_COPIES))
+def test_a_ledger_copy_agrees_with_its_derived_row_while_it_is_there(
+    activity: Path, copy: str
+) -> None:
+    """An owner decision's work, title and target field are its case's, and
+    a transition's settled counts its items': cases never change and the
+    counts settle with the items, so while they are there each copy equals
+    them; once a regeneration took them, the copy stands."""
+    for sql in _CASE_AND_ITEM_COPIES[copy]:
+        rewrite(activity, sql)
+    assert not opens(activity)
+    regenerate(activity)
+    assert opens(activity)
+
+
+@pytest.mark.parametrize("table", ["field_effects", "field_effect_no_changes"])
+def test_a_plan_and_a_no_change_title_agree_with_their_report(
+    tmp_path: Path, table: str
+) -> None:
+    """A write plan and a no-change row show the title of the report their
+    decision was made over; reports never change, so while it is there the
+    copy equals it, and once a regeneration took it the copy stands."""
+    genres = {"kind": "list", "value": ["Fantasy"]}
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        first = store.decide("accept", genres, destination="genres")
+        store.write(first)
+        assert store.repository.clear_field_effect_manual_hold(
+            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        )
+        store.decide("accept", genres, destination="genres")
+        path = copied_store(store.repository, tmp_path / "changed")
+    finally:
+        store.close()
+    rewrite(path, f"UPDATE {table} SET display_title='Another title'")
     assert not opens(path)
     regenerate(path)
     assert opens(path)

@@ -541,11 +541,10 @@ def set_pre_2038_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     """Undo #2038's schema change for a reconstructed earlier producer."""
     for name, sql in PRE_2038_SCHEMA.items():
         monkeypatch.setattr(persistence_schema, name, sql)
-    # Its rows carried no item key, so its open had none to compare, and it
-    # kept no record of the owner's answers to validate.
-    monkeypatch.setattr(
-        persistence_schema, "_OWNER_ITEM_KEY_DISAGREES_SQL", "SELECT 1 WHERE 0"
-    )
+    # Its rows carried no item key or copies, so its open had none to
+    # compare, and it kept no record of the owner's answers to validate.
+    for name in ("_OWNER_ITEM_KEY_DISAGREES_SQL", "_LEDGER_COPY_DISAGREES_SQL"):
+        monkeypatch.setattr(persistence_schema, name, "SELECT 1 WHERE 0")
     monkeypatch.setattr(
         persistence_schema, "validate_owner_field_answers", lambda connection: None
     )
