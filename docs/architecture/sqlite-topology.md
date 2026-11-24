@@ -110,11 +110,11 @@ Tables fall into six kinds. The kind decides the table's write rule.
 | Kind | Write rule | Tables |
 | --- | --- | --- |
 | Canonical immutable documents | Insert only; triggers refuse `UPDATE` and `DELETE` | `metadata_reports`, `metadata_report_cover_references`, `proposal_sets`, `level_proposal_sets`, `review_cases`, `review_case_level_offers`, `metadata_policy_drafts`, `description_advice_candidates` |
-| Append-only audit and decisions | Insert only; triggers refuse `UPDATE` and `DELETE` | `review_case_transitions`, `human_decisions`, `human_decision_events`, `automatic_decisions`, `shadow_decision_outcomes`, `level_decision_notes`, `cover_considerations`, `cover_consideration_events`, `cover_selection_authorities`, `description_decisions`, `field_effect_events`, `field_effect_no_changes` |
-| Current pointers | Updated in the transaction that publishes or admits their target | `current_metadata_reports`, `current_metadata_report_lineages`, `current_review_case_lineages`, `current_review_packages`, `current_cover_considerations`, `current_cover_selection_authorities`, `current_description_advice`, `current_description_decisions`, `review_case_episodes`, `review_case_level_reconciliation` |
+| Append-only audit and decisions | Insert only; triggers refuse `UPDATE` and `DELETE` | `review_case_transitions`, `human_decisions`, `human_decision_events`, `automatic_decisions`, `shadow_decision_outcomes`, `level_decision_notes`, `cover_considerations`, `cover_consideration_events`, `owner_cover_selections`, `automatic_cover_selections`, `owner_authored_descriptions`, `automatic_description_decisions`, `field_effect_events`, `field_effect_no_changes`, `owner_field_events` |
+| Current pointers | Updated in the transaction that publishes or admits their target | `current_metadata_reports`, `current_metadata_report_lineages`, `current_review_case_lineages`, `current_review_packages`, `current_cover_considerations`, `owner_cover_pointers`, `automatic_cover_pointers`, `current_description_advice`, `current_description_decisions`, `review_case_episodes`, `review_case_level_reconciliation` |
 | Derived facts | Written only by triggers, in the same statement or transaction as their source | `review_case_field_facts`, `shadow_outcome_field_facts`, `metadata_report_browse_facts`, `metadata_report_browse_authors`, `metadata_report_value_flags`, `proposal_set_browse_facts`, `review_attention_facts` |
-| Operational and recovery state | Mutable state machines with their own restart rules | `review_preparation_scans`, `review_preparation_work`, `review_preparation_absences`, `review_preparation_connection_conditions`, `review_preparation_presentation`, `description_preparation_pending`, `description_advice_attempts`, `provider_recovery_outbox`, `metadata_policy_transitions`, `metadata_policy_transition_items`, `metadata_policy_resolutions`, `field_effects`, `field_effect_actions`, `field_effect_cleanups` |
-| Controls, settings and credentials | Singletons or scoped rows changed only by their own command | `metadata_policy_state`, `review_preparation_control`, `automatic_safety_state`, `field_effect_control`, `field_effect_suspensions`, `field_effect_authorities`, `field_effect_consents`, `field_effect_manual_holds`, `browse_fact_identity`, `library_visit`, `owner_settings`, `owner_setting_secrets`, `reviewer_access`, `reviewer_access_secrets` |
+| Operational and recovery state | Mutable state machines with their own restart rules | `review_preparation_scans`, `review_preparation_work`, `review_preparation_absences`, `review_preparation_connection_conditions`, `review_preparation_presentation`, `description_preparation_pending`, `description_advice_attempts`, `provider_recovery_outbox`, `metadata_policy_transitions`, `metadata_policy_transition_items`, `metadata_policy_resolutions`, `field_effects`, `field_effect_actions`, `field_effect_cleanups`, `review_preparation_control` |
+| Controls, settings and credentials | Singletons or scoped rows changed only by their own command | `metadata_policy_state`, `review_preparation_owner_control`, `automatic_safety_state`, `field_effect_control`, `field_effect_suspensions`, `field_effect_authorities`, `field_effect_consents`, `field_effect_manual_holds`, `owner_field_answers`, `owner_answer_ordinal`, `browse_fact_identity`, `library_visit`, `owner_settings`, `owner_setting_secrets`, `reviewer_access`, `reviewer_access_secrets` |
 
 There is also one view, `review_attention_refresh`, used only to drive
 attention-fact maintenance (see [Derived facts](#derived-facts)).
@@ -561,28 +561,36 @@ To see which tables a bounded set of public tests writes, run:
 It reports committed row-count deltas per table against a fresh schema. It
 cannot see update-only changes or rolled-back work.
 
-### Planned: ledger and derived state
+### Ledger and derived state
 
-Not built yet ([ADR-0108](decisions/0108-ledger-and-derived-state.md),
-proposed). Until it lands, every schema change stays a clean rebuild.
+Partly built ([ADR-0108](decisions/0108-ledger-and-derived-state.md),
+proposed). Until regeneration lands, every schema change stays a clean rebuild.
 
 - The application database keeps one file in two partitions. The **ledger**
   holds owner authority and its audit, safety budgets and paid artefacts
   that cannot be rebuilt: settings and secrets, policy, controls, consents,
   suspensions, owner decisions, owner cover and description choices, write
   plans and their events, taste profiles, retained originals and owner links.
-  Everything else is **derived** and rebuilt by preparation.
+  Everything else is **derived** and rebuilt by preparation. `LEDGER_TABLES`
+  in `schema.py` lists the ledger, and a test pins every other table as
+  derived.
 - No ledger row references a derived row by foreign key; it keeps derived ids
   as plain provenance and copies the values its readers need, keyed by
-  connection, library and item.
-- `ledger_meta` records the ledger format version, the derived version and
-  schema digest, and the derived epoch, which proposal identity binds so no
-  case id recurs across a regeneration. `derived_regenerations` is the
-  append-only audit of each run.
+  connection, library and item. Open checks ledger rows from ledger tables
+  alone; a derived row they name must agree while it exists, and a live write
+  plan still needs its own. A test deletes every derived row and reopens.
+  `field_effect_manual_holds` keeps its foreign key until the record below
+  replaces it.
 - One ledger row per field records the owner's latest answer
-  (`owner_field_answers`, with the append-only `owner_field_events` for
-  Resume), replacing `field_effect_manual_holds`.
-- Startup refuses derived state from another build and names the offline
+  (`owner_field_answers`, ordered by `owner_answer_ordinal`, with the
+  append-only `owner_field_events` for Resume). For now it is written beside
+  `field_effect_manual_holds`, which still decides, and tests recompute it
+  from the owner's decisions.
+- Planned: `ledger_meta` records the ledger format version, the derived
+  version and schema digest, and the derived epoch, which proposal identity
+  binds so no case id recurs across a regeneration. `derived_regenerations`
+  is the append-only audit of each run.
+- Planned: startup refuses derived state from another build and names the offline
   `regenerate-derived` command, which keeps a verified backup, drops and
   recreates derived state in one transaction, and keeps the ledger. Ledger
   changes become code-defined migrations inside that command before 1.0.

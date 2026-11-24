@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- **Clean rebuild required.** The application database now keeps the owner's
+  decisions, choices, controls and write plans apart from what preparation
+  rebuilds, with no link from the first to the second, and records each
+  field's latest answer in one place beside today's holds. Nothing you see
+  changes yet (#2038).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).

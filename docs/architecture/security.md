@@ -681,6 +681,12 @@ mutation. Admission does not rely on SQLite alone:
   every current row; any difference refuses the database
   ([ADR-0084](decisions/0084-persisted-attention-facts.md)). No product code
   writes with `REPLACE`, which would skip delete triggers.
+- Ledger rows are checked from ledger tables alone; a derived row they name
+  must agree while it exists, and a live write plan needs its own
+  ([ADR-0108](decisions/0108-ledger-and-derived-state.md)). Display copies,
+  such as titles and earlier field values, have nothing left to agree with
+  once their derived rows are gone, an accepted gap since changing one needs
+  write access to the volume.
 
 Database-root crash recovery is explicit, runs under an exclusive lock and
 rolls back a private journal on verified copies first; unknown or malformed
