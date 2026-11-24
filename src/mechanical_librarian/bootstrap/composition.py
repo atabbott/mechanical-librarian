@@ -1590,230 +1590,241 @@ def create_review_pipeline(
     defer_cutover: Callable[[Callable[[], None]], None] | None = None,
     pacers: _ProviderPacers | None = None,
 ) -> ReviewPreparationSupervisor:
-    mounts = {item.name: item for item in configuration.mounts}
-    clients = {item.name: item for item in configuration.connections}
-    reader = AudiobookshelfCatalogueReader(
-        client_factory=lambda name: _target_client_factory(
-            configuration, credentials, clients[name]
-        )(),
-        mounts=mounts,
-        maximum_bytes=configuration.limits.target_response_bytes,
-        timeout_seconds=configuration.limits.timeout_seconds,
-    )
-    # A store generation passes the pacers its owner search shares (#1477).
-    pacers = pacers or _provider_pacers(configuration.providers)
-    discovery_lock = threading.Lock()
     if provider_recovery is None:
         raise ConfigurationError("provider recovery store is unavailable")
-    # Held provider answers, beside the recovery store; a store that cannot be
-    # used leaves every request live (#1064).
-    provider_responses = (
-        None
-        if private_root is None
-        else open_provider_response_store(private_root / "provider-responses.sqlite")
-    )
+    # The supervisor's stop closes the private stores; a failure before the
+    # supervisor exists closes them here instead.
     stopping = ExitStack()
     stopping.callback(provider_recovery.close)
-    if provider_responses is not None:
-        stopping.callback(provider_responses.close)
-
-    recover_artifacts_once, repository_factory, observation_repository_factory = (
-        _pipeline_repositories(
-            database_path,
-            artifact_store_path,
-            database_authority,
-            admission,
-            configuration.review,
+    with ExitStack() as on_failure:
+        on_failure.callback(stopping.close)
+        mounts = {item.name: item for item in configuration.mounts}
+        clients = {item.name: item for item in configuration.connections}
+        reader = AudiobookshelfCatalogueReader(
+            client_factory=lambda name: _target_client_factory(
+                configuration, credentials, clients[name]
+            )(),
+            mounts=mounts,
+            maximum_bytes=configuration.limits.target_response_bytes,
+            timeout_seconds=configuration.limits.timeout_seconds,
         )
-    )
-    pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
-    activation, recovery_cancel, recover_provider = _provider_recovery_wiring(
-        configuration,
-        artifact_store_path,
-        credentials,
-        pacers,
-        provider_recovery,
-        repository_factory,
-        pipeline_holder,
-        provider_responses,
-    )
+        # A store generation passes the pacers its owner search shares (#1477).
+        pacers = pacers or _provider_pacers(configuration.providers)
+        discovery_lock = threading.Lock()
+        # Held provider answers, beside the recovery store; a store that cannot be
+        # used leaves every request live (#1064).
+        provider_responses = (
+            None
+            if private_root is None
+            else open_provider_response_store(
+                private_root / "provider-responses.sqlite"
+            )
+        )
+        if provider_responses is not None:
+            stopping.callback(provider_responses.close)
 
-    # One full catalogue validation per file version, not per extraction.
-    schema = CatalogueSchemaAdmission()
-
-    # The pipeline hands every stage callback back exactly the repository
-    # ``repository_factory`` above created, so each of these narrows the seam's
-    # ``ReviewPipelineRepository`` to that concrete adapter where it needs a
-    # capability the seam does not name.
-    def catalogue_repository(create: bool) -> SQLiteCatalogueRepository:
-        return open_catalogue(catalogue_path, create=create, admission=schema)
-
-    def generate_report(
-        action: PipelineAction,
-        claim_next: bool,
-        pipeline_repository: ReviewPipelineRepository,
-    ) -> str:
-        return run_metadata_report_loaded(
+        recover_artifacts_once, repository_factory, observation_repository_factory = (
+            _pipeline_repositories(
+                database_path,
+                artifact_store_path,
+                database_authority,
+                admission,
+                configuration.review,
+            )
+        )
+        pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
+        activation, recovery_cancel, recover_provider = _provider_recovery_wiring(
             configuration,
-            database_path,
             artifact_store_path,
-            action.connection,
-            action.library,
-            action.item_id or "",
-            0,
-            expected_file_identity=action.file_identity,
-            google_books_pacer=pacers.google_books,
-            open_library_pacer=pacers.open_library,
-            inventaire_pacer=pacers.inventaire,
-            hardcover_pacer=pacers.hardcover,
-            audible_catalog_pacer=pacers.audible_catalog,
-            audnexus_pacer=pacers.audnexus,
-            audiosilo_pacer=pacers.audiosilo,
-            itunes_search_pacer=pacers.itunes_search,
-            review_action=action,
-            recover_artifacts=False,
-            repository_authority=database_authority,
-            pipeline_repository=cast(
-                "SQLiteMetadataReportRepository", pipeline_repository
-            ),
-            review_claim_next=claim_next,
-            timing=timing,
-            credentials=credentials,
-            provider_responses=provider_responses,
-        )
-
-    def drain_outbox(repository: ReviewPipelineRepository) -> None:
-        failures = activation.drain_outbox(
-            cast("ProviderRecoveryRepository", repository)
-        )
-        if failures:
-            raise ReviewPipelineError(failures[0])
-
-    def create_proposal_set_for(
-        report_id: str, pipeline_repository: ReviewPipelineRepository
-    ) -> str:
-        return create_proposal_set_loaded(
-            configuration,
-            database_path,
-            artifact_store_path,
-            report_id,
-            database_authority,
-            cast("SQLiteMetadataReportRepository", pipeline_repository),
             credentials,
-        )
-
-    def admit_review_case_for(
-        proposal_set_id: str, pipeline_repository: ReviewPipelineRepository, now: int
-    ) -> str:
-        return admit_review_case_loaded(
-            configuration,
-            database_path,
-            artifact_store_path,
-            proposal_set_id,
-            database_authority,
-            cast("SQLiteMetadataReportRepository", pipeline_repository),
-            credentials,
-            now,
-        )
-
-    def cover_considerations(
-        pipeline_repository: ReviewPipelineRepository,
-    ) -> CoverConsiderationService:
-        return _compose_cover_considerations(
-            cast("SQLiteMetadataReportRepository", pipeline_repository),
-            artifact_store_path,
-            # Callers reject an absent review configuration before composing.
-            cast("ReviewWebConfiguration", configuration.review),
-            reviewer_access,
-            provider_recovery=provider_recovery,
-            retained_root=database_path.parent / "private" / "retained-covers",
-        )
-
-    stages = ReviewPipelineStages(
-        configuration=configuration,
-        catalogue=catalogue_repository,
-        catalogue_reader=reader,
-        probe_connection=reader.probe_connection,
-        connections=frozenset(clients),
-        repository_factory=repository_factory,
-        observation_repository_factory=observation_repository_factory,
-        recover_artifacts=recover_artifacts_once,
-        generate_report=generate_report,
-        create_proposal_set=create_proposal_set_for,
-        admit_review_case=admit_review_case_for,
-        cover_considerations=cover_considerations,
-        prepare_description=partial(
-            prepare_staged_description,
-            reviewer_access=reviewer_access,
-            review=cast("ReviewWebConfiguration", configuration.review),
-        ),
-        admit_description=admit_staged_description,
-        recovery_observer=provider_recovery,
-        google_burst_remaining=(
-            pacers.google_books.remaining_burst
-            if pacers.google_books is not None
-            else None
-        ),
-        drain_outbox=drain_outbox,
-        discovery_lock=discovery_lock,
-        clock=lambda: int(time.time()),
-    )
-    pipeline = stages.pipeline(timing, first_boot=first_boot, admission=admission)
-    pipeline_holder["pipeline"] = pipeline
-    provider_recovery.require_generation_compatible(
-        generation=configuration.provider_recovery_generation
-    )
-
-    def cutover() -> None:
-        activation.drain_outbox()
-        provider_recovery.reconcile_generation(
-            generation=configuration.provider_recovery_generation, now=int(time.time())
-        )
-
-    # A Settings or setup candidate defers this until its authority commits.
-    if defer_cutover is None:
-        cutover()
-    else:
-        defer_cutover(cutover)
-    # This composition root reads the review configuration unconditionally, so
-    # an absent one is already a configuration failure before this point.
-    review_configuration = cast("ReviewWebConfiguration", configuration.review)
-    taste_lease = CoverTasteRepositoryLease(
-        partial(
-            _open_cover_taste_repository,
-            observation_repository_factory,
-            artifact_store_path,
-            review_configuration,
-            reviewer_access,
+            pacers,
             provider_recovery,
+            repository_factory,
+            pipeline_holder,
+            provider_responses,
         )
-    )
-    return ReviewPreparationSupervisor(
-        pipeline,
-        polling_interval_seconds=review_configuration.library_polling_interval_seconds,
-        graceful_shutdown_seconds=review_configuration.graceful_shutdown_seconds,
-        # The supervisor reads the run summary to refresh preparation (#1494).
-        recovery_wake=recover_provider,
-        recovery_drain=recovery_cancel.set,
-        recovery_resume=recovery_cancel.clear,
-        on_stop=stopping.close,
-        background_wake=CoverTasteBackground(
-            _compose_cover_taste(
-                taste_lease.store,
+
+        # One full catalogue validation per file version, not per extraction.
+        schema = CatalogueSchemaAdmission()
+
+        # The pipeline hands every stage callback back exactly the repository
+        # ``repository_factory`` above created, so each of these narrows the seam's
+        # ``ReviewPipelineRepository`` to that concrete adapter where it needs a
+        # capability the seam does not name.
+        def catalogue_repository(create: bool) -> SQLiteCatalogueRepository:
+            return open_catalogue(catalogue_path, create=create, admission=schema)
+
+        def generate_report(
+            action: PipelineAction,
+            claim_next: bool,
+            pipeline_repository: ReviewPipelineRepository,
+        ) -> str:
+            return run_metadata_report_loaded(
+                configuration,
+                database_path,
+                artifact_store_path,
+                action.connection,
+                action.library,
+                action.item_id or "",
+                0,
+                expected_file_identity=action.file_identity,
+                google_books_pacer=pacers.google_books,
+                open_library_pacer=pacers.open_library,
+                inventaire_pacer=pacers.inventaire,
+                hardcover_pacer=pacers.hardcover,
+                audible_catalog_pacer=pacers.audible_catalog,
+                audnexus_pacer=pacers.audnexus,
+                audiosilo_pacer=pacers.audiosilo,
+                itunes_search_pacer=pacers.itunes_search,
+                review_action=action,
+                recover_artifacts=False,
+                repository_authority=database_authority,
+                pipeline_repository=cast(
+                    "SQLiteMetadataReportRepository", pipeline_repository
+                ),
+                review_claim_next=claim_next,
+                timing=timing,
+                credentials=credentials,
+                provider_responses=provider_responses,
+            )
+
+        def drain_outbox(repository: ReviewPipelineRepository) -> None:
+            failures = activation.drain_outbox(
+                cast("ProviderRecoveryRepository", repository)
+            )
+            if failures:
+                raise ReviewPipelineError(failures[0])
+
+        def create_proposal_set_for(
+            report_id: str, pipeline_repository: ReviewPipelineRepository
+        ) -> str:
+            return create_proposal_set_loaded(
+                configuration,
+                database_path,
+                artifact_store_path,
+                report_id,
+                database_authority,
+                cast("SQLiteMetadataReportRepository", pipeline_repository),
+                credentials,
+            )
+
+        def admit_review_case_for(
+            proposal_set_id: str,
+            pipeline_repository: ReviewPipelineRepository,
+            now: int,
+        ) -> str:
+            return admit_review_case_loaded(
+                configuration,
+                database_path,
+                artifact_store_path,
+                proposal_set_id,
+                database_authority,
+                cast("SQLiteMetadataReportRepository", pipeline_repository),
+                credentials,
+                now,
+            )
+
+        def cover_considerations(
+            pipeline_repository: ReviewPipelineRepository,
+        ) -> CoverConsiderationService:
+            return _compose_cover_considerations(
+                cast("SQLiteMetadataReportRepository", pipeline_repository),
+                artifact_store_path,
+                # Callers reject an absent review configuration before composing.
+                cast("ReviewWebConfiguration", configuration.review),
+                reviewer_access,
+                provider_recovery=provider_recovery,
+                retained_root=database_path.parent / "private" / "retained-covers",
+            )
+
+        stages = ReviewPipelineStages(
+            configuration=configuration,
+            catalogue=catalogue_repository,
+            catalogue_reader=reader,
+            probe_connection=reader.probe_connection,
+            connections=frozenset(clients),
+            repository_factory=repository_factory,
+            observation_repository_factory=observation_repository_factory,
+            recover_artifacts=recover_artifacts_once,
+            generate_report=generate_report,
+            create_proposal_set=create_proposal_set_for,
+            admit_review_case=admit_review_case_for,
+            cover_considerations=cover_considerations,
+            prepare_description=partial(
+                prepare_staged_description,
+                reviewer_access=reviewer_access,
+                review=cast("ReviewWebConfiguration", configuration.review),
+            ),
+            admit_description=admit_staged_description,
+            recovery_observer=provider_recovery,
+            google_burst_remaining=(
+                pacers.google_books.remaining_burst
+                if pacers.google_books is not None
+                else None
+            ),
+            drain_outbox=drain_outbox,
+            discovery_lock=discovery_lock,
+            clock=lambda: int(time.time()),
+        )
+        pipeline = stages.pipeline(timing, first_boot=first_boot, admission=admission)
+        pipeline_holder["pipeline"] = pipeline
+        provider_recovery.require_generation_compatible(
+            generation=configuration.provider_recovery_generation
+        )
+
+        def cutover() -> None:
+            activation.drain_outbox()
+            provider_recovery.reconcile_generation(
+                generation=configuration.provider_recovery_generation,
+                now=int(time.time()),
+            )
+
+        # A Settings or setup candidate defers this until its authority commits.
+        if defer_cutover is None:
+            cutover()
+        else:
+            defer_cutover(cutover)
+        # This composition root reads the review configuration unconditionally, so
+        # an absent one is already a configuration failure before this point.
+        review_configuration = cast("ReviewWebConfiguration", configuration.review)
+        taste_lease = CoverTasteRepositoryLease(
+            partial(
+                _open_cover_taste_repository,
+                observation_repository_factory,
                 artifact_store_path,
                 review_configuration,
                 reviewer_access,
-            ),
-            _compose_cover_taste_judge(
-                taste_lease.judge_store,
-                artifact_store_path,
-                review_configuration,
-                reviewer_access,
-            ),
-            CoverTasteSwitching(taste_lease.switching_store),
-        ).wake,
-        background_close=taste_lease.close,
-    )
+                provider_recovery,
+            )
+        )
+        supervisor = ReviewPreparationSupervisor(
+            pipeline,
+            polling_interval_seconds=review_configuration.library_polling_interval_seconds,
+            graceful_shutdown_seconds=review_configuration.graceful_shutdown_seconds,
+            # The supervisor reads the run summary to refresh preparation (#1494).
+            recovery_wake=recover_provider,
+            recovery_drain=recovery_cancel.set,
+            recovery_resume=recovery_cancel.clear,
+            on_stop=stopping.close,
+            background_wake=CoverTasteBackground(
+                _compose_cover_taste(
+                    taste_lease.store,
+                    artifact_store_path,
+                    review_configuration,
+                    reviewer_access,
+                ),
+                _compose_cover_taste_judge(
+                    taste_lease.judge_store,
+                    artifact_store_path,
+                    review_configuration,
+                    reviewer_access,
+                ),
+                CoverTasteSwitching(taste_lease.switching_store),
+            ).wake,
+            background_close=taste_lease.close,
+        )
+        on_failure.pop_all()
+    return supervisor
 
 
 def _private_root(database_path: Path) -> Path:
