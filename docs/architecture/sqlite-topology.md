@@ -577,8 +577,9 @@ proposed). Until regeneration lands, every schema change stays a clean rebuild.
 - No ledger row references a derived row by foreign key; it keeps derived ids
   as plain provenance and copies the values its readers need, keyed by
   connection, library and item. Open checks ledger rows from ledger tables
-  alone; a derived row they name must agree while it exists, and a live write
-  plan still needs its own. A test deletes every derived row and reopens.
+  alone, and the copies [Schema admission](security.md#schema-admission) lists
+  against their derived rows while those exist; a live write plan still needs
+  its own. A test deletes every derived row and reopens.
   `field_effect_manual_holds` keeps its foreign key until the record below
   replaces it.
 - One ledger row per field records the owner's latest answer
