@@ -220,6 +220,11 @@ posture, deterministic shadow decisions and outcomes record what policy would
 do without deciding. Which options are qualified is in
 [automation policy](../product/automation-policy.md).
 
+The conditions under which Automatic may act are named once in
+`domain/automatic_decision.py`, and each place that decides or shows it
+declares which of them it checks. The SQL that reads the posture and the
+safety state shares that definition's posture value and category lanes.
+
 ### Cover considerations
 
 A cover consideration is an immutable, owner-facing record over one current

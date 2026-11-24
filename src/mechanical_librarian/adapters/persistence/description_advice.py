@@ -11,6 +11,9 @@ from collections.abc import Callable
 from typing import Literal
 
 from mechanical_librarian.adapters.persistence.owner_links import owner_link_bound
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _AUTOMATIC_SAFETY_ROW_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -18,6 +21,10 @@ from mechanical_librarian.adapters.persistence.transactions import (
 from mechanical_librarian.adapters.providers.visible_text import read_description
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
+)
+from mechanical_librarian.domain.automatic_decision import (
+    AUTOMATIC_POSTURE,
+    automatic_safety_row_permits,
 )
 from mechanical_librarian.domain.description_advice import (
     DESCRIPTION_INSTRUCTION,
@@ -314,9 +321,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             ).fetchone()
             choosable = self._description_choosable(case_id)
             if origin == "automatic_policy":
-                safety = self._connection.execute(
-                    "SELECT paused,global_suspension,category_suspensions_document FROM automatic_safety_state WHERE singleton=1"
-                ).fetchone()
+                safety = self._connection.execute(_AUTOMATIC_SAFETY_ROW_SQL).fetchone()
                 posture = self._connection.execute(
                     "SELECT posture FROM metadata_policy_state WHERE singleton=1"
                 ).fetchone()
@@ -332,11 +337,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                     # An owner's hold does not refuse the decision: a successor
                     # carries it with nothing yet to hold, and authority_value
                     # holds the write (ADR-0085).
-                    or posture != ("automatic",)
+                    or posture != (AUTOMATIC_POSTURE,)
                     or safety is None
-                    or safety[0]
-                    or safety[1] is not None
-                    or "description" in dict(json.loads(safety[2]))
+                    or not automatic_safety_row_permits(safety, "description")
                     or prior is not None
                     and AuthoredDescriptionDecision.from_json(prior[0]).origin
                     == "human"
@@ -480,9 +483,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         if not self._candidate_is_current(candidate, decision.binding):
             raise FieldEffectError("authority_binding")
         if decision.origin == "automatic_policy":
-            safety = self._connection.execute(
-                "SELECT paused,global_suspension,category_suspensions_document FROM automatic_safety_state WHERE singleton=1"
-            ).fetchone()
+            safety = self._connection.execute(_AUTOMATIC_SAFETY_ROW_SQL).fetchone()
             posture = self._connection.execute(
                 "SELECT posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
@@ -503,11 +504,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 or not automatic_description_floor_met(candidate.output.description)
                 or owner_final is not None
                 or not choosable
-                or posture != ("automatic",)
+                or posture != (AUTOMATIC_POSTURE,)
                 or safety is None
-                or safety[0]
-                or safety[1] is not None
-                or "description" in dict(json.loads(safety[2]))
+                or not automatic_safety_row_permits(safety, "description")
                 or decision.qualification_manifest_sha256
                 != description_qualification_manifest(self.current_settings().cleanup())
             ):

@@ -65,6 +65,7 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
+    _AUTOMATIC_SAFETY_BLOCKED_SQL,
     _LATEST_PREPARATION_WORK_SQL,
     _POLICY_ASK_ATTENTION_SQL,
     _episode_decision_sql,
@@ -1107,12 +1108,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         rows = self._connection.execute(
             "SELECT DISTINCT outcome.destination FROM shadow_outcome_field_facts outcome, "
             "automatic_safety_state safety WHERE outcome.review_case_id=? "
-            "AND outcome.automatic_destination=1 AND (safety.paused=1 OR "
-            "safety.global_suspension IS NOT NULL OR EXISTS(SELECT 1 FROM "
-            "json_each(safety.category_suspensions_document) category WHERE "
-            "json_extract(category.value,'$[0]')=CASE WHEN "
-            "outcome.policy_category='title' "
-            "THEN 'title_layout' ELSE outcome.policy_category END)) ORDER BY 1",
+            "AND outcome.automatic_destination=1 AND ("
+            + _AUTOMATIC_SAFETY_BLOCKED_SQL
+            + ") ORDER BY 1",
             (review_case_id,),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):

@@ -5,8 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from enum import StrEnum
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from mechanical_librarian.domain.shadow_outcome import ShadowFieldOutcome
@@ -135,12 +138,80 @@ QUALIFIED_POLICY_OPTIONS = (
 )
 
 
+# The conditions under which Automatic may act are named here once. Each
+# place that decides or shows whether it may act declares the set it checks
+# below; the SQL terms in the persistence adapter are built from these values.
+AUTOMATIC_POSTURE = "automatic"
+# All title elections write the same target through the same suspension lane.
+SAFETY_CATEGORY_LANES: Mapping[str, str] = MappingProxyType({"title": "title_layout"})
+
+
+class AutomaticCondition(StrEnum):
+    POSTURE = "posture"
+    NOT_PAUSED = "not_paused"
+    NOT_SUSPENDED = "not_suspended"
+    CATEGORY_NOT_SUSPENDED = "category_not_suspended"
+    # Evaluated per kind where it is read: field manifest, cover recorded
+    # identity, or description adviser record and manifest.
+    QUALIFICATION_CURRENT = "qualification_current"
+    FIELD_AUTOMATIC = "field_automatic"
+    DESCRIPTION_APPLICATION = "description_application"
+    DESCRIPTION_FLOOR = "description_floor"
+    COVER_ORDER = "cover_order"
+
+
+_C = AutomaticCondition
+# What `AutomaticSafetyState.permits` and `automatic_safety_row_permits` check.
+AUTOMATIC_SAFETY = frozenset(
+    {_C.NOT_PAUSED, _C.NOT_SUSPENDED, _C.CATEGORY_NOT_SUSPENDED}
+)
+_DESCRIPTION = AUTOMATIC_SAFETY | {
+    _C.POSTURE, _C.QUALIFICATION_CURRENT, _C.DESCRIPTION_APPLICATION, _C.DESCRIPTION_FLOOR
+}
+# Each site's declared set. A missing or malformed state row is answered per
+# site, outside these sets. Attention shows a field held when its set fails.
+AUTOMATIC_SITE_CONDITIONS: Mapping[str, frozenset[AutomaticCondition]] = MappingProxyType({
+    # persist_shadow_outcome, then _validated_automatic_decisions per field.
+    "mint_posture": frozenset({_C.POSTURE}),
+    "mint_field": AUTOMATIC_SAFETY | {_C.FIELD_AUTOMATIC},
+    # _PENDING_PREPARED_SQL and the pending decision documents, every arm.
+    "pending_counts": frozenset({_C.POSTURE}),
+    "pending_documents": frozenset({_C.POSTURE}),
+    # _HELD_AUTOMATIC_NOTE_SQL: an active-generation field choice already
+    # means Automatic is on; a description choice reads the posture.
+    "held_note_field": frozenset(),
+    "held_note_description": frozenset({_C.POSTURE}),
+    "authority_current": frozenset({_C.POSTURE, _C.QUALIFICATION_CURRENT}),
+    # _FIELD_EFFECT_DEFERRED_SQL, its automatic-origin term only.
+    "deferred": frozenset({_C.POSTURE}),
+    # _require_review_case_authority; qualification is not read for a cover.
+    "claim": AUTOMATIC_SAFETY | {_C.QUALIFICATION_CURRENT},
+    # Description advice admission and its authority_value.
+    "description_admission": _DESCRIPTION,
+    "description_authority": _DESCRIPTION,
+    "cover_admission": AUTOMATIC_SAFETY | {_C.POSTURE, _C.COVER_ORDER},
+    # _AUTOMATIC_SAFETY_ATTENTION_SQL and _automatic_attention_destinations.
+    "attention": AUTOMATIC_SAFETY | {_C.FIELD_AUTOMATIC},
+    "attention_destinations": AUTOMATIC_SAFETY | {_C.FIELD_AUTOMATIC},
+    # Activity's held_back note on a planned automatic write.
+    "held_back_note": frozenset({_C.POSTURE}),
+})
+
+
 def automatic_safety_category(policy_category: str, policy_option: str) -> str:
     """Return the suspension lane for one immutable policy identity."""
-    if policy_category == "title":
-        # All title elections write the same target through the same lane.
-        return "title_layout"
-    return policy_category
+    return SAFETY_CATEGORY_LANES.get(policy_category, policy_category)
+
+
+def automatic_safety_row_permits(row: Sequence[Any], category: str) -> bool:
+    """`AutomaticSafetyState.permits` over one stored row, read as it is.
+
+    The row is (paused, global_suspension, category_suspensions_document).
+    Unlike the validated state it accepts an unsorted or duplicated document,
+    and the document is parsed only once the row is neither paused nor
+    suspended. A missing row is the caller's to answer.
+    """
+    return not row[0] and row[1] is None and category not in dict(json.loads(row[2]))
 
 
 def _current_qualification_manifest_sha256(

@@ -189,6 +189,7 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.automatic_decision import (
+    AUTOMATIC_POSTURE,
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
@@ -577,9 +578,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda review_case_id: self._review_case_accepts_authority(
                     review_case_id
                 )
-            ),
-            current_resolved_policy_id=(
-                lambda library: self.current_resolved_policy_id(library)
             ),
             record_cover_decision_outcome=(
                 lambda decision, consideration_id, confirmation, **kwargs: (
@@ -2353,7 +2351,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             # the input to decision-only automatic handling.  Decisions are
             # derived inside this same exact-current transaction, never by a
             # later queue or apply worker.
-            if state[1] == "automatic":
+            if state[1] == AUTOMATIC_POSTURE:
                 attempted_categories: set[str] = set()
                 while True:
                     admission = self._transaction("automatic_admission")
@@ -2634,9 +2632,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             cover_consideration_id=cover_consideration_id,
             cover_confirmation=cover_confirmation,
         )
-
-    def _record_automatic_decision(self, decision: AutomaticDecision) -> str:
-        return self._decisions._record_automatic_decision(decision)
 
     def automatic_safety_state(self) -> AutomaticSafetyState:
         return self._decisions.automatic_safety_state()
