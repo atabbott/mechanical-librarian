@@ -275,8 +275,7 @@ Each tab names the field's status:
 - Decided means your decision is recorded or an earlier one holds the
   field.
 - Pinned means Audiobookshelf shows the value you pinned.
-- Automatic means Automatic decided the field. You can still change it, and it
-  is not in Attention.
+- Automatic means Automatic decided the field, and it is not in Attention.
 - Optional means you can choose, but the field is not counted and the canvas
   skips it when it moves on. Its one reason says why no review is needed, and
   it shows no condition asking you to choose.

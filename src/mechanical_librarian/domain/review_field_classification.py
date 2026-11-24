@@ -182,6 +182,8 @@ def classify_review_field(
             "automatic_recorded",
             (
                 "Automatic decided this field. You can change it here."
+                if override_available and changeable
+                else "Automatic decided this field."
                 if override_available
                 else "Automatic\u2019s change is being applied and cannot be changed yet."
             ),

@@ -12,6 +12,9 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- A field Automatic decided says "You can change it here." only where the field
+  offers a choice or a value of your own, as your own decisions already do
+  (#2034).
 - A pinned field whose value changed elsewhere is now asked even when nothing
   else about the book is left to decide. The book keeps its review open while
   the pin reads changed, instead of closing it and never asking, including
