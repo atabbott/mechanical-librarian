@@ -87,6 +87,7 @@ from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_repor
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.cover_producers import adapter_cover_value
 from tests.support.field_effects import CAPABILITY, Clock
+from tests.support.ledger_copies import assert_ledger_copies
 from tests.unit.test_cover_packets import _preview, _report, _source
 from tests.unit.test_shadow_outcome_persistence import (
     _measured_record,
@@ -599,6 +600,11 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             assert any(
                 event.get("record", {}).get("policy_option") == automatic.policy_option
                 for event in events
+            )
+            # Its write's copy is the title Activity shows for it (ADR-0108).
+            assert (
+                assert_ledger_copies(reopened)["activity_field_effect_automatic_cover"]
+                > 0
             )
         finally:
             reopened.close()
@@ -1291,6 +1297,11 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
             persistence_schema._COVER_CONSIDERATION_NO_UPDATE_SQL
         )
         repository._connection.commit()
+        # The owner's cover choice and its write carry what Activity and
+        # history show for them now (ADR-0108).
+        checked = assert_ledger_copies(repository)
+        assert checked["activity_field_effect_human"] > 0
+        assert checked["activity_human_decision"] > 0
         repository.close()
 
 

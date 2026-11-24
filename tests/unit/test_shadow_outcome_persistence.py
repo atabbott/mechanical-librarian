@@ -38,6 +38,10 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _cover_automatic_decision_value,
     _validate_automatic_decision_authority,
 )
+from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    HUMAN_DECISION_INSERT_SQL,
+    decision_copies,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     SQLiteMetadataReportRepository,
@@ -415,11 +419,7 @@ def test_only_a_retained_recorded_decision_is_kept_out_of_pending_work() -> None
         # since F47 that refuses `recorded_only` outright, so the retained row
         # is seeded exactly as F45 wrote it.
         repository._connection.execute(
-            "INSERT INTO human_decisions("
-            "decision_id,review_case_id,proposal_id,target_fingerprint,"
-            "destination,actor,outcome,selected_value_document,"
-            "idempotency_digest,request_digest,occurred_at,document) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            HUMAN_DECISION_INSERT_SQL,
             (
                 retained.decision_id,
                 retained.review_case_id,
@@ -433,6 +433,8 @@ def test_only_a_retained_recorded_decision_is_kept_out_of_pending_work() -> None
                 retained.request_digest,
                 retained.occurred_at,
                 retained.to_json(),
+                *decision_copies(case, retained.destination),
+                None,
             ),
         )
         repository._connection.commit()

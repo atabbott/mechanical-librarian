@@ -69,6 +69,7 @@ from tests.support.metadata_report_schemas import (
     forged_latin_work_report_json,
     leave_hot_journal,
     prior_report_browse_fact_pairs,
+    set_pre_2038_schema,
     synthetic_latin_work_report,
     synthetic_reordered_work_report,
     synthetic_report,
@@ -869,6 +870,7 @@ def test_the_dd568e2_episode_and_follows_schema_is_rejected_without_change(
 
     path = tmp_path / "prior-episodes.sqlite"
     with monkeypatch.context() as prior:
+        set_pre_2038_schema(prior)
         prior.setattr(
             persistence_schema,
             "_REVIEW_CASE_EPISODES_SQL",
@@ -909,6 +911,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         ).read_text()
     )
     with monkeypatch.context() as old:
+        set_pre_2038_schema(old)
         old.setattr(
             persistence_schema,
             "_COVER_CONSIDERATIONS_SQL",
@@ -2683,6 +2686,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
         ).read_text()
     )
     with monkeypatch.context() as old:
+        set_pre_2038_schema(old)
         old.setattr(
             persistence_schema, "_PROPOSAL_SETS_SQL", predecessor["proposal_sets_ddl"]
         )

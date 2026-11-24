@@ -175,7 +175,7 @@ def test_reader_equals_recomputation_across_pending_changes(
     step(
         (
             "INSERT INTO field_effect_no_changes VALUES(?,?,?,'primary','books',"
-            "'work','title','fingerprint','version','human',1,?)",
+            "'work','title','fingerprint','version','human',1,?,NULL)",
             (pending[3], case, report, "event-" + _digest("no-change")),
         )
     )
@@ -183,8 +183,10 @@ def test_reader_equals_recomputation_across_pending_changes(
         (
             "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
             "target_fingerprint,destination,actor,outcome,selected_value_document,"
-            "idempotency_digest,request_digest,occurred_at,document) "
-            "VALUES(?,?,?,?,'genres','owner','accept','null',?,?,1,'{}')",
+            "idempotency_digest,request_digest,occurred_at,document,"
+            "connection_name,library_name,item_id,target_field_document) "
+            "VALUES(?,?,?,?,'genres','owner','accept','null',?,?,1,'{}',"
+            "'primary','books','work','null')",
             (
                 "human_decision_" + _digest("new"),
                 case,

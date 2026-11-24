@@ -907,7 +907,7 @@ _HUMAN_DECISIONS_SQL = (
     "CREATE TABLE human_decisions ("
     "ordinal INTEGER PRIMARY KEY NOT NULL, "
     "decision_id TEXT NOT NULL UNIQUE CHECK(decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), "
-    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), "
     "proposal_id TEXT NOT NULL CHECK(proposal_id GLOB 'review_proposal_[0-9a-f]*' AND length(proposal_id)=80), "
     "target_fingerprint TEXT NOT NULL CHECK(length(target_fingerprint)=64 AND target_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
@@ -918,6 +918,13 @@ _HUMAN_DECISIONS_SQL = (
     "request_digest TEXT NOT NULL CHECK(length(request_digest)=64 AND request_digest NOT GLOB '*[^0-9a-f]*'), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536), "
+    # A ledger row keeps its work and what its readers show when the case is
+    # gone (ADR-0108): the case's display title, its target field as read
+    # ('null' where it read none) and an accepted description's chosen copy.
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
+    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'), "
+    "target_field_document TEXT NOT NULL CHECK(typeof(target_field_document)='text' AND json_valid(target_field_document) AND json_type(target_field_document) IN ('object','null')), "
+    "selected_form TEXT CHECK(selected_form IS NULL OR (typeof(selected_form)='text' AND destination='description' AND outcome='accept')), "
     # The selected value is null or one closed kind; the owner's empty value
     # carries no value and only an owner-entered decision selects it (ADR-0105).
     "CHECK(selected_value_document='null' OR (json_valid(selected_value_document) "
@@ -952,11 +959,12 @@ _HUMAN_DECISION_EVENTS_SQL = (
     "CREATE TABLE human_decision_events ("
     "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'human_decision_event_[0-9a-f]*' AND length(event_id)=85), "
     "decision_id TEXT NOT NULL UNIQUE REFERENCES human_decisions(decision_id), "
-    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), "
     "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
     "actor TEXT NOT NULL CHECK(actor='owner'), kind TEXT NOT NULL CHECK(kind='human_decision_recorded'), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
-    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536))"
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536), "
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL)"
 )
 _COVER_CONSIDERATIONS_SQL = (
     "CREATE TABLE cover_considerations ("
@@ -1241,7 +1249,8 @@ _FIELD_EFFECTS_SQL = (
     "work_id TEXT NOT NULL, destination TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN "
     "('planned','claimed','applying','reconciling','retryable','verified','stale','superseded','abandoned')), "
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
-    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072))"
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072), "
+    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'))"
 )
 # Pending, revocation, replacement, history and override reads ask which effects
 # name a decision as their own authority or as their subtitle companion's;
@@ -1395,10 +1404,11 @@ _FIELD_EFFECTS_TARGET_INDEX_SQL = (
 _FIELD_EFFECT_NO_CHANGES_SQL = (
     "CREATE TABLE field_effect_no_changes ("
     "decision_id TEXT PRIMARY KEY NOT NULL, "
-    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), report_id TEXT NOT NULL CHECK(report_id GLOB 'report_[0-9a-f]*' AND length(report_id)=71), "
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, work_id TEXT NOT NULL, destination TEXT NOT NULL, "
     "target_fingerprint TEXT NOT NULL, target_version TEXT NOT NULL, origin TEXT NOT NULL CHECK(origin IN ('human','automatic_policy')), "
-    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), event_id TEXT NOT NULL UNIQUE) WITHOUT ROWID"
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), event_id TEXT NOT NULL UNIQUE, "
+    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text')) WITHOUT ROWID"
 )
 _FIELD_EFFECT_ACTIONS_SQL = (
     "CREATE TABLE field_effect_actions ("

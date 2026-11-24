@@ -458,13 +458,86 @@ assert (
 )
 
 
+# Every producer before #2038 held its owner decisions, their events and its
+# no-change rows by foreign key to their case and report, and kept no item key
+# or display copies on them or on its write plans (ADR-0108). These undo
+# exactly that change, so each older form below derives from them.
+_CASE_REFERENCE = (
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+)
+_CASE_SHAPE = (
+    "review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' "
+    "AND length(review_case_id)=76), "
+)
+_ITEM_KEY = (
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL"
+)
+_DISPLAY_TITLE = (
+    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text')"
+)
+
+
+def _undone(current: str, *steps: tuple[str, str]) -> str:
+    """The current DDL with each (now, then) step undone, every one applying."""
+    for now, then in steps:
+        assert current.count(now) == 1, now
+        current = current.replace(now, then)
+    return current
+
+
+PRE_2038_HUMAN_DECISIONS_SQL = _undone(
+    persistence_schema._HUMAN_DECISIONS_SQL,
+    (_CASE_SHAPE, _CASE_REFERENCE),
+    (
+        _ITEM_KEY
+        + ", "
+        + _DISPLAY_TITLE
+        + ", target_field_document TEXT NOT NULL CHECK(typeof(target_field_document)='text' "
+        "AND json_valid(target_field_document) AND json_type(target_field_document) IN "
+        "('object','null')), selected_form TEXT CHECK(selected_form IS NULL OR "
+        "(typeof(selected_form)='text' AND destination='description' AND outcome='accept')), ",
+        "",
+    ),
+)
+PRE_2038_HUMAN_DECISION_EVENTS_SQL = _undone(
+    persistence_schema._HUMAN_DECISION_EVENTS_SQL,
+    (_CASE_SHAPE, _CASE_REFERENCE),
+    (", " + _ITEM_KEY + ")", ")"),
+)
+PRE_2038_FIELD_EFFECT_NO_CHANGES_SQL = _undone(
+    persistence_schema._FIELD_EFFECT_NO_CHANGES_SQL,
+    (
+        _CASE_SHAPE
+        + "report_id TEXT NOT NULL CHECK(report_id GLOB 'report_[0-9a-f]*' AND length(report_id)=71), ",
+        _CASE_REFERENCE
+        + "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), ",
+    ),
+    (", " + _DISPLAY_TITLE + ") WITHOUT ROWID", ") WITHOUT ROWID"),
+)
+PRE_2038_FIELD_EFFECTS_SQL = _undone(
+    persistence_schema._FIELD_EFFECTS_SQL, (", " + _DISPLAY_TITLE + ")", ")")
+)
+# What a reconstruction of any earlier producer sets first, before its own
+# older forms (#2038).
+PRE_2038_SCHEMA = {
+    "_HUMAN_DECISIONS_SQL": PRE_2038_HUMAN_DECISIONS_SQL,
+    "_HUMAN_DECISION_EVENTS_SQL": PRE_2038_HUMAN_DECISION_EVENTS_SQL,
+    "_FIELD_EFFECT_NO_CHANGES_SQL": PRE_2038_FIELD_EFFECT_NO_CHANGES_SQL,
+    "_FIELD_EFFECTS_SQL": PRE_2038_FIELD_EFFECTS_SQL,
+}
+
+
+def set_pre_2038_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undo #2038's schema change for a reconstructed earlier producer."""
+    for name, sql in PRE_2038_SCHEMA.items():
+        monkeypatch.setattr(persistence_schema, name, sql)
+
+
 # Every producer before #1285 admitted only the three original human outcomes.
 # Every producer before #1523 kept no check on the selected value's kind.
 WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL = (
-    persistence_schema._HUMAN_DECISIONS_SQL[
-        : persistence_schema._HUMAN_DECISIONS_SQL.index(
-            ", CHECK(selected_value_document='null'"
-        )
+    PRE_2038_HUMAN_DECISIONS_SQL[
+        : PRE_2038_HUMAN_DECISIONS_SQL.index(", CHECK(selected_value_document='null'")
     ]
     + ")"
 )
@@ -478,12 +551,12 @@ PRIOR_REVIEW_CASE_EPISODES_SQL = persistence_schema._REVIEW_CASE_EPISODES_SQL.re
     "event_floor", "effect_floor"
 )
 assert PRIOR_REVIEW_CASE_EPISODES_SQL != persistence_schema._REVIEW_CASE_EPISODES_SQL
-PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL = persistence_schema._HUMAN_DECISIONS_SQL.replace(
+PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL = PRE_2038_HUMAN_DECISIONS_SQL.replace(
     "CHECK(json_valid(document)=0 OR json_type(document,'$.follows') IN ('null','text')))",
     "CHECK(json_valid(document)=0 OR json_type(document,'$.follows')='null' "
     "OR (outcome='keep_current' AND json_type(document,'$.follows')='text')))",
 )
-assert PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL != persistence_schema._HUMAN_DECISIONS_SQL
+assert PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL != PRE_2038_HUMAN_DECISIONS_SQL
 # Every producer before #1953 recorded no unidentified retirement.
 WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL = (
     persistence_schema._REVIEW_TRANSITIONS_SQL.replace(

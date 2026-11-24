@@ -64,6 +64,7 @@ from tests.integration.test_leaving_automatic_posture import (
     _planned,
     _prepared,
 )
+from tests.support.ledger_copies import assert_ledger_copies
 from tests.support.owner_values import OwnerStore
 from tests.unit import test_identity_refused_retention as retained
 from tests.unit.test_cover_packets import _source
@@ -364,6 +365,9 @@ def test_level_change_reasks_only_changed_offer(tmp_path: Path, case: str) -> No
         # A replayed check asks nothing twice.
         assert _check(store, 62) == "reconciled"
         assert len(_decisions(store)) == 2
+        # The valueless row Book matching appended carries its case's copies
+        # as the owner's own did (ADR-0108).
+        assert assert_ledger_copies(store.repository)["history_target_field"] == 2
     finally:
         store.close()
 

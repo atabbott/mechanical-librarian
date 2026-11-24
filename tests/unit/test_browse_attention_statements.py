@@ -305,8 +305,10 @@ def _human_decision(
     repository._connection.execute(
         "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
         "target_fingerprint,destination,actor,outcome,selected_value_document,"
-        "idempotency_digest,request_digest,occurred_at,document) "
-        "VALUES(?,?,?,?,?,'owner','accept','null',?,?,1,'{}')",
+        "idempotency_digest,request_digest,occurred_at,document,"
+        "connection_name,library_name,item_id,target_field_document) "
+        "VALUES(?,?,?,?,?,'owner','accept','null',?,?,1,'{}',"
+        "'primary','books','work','null')",
         (
             f"human_decision_{key}",
             case_id,

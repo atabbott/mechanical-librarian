@@ -8,13 +8,24 @@ ledger objects, and a trigger that writes derived state is derived.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
 from mechanical_librarian.adapters.persistence import schema
+from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from tests.support.activity_seed import seed_activity
+from tests.support.genre_reports import (
+    OFFERED_DESCRIPTION_COPY,
+    formatted_description_report,
+    genre_report,
+)
+from tests.support.ledger_copies import assert_ledger_copies
+from tests.support.owner_values import OwnerStore
 
 DERIVED_TABLES = frozenset(
     {
@@ -77,11 +88,6 @@ KNOWN_LEDGER_TO_DERIVED_KEYS = frozenset(
         ("description_decisions", "review_case_id", "review_cases"),
         # #2038 C2b deletes the manual holds; the record replaces them.
         ("field_effect_manual_holds", "review_case_id", "review_cases"),
-        # #2038 C2a gives decisions and no-change rows their item key.
-        ("field_effect_no_changes", "report_id", "metadata_reports"),
-        ("field_effect_no_changes", "review_case_id", "review_cases"),
-        ("human_decision_events", "review_case_id", "review_cases"),
-        ("human_decisions", "review_case_id", "review_cases"),
     }
 )
 _WRITE = re.compile(
@@ -191,3 +197,89 @@ def test_the_classification_names_only_objects_the_schema_defines() -> None:
     expected = {name for _, name, _ in schema._expected_schema_objects()}
     assert _LEDGER <= expected
     assert DERIVED_TABLES | DERIVED_VIEWS <= expected
+
+
+def test_seeded_activity_copies_equal_what_activity_and_history_read(
+    tmp_path: Path,
+) -> None:
+    """Owner decisions and the writes of both origins, written the way the
+    product writes them, carry the copies their readers show now."""
+    seeded = seed_activity(tmp_path)
+    try:
+        checked = assert_ledger_copies(seeded.repository)
+    finally:
+        seeded.repository.close()
+    assert checked["activity_human_decision"] > 0
+    assert checked["history_target_field"] > 0
+    # Its writes stand on synthetic decisions no table holds: Activity reads
+    # no report for them, and their copies are empty alike.
+    assert checked["activity_field_effect_unbound"] > 0
+
+
+def test_owner_writes_and_no_change_copy_what_their_readers_show(
+    tmp_path: Path,
+) -> None:
+    """An owner's accepted, written and kept answers, and an accept of the
+    value already written, carry what Activity and history show now; an
+    accepted description keeps the copy its offer chose (#2003)."""
+    (tmp_path / "description").mkdir(mode=0o700)
+    (tmp_path / "genres").mkdir(mode=0o700)
+    store = OwnerStore(tmp_path / "description", formatted_description_report())
+    try:
+        accept = store.decide(
+            "accept",
+            {"kind": "text", "value": "A qualified description."},
+            destination="description",
+        )
+        store.write(accept)
+        store.write(store.decide("keep_current", destination="description"))
+        (selected_form,) = store.repository._connection.execute(
+            "SELECT selected_form FROM human_decisions WHERE decision_id=?",
+            (accept.decision_id,),
+        ).fetchone()
+        assert selected_form == OFFERED_DESCRIPTION_COPY
+        described = assert_ledger_copies(store.repository)
+    finally:
+        store.close()
+    assert described["history_selected_form"] == 1
+    assert described["activity_field_effect_human"] > 0
+    genres = {"kind": "list", "value": ["Fantasy"]}
+    store = OwnerStore(tmp_path / "genres", genre_report())
+    try:
+        first = store.decide("accept", genres, destination="genres")
+        store.write(first)
+        assert store.repository.clear_field_effect_manual_hold(
+            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        )
+        store.decide("accept", genres, destination="genres")
+        settled = assert_ledger_copies(store.repository)
+    finally:
+        store.close()
+    assert settled["activity_no_change_human"] == 1
+    assert settled["activity_human_decision"] == 2
+
+
+def test_automatic_writes_copy_what_activity_shows(tmp_path: Path) -> None:
+    held = genre_report(current=("Drama",), genres=("Fantasy",))
+    store = OwnerStore(tmp_path, None)
+    try:
+        store.automatic("genres", "replace", held.target.library)
+        store.publish(held)
+        store.write(
+            next(
+                AutomaticDecision.from_json(raw)
+                for raw in store.repository.get_review_case_decisions(
+                    store.case.review_case_id
+                )
+                if json.loads(raw)["schema_version"] == "automatic-decision-v1"
+                and json.loads(raw)["destination"] == "genres"
+            )
+        )
+        checked = assert_ledger_copies(store.repository)
+        titles = store.repository._connection.execute(
+            "SELECT DISTINCT display_title FROM field_effects"
+        ).fetchall()
+    finally:
+        store.close()
+    assert checked["activity_field_effect_automatic"] > 0
+    assert titles == [(held.target.current_title,)]

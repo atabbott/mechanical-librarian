@@ -1004,8 +1004,9 @@ def test_one_decision_refreshes_one_field_at_any_library_size() -> None:
                     "INSERT INTO human_decisions(decision_id,review_case_id,"
                     "proposal_id,target_fingerprint,destination,actor,outcome,"
                     "selected_value_document,idempotency_digest,request_digest,"
-                    "occurred_at,document) VALUES(?,?,?,?,'title','owner','accept',"
-                    "'null',?,?,1,'{}')",
+                    "occurred_at,document,connection_name,library_name,item_id,"
+                    "target_field_document) VALUES(?,?,?,?,'title','owner','accept',"
+                    "'null',?,?,1,'{}','primary','books','work','null')",
                     (
                         f"human_decision_{_hex(case_id)}",
                         case_id,

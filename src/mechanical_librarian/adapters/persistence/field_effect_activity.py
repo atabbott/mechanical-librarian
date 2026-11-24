@@ -88,6 +88,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _LANDED_IN_EPISODE_SQL,
     _LANDED_LAST_SQL,
     _LANDED_SQL,
+    _PLAN_REPORT_JOIN_SQL,
     _active_generation_automatic_sql,
     _episode_decision_sql,
 )
@@ -1069,17 +1070,7 @@ def _field_effect_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
                    {scalar["title"]}, NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id, NULL, NULL,
                    CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, 0, 0
               FROM field_effect_events event
-              JOIN field_effects effect ON effect.plan_id=event.plan_id
-         LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id
-         LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id
-         LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id
-         LEFT JOIN review_cases automatic_review ON automatic_review.review_case_id=automatic.review_case_id
-         LEFT JOIN cover_selection_authorities cover_selection ON cover_selection.decision_id=effect.decision_id AND cover_selection.kind='automatic'
-         LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id
-         LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id
-         LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id
-         LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id
-         LEFT JOIN metadata_reports report ON report.report_id=COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id){scope("field_effect", "event.plan_id", "WHERE")}"""
+              JOIN field_effects effect ON effect.plan_id=event.plan_id{_PLAN_REPORT_JOIN_SQL}{scope("field_effect", "event.plan_id", "WHERE")}"""
 
 
 def _human_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:

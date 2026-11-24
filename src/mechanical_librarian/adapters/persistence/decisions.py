@@ -36,8 +36,10 @@ from mechanical_librarian.adapters.persistence.description_advice import (
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    HUMAN_DECISION_INSERT_SQL,
     case_level_unreconciled,
     current_level_offer,
+    decision_copies,
     stored_level_offer_documents,
     target_level,
 )
@@ -51,6 +53,7 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _AUTOMATIC_SAFETY_ROW_SQL,
+    _REPORT_TITLE_SQL,
     _SHADOW_OUTCOME_HISTORY_SQL,
     _WORK_LATEST_MANUAL_HOLDS_SQL,
     _active_generation_automatic_sql,
@@ -805,8 +808,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self._connection.execute(
             "INSERT INTO field_effect_no_changes(decision_id,review_case_id,"
             "report_id,connection_name,library_name,work_id,destination,"
-            "target_fingerprint,target_version,origin,occurred_at,event_id) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            "target_fingerprint,target_version,origin,occurred_at,event_id,"
+            "display_title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?," + _REPORT_TITLE_SQL + ")",
             (
                 record.decision_id,
                 record.review_case_id,
@@ -820,6 +823,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 record.origin,
                 record.occurred_at,
                 record.event_id,
+                record.report_id,
             ),
         )
 
@@ -942,12 +946,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 else self._replacement_authorities(decision, case)
             )
             selected = _canonical_json(decision.selected_value)
+            copies = decision_copies(case, decision.destination)
             self._connection.execute(
-                "INSERT INTO human_decisions("
-                "decision_id,review_case_id,proposal_id,target_fingerprint,"
-                "destination,actor,outcome,selected_value_document,"
-                "idempotency_digest,request_digest,occurred_at,document) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                HUMAN_DECISION_INSERT_SQL,
                 (
                     decision.decision_id,
                     decision.review_case_id,
@@ -961,12 +962,19 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     decision.request_digest,
                     decision.occurred_at,
                     decision.to_json(),
+                    *copies,
+                    # What review history shows an accepted description
+                    # chose, read from its offer now (#2003, ADR-0108).
+                    self._chosen_form(decision, case)
+                    if decision.destination == "description"
+                    and decision.outcome == "accept"
+                    else None,
                 ),
             )
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation
             )
-            self._record_human_decision_event(decision)
+            self._record_human_decision_event(decision, copies[:3])
             if annotation:
                 self._annotate_hold(decision, pin)
             else:
@@ -1003,8 +1011,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
             transaction.rollback()
             raise MetadataReportError("human decision persistence failed") from error
 
-    def _record_human_decision_event(self, decision: HumanDecision) -> None:
-        """Write the `human_decision_recorded` audit event."""
+    def _record_human_decision_event(
+        self, decision: HumanDecision, item: tuple[str, ...]
+    ) -> None:
+        """Write the `human_decision_recorded` audit event with the decision's
+        item key (ADR-0108)."""
         event_id = (
             "human_decision_event_"
             + hashlib.sha256(
@@ -1029,7 +1040,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self._connection.execute(
             "INSERT INTO human_decision_events("
             "event_id,decision_id,review_case_id,destination,actor,kind,"
-            "occurred_at,document) VALUES(?,?,?,?,?,'human_decision_recorded',?,?)",
+            "occurred_at,document,connection_name,library_name,item_id) "
+            "VALUES(?,?,?,?,?,'human_decision_recorded',?,?,?,?,?)",
             (
                 event_id,
                 decision.decision_id,
@@ -1038,6 +1050,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 decision.actor,
                 decision.occurred_at,
                 event_document,
+                *item,
             ),
         )
 

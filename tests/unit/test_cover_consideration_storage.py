@@ -5,7 +5,7 @@ import json
 import sqlite3
 from contextlib import ExitStack, closing
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -27,6 +27,7 @@ from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY
 from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 from tests.support.cover_retention import retained_cover_case
 from tests.support.metadata_report_schemas import (
+    PRE_2038_SCHEMA,
     PRIOR_ATTENTION_FACT_OBJECTS,
     PRIOR_ATTENTION_FACT_SOURCE_SQL,
     PRIOR_AUTOMATIC_DECISIONS_SQL,
@@ -172,6 +173,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
     # and decision policy literals, which its own DDL carried, and #1253's
     # field-fact clause.
     with (
+        patch.multiple(schema, **cast("dict[str, Any]", PRE_2038_SCHEMA)),
         patch.object(
             schema, "_COVER_CONSIDERATIONS_SQL", fixture["cover_considerations_sql"]
         ),

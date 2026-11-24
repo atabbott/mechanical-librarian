@@ -13,6 +13,37 @@ from __future__ import annotations
 
 from mechanical_librarian.domain.automatic_decision import SAFETY_CATEGORY_LANES
 
+# The display title Activity reads for a report, the first target field's
+# value, copied onto the ledger rows that name the report (ADR-0108). Each
+# binds the report or the case whose report it is.
+_REPORT_TITLE_SQL = (
+    "(SELECT json_extract(document,'$.target.fields[0].value') "
+    "FROM metadata_reports WHERE report_id=?)"
+)
+_CASE_TITLE_SQL = (
+    "(SELECT json_extract(report.document,'$.target.fields[0].value') "
+    "FROM review_cases review JOIN metadata_reports report "
+    "ON report.report_id=review.report_id WHERE review.review_case_id=?)"
+)
+# The report of the case a write plan's decision names, by whichever decision
+# table holds it: Activity's join for a plan's rows. Joins `effect.decision_id`.
+_PLAN_REPORT_JOIN_SQL = (
+    "\n         LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id"
+    "\n         LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id"
+    "\n         LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id"
+    "\n         LEFT JOIN review_cases automatic_review ON automatic_review.review_case_id=automatic.review_case_id"
+    "\n         LEFT JOIN cover_selection_authorities cover_selection ON cover_selection.decision_id=effect.decision_id AND cover_selection.kind='automatic'"
+    "\n         LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id"
+    "\n         LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id"
+    "\n         LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id"
+    "\n         LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id"
+    "\n         LEFT JOIN metadata_reports report ON report.report_id=COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id)"
+)
+# The title Activity shows for a plan's rows, binding its decision id.
+_PLAN_TITLE_SQL = (
+    "(SELECT json_extract(report.document,'$.target.fields[0].value') "
+    "FROM (SELECT ? AS decision_id) effect" + _PLAN_REPORT_JOIN_SQL + ")"
+)
 # When the work was last written: its latest verified effect, of any origin
 # and destination, covers included. Admission keeps a case on a recent write
 # and preparation sends that case back to admission once it is old (#1523).

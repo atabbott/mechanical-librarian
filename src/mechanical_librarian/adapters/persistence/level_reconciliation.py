@@ -30,12 +30,14 @@ import time
 from collections.abc import Callable
 from typing import cast
 
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.level_sql import (
     _TARGET_LEVEL_SQL,
     _reconciled_level_sql,
     _unreconciled_case_sql,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _CASE_TITLE_SQL,
     _episode_decision_sql,
     _pin_hold_sql,
 )
@@ -212,6 +214,43 @@ def _write_marker(
     )
 
 
+# Every owner decision is inserted with its work and copies (ADR-0108): the
+# decision's own columns, then its item key, its case's display title (bound to
+# the case) and target field, and an accepted description's chosen copy.
+HUMAN_DECISION_INSERT_SQL = (
+    "INSERT INTO human_decisions("
+    "decision_id,review_case_id,proposal_id,target_fingerprint,"
+    "destination,actor,outcome,selected_value_document,"
+    "idempotency_digest,request_digest,occurred_at,document,"
+    "connection_name,library_name,item_id,display_title,"
+    "target_field_document,selected_form) "
+    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?," + _CASE_TITLE_SQL + ",?,?)"
+)
+
+
+def decision_copies(case: ReviewCase, destination: str) -> tuple[str, ...]:
+    """A decision's item key, its case bound for the display title, and the
+    case's target field for its destination as read ('null' where it read
+    none), in `HUMAN_DECISION_INSERT_SQL`'s order (ADR-0108)."""
+    target = case.target
+    fields = target.get("fields")
+    field = next(
+        (
+            item
+            for item in (fields if type(fields) is list else ())
+            if type(item) is dict and item.get("destination") == destination
+        ),
+        None,
+    )
+    return (
+        str(target["connection"]),
+        str(target["library"]),
+        str(target["item"]),
+        case.review_case_id,
+        _canonical_json(field),
+    )
+
+
 # A standing owner choice: what the field's latest decision of the case's
 # episode settles it with. A withdrawal, the valueless row included, stands for
 # nothing, so a field already asked again is not asked twice.
@@ -270,11 +309,7 @@ def _ask_changed_fields(
         except HumanDecisionError as error:
             raise MetadataReportError("level reconciliation failed") from error
         connection.execute(
-            "INSERT INTO human_decisions("
-            "decision_id,review_case_id,proposal_id,target_fingerprint,"
-            "destination,actor,outcome,selected_value_document,"
-            "idempotency_digest,request_digest,occurred_at,document) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            HUMAN_DECISION_INSERT_SQL + " ON CONFLICT DO NOTHING",
             (
                 cause.decision_id,
                 cause.review_case_id,
@@ -288,6 +323,8 @@ def _ask_changed_fields(
                 cause.request_digest,
                 cause.occurred_at,
                 cause.to_json(),
+                *decision_copies(case, cause.destination),
+                None,
             ),
         )
         revoke(standing.decision_id, occurred_at)

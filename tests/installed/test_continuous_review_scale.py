@@ -249,6 +249,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
         PRIOR_REVIEW_SCANS_SQL,
         PRIOR_REVIEW_TRANSITIONS_SQL,
         PRIOR_REVIEW_WORK_SQL,
+        set_pre_2038_schema,
     )
 
     from mechanical_librarian.adapters.persistence import schema
@@ -265,6 +266,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
     )
     old_path = tmp_path / "prior.sqlite"
     with monkeypatch.context() as old_schema:
+        set_pre_2038_schema(old_schema)
         old_schema.setattr(
             schema,
             "_COVER_CONSIDERATIONS_SQL",

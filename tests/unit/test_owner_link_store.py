@@ -46,6 +46,7 @@ from tests.support.metadata_report_schemas import (
     PRIOR_REVIEW_SCANS_SQL,
     WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL,
     WITHOUT_UNREAD_REVIEW_WORK_SQL,
+    set_pre_2038_schema,
 )
 
 ITEM = OwnerLinkItem("abs", "Books", "item-1")
@@ -738,6 +739,7 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
     clean rebuild: it is refused before anything is written (ADR-0013)."""
     fixture = json.loads(_PREDECESSORS.read_text(encoding="utf-8"))
     path = tmp_path / "state.sqlite"
+    set_pre_2038_schema(monkeypatch)
     # Its episodes floored by field effect row and its `follows` CHECK admitted
     # a keep only (#1973).
     monkeypatch.setattr(

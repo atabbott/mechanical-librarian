@@ -126,8 +126,10 @@ def store(tmp_path: Path) -> Iterator[tuple[sqlite3.Connection, list[str]]]:
         connection.execute(
             "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
             "target_fingerprint,destination,actor,outcome,selected_value_document,"
-            "idempotency_digest,request_digest,occurred_at,document) "
-            "VALUES(?,?,?,?,'authors','owner','accept','null',?,?,?,?)",
+            "idempotency_digest,request_digest,occurred_at,document,"
+            "connection_name,library_name,item_id,target_field_document) "
+            "VALUES(?,?,?,?,'authors','owner','accept','null',?,?,?,?,"
+            "'primary','books','work','null')",
             (
                 human_id,
                 case,
@@ -1634,8 +1636,10 @@ def test_lineage_membership_equals_the_correlated_test_across_lineage_shapes(
     connection.execute(
         "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
         "target_fingerprint,destination,actor,outcome,selected_value_document,"
-        "idempotency_digest,request_digest,occurred_at,document) "
-        "VALUES(?,?,?,?,'cover','owner','accept','null',?,?,0,?)",
+        "idempotency_digest,request_digest,occurred_at,document,"
+        "connection_name,library_name,item_id,target_field_document) "
+        "VALUES(?,?,?,?,'cover','owner','accept','null',?,?,0,?,"
+        "'primary','books','work','null')",
         (
             cover_id,
             cover_case,
@@ -1703,9 +1707,11 @@ def test_lineage_membership_refuses_malformed_documents_as_before(
     connection.execute(
         "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
         "target_fingerprint,destination,actor,outcome,selected_value_document,"
-        "idempotency_digest,request_digest,occurred_at,document) "
+        "idempotency_digest,request_digest,occurred_at,document,"
+        "connection_name,library_name,item_id,target_field_document) "
         "SELECT ?,review_case_id,proposal_id,target_fingerprint,destination,actor,"
-        "'keep_current',selected_value_document,?,?,occurred_at+1,? "
+        "'keep_current',selected_value_document,?,?,occurred_at+1,?,"
+        "connection_name,library_name,item_id,target_field_document "
         "FROM human_decisions WHERE ordinal=?",
         (
             later_id,

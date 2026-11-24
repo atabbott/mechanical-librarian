@@ -29,6 +29,7 @@ from tests.support.description_advice import (
     _preserved_description_report,
     qualify_description_advice,
 )
+from tests.support.ledger_copies import assert_ledger_copies
 from tests.unit.test_reviewer_access_application import _Auth
 
 
@@ -203,6 +204,9 @@ def test_real_service_candidate_admits_through_persisted_authority(
     assert repository._connection.execute(
         "SELECT count(*) FROM current_description_decisions"
     ).fetchone() == (0,)
+    # The authored write's copy is the title Activity shows for it now
+    # (ADR-0108).
+    assert assert_ledger_copies(repository)["activity_field_effect_description"] > 0
 
     repository.close()
     reopened = open_repository(tmp_path / "reports.sqlite", create=False)
@@ -538,6 +542,8 @@ def test_authored_same_text_uses_no_change_and_has_permanent_history(
     )
     assert selected["candidate"]["advised"] is True
     assert selected["decision"]["decision_id"] == decision.decision_id
+    # Its copy is the title Activity shows for it now (ADR-0108).
+    assert assert_ledger_copies(repository)["activity_no_change_" + origin] == 1
     repository.close()
     reopened = open_repository(tmp_path / "reports.sqlite", create=False)
     reopened.close()
