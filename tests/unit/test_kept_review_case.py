@@ -335,6 +335,36 @@ def test_a_changed_pin_keeps_an_expiring_kept_case_open(tmp_path: Path) -> None:
     store.close()
 
 
+def test_a_case_kept_for_a_changed_pin_is_scanned_without_advice(
+    tmp_path: Path,
+) -> None:
+    """A work never written whose pinned title changed elsewhere keeps its
+    case, and an unchanged scan completes it in one step though a description
+    request is pending: a kept case asks no advice, so nothing would consume
+    the request (ADR-0105, Amendment 1)."""
+    store = OwnerStore(tmp_path, None)
+    install_settings_authority(store.repository)
+    store.repository.enter_shadow_preview(1, ())
+    _drain(_pipeline(store.repository, _report(), 20))
+    store.load(str(_work(store)[3]))
+    store.decide("pin")
+    changed = _report("Changed Elsewhere", actionable=False)
+    _drain(_pipeline(store.repository, changed, 100))
+    kept = _work(store)
+    assert kept[:3] == ("complete", "complete", "case")
+    assert _reason(store) == "actionable"
+    connection = store.repository._connection
+    connection.execute(
+        "UPDATE review_preparation_work SET research_not_before=?", (10**9,)
+    )
+    connection.execute(
+        "INSERT INTO description_preparation_pending VALUES(?,0,?)", (kept[3], 101)
+    )
+    assert _drain(_pipeline(store.repository, changed, 200)) == 1
+    assert _work(store) == kept
+    store.close()
+
+
 def test_a_re_preparation_that_identifies_nothing_retires_the_kept_case(
     tmp_path: Path,
 ) -> None:

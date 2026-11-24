@@ -227,8 +227,9 @@ Amendment 2):
 - Without one the case is admitted with the reason `actionable`, on any
   admission, with or without the scan's time.
 - Either way it is a kept case: preparation asks no cover or description
-  advice for a current case whose ProposalSet has nothing actionable, and it
-  adds no attention fact except the changed pin.
+  advice for a current case whose ProposalSet has nothing actionable and
+  does not project it again for a pending request, and it adds no attention
+  fact except the changed pin.
 
 No table, `CHECK` or document version changes, so no clean rebuild is needed.
 A work that retired with a changed pin before this amendment is asked once

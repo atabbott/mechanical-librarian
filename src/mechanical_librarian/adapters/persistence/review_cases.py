@@ -381,9 +381,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
     ) -> bool:
         """Whether a pin the work carries would read changed on ``case``.
 
-        It compares as `_carry_manual_holds_forward` does: the latest active
-        hold per field with no return pending, whose pin keeps a value the
-        case does not show (ADR-0085, Amendment 2).
+        It compares as `_carry_manual_holds_forward` does for each hold row it
+        rewrites: the latest active hold per field with no return pending,
+        whose pin keeps a value the case does not show (ADR-0085, Amendment
+        2). A row already on this case keeps its stored flag there; it differs
+        only for a pin taken while a write waited, which this reads in force.
         """
         for destination, active, document in self._connection.execute(
             _WORK_LATEST_MANUAL_HOLDS_SQL, lineage

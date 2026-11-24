@@ -101,6 +101,7 @@ from mechanical_librarian.domain.preparation_presentation import (
     PreparationTrigger,
 )
 from mechanical_librarian.domain.proposal_set import (
+    ProposalSet,
     evaluate_report,
     proposal_set_content_address,
 )
@@ -110,6 +111,7 @@ from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
     ReviewTransition,
+    is_actionable,
 )
 
 # Each work whose current report and current case it prepared, in a package
@@ -1565,6 +1567,19 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             ),
         )
 
+    def _proposal_actionable(self, proposal_set_id: str | None) -> bool:
+        """Whether the stored ProposalSet has anything actionable.
+
+        A current case whose ProposalSet has nothing actionable is kept, for a
+        recent write or a changed pin, and asks no advice (ADR-0105), so a
+        pending description or a stale cover never projects it again.
+        """
+        row = self._connection.execute(
+            "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+            (proposal_set_id,),
+        ).fetchone()
+        return row is not None and is_actionable(ProposalSet.from_json(row[0]))
+
     def _settled_work_stage(
         self,
         action: PipelineAction,
@@ -1641,8 +1656,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             review_case_id = None
         elif (
             pointer_matches
-            and pointer[4] != "recent_write"
             and (pending_description or stale_cover)
+            and self._proposal_actionable(proposal_set_id)
         ):
             stage = "projection"
             state = "queued"
