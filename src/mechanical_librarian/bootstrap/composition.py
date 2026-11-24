@@ -2326,12 +2326,12 @@ def compose_store_runtime_generation(
         authority=repository_authority,
         admission=operation_admission,
     )
+    # Released if composition fails, the pipeline first; a generation owns them.
+    releases = ExitStack()
+    releases.callback(repository.close)
     try:
         session_store = _open_review_session_store(database_path)
-    except Exception:
-        repository.close()
-        raise
-    try:
+        releases.callback(session_store.close)
         settings_store = repository.owner_settings_store()
         if authority_snapshot is None:
             settings_view, stored_credentials, encoded_verifier = (
@@ -2366,9 +2366,6 @@ def compose_store_runtime_generation(
             enabled=review.diagnostic_timings_enabled,
         )
         timing = StageTimer(timing_store)
-        provider_recovery = SQLiteProviderRecoveryStore.open(
-            private_root / "provider-recovery.sqlite"
-        )
         reviewer_access = _compose_reviewer_access(
             repository,
             review,
@@ -2380,6 +2377,9 @@ def compose_store_runtime_generation(
             repository.has_first_boot_preparation(),
         )
         pacers = _provider_pacers(configuration.providers)
+        provider_recovery = SQLiteProviderRecoveryStore.open(
+            private_root / "provider-recovery.sqlite"
+        )
         preparation = create_review_pipeline(
             configuration,
             database_path,
@@ -2400,6 +2400,7 @@ def compose_store_runtime_generation(
             ),
             pacers=pacers,
         )
+        releases.callback(preparation.stop)
         field_application = (
             compose_continuous_guarded_application(
                 configuration,
@@ -2569,8 +2570,7 @@ def compose_store_runtime_generation(
             review,
         )
     except Exception:
-        session_store.close()
-        repository.close()
+        releases.close()
         raise
 
 

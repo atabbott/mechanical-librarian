@@ -69,6 +69,7 @@ from mechanical_librarian.application.provider_recovery_runner import RecoveryRu
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     ReviewPipelineError,
+    ReviewPreparationSupervisor,
 )
 from mechanical_librarian.application.review_pipeline_stages import ReviewPipelineStages
 from mechanical_librarian.application.reviewer_access import (
@@ -471,6 +472,75 @@ def test_a_pipeline_that_fails_to_compose_closes_both_private_stores(
         for store in (recovery, *opened):
             with pytest.raises(sqlite3.ProgrammingError):
                 store._connection.execute("SELECT 1")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        "_compose_reviewer_access",
+        "_provider_pacers",
+        "compose_continuous_guarded_application",
+        "compose_review_application",
+        "create_review_app",
+    ),
+    ids=(
+        "reviewer_access",
+        "pacers",
+        "guarded_application",
+        "review_application",
+        "review_app",
+    ),
+)
+def test_a_store_generation_that_fails_to_compose_releases_its_pipeline(
+    failure: str,
+) -> None:
+    """A failed store generation leaves no recovery store or supervisor behind.
+
+    The first two fail before the pipeline is built, the rest after it.
+    """
+    opened: list[SQLiteProviderRecoveryStore] = []
+    built: list[ReviewPreparationSupervisor] = []
+    real_open = SQLiteProviderRecoveryStore.open
+    real_pipeline = composition.create_review_pipeline
+
+    def recording_open(path: Path, **kwargs: object) -> SQLiteProviderRecoveryStore:
+        store = real_open(path, **kwargs)  # type: ignore[arg-type]
+        opened.append(store)
+        return store
+
+    def recording_pipeline(*args: object, **kwargs: object) -> object:
+        supervisor = real_pipeline(*args, **kwargs)  # type: ignore[arg-type]
+        built.append(supervisor)
+        return supervisor
+
+    with (
+        tempfile.TemporaryDirectory() as temporary,
+        quiet_store_runtime(Path(temporary), 1) as runtime,
+        patch.object(SQLiteProviderRecoveryStore, "open", side_effect=recording_open),
+        patch.object(
+            composition, "create_review_pipeline", side_effect=recording_pipeline
+        ),
+        patch.object(
+            composition, failure, side_effect=RuntimeError("composition refused")
+        ),
+        pytest.raises(RuntimeError, match="composition refused"),
+    ):
+        composition.compose_store_runtime_generation(
+            runtime.bootstrap,
+            runtime.database,
+            runtime.root / "catalogue.sqlite",
+            runtime.root / "artifacts",
+            repository_authority=runtime.control.authority,
+            operation_admission=runtime.admission,
+        )
+    assert len(built) == (
+        0 if failure in {"_compose_reviewer_access", "_provider_pacers"} else 1
+    )
+    for supervisor in built:
+        assert supervisor._on_stop is None and supervisor._background_close is None
+    for store in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            store._connection.execute("SELECT 1")
 
 
 def test_generation_rollback_rejects_before_cutover_delivery() -> None:
