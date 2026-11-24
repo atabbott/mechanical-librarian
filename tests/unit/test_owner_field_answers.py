@@ -18,27 +18,41 @@ from typing import cast
 
 import pytest
 
-from mechanical_librarian.adapters.persistence import owner_field_answers, schema
+from mechanical_librarian.adapters.persistence import (
+    decisions,
+    owner_field_answers,
+    schema,
+)
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
     HUMAN_DECISION_INSERT_SQL,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
     next_ordinal,
+    stored_answers,
     validate_owner_field_answers,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.human_decision import (
     chosen_value_fingerprint,
     field_fingerprint,
+    pinned_field_fingerprint,
 )
 from mechanical_librarian.domain.owner_field_answer import (
     OwnerAnswerRow,
+    OwnerFieldAnswer,
     fold_owner_field_answers,
     owner_field_event_id,
     restored_answer,
 )
+from tests.support.cover_taste import record_owner_cover_decisions
+from tests.support.description_advice import _prepared
 from tests.support.genre_reports import genre_report
+from tests.support.ledger_partition import copied_store, opens, regenerate, rewrite
+from tests.support.owner_field_record import (
+    assert_record_recomputes,
+    record_recomputes,  # noqa: F401
+)
 from tests.support.owner_values import OwnerStore
 
 _CASE = "review_case_" + "a" * 64
@@ -859,3 +873,186 @@ def test_a_cover_answer_names_its_selection_and_fields_fold_apart() -> None:
         "cover": _SELECTION,
         "title": None,
     }
+
+
+# -- the store writes the record beside the hold (C2a) ------------------------
+
+
+def _stored(store: OwnerStore) -> dict[str, OwnerFieldAnswer]:
+    return {
+        answer.destination: answer
+        for answer in stored_answers(store.repository._connection)
+    }
+
+
+def test_each_owner_answer_writes_the_record_and_a_withdrawal_takes_it_back(
+    tmp_path: Path,
+) -> None:
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        kept = store.decide("keep_current", destination="genres")
+        assert _stored(store)["genres"] == replace(
+            _stored(store)["genres"],
+            source="human",
+            answer_id=kept.decision_id,
+            outcome="keep_current",
+            value_document="null",
+            review_case_id=store.case.review_case_id,
+            episode=0,
+            previous_answer_id=None,
+            carry_eligible=True,
+            pin_fingerprint=None,
+            cover_selection_id=None,
+        )
+        accepted = store.decide("accept", json.loads(_GENRES), destination="genres")
+        record = _stored(store)["genres"]
+        # The kept answer was this case's episode's, so it is not restorable.
+        assert (record.answer_id, record.value_document, record.previous_answer_id) == (
+            accepted.decision_id,
+            _GENRES,
+            None,
+        )
+        assert_record_recomputes(store.repository._connection)
+        store.decide("withdraw", destination="genres")
+        assert "genres" not in _stored(store)
+        assert_record_recomputes(store.repository._connection)
+    finally:
+        store.close()
+
+
+def test_a_pin_marks_the_standing_answer_and_an_unpin_clears_it(
+    tmp_path: Path,
+) -> None:
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        accepted = store.decide("accept", json.loads(_GENRES), destination="genres")
+        pin = store.decide("pin", destination="genres")
+        record = _stored(store)["genres"]
+        assert (record.answer_id, record.pin_fingerprint) == (
+            accepted.decision_id,
+            chosen_value_fingerprint("genres", json.loads(_GENRES)),
+        )
+        assert pin.decision_id not in {
+            answer.answer_id for answer in _stored(store).values()
+        }
+        store.decide("unpin", destination="genres")
+        record = _stored(store)["genres"]
+        assert (record.answer_id, record.pin_fingerprint) == (
+            accepted.decision_id,
+            None,
+        )
+        assert_record_recomputes(store.repository._connection)
+    finally:
+        store.close()
+
+
+def test_a_pin_with_no_standing_answer_is_the_answer_keeping_the_shown_value(
+    tmp_path: Path,
+) -> None:
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        pin = store.decide("pin", destination="genres")
+        record = _stored(store)["genres"]
+        assert (record.answer_id, record.outcome, record.pin_fingerprint) == (
+            pin.decision_id,
+            "pin",
+            pinned_field_fingerprint(store.case, "genres"),
+        )
+        assert_record_recomputes(store.repository._connection)
+    finally:
+        store.close()
+
+
+def test_the_record_is_written_in_the_answers_own_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure after the record is written rolls it back with the answer."""
+    store = OwnerStore(tmp_path, genre_report())
+
+    def then_fail(*args: object, **kwargs: object) -> None:
+        owner_field_answers.record_answer(*args, **kwargs)  # type: ignore[arg-type]  # reason: forwards the product call unchanged.
+        raise sqlite3.OperationalError("after the record")
+
+    monkeypatch.setattr(decisions, "record_answer", then_fail)
+    try:
+        with pytest.raises(MetadataReportError):
+            store.decide("keep_current", destination="genres")
+        connection = store.repository._connection
+        assert connection.execute(
+            "SELECT (SELECT count(*) FROM human_decisions),"
+            "(SELECT count(*) FROM owner_field_answers),"
+            "(SELECT ordinal FROM owner_answer_ordinal)"
+        ).fetchone() == (0, 0, 0)
+    finally:
+        store.close()
+
+
+def test_an_authored_description_is_the_fields_answer(tmp_path: Path) -> None:
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    try:
+        decision = store.admit(candidate.candidate_id, binding, "human", "b" * 64, 11)
+        (record,) = stored_answers(repository._connection)
+        assert (
+            record.source,
+            record.answer_id,
+            record.outcome,
+            record.value_document,
+            record.destination,
+        ) == (
+            "authored_description",
+            decision.decision_id,
+            "authored",
+            "null",
+            "description",
+        )
+        assert_record_recomputes(repository._connection)
+    finally:
+        repository.close()
+
+
+def test_an_owner_cover_answer_names_its_selection(tmp_path: Path) -> None:
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        record_owner_cover_decisions(tmp_path, repository, 1)
+        (record,) = stored_answers(repository._connection)
+        assert (record.destination, record.cover_selection_id) == (
+            "cover",
+            repository._connection.execute(
+                "SELECT selection_id FROM owner_cover_selections WHERE decision_id=?",
+                (record.answer_id,),
+            ).fetchone()[0],
+        )
+        # No Automatic cover stood, so this choice took nothing over (S9).
+        assert repository._connection.execute(
+            "SELECT cover_took_over FROM owner_cover_selections"
+        ).fetchall() == [(0,)]
+        assert_record_recomputes(repository._connection)
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    "edit",
+    (
+        "UPDATE human_decisions SET display_title='Another title'",
+        "UPDATE human_decisions SET item_id='another-book'",
+    ),
+)
+def test_a_ledger_edit_the_record_disagrees_with_is_refused_once_regenerated(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, edit: str
+) -> None:
+    """The record copies each answer's work and title, so a regeneration no
+    longer leaves an edit of one of them unseen (ADR-0108). The edited copy
+    is kept apart from the teardown check, which it is meant to fail."""
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        store.decide("accept", json.loads(_GENRES), destination="genres")
+        path = copied_store(
+            store.repository, tmp_path_factory.mktemp("edited") / "copy"
+        )
+    finally:
+        store.close()
+    regenerate(path)
+    assert opens(path)
+    rewrite(path, edit)
+    assert not opens(path)

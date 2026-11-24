@@ -65,6 +65,7 @@ from tests.support.cover_operations import (
 )
 from tests.support.cover_producers import _preview, _qualified_cover_report
 from tests.support.cover_selections import ALL_COVER_SELECTIONS
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,

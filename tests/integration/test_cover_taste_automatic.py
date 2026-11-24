@@ -86,6 +86,7 @@ from tests.support.audiobook_covers import (
     SYNTHETIC_MEASURED_RECORD,
     SYNTHETIC_TASTE_RECORD,
 )
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.unit.test_cover_taste_judge import WORKS, _Library, _report, _version
 from tests.unit.test_cover_taste_suggestions import _detail_suggestion
 
@@ -1178,6 +1179,12 @@ def test_an_answer_after_resume_was_asked_is_not_released(
         (answered,) = _selections(repository)
         assert answered["kind"] == "owner"
         assert answered["selection_id"] != kept["selection_id"]
+        # The Keep took the cover over from Automatic's switch; the answer
+        # over the Keep carries that (S9).
+        assert repository._connection.execute(
+            "SELECT selection_id,cover_took_over FROM owner_cover_selections "
+            "ORDER BY occurred_at"
+        ).fetchall() == [(kept["selection_id"], 1), (answered["selection_id"], 1)]
         hold = json.loads(
             repository._connection.execute(
                 "SELECT document FROM field_effect_manual_holds "

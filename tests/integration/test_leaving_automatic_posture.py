@@ -96,6 +96,7 @@ from tests.support.audiobook_reports import (
     synthetic_audiobook_bibliographic_report,
 )
 from tests.support.author_evidence import author_report
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 
 _PRODUCER = "f" * 64
 _LINEAGE = "connection_name='primary' AND library_name='ebooks' AND item_id='item-1'"

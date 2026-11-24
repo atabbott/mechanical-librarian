@@ -38,6 +38,7 @@ from tests.support.ledger_partition import (
     reopen_without_derived_rows,
     rewrite_no_change,
 )
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.unit.test_reviewer_access_application import _Auth
 
 

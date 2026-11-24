@@ -1302,7 +1302,20 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 None if prior is None else prior["selection_id"],
                 decision.occurred_at,
                 selection_document,
-                int(took_over),
+                # A choice over the owner's own takes over what that one did,
+                # so the fact survives every later choice (S9).
+                int(
+                    took_over
+                    or (
+                        prior is not None
+                        and self._connection.execute(
+                            "SELECT 1 FROM owner_cover_selections "
+                            "WHERE selection_id=? AND cover_took_over=1",
+                            (prior["selection_id"],),
+                        ).fetchone()
+                        is not None
+                    )
+                ),
             ),
         )
         # The owner's choice takes the work from Automatic in the same

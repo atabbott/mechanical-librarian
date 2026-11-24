@@ -229,26 +229,54 @@ def record_answer(
     _write(connection, answer_from(row, _current(connection, row.key), pin_fingerprint))
 
 
+def _decision_key(connection: sqlite3.Connection, decision_id: str) -> ItemKey:
+    row = connection.execute(
+        "SELECT connection_name,library_name,item_id,destination "
+        "FROM human_decisions WHERE decision_id=?",
+        (decision_id,),
+    ).fetchone()
+    if row is None:
+        raise MetadataReportError("database is unavailable or incompatible")
+    return (row[0], row[1], row[2], row[3])
+
+
 def mark_pin(
-    connection: sqlite3.Connection, key: ItemKey, pin_fingerprint: str | None
+    connection: sqlite3.Connection, decision_id: str, pin_fingerprint: str | None
 ) -> None:
-    """Set, or with None take off, the pin on the field's answer; the answer
-    itself stays (ADR-0085, Amendment 2)."""
+    """The just-recorded pin (or, with None, unpin) ``decision_id`` marks the
+    field's answer; the answer itself stays (ADR-0085, Amendment 2)."""
     connection.execute(
         f"UPDATE owner_field_answers SET pin_fingerprint=? WHERE {_KEY_SQL}",
-        (pin_fingerprint, *key),
+        (pin_fingerprint, *_decision_key(connection, decision_id)),
     )
 
 
-def withdraw_answer(
-    connection: sqlite3.Connection, key: ItemKey, withdrawn: str
-) -> None:
-    """Withdraw ``withdrawn``: where it is the field's answer, give the field
-    back to the answer from an earlier case it replaced, no longer carried,
-    or leave the field without one. Another answer's withdrawal leaves the
-    record alone."""
+# The answer a withdrawal takes back: the latest owner decision of its case's
+# episode before it, pins and unpins aside, as `_require_withdrawable` read it.
+_WITHDRAWN_SQL = (
+    "SELECT standing.decision_id FROM human_decisions withdrawal "
+    "JOIN human_decisions standing "
+    "ON standing.review_case_id=withdrawal.review_case_id "
+    "AND standing.destination=withdrawal.destination "
+    "AND standing.outcome NOT IN ('pin','unpin') "
+    "AND standing.ordinal<withdrawal.ordinal "
+    "AND standing.ordinal>json_extract(withdrawal.document,'$.episode') "
+    "WHERE withdrawal.decision_id=? ORDER BY standing.ordinal DESC LIMIT 1"
+)
+
+
+def withdraw_answer(connection: sqlite3.Connection, decision_id: str) -> None:
+    """The just-recorded withdrawal ``decision_id`` takes back its case's
+    standing answer.
+
+    Where that is the field's answer, the field goes back to the answer from
+    an earlier case it replaced, no longer carried, or is left without one.
+    Another answer's withdrawal leaves the record alone.
+    """
+    key = _decision_key(connection, decision_id)
     current = _current(connection, key)
-    if current is None or current.answer_id != withdrawn:
+    withdrawn = connection.execute(_WITHDRAWN_SQL, (decision_id,)).fetchone()
+    if current is None or withdrawn is None or current.answer_id != withdrawn[0]:
         return
     restored = restored_answer(
         ledger_answers(connection, key), current.previous_answer_id
@@ -260,14 +288,15 @@ def withdraw_answer(
 
 
 def matching_changed(
-    connection: sqlite3.Connection, key: ItemKey, superseded: str
+    connection: sqlite3.Connection, decision_id: str, superseded: str
 ) -> None:
-    """Book matching asked the field again over ``superseded``: where that is
-    the field's answer it stays, no longer carried (ADR-0108)."""
+    """Book matching's just-recorded row ``decision_id`` asked the field again
+    over ``superseded``: where that is the field's answer it stays, no longer
+    carried (ADR-0108)."""
     connection.execute(
-        "UPDATE owner_field_answers SET carry_eligible=0 WHERE "
-        f"{_KEY_SQL} AND answer_id=?",
-        (*key, superseded),
+        f"UPDATE owner_field_answers SET carry_eligible=0 WHERE {_KEY_SQL} "
+        "AND answer_id=?",
+        (*_decision_key(connection, decision_id), superseded),
     )
 
 

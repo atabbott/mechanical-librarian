@@ -28,7 +28,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.description_advice import (
@@ -45,7 +45,10 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
 )
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
     case_episode,
+    mark_pin,
     next_ordinal,
+    record_answer,
+    withdraw_answer,
 )
 from mechanical_librarian.adapters.persistence.owner_links import (
     OwnerLinkItem,
@@ -1112,6 +1115,17 @@ class SQLiteDecisionRepository(ConnectionScoped):
             self._revoke_field_effect_authority_in_transaction(
                 automatic[0], decision.occurred_at, required=False
             )
+        # The record of the owner's answers is written beside the hold, in
+        # this transaction; nothing reads it yet (ADR-0108, C2a).
+        if decision.outcome == "withdraw":
+            withdraw_answer(self._connection, decision.decision_id)
+        else:
+            record_answer(
+                self._connection,
+                "human",
+                decision.decision_id,
+                pin_fingerprint=None if pin is None else cast(str, pin["fingerprint"]),
+            )
         if decision.outcome == "withdraw":
             self._withdraw_manual_hold(decision, previous, case)
         elif decision.destination == "cover" and automatic is None:
@@ -1240,6 +1254,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
         would not, since a re-admitted case keeps its old row. The explicit
         DELETE fires the attention delete trigger.
         """
+        mark_pin(
+            self._connection,
+            decision.decision_id,
+            None if pin is None else cast(str, pin["fingerprint"]),
+        )
         active, document = self._connection.execute(
             "SELECT active,document FROM field_effect_manual_holds "
             "WHERE review_case_id=? AND destination=?",

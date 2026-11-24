@@ -66,6 +66,7 @@ from tests.integration.test_leaving_automatic_posture import (
 )
 from tests.support.ledger_copies import assert_ledger_copies
 from tests.support.ledger_partition import reopen_without_derived_rows
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.support.owner_values import OwnerStore
 from tests.unit import test_identity_refused_retention as retained
 from tests.unit.test_cover_packets import _source
@@ -482,6 +483,12 @@ def test_offer_change_appends_valueless_matching_changed_decision(
             "matching_changed",
         )
         assert cause.proposal_id == standing.proposal_id
+        # The record keeps the choice as the field's answer, no longer
+        # carried (ADR-0108).
+        assert store.repository._connection.execute(
+            "SELECT answer_id,carry_eligible FROM owner_field_answers "
+            "WHERE destination='description'"
+        ).fetchall() == [(standing.decision_id, 0)]
         assert cause.offered_alternatives_digest == offer_digest(
             store.case.proposals, "description"
         )

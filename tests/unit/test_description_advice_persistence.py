@@ -13,6 +13,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
 )
 from tests.support.description_advice import qualify_description_advice
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 
 
 @pytest.fixture(autouse=True)

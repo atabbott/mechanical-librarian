@@ -58,6 +58,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.owner_field_record import assert_store_recomputes
 
 CAPABILITY = "c" * 64
 DEPENDENCY = "d" * 64
@@ -481,4 +482,6 @@ def seed_activity(root: Path) -> SeededActivity:
     _seed_owner_decisions(repository)
     _seed_policy_chosen_writes(repository, service, doubles)
     _seed_policy(repository)
+    # The seeded owner answers' record is the ledger's fold (ADR-0108).
+    assert assert_store_recomputes(root / "activity.sqlite")
     return SeededActivity(repository, clock)

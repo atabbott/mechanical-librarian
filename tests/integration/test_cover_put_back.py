@@ -61,6 +61,7 @@ from tests.support.field_effects import (
 from tests.support.field_effects import (
     effects as effects,
 )
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.unit.test_cover_retention import _automatic_cover
 from tests.unit.test_cover_retention import (
     _measured_record as _measured_record,  # autouse: a switch is the measured replacement

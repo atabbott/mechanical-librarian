@@ -13,6 +13,7 @@ from typing import Literal
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
     case_episode,
     next_ordinal,
+    record_answer,
 )
 from mechanical_librarian.adapters.persistence.owner_links import owner_link_bound
 from mechanical_librarian.adapters.persistence.review_sql import (
@@ -469,6 +470,11 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 if self._manual_hold is None:
                     raise ValueError("description manual hold unavailable")
                 self._manual_hold(case_id, "description", now, decision.decision_id)
+                # The owner's choice is the field's answer in the record,
+                # written beside the hold (ADR-0108, C2a).
+                record_answer(
+                    self._connection, "authored_description", decision.decision_id
+                )
 
             transaction.commit()
             return decision

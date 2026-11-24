@@ -381,6 +381,10 @@ def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
     finally:
         repository.close()
     rewrite(path, f"UPDATE owner_authored_descriptions SET {assignment}")
+    if assignment.startswith("item_id"):
+        # The record of the owner's answers copies the work too, so an edit
+        # that stands once regenerated moves both (ADR-0108).
+        rewrite(path, f"UPDATE owner_field_answers SET {assignment}")
     assert not opens(path)
     regenerate(path)
     assert opens(path) is regenerated_opens
@@ -620,10 +624,14 @@ def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) ->
     finally:
         repository.close()
     selection = "UPDATE owner_cover_selections SET "
-    gaps = {
+    gaps: dict[str, tuple[Path, *tuple[str, ...]]] = {
+        # The record of the owner's answers copies the title and the work
+        # of each answer, so these edits move it too (ADR-0108).
         "display_title": (
             activity,
             "UPDATE human_decisions SET display_title='Another title'",
+            "UPDATE owner_field_answers SET display_title='Another title' "
+            "WHERE source='human'",
         ),
         "target_field_document": (
             activity,
@@ -675,11 +683,13 @@ def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) ->
         "item_key_without_ledger_reference": (
             advice,
             "UPDATE owner_authored_descriptions SET item_id='another-book'",
+            "UPDATE owner_field_answers SET item_id='another-book'",
         ),
     }
     assert tuple(gaps) == ACCEPTED_GAPS
-    for name, (path, sql) in gaps.items():
+    for name, (path, *edits) in gaps.items():
         changed = _regenerated(path, tmp_path / name)
         regenerate(changed)
-        rewrite(changed, sql)
+        for sql in edits:
+            rewrite(changed, sql)
         assert opens(changed), name

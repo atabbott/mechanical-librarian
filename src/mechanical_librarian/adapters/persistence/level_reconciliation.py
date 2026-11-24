@@ -39,6 +39,7 @@ from mechanical_librarian.adapters.persistence.level_sql import (
 )
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
     case_episode,
+    matching_changed,
     next_ordinal,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
@@ -316,7 +317,7 @@ def _ask_changed_fields(
             )
         except HumanDecisionError as error:
             raise MetadataReportError("level reconciliation failed") from error
-        connection.execute(
+        inserted = connection.execute(
             HUMAN_DECISION_INSERT_SQL + " ON CONFLICT DO NOTHING",
             (
                 next_ordinal(connection),
@@ -335,7 +336,11 @@ def _ask_changed_fields(
                 *decision_copies(case, cause.destination),
                 None,
             ),
-        )
+        ).rowcount
+        if inserted:
+            # The answer stays the field's in the record, no longer carried
+            # (ADR-0108).
+            matching_changed(connection, cause.decision_id, standing.decision_id)
         revoke(standing.decision_id, occurred_at)
 
 
