@@ -8,7 +8,7 @@ alone, with no external request. At ``identifier`` nothing is written, no
 marker reads as ``identifier``, and a stored wider marker becomes
 ``identifier``.
 
-The configured level is ``review_preparation_control.work_identity_level``,
+The configured level is ``review_preparation_owner_control.work_identity_level``,
 which every gate compares a case's marker with (``level_sql``). When the level
 changes, the projection reconciles each case again (``reconcile_case_level``):
 a field whose offer changed under its standing owner choice is asked again
@@ -91,7 +91,7 @@ def reconcile_case_level_in_transaction(
 ) -> None:
     """Reconcile one case to the configured level inside the caller's transaction.
 
-    The configured level is ``review_preparation_control.work_identity_level``,
+    The configured level is ``review_preparation_owner_control.work_identity_level``,
     the one every gate compares with. At a wider level the case's level set,
     notes and offer are written; at ``identifier`` nothing is, and a stored
     wider marker becomes ``identifier``. Everything written is content-addressed

@@ -38,6 +38,7 @@ from tests.support.metadata_report_schemas import (
     PRIOR_REVIEW_SCANS_SQL,
     PRIOR_REVIEW_TRANSITIONS_SQL,
     PRIOR_REVIEW_WORK_SQL,
+    undo_2038_tables,
 )
 from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
 
@@ -245,6 +246,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         ),
     ):
         schema._create_schema(connection)
+    undo_2038_tables(connection)
     # The producer predates #1199's report browse facts, #1202's
     # history indexes, #1204's indexes, #1211's case indexes, #1232's
     # attention facts, #1363's retained covers and #1355's level storage.

@@ -1217,7 +1217,7 @@ def _derived_run_state(
 ) -> PreparationRunState:
     blocked = (
         connection.execute(
-            "SELECT 1 FROM review_preparation_control WHERE singleton=1 AND paused=1 UNION ALL "
+            "SELECT 1 FROM review_preparation_owner_control WHERE singleton=1 AND paused=1 UNION ALL "
             "SELECT 1 FROM review_preparation_presentation AS deferred "
             "WHERE deferred.row_kind='deferred_enrollment' AND deferred.run_id=? UNION ALL "
             "SELECT 1 FROM review_preparation_connection_conditions AS condition "

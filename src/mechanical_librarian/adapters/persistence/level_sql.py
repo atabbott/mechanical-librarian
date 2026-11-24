@@ -31,7 +31,7 @@ def _reconciled_level_sql(case: str) -> str:
 # The configured Book matching level the gates compare with (amendment 5).
 _TARGET_LEVEL_SQL = (
     "COALESCE((SELECT level_target.work_identity_level "
-    "FROM review_preparation_control level_target "
+    "FROM review_preparation_owner_control level_target "
     "WHERE level_target.singleton=1),'identifier')"
 )
 

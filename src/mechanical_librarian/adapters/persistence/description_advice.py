@@ -955,7 +955,7 @@ def request_description_preparation(
         if library_id is not None and producer is not None:
             scans.add((target, library, library_id, producer))
     if connection.execute(
-        "SELECT paused FROM review_preparation_control WHERE singleton=1"
+        "SELECT paused FROM review_preparation_owner_control WHERE singleton=1"
     ).fetchone() == (1,):
         return
     repository = SQLiteReviewScanRepository(connection)

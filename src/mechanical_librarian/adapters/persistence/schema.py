@@ -787,16 +787,24 @@ _REVIEW_SCANS_SQL = (
     # stands failed; every writer that moves it on clears it.
     "discovery_failure TEXT CHECK(discovery_failure IS NULL OR (state='completed_with_failures' AND discovery_failure IN ('library_unavailable','library_too_large','response_too_large','response_unreadable','catalogue_unavailable','persistence','unknown'))))"
 )
+# Preparation's scheduling: the claim order, the provider circuit and when
+# either last moved. Derived; the owner's controls are their own row.
 _REVIEW_CONTROL_SQL = (
     "CREATE TABLE review_preparation_control ("
     "singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
-    "paused INTEGER NOT NULL CHECK(paused IN (0,1)), "
     "claim_sequence INTEGER NOT NULL CHECK(claim_sequence>=0), "
-    "first_boot_acknowledged INTEGER NOT NULL CHECK(first_boot_acknowledged IN (0,1)), "
     "last_library TEXT CHECK(last_library IS NULL OR (typeof(last_library)='text' AND length(CAST(last_library AS BLOB)) BETWEEN 1 AND 64 AND last_library NOT GLOB '*[^a-z0-9_-]*' AND substr(last_library,1,1) GLOB '[a-z]')), circuit_failures INTEGER NOT NULL CHECK(circuit_failures BETWEEN 0 AND 3), "
-    "circuit_open_until INTEGER NOT NULL CHECK(circuit_open_until>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
-    # The Book matching level every case is reconciled to (#1355, S10): the
-    # gates read it, so a case reconciled at another level waits for its check.
+    "circuit_open_until INTEGER NOT NULL CHECK(circuit_open_until>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
+)
+# The owner's preparation controls (ADR-0108, ledger): the pause, the
+# acknowledged setup handover and the Book matching level every case is
+# reconciled to (#1355, S10). The gates read the level, so a case reconciled
+# at another level waits for its check.
+_REVIEW_OWNER_CONTROL_SQL = (
+    "CREATE TABLE review_preparation_owner_control ("
+    "singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
+    "paused INTEGER NOT NULL CHECK(paused IN (0,1)), "
+    "first_boot_acknowledged INTEGER NOT NULL CHECK(first_boot_acknowledged IN (0,1)), "
     "work_identity_level TEXT NOT NULL DEFAULT 'identifier' CHECK(work_identity_level IN "
     "('identifier','title_and_creator_exact','title_and_creator')))"
 )
@@ -1635,7 +1643,8 @@ _SETUP_POLICY_TRANSITION_ROW = (
     0,
     0,
 )
-_SETUP_REVIEW_CONTROL_ROW = (1, 0, 0, 0, None, 0, 0, 0)
+_SETUP_REVIEW_CONTROL_ROW = (1, 0, None, 0, 0, 0)
+_SETUP_REVIEW_OWNER_CONTROL_ROW = (1, 0, 0)
 _SETUP_AUTOMATIC_SAFETY_ROW = (1, 0, None, "[]", 0)
 _SETUP_FIELD_EFFECT_CONTROL_ROW = (1, 0, 0)
 _SETUP_BROWSE_FACT_IDENTITY_ROW = (
@@ -2022,8 +2031,13 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REVIEW_SCANS_SQL)
     connection.execute(_REVIEW_CONTROL_SQL)
     connection.execute(
-        "INSERT INTO review_preparation_control(singleton,paused,claim_sequence,first_boot_acknowledged,last_library,circuit_failures,circuit_open_until,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+        "INSERT INTO review_preparation_control(singleton,claim_sequence,last_library,circuit_failures,circuit_open_until,updated_at) VALUES(?,?,?,?,?,?)",
         _SETUP_REVIEW_CONTROL_ROW,
+    )
+    connection.execute(_REVIEW_OWNER_CONTROL_SQL)
+    connection.execute(
+        "INSERT INTO review_preparation_owner_control(singleton,paused,first_boot_acknowledged) VALUES(?,?,?)",
+        _SETUP_REVIEW_OWNER_CONTROL_ROW,
     )
     connection.execute(_REVIEW_PREPARATION_PRESENTATION_SQL)
     connection.execute(_REVIEW_PREPARATION_PRESENTATION_ACTIVE_INDEX_SQL)
@@ -2571,6 +2585,7 @@ def _review_objects() -> tuple[tuple[str, str, str | None], ...]:
         ("table", "review_cases", _REVIEW_CASES_SQL),
         ("table", "review_case_field_facts", _REVIEW_CASE_FIELD_FACTS_SQL),
         ("table", "review_preparation_control", _REVIEW_CONTROL_SQL),
+        ("table", "review_preparation_owner_control", _REVIEW_OWNER_CONTROL_SQL),
         (
             "table",
             "review_preparation_presentation",
@@ -2781,7 +2796,7 @@ LEDGER_TABLES = frozenset(
         "retained_cover_bindings",
         "retained_cover_listings",
         "retained_cover_removals",
-        "review_preparation_control",
+        "review_preparation_owner_control",
         "reviewer_access",
         "reviewer_access_secrets",
         "reviewer_task_requests",

@@ -340,7 +340,7 @@ def request_matching_check(
     nothing (amendment 4).
     """
     connection.execute(
-        "UPDATE review_preparation_control SET work_identity_level=? WHERE singleton=1",
+        "UPDATE review_preparation_owner_control SET work_identity_level=? WHERE singleton=1",
         (work_identity_level,),
     )
     rows = connection.execute(

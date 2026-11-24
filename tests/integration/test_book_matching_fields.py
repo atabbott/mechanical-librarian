@@ -1012,7 +1012,7 @@ def test_works_list_and_attention_facts_follow_the_offer(tmp_path: Path) -> None
         "CREATE TABLE review_case_level_offers(review_case_id,work_identity_level,"
         "reconciled_level,document);"
         "CREATE TABLE review_case_level_reconciliation(review_case_id,reconciled_level);"
-        "CREATE TABLE review_preparation_control(singleton,work_identity_level);"
+        "CREATE TABLE review_preparation_owner_control(singleton,work_identity_level);"
         "CREATE TABLE proposal_set_browse_facts(proposal_set_id,resolved_policy_id);"
         "CREATE TABLE metadata_policy_resolutions(resolved_policy_id,document);"
         "CREATE TABLE review_cases(review_case_id,proposal_set_id,document);"
@@ -1102,7 +1102,8 @@ def test_facts_that_differ_from_live_are_checked_and_kept_by_the_offer(
             (exact, case_id),
         )
         connection.execute(
-            "UPDATE review_preparation_control SET work_identity_level=?", (exact,)
+            "UPDATE review_preparation_owner_control SET work_identity_level=?",
+            (exact,),
         )
         refresh_offered_field_facts(connection, case_id)
         connection.commit()

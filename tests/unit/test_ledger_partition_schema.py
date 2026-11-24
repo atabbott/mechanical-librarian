@@ -17,6 +17,11 @@ from pathlib import Path
 import pytest
 
 from mechanical_librarian.adapters.persistence import schema
+from mechanical_librarian.adapters.persistence.level_reconciliation import target_level
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    request_matching_check,
+)
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from tests.support.activity_seed import seed_activity
 from tests.support.genre_reports import (
@@ -67,6 +72,7 @@ DERIVED_TABLES = frozenset(
         "review_cases",
         "review_preparation_absences",
         "review_preparation_connection_conditions",
+        "review_preparation_control",
         "review_preparation_presentation",
         "review_preparation_scans",
         "review_preparation_work",
@@ -283,3 +289,28 @@ def test_automatic_writes_copy_what_activity_shows(tmp_path: Path) -> None:
         store.close()
     assert checked["activity_field_effect_automatic"] > 0
     assert titles == [(held.target.current_title,)]
+
+
+def test_the_owner_preparation_controls_are_their_own_ledger_row(
+    tmp_path: Path,
+) -> None:
+    """Pausing, acknowledging the setup handover and the Book matching level
+    are the owner's and live in the ledger row; the scheduling row keeps when
+    preparation last moved (ADR-0108)."""
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        connection = repository._connection
+        owner = "SELECT paused,first_boot_acknowledged,work_identity_level FROM review_preparation_owner_control"
+        assert connection.execute(owner).fetchall() == [(0, 0, "identifier")]
+        repository.set_review_pipeline_paused(True, 5)
+        repository.acknowledge_first_boot_preparation()
+        request_matching_check(connection, "title_and_creator", updated_at=6)
+        connection.commit()
+        assert connection.execute(owner).fetchall() == [(1, 1, "title_and_creator")]
+        assert repository.review_pipeline_paused() is True
+        assert target_level(connection).value == "title_and_creator"
+        assert connection.execute(
+            "SELECT claim_sequence,updated_at FROM review_preparation_control"
+        ).fetchall() == [(0, 5)]
+    finally:
+        repository.close()

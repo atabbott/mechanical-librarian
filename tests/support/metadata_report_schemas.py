@@ -533,6 +533,47 @@ def set_pre_2038_schema(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(persistence_schema, name, sql)
 
 
+# Nor did it keep the owner's preparation controls apart from scheduling: one
+# row held both, the Book matching level last (#2038).
+PRE_2038_REVIEW_CONTROL_SQL = _undone(
+    persistence_schema._REVIEW_CONTROL_SQL,
+    (
+        "CHECK(singleton=1), claim_sequence",
+        "CHECK(singleton=1), paused INTEGER NOT NULL CHECK(paused IN (0,1)), "
+        "claim_sequence",
+    ),
+    (
+        "CHECK(claim_sequence>=0), last_library",
+        "CHECK(claim_sequence>=0), first_boot_acknowledged INTEGER NOT NULL "
+        "CHECK(first_boot_acknowledged IN (0,1)), last_library",
+    ),
+    (
+        "CHECK(updated_at>=0))",
+        "CHECK(updated_at>=0), work_identity_level TEXT NOT NULL DEFAULT "
+        "'identifier' CHECK(work_identity_level IN "
+        "('identifier','title_and_creator_exact','title_and_creator')))",
+    ),
+)
+
+
+def undo_2038_tables(connection: sqlite3.Connection) -> None:
+    """Merge the two preparation control rows back into the one row every
+    producer before #2038 kept, keeping their values."""
+    connection.executescript(
+        "CREATE TEMP TABLE pre_2038_control AS SELECT 1 AS singleton,"
+        "owner.paused,scheduling.claim_sequence,owner.first_boot_acknowledged,"
+        "scheduling.last_library,scheduling.circuit_failures,"
+        "scheduling.circuit_open_until,scheduling.updated_at,"
+        "owner.work_identity_level FROM review_preparation_control scheduling,"
+        "review_preparation_owner_control owner;"
+        "DROP TABLE review_preparation_owner_control;"
+        "DROP TABLE review_preparation_control;"
+        + PRE_2038_REVIEW_CONTROL_SQL
+        + ";INSERT INTO review_preparation_control SELECT * FROM pre_2038_control;"
+        "DROP TABLE temp.pre_2038_control;"
+    )
+
+
 # Every producer before #1285 admitted only the three original human outcomes.
 # Every producer before #1523 kept no check on the selected value's kind.
 WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL = (

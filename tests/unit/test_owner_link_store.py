@@ -47,6 +47,7 @@ from tests.support.metadata_report_schemas import (
     WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL,
     WITHOUT_UNREAD_REVIEW_WORK_SQL,
     set_pre_2038_schema,
+    undo_2038_tables,
 )
 
 ITEM = OwnerLinkItem("abs", "Books", "item-1")
@@ -775,6 +776,7 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
     monkeypatch.undo()
     connection = sqlite3.connect(path, isolation_level=None)
     try:
+        undo_2038_tables(connection)
         # Every owner_links object but the table itself reads as it did then.
         kept = connection.execute(
             "SELECT sql FROM sqlite_schema WHERE tbl_name IN "

@@ -250,6 +250,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
         PRIOR_REVIEW_TRANSITIONS_SQL,
         PRIOR_REVIEW_WORK_SQL,
         set_pre_2038_schema,
+        undo_2038_tables,
     )
 
     from mechanical_librarian.adapters.persistence import schema
@@ -343,6 +344,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
             ),
         )
         with closing(open_repository(old_path)) as repository:
+            undo_2038_tables(repository._connection)
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes, #1232's
             # attention facts, #1363's retained cover tables, #1355's level

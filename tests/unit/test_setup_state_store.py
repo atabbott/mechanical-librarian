@@ -1177,7 +1177,7 @@ def test_resume_rejects_a_second_valid_seeded_policy_draft() -> None:
 def test_resume_rejects_changed_seeded_singleton_value() -> None:
     connection, store = _real_store()
     _connected(store)
-    connection.execute("UPDATE review_preparation_control SET paused=1")
+    connection.execute("UPDATE review_preparation_owner_control SET paused=1")
 
     with pytest.raises(SetupStateError):
         store.read(_BOOTSTRAP)

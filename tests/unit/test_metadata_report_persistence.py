@@ -73,6 +73,7 @@ from tests.support.metadata_report_schemas import (
     synthetic_latin_work_report,
     synthetic_reordered_work_report,
     synthetic_report,
+    undo_2038_tables,
 )
 from tests.support.report_schema_version import (
     CURRENT_REPORT_SCHEMA,
@@ -703,6 +704,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("review_preparation_absences",),
             ("review_preparation_connection_conditions",),
             ("review_preparation_control",),
+            ("review_preparation_owner_control",),
             ("review_preparation_presentation",),
             ("review_preparation_scans",),
             ("review_preparation_work",),
@@ -884,6 +886,7 @@ def test_the_dd568e2_episode_and_follows_schema_is_rejected_without_change(
         repository = open_repository(path)
         if populated:
             repository.publish(_case_report(1), lambda: True)
+        undo_2038_tables(repository._connection)
         repository.close()
     before = path.read_bytes()
     with pytest.raises(MetadataReportError):
@@ -974,6 +977,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         )
         old.setattr(schema, "_PACKAGE_POSITION_OBJECTS", ())
         with closing(open_repository(path)) as repository:
+            undo_2038_tables(repository._connection)
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes, #1232's
             # attention facts, #1363's retained cover tables and #1355's
@@ -1868,8 +1872,7 @@ def test_dependent_open_borrows_a_root_that_is_mid_transaction() -> None:
         root = open_repository(path)
         root._connection.execute("BEGIN IMMEDIATE")
         root._connection.execute(
-            "UPDATE review_preparation_control SET paused=1,updated_at=7 "
-            "WHERE singleton=1"
+            "UPDATE review_preparation_owner_control SET paused=1 WHERE singleton=1"
         )
         if not sys.platform.startswith("linux"):
             # Off Linux the rollback journal sits beside the configured name,
@@ -1911,8 +1914,7 @@ def test_portable_dependent_open_requires_the_authoritys_configured_path(
         assert type(authority) is persistence_binding._PortableDatabaseAuthority
         owner._connection.execute("BEGIN IMMEDIATE")
         owner._connection.execute(
-            "UPDATE review_preparation_control SET paused=1,updated_at=7 "
-            "WHERE singleton=1"
+            "UPDATE review_preparation_owner_control SET paused=1 WHERE singleton=1"
         )
         try:
             assert Path(f"{configured}-journal").is_file()
@@ -1953,8 +1955,8 @@ def test_dependent_opens_continue_while_a_writer_thread_churns_journals() -> Non
                     writer._connection.execute("BEGIN IMMEDIATE")
                     writer._connection.execute(
                         "UPDATE review_preparation_control "
-                        "SET paused=?,updated_at=? WHERE singleton=1",
-                        (updated_at % 2 == 0, updated_at),
+                        "SET updated_at=? WHERE singleton=1",
+                        (updated_at,),
                     )
                     writer._connection.execute("COMMIT")
             except BaseException as error:
@@ -2793,6 +2795,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             ),
         )
         with closing(open_repository(path)) as repository:
+            undo_2038_tables(repository._connection)
             if not current_scaffolding:
                 # The earlier producers predate #1199's report browse facts,
                 # #1202's history indexes, #1204's indexes, #1211's case indexes,
