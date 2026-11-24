@@ -468,7 +468,7 @@ def test_a_pipeline_that_fails_to_compose_closes_both_private_stores(
         assert len(opened) == (0 if failure == "response_store" else 1)
         for store in (recovery, *opened):
             with pytest.raises(sqlite3.ProgrammingError):
-                store._connection.execute("SELECT 1")  # type: ignore[attr-defined]  # reason: both adapters keep their connection private
+                store._connection.execute("SELECT 1")
 
 
 def test_generation_rollback_rejects_before_cutover_delivery() -> None:
