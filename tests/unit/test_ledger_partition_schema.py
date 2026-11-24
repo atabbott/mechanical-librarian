@@ -12,7 +12,7 @@ import json
 import re
 import shutil
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -423,8 +423,9 @@ def test_a_case_chosen_description_names_a_decision_of_one_half(
     assert opens(path)
 
 
-# The owner decision of the seeded Activity store that no plan or no-change
-# row names, so only its case and the record it may be the answer of hold it.
+# The first owner decision of the seeded Activity store that no plan or
+# no-change row names; a later answer replaced it in the record, so only its
+# events and its case hold it.
 _UNWRITTEN = (
     "(SELECT decision_id FROM human_decisions decision WHERE NOT EXISTS("
     "SELECT 1 FROM field_effects WHERE decision_id=decision.decision_id) "
@@ -439,14 +440,11 @@ _CASE_AND_ITEM_COPIES = {
             f"UPDATE {table} SET item_id='another-book' WHERE {column}={_UNWRITTEN}"
             for table, column in (
                 ("human_decision_events", "decision_id"),
-                ("owner_field_answers", "answer_id"),
                 ("human_decisions", "decision_id"),
             )
         ),
     ),
     "display_title": (
-        f"UPDATE owner_field_answers SET display_title='Another title' "
-        f"WHERE answer_id={_UNWRITTEN}",
         f"UPDATE human_decisions SET display_title='Another title' "
         f"WHERE decision_id={_UNWRITTEN}",
     ),
@@ -555,13 +553,20 @@ def test_a_plan_and_a_no_change_title_agree_with_their_report(
     assert opens(path)
 
 
-# What open validation cannot check once the derived rows a copy was made
-# from are gone (ADR-0108). Each entry names a ledger edit that, on a store
-# whose derived partition was regenerated, still opens. A check added for one
-# of them, or a gap added, changes this list deliberately.
+# What open validation cannot check once the derived rows a ledger value was
+# copied from, or names, are gone (ADR-0108), by class. Each entry names a
+# ledger edit that, on a store whose derived partition was regenerated, still
+# opens. A check added for one of them, or a gap added, changes this list
+# deliberately.
 ACCEPTED_GAPS = (
+    # Display copies; the selected form and episodes are never checked.
     "display_title",
     "target_field_document",
+    "selected_form",
+    "authored_description_display_title",
+    "plan_display_title",
+    "no_change_display_title",
+    # An owner cover choice's copies of its comparison.
     "preview_digest",
     "original_digest",
     "transport_digest",
@@ -569,8 +574,19 @@ ACCEPTED_GAPS = (
     "rank_key",
     "consideration_digest",
     "taste_copies",
+    # The case episode an owner answer was given in.
+    "decision_episode",
+    "authored_description_episode",
+    # A settled transition's counts, its state kept.
+    "transition_counts",
+    # References into derived state.
+    "decision_provenance",
+    "cover_comparison_reference",
     "absent_cover_predecessor",
+    "no_change_report_id",
+    "no_change_target_version",
     "item_key_without_ledger_reference",
+    "decision_item_key_without_ledger_reference",
 )
 _OTHER_DIGEST = "0" * 64
 # An owner cover choice made to supersede a selection that is not there.
@@ -792,82 +808,198 @@ def test_an_owner_cover_choice_names_its_decisions_work(
     assert not opens(owner_cover)
 
 
-def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) -> None:
-    """Each listed gap is a ledger copy that, its derived rows gone, open
-    cannot check; this test edits each and the store still opens."""
-    (tmp_path / "seed").mkdir(mode=0o700)
-    seeded = seed_activity(tmp_path / "seed")
+def _gap_stores(root: Path, owner_cover: Path) -> dict[str, Path]:
+    """A copy of each store an accepted gap is shown on, derived rows and
+    all: the seeded Activity store, an owner cover choice, an owner's genres
+    plan and no-change row, an accepted description and its selected form,
+    and an owner authored description written and settled with no change."""
+    root.mkdir(mode=0o700)
+    (root / "seed").mkdir(mode=0o700)
+    seeded = seed_activity(root / "seed")
     try:
-        activity = copied_store(seeded.repository, tmp_path / "activity")
+        activity = copied_store(seeded.repository, root / "activity")
     finally:
         seeded.repository.close()
-    (tmp_path / "advice").mkdir(mode=0o700)
-    repository, store, binding, candidate, _ = _prepared(tmp_path / "advice")
+    (root / "advice").mkdir(mode=0o700)
+    repository, store, binding, candidate, _ = _prepared(root / "advice")
     try:
         store.admit(candidate.candidate_id, binding, "human", "b" * 64, 11)
-        advice = copied_store(repository, tmp_path / "advice-store")
+        advice = copied_store(repository, root / "advice-store")
     finally:
         repository.close()
+    (root / "same").mkdir(mode=0o700)
+    repository, store, binding, candidate, _ = _prepared(
+        root / "same", same_current=True
+    )
+    try:
+        authored = store.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
+        assert repository.record_current_field_effect_no_change(authored, 12)
+        authored_no_change = copied_store(repository, root / "same-store")
+    finally:
+        repository.close()
+    (root / "described").mkdir(mode=0o700)
+    owner = OwnerStore(root / "described", formatted_description_report())
+    try:
+        owner.write(
+            owner.decide(
+                "accept",
+                {"kind": "text", "value": "A qualified description."},
+                destination="description",
+            )
+        )
+        described = copied_store(owner.repository, root / "described-store")
+    finally:
+        owner.close()
+    return {
+        "activity": activity,
+        "advice": advice,
+        "authored_no_change": authored_no_change,
+        "cover": owner_cover,
+        "described": described,
+        "genres": _owner_genres(root / "genres"),
+    }
+
+
+def _no_change(column: str, value: str) -> Callable[[Path], None]:
+    return lambda path: rewrite_no_change(path, column, value)
+
+
+def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) -> None:
+    """Each listed gap is a ledger value that, its derived rows gone, open
+    cannot check; this test edits each and the store still opens."""
+    stores = _gap_stores(tmp_path / "stores", owner_cover)
     selection = "UPDATE owner_cover_selections SET "
-    gaps: dict[str, tuple[Path, *tuple[str, ...]]] = {
-        # The record of the owner's answers copies the title and the work
-        # of each answer, so these edits move it too (ADR-0108).
+    case = "review_case_" + _OTHER_DIGEST
+    # Every edit to an owner answer the record holds moves the record too, as
+    # its copy of the answer must equal it (ADR-0108).
+    gaps: dict[str, tuple[str, *tuple[str | Callable[[Path], None], ...]]] = {
         "display_title": (
-            activity,
+            "activity",
             "UPDATE human_decisions SET display_title='Another title'",
             "UPDATE owner_field_answers SET display_title='Another title' "
             "WHERE source='human'",
         ),
         "target_field_document": (
-            activity,
+            "activity",
             "UPDATE human_decisions SET target_field_document='null'",
         ),
+        "selected_form": (
+            "described",
+            "UPDATE human_decisions SET selected_form='Another form' "
+            "WHERE selected_form IS NOT NULL",
+        ),
+        "authored_description_display_title": (
+            "advice",
+            "UPDATE owner_authored_descriptions SET display_title='Another title'",
+            "UPDATE owner_field_answers SET display_title='Another title'",
+        ),
+        "plan_display_title": (
+            "genres",
+            "UPDATE field_effects SET display_title='Another title'",
+        ),
+        "no_change_display_title": (
+            "genres",
+            "UPDATE field_effect_no_changes SET display_title='Another title'",
+        ),
         "preview_digest": (
-            owner_cover,
+            "cover",
             selection + "document=json_set(document,'$.preview_sha256','"
             f"{_OTHER_DIGEST}')",
         ),
         "original_digest": (
-            owner_cover,
+            "cover",
             selection + "document=json_set(document,'$.original_sha256','"
             f"{_OTHER_DIGEST}')",
         ),
         "transport_digest": (
-            owner_cover,
+            "cover",
             selection + f"transport_sha256='{_OTHER_DIGEST}'",
         ),
         "observed_identity": (
-            owner_cover,
+            "cover",
             selection + "document=json_set(document,'$.observed_identity',"
             "json('null'))",
         ),
         "rank_key": (
-            owner_cover,
+            "cover",
             selection + "document=json_set(document,'$.rank_key',json('[0]'))",
         ),
         "consideration_digest": (
-            owner_cover,
+            "cover",
             selection + "document=json_set(document,'$.consideration_digest','"
             f"{_OTHER_DIGEST}')",
         ),
         "taste_copies": (
-            owner_cover,
+            "cover",
             selection + "width=1,height=1,offered_arts=1,report_format='mp3'",
+        ),
+        "decision_episode": (
+            "activity",
+            "UPDATE human_decisions SET document=json_set(document,'$.episode',"
+            f"json_extract(document,'$.episode')+1) WHERE decision_id={_UNWRITTEN}",
+        ),
+        # Its only answer is the first, so an episode before it needs a
+        # later ordinal.
+        "authored_description_episode": (
+            "advice",
+            "UPDATE owner_answer_ordinal SET ordinal=ordinal+1",
+            "UPDATE owner_authored_descriptions SET ordinal=ordinal+1,episode=episode+1",
+            "UPDATE owner_field_answers SET ordinal=ordinal+1,episode=episode+1",
+        ),
+        "transition_counts": (
+            "activity",
+            _CASE_AND_ITEM_COPIES["transition_counts"][0],
+        ),
+        # The case, proposal and fingerprint an owner decision was made on.
+        "decision_provenance": (
+            "activity",
+            f"UPDATE human_decisions SET review_case_id='{case}',"
+            f"document=json_set(document,'$.review_case_id','{case}') "
+            f"WHERE decision_id={_UNWRITTEN}",
+            f"UPDATE human_decision_events SET review_case_id='{case}' "
+            f"WHERE decision_id={_UNWRITTEN}",
+            "UPDATE human_decisions SET proposal_id='review_proposal_"
+            f"{_OTHER_DIGEST}',document=json_set(document,'$.proposal_id',"
+            f"'review_proposal_{_OTHER_DIGEST}') WHERE decision_id={_UNWRITTEN}",
+            _CASE_AND_ITEM_COPIES["target_fingerprint"][0],
+        ),
+        "cover_comparison_reference": (
+            "cover",
+            selection + f"consideration_id='cover_consideration_{_OTHER_DIGEST}',"
+            "document=json_set(document,'$.consideration_id',"
+            f"'cover_consideration_{_OTHER_DIGEST}')",
         ),
         # An owner's choice may supersede one of Automatic's, which a
         # regeneration takes; so its predecessor may be absent.
-        "absent_cover_predecessor": (owner_cover, _SUPERSEDES_ABSENT),
+        "absent_cover_predecessor": ("cover", _SUPERSEDES_ABSENT),
+        "no_change_report_id": (
+            "genres",
+            _no_change("report_id", "report_" + _OTHER_DIGEST),
+        ),
+        # An advised text's no-change row is at the report's version.
+        "no_change_target_version": (
+            "authored_no_change",
+            _no_change("target_version", _OTHER_DIGEST),
+        ),
         # No plan or no-change row names this authored description yet.
         "item_key_without_ledger_reference": (
-            advice,
+            "advice",
             "UPDATE owner_authored_descriptions SET item_id='another-book'",
             "UPDATE owner_field_answers SET item_id='another-book'",
         ),
+        # Nor this owner decision; its events move with it.
+        "decision_item_key_without_ledger_reference": (
+            "activity",
+            *_CASE_AND_ITEM_COPIES["decision_item_key"][:2],
+        ),
     }
     assert tuple(gaps) == ACCEPTED_GAPS
-    for name, (path, *edits) in gaps.items():
-        changed = _regenerated(path, tmp_path / name)
+    for name, (store, *edits) in gaps.items():
+        changed = _regenerated(stores[store], tmp_path / name)
         regenerate(changed)
-        for sql in edits:
-            rewrite(changed, sql)
+        for edit in edits:
+            if isinstance(edit, str):
+                assert rewrite(changed, edit) > 0, (name, edit)
+            else:
+                edit(changed)
         assert opens(changed), name

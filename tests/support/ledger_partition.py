@@ -83,12 +83,10 @@ def _derived_setup() -> dict[str, list[tuple[object, ...]]]:
         fresh.close()
 
 
-def _without_triggers(
-    path: Path, change: Callable[[sqlite3.Connection], object]
-) -> None:
+def _without_triggers[T](path: Path, change: Callable[[sqlite3.Connection], T]) -> T:
     """Run ``change`` on the store at ``path`` with every trigger set aside,
     as a hostile edit or a table drop would, then restore each trigger by its
-    exact text, so the schema still compares equal."""
+    exact text, so the schema still compares equal; return what it returns."""
     connection = sqlite3.connect(path)
     try:
         triggers = connection.execute(
@@ -97,12 +95,13 @@ def _without_triggers(
         connection.execute("PRAGMA foreign_keys=OFF")
         for name, _ in triggers:
             connection.execute(f'DROP TRIGGER "{name}"')
-        change(connection)
+        result = change(connection)
         for _, sql in triggers:
             connection.execute(sql)
         connection.commit()
     finally:
         connection.close()
+    return result
 
 
 def regenerate(path: Path) -> None:
@@ -121,9 +120,12 @@ def regenerate(path: Path) -> None:
     _without_triggers(path, change)
 
 
-def rewrite(path: Path, sql: str, parameters: tuple[object, ...] = ()) -> None:
-    """Change stored rows behind every guard, as a hostile edit would."""
-    _without_triggers(path, lambda connection: connection.execute(sql, parameters))
+def rewrite(path: Path, sql: str, parameters: tuple[object, ...] = ()) -> int:
+    """Change stored rows behind every guard, as a hostile edit would, and
+    return how many rows changed."""
+    return _without_triggers(
+        path, lambda connection: connection.execute(sql, parameters).rowcount
+    )
 
 
 def rewrite_no_change(path: Path, column: str, value: str) -> None:
