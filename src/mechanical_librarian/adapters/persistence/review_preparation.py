@@ -89,6 +89,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
 from mechanical_librarian.domain.audiobook_corroboration import recording_unmatched
+from mechanical_librarian.domain.automatic_decision import SAFETY_CATEGORY_LANES
 from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
     human_review_destinations,
@@ -2715,7 +2716,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             "AND o.report_id=w.report_id AND o.proposal_set_id=w.proposal_set_id "
             "JOIN shadow_outcome_field_facts title ON title.outcome_set_id=o.outcome_set_id "
             "AND title.destination='title' AND title.automatic_destination=1 "
-            "AND title.policy_category IN ('title_layout','title') "
+            "AND title.policy_category IN ('"
+            + SAFETY_CATEGORY_LANES["title"]
+            + "','title') "
             "AND title.disposition IN ('candidate','keep_current') "
             "JOIN metadata_policy_state policy ON policy.singleton=1 "
             "AND policy.generation=json_extract(o.document,'$.policy_generation') "

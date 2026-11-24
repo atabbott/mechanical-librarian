@@ -864,3 +864,41 @@ def test_a_repeated_description_says_every_source_repeats_it() -> None:
         ).reason
         == "Nothing to decide for this field."
     )
+
+
+@pytest.mark.parametrize(
+    ("override_available", "changeable", "reason"),
+    (
+        (True, True, "Automatic decided this field. You can change it here."),
+        (True, False, "Automatic decided this field."),
+        (
+            False,
+            True,
+            "Automatic\u2019s change is being applied and cannot be changed yet.",
+        ),
+        (
+            False,
+            False,
+            "Automatic\u2019s change is being applied and cannot be changed yet.",
+        ),
+    ),
+    ids=("changeable", "nothing_to_change", "applying", "applying_unchangeable"),
+)
+def test_automatic_reason_offers_a_change_only_where_one_is_offered(
+    override_available: bool, changeable: bool, reason: str
+) -> None:
+    # The same rule as the owner's own line: "You can change it here" only
+    # where a choice or the owner's own value is offered (BT F1).
+    value = classify_review_field(
+        attention_candidate=False,
+        automatic_outcome="keep_current",
+        has_human_decision=False,
+        suspended=False,
+        current_value="Title",
+        proposed_values=("Title",),
+        override_available=override_available,
+        changeable=changeable,
+    )
+    assert value.state == "automatic_recorded"
+    assert value.reason == reason
+    assert value.editable is override_available

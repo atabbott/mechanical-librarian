@@ -7,16 +7,14 @@ review history ledger. Nothing outside it inserts into those four tables.
 
 It was deferred until the review and field-effect aggregates existed because
 `record_human_decision` supersedes prior authority and takes a manual hold in
-the same transaction, and `_record_automatic_decision` resolves the current
-policy: seven seams cross the boundary and each needs an owner on the other
-side to delegate to.
+the same transaction: its seams cross the boundary and each needs an owner on
+the other side to delegate to.
 
 Every seam arrives as a callable resolved through the composing repository at
-call time. `current_resolved_policy_id` is substituted on the composing
-repository's *class* by three consent tests, and `_record_automatic_outcomes`
-is substituted on the composing repository *instance* by two authority-failure
-tests which drive it through `persist_shadow_outcome`; that caller stays on the
-composing repository, so its delegating stub is what those tests replace.
+call time. `_record_automatic_outcomes` is substituted on the composing
+repository *instance* by tests which drive it through
+`persist_shadow_outcome`; that caller stays on the composing repository, so its
+delegating stub is what those tests replace.
 
 `_record_automatic_outcomes` and `_set_automatic_safety_state` are deliberately
 scope-free: `persist_shadow_outcome` owns the enclosing transaction and these
@@ -52,6 +50,7 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
     request_matching_check,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _AUTOMATIC_SAFETY_ROW_SQL,
     _SHADOW_OUTCOME_HISTORY_SQL,
     _WORK_LATEST_MANUAL_HOLDS_SQL,
     _active_generation_automatic_sql,
@@ -428,7 +427,6 @@ class SQLiteDecisionRepository(ConnectionScoped):
         get_review_case: Callable[[str], str],
         requeue_title_projections: Callable[[int], None],
         review_case_accepts_authority: Callable[[str], bool],
-        current_resolved_policy_id: Callable[[str], str],
         record_cover_decision_outcome: Callable[..., None],
         revoke_field_effect_authority_in_transaction: Callable[..., int],
         set_field_effect_manual_hold: Callable[
@@ -449,7 +447,6 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self._requeue_title_projections = requeue_title_projections
         self.get_review_case = get_review_case
         self._review_case_accepts_authority = review_case_accepts_authority
-        self.current_resolved_policy_id = current_resolved_policy_id
         self._record_cover_decision_outcome = record_cover_decision_outcome
         self._revoke_field_effect_authority_in_transaction = (
             revoke_field_effect_authority_in_transaction
@@ -1556,162 +1553,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
             raise HumanDecisionError("decision_written")
 
     @local_operation
-    def _record_automatic_decision(self, decision: AutomaticDecision) -> str:
-        """Legacy internal single-row helper; projection admission owns policy classification.
-
-        It is intentionally not a repository command or web/API seam.  The
-        only supported admission path is ``persist_shadow_outcome``, which
-        validates a complete outcome and applies bundle/race classification
-        before any durable insert.
-        """
-        if type(decision) is not AutomaticDecision:
-            raise MetadataReportError("automatic decision persistence failed")
-        transaction = self._transaction("_record_automatic_decision")
-        try:
-            transaction.begin()
-            replay = self._connection.execute(
-                "SELECT document FROM automatic_decisions WHERE idempotency_digest=?",
-                (decision.idempotency_digest,),
-            ).fetchone()
-            if replay is not None:
-                if replay != (decision.to_json(),):
-                    raise AutomaticDecisionError("idempotency_conflict")
-                transaction.commit()
-                return decision.to_json()
-            posture = self._connection.execute(
-                "SELECT posture FROM metadata_policy_state WHERE singleton=1"
-            ).fetchone()
-            # The persistence seam is intentionally inert until the complete
-            # policy-control/suspension composition admits active posture.
-            if posture != ("automatic",):
-                raise AutomaticDecisionError("unavailable")
-            if not self.automatic_safety_state().permits(
-                automatic_safety_category(
-                    decision.policy_category, decision.policy_option
-                )
-            ):
-                raise AutomaticDecisionError("suspended")
-            case = json.loads(self.get_review_case(decision.review_case_id))
-            if type(case) is not dict or case.get("current") is not True:
-                raise AutomaticDecisionError("stale")
-            existing = self._connection.execute(
-                _AUTOMATIC_MINT_CONFLICT_SQL, _automatic_mint_conflict(decision)
-            ).fetchone()
-            if existing is not None:
-                raise AutomaticDecisionError("already_decided")
-            outcome = self._connection.execute(
-                "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? AND report_id=? "
-                "AND proposal_set_id=? AND resolved_policy_id=? "
-                "AND json_extract(document,'$.policy_generation')=?",
-                (
-                    decision.review_case_id,
-                    decision.report_id,
-                    decision.proposal_set_id,
-                    decision.resolved_policy_id,
-                    decision.policy_generation,
-                ),
-            ).fetchone()
-            if outcome is None:
-                raise AutomaticDecisionError("stale")
-            source = ShadowOutcomeSet.from_json(outcome[0])
-            field = next(
-                (
-                    value
-                    for value in source.outcomes
-                    if value.outcome_id == decision.source_outcome_id
-                ),
-                None,
-            )
-            if (
-                field is None
-                or (field.disposition != decision.outcome)
-                or any(
-                    (
-                        field.proposal_id != decision.proposal_id,
-                        field.destination != decision.destination,
-                        field.rule_id != decision.rule_id,
-                        field.policy_category != decision.policy_category,
-                        field.policy_option != decision.policy_option,
-                    )
-                )
-            ):
-                raise AutomaticDecisionError("stale")
-            if decision.policy_category in {"title_layout", "date_precision"}:
-                required = (
-                    ("title",)
-                    if decision.policy_category == "title_layout"
-                    else ("publishedDate",)
-                )
-                members = tuple(
-                    value
-                    for value in source.outcomes
-                    if value.policy_category == decision.policy_category
-                    and value.destination in required
-                )
-                expected_bundle = (
-                    "automatic_bundle_"
-                    + hashlib.sha256(
-                        _canonical_json(
-                            {
-                                "category": decision.policy_category,
-                                "combination_ids": list(field.combination_ids),
-                            }
-                        ).encode("utf-8")
-                    ).hexdigest()
-                )
-                if (
-                    len(members) != len(required)
-                    or {value.destination for value in members} != set(required)
-                    or len({value.combination_ids for value in members}) != 1
-                    or not field.combination_ids
-                    or decision.bundle_id != expected_bundle
-                ):
-                    raise AutomaticDecisionError("bundle_identity")
-            if (
-                self.current_resolved_policy_id(
-                    json.loads(case["case"])["target"]["library"]
-                )
-                != decision.resolved_policy_id
-            ):
-                raise AutomaticDecisionError("stale")
-            self._connection.execute(
-                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document,policy_generation) VALUES(?,?,?,?,?,?,?)",
-                (
-                    decision.decision_id,
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.idempotency_digest,
-                    decision.occurred_at,
-                    decision.to_json(),
-                    decision.policy_generation,
-                ),
-            )
-            if self._binding is not None:
-                self._binding.require_current()
-            transaction.commit()
-            return decision.to_json()
-        except AutomaticDecisionError:
-            transaction.rollback()
-            raise
-        except (
-            sqlite3.Error,
-            MetadataReportError,
-            ShadowOutcomeError,
-            TypeError,
-            ValueError,
-            json.JSONDecodeError,
-        ) as error:
-            transaction.rollback()
-            raise MetadataReportError(
-                "automatic decision persistence failed"
-            ) from error
-
-    @local_operation
     def automatic_safety_state(self) -> AutomaticSafetyState:
         try:
-            row = self._connection.execute(
-                "SELECT paused,global_suspension,category_suspensions_document FROM automatic_safety_state WHERE singleton=1"
-            ).fetchone()
+            row = self._connection.execute(_AUTOMATIC_SAFETY_ROW_SQL).fetchone()
             if row is None:
                 raise MetadataReportError("automatic safety state is unavailable")
             categories = json.loads(row[2])

@@ -2,14 +2,16 @@
 
 Several aggregates read the same current-review join and the same field
 attention predicate. These fragments compose into each other, so they live in
-one leaf module that imports nothing and is imported downward, rather than
-being copied into each aggregate that reads through them.
+one leaf module that imports only the domain's definitions and is imported
+downward, rather than being copied into each aggregate that reads through them.
 
 The text is verbatim. Nothing here is reflowed: these strings concatenate into
 executed SQL, and a rewrap would change statements this unit must leave alone.
 """
 
 from __future__ import annotations
+
+from mechanical_librarian.domain.automatic_decision import SAFETY_CATEGORY_LANES
 
 # When the work was last written: its latest verified effect, of any origin
 # and destination, covers included. Admission keeps a case on a recent write
@@ -89,16 +91,28 @@ _SHADOW_ABSTENTION_SQL = (
     "outcome.review_case_id=rc.review_case_id AND "
     "outcome.destination=result.destination AND outcome.disposition='abstention')"
 )
+# The one stored safety row, read as (paused, global, category document).
+_AUTOMATIC_SAFETY_ROW_SQL = (
+    "SELECT paused,global_suspension,category_suspensions_document "
+    "FROM automatic_safety_state WHERE singleton=1"
+)
+# Automatic is held for field fact `outcome` by safety row `safety`: the
+# negation of `AutomaticSafetyState.permits` over the field's lane.
+_AUTOMATIC_SAFETY_BLOCKED_SQL = (
+    "safety.paused=1 OR safety.global_suspension IS NOT NULL OR EXISTS("
+    "SELECT 1 FROM json_each(safety.category_suspensions_document) category "
+    "WHERE json_extract(category.value,'$[0]')=CASE "
+    + "".join(
+        f"WHEN outcome.policy_category='{category}' THEN '{lane}' "
+        for category, lane in SAFETY_CATEGORY_LANES.items()
+    )
+    + "ELSE outcome.policy_category END)"
+)
 _AUTOMATIC_SAFETY_ATTENTION_SQL = (
     "EXISTS (SELECT 1 FROM shadow_outcome_field_facts outcome,automatic_safety_state safety "
     "WHERE outcome.review_case_id=rc.review_case_id "
     "AND outcome.destination=result.destination "
-    "AND outcome.automatic_destination=1 AND ("
-    "safety.paused=1 OR safety.global_suspension IS NOT NULL OR EXISTS("
-    "SELECT 1 FROM json_each(safety.category_suspensions_document) category "
-    "WHERE json_extract(category.value,'$[0]')=CASE WHEN "
-    "outcome.policy_category='title' "
-    "THEN 'title_layout' ELSE outcome.policy_category END)))"
+    "AND outcome.automatic_destination=1 AND (" + _AUTOMATIC_SAFETY_BLOCKED_SQL + "))"
 )
 # A case has at most one current cover pointer. The authority admits a cover
 # field when it has none, or when the pointed consideration agrees with the
@@ -556,6 +570,8 @@ __all__ = [
     "_NOT_MATCHED_REASON_SQL",
     "_STORED_COVER_ATTENTION_AUTHORITY_SQL",
     "_AUTOMATIC_SAFETY_ATTENTION_SQL",
+    "_AUTOMATIC_SAFETY_BLOCKED_SQL",
+    "_AUTOMATIC_SAFETY_ROW_SQL",
     "_CURRENT_COVER_ATTENTION_AUTHORITY_SQL",
     "_CURRENT_LIBRARY_FROM_SQL",
     "_CURRENT_REVIEW_CASE_COUNT_SQL",

@@ -71,7 +71,10 @@ from mechanical_librarian.application.cover_consideration import (
     cover_consideration_currentness_document,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
+from mechanical_librarian.domain.automatic_decision import (
+    AUTOMATIC_POSTURE,
+    AutomaticDecisionError,
+)
 from mechanical_librarian.domain.cover_automatic_decision import (
     SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
 )
@@ -1271,7 +1274,7 @@ _FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL = (
 # posture.
 _AUTOMATIC_POSTURE_SQL = (
     "EXISTS (SELECT 1 FROM metadata_policy_state "
-    "WHERE singleton=1 AND posture='automatic')"
+    "WHERE singleton=1 AND posture='" + AUTOMATIC_POSTURE + "')"
 )
 
 
