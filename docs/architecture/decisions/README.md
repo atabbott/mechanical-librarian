@@ -24,7 +24,7 @@ status line that says who accepted it and when.
 | [0010](0010-0-4-neutral-evidence-baseline.md) | accepted | Set the clean-state neutral evidence baseline |
 | [0011](0011-isolated-epub-inspector.md) | accepted | Keep EPUB inspection private to an isolated child |
 | [0012](0012-metadata-report-activation.md) | accepted; schema policy superseded by 0013 | Activate the two-table metadata-report runtime |
-| [0013](0013-pre-release-clean-schema.md) | accepted | Require clean schemas until the first production release |
+| [0013](0013-pre-release-clean-schema.md) | accepted; superseded from the C-minus cutover by 0108 (proposed) | Require clean schemas until the first production release |
 | [0014](0014-review-case-admission.md) | accepted; amended by 0105 (proposed) | Admit immutable review cases atomically |
 | [0015](0015-isolated-shadow-reviewer.md) | superseded by 0016 | Isolate one qualification-only shadow reviewer |
 | [0016](0016-freeze-explainable-shadow-reviewer.md) | partly superseded by 0019 and 0026 | Freeze explainable publication-date shadow review |
@@ -95,7 +95,7 @@ status line that says who accepted it and when.
 | [0082](0082-runtime-activity-facts.md) | accepted | Reuse Activity facts with exact source witnesses |
 | [0083](0083-validated-browse-document-reuse.md) | accepted | Reuse validated browse documents by exact bytes |
 | [0084](0084-persisted-attention-facts.md) | accepted | Persist which fields need the owner |
-| [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted; Amendments 1 to 5 proposed; amended by 0105 (proposed) | Admit owner-entered values, withdrawal and reselection |
+| [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted; Amendments 1 to 6 proposed; amended by 0105 and 0108 (proposed) | Admit owner-entered values, withdrawal and reselection |
 | [0086](0086-deployment-held-setup-claim-token.md) | accepted | Require a deployment-held claim token for the first owner |
 | [0087](0087-operation-bound-qualification-authority.md) | accepted | Bind qualification authority to permitted operations |
 | [0088](0088-carried-recording-admission.md) | accepted; amended by 0104 (proposed) | Carry an admitted audiobook edition into the next preparation |
@@ -106,7 +106,7 @@ status line that says who accepted it and when.
 | [0093](0093-measured-cover-rules-and-current-cover-protection.md) | accepted | Choose covers by measured rules, protect fault-free current covers, and keep replaced covers for revert |
 | [0094](0094-unconfirmed-current-covers-take-part.md) | accepted | Let an unconfirmed current cover take part in cover election |
 | [0095](0095-learned-cover-taste-profile.md) | proposed | Learn the owner's cover taste as a readable profile and let a closed judge verdict choose covers |
-| [0096](0096-owner-chosen-work-identity-strictness.md) | accepted | Let the owner choose how strictly title and creator agreement establishes work identity |
+| [0096](0096-owner-chosen-work-identity-strictness.md) | accepted; amended by 0108 (proposed) | Let the owner choose how strictly title and creator agreement establishes work identity |
 | [0097](0097-keep-the-bibliographic-combination-gate.md) | accepted | Keep the bibliographic combination gate and extend the would-admit note to rich-preview fields |
 | [0098](0098-revised-cover-observation-vocabulary.md) | proposed | Revise the cover observation vocabulary and keep observations advisory |
 | [0099](0099-qualify-automatic-description-advice.md) | proposed | Qualify automatic description advice on the owner's decisions before it writes without asking |
@@ -118,3 +118,4 @@ status line that says who accepted it and when.
 | [0105](0105-going-back-after-a-write.md) | proposed; amended by 0107 (proposed) | Go back after a write: clear a field, enter names, and keep a written work's case for 30 days |
 | [0106](0106-show-description-formatting.md) | proposed; amended by 0107 (proposed) | Show a description's formatting from a closed set of tags |
 | [0107](0107-write-description-formatting.md) | proposed | Write a description's formatting from a closed set of tags |
+| [0108](0108-ledger-and-derived-state.md) | proposed | Keep owner state in a ledger, regenerate derived state offline, and keep one record of the owner's answer per field |

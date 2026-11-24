@@ -518,6 +518,15 @@ stale if the field changed. Any decision but a withdrawal holds its field
 it, after its scan succeeds and if no later decision replaced it
 ([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
 
+Planned, not built ([ADR-0108](decisions/0108-ledger-and-derived-state.md),
+proposed): one ledger record of the owner's latest answer per field, covers
+included, replaces the hold, and the server may carry an answer to a later
+case or episode of the same book that asks exactly the same question, within
+a release or after a regeneration. The carried row names its original and
+grants exactly what it granted, under current consent and every write guard.
+It will be the one owner decision not made by an owner request, and the one
+exception to preparation creating no owner decision.
+
 Owner-entered text is refused, never rewritten, unless it is 1 to 512 code
 points of NFC text with no control, path, credential or URI. No automatic path
 reads an owner-entered value. Rollback and undo are unavailable; only a
@@ -714,6 +723,13 @@ None of these has target-write, media-write or startup authority.
 - The qualification-state bridge (`scripts/qualification_state_bridge.py`)
   is test-state tooling with no credential, network or provider authority,
   and never writes its source.
+- Planned ([ADR-0108](decisions/0108-ledger-and-derived-state.md)): the
+  owner-run offline `regenerate-derived` command will be the one tool that
+  writes the canonical database. It runs on a stopped volume under the
+  binding's lock, never contacts Audiobookshelf or a provider, verifies and
+  keeps a backup before its one transaction, and drops only derived state.
+  Its report names items by item id and library, never a title, path, value
+  or credential.
 - [Reviewer cost measurement](../development/reviewer-cost-measurement.md)
   is read-only by default; paid runs need explicit confirmation and a
   monitored budget, which an in-flight request may overshoot.
