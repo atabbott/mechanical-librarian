@@ -362,6 +362,10 @@ def test_a_case_kept_for_a_changed_pin_is_scanned_without_advice(
     )
     assert _drain(_pipeline(store.repository, changed, 200)) == 1
     assert _work(store) == kept
+    # The request is consumed, so the library no longer waits for it.
+    assert connection.execute(
+        "SELECT COUNT(*) FROM description_preparation_pending"
+    ).fetchone() == (0,)
     store.close()
 
 

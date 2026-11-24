@@ -1628,6 +1628,19 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             ).fetchone()
             is not None
         )
+        if (
+            pointer_matches
+            and pending_description
+            and not self._proposal_actionable(proposal_set_id)
+        ):
+            # A kept case asks no description advice, so nothing else would
+            # consume its request and its library would stay listed as
+            # waiting for description work (ADR-0105).
+            self._connection.execute(
+                "DELETE FROM description_preparation_pending WHERE review_case_id=?",
+                (review_case_id,),
+            )
+            pending_description = False
         stale_cover = (
             cover_policy_reference is not None
             and review_case_id is not None
