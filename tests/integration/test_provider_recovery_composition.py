@@ -394,6 +394,83 @@ def test_a_pipeline_opens_the_response_store_and_closes_it_on_stop() -> None:
             recovery._connection.execute("SELECT 1")
 
 
+@pytest.mark.parametrize(
+    "failure", ("response_store", "repositories", "stale_generation")
+)
+def test_a_pipeline_that_fails_to_compose_closes_both_private_stores(
+    failure: str,
+) -> None:
+    """A failed composition releases the stores it was handed and opened.
+
+    The supervisor's stop closes both on the success path; before this, a
+    failure on the way there left both connections to the garbage collector.
+    """
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        private = root / "private"
+        private.mkdir(mode=0o700)
+        recovery = SQLiteProviderRecoveryStore.open(
+            private / "provider-recovery.sqlite"
+        )
+        if failure == "stale_generation":
+            recovery.observe_failure(
+                connection="google",
+                adapter="google_books",
+                scope="ebooks",
+                generation=2,
+                failure="authentication",
+                now=1,
+            )
+        open_repository(database).close()
+        configuration = _recovery_configuration()
+        composition.CoverArtifactStore(root / "artifacts", create=True)
+        opened: list[object] = []
+        real_open = composition.open_provider_response_store
+
+        def recording(path: Path) -> object:
+            if failure == "response_store":
+                raise RuntimeError("response store refused")
+            store = real_open(path)
+            opened.append(store)
+            return store
+
+        repositories = (
+            patch.object(
+                composition,
+                "_pipeline_repositories",
+                side_effect=RuntimeError("repositories refused"),
+            )
+            if failure == "repositories"
+            else nullcontext()
+        )
+        expected = {
+            "response_store": "response store refused",
+            "repositories": "repositories refused",
+            "stale_generation": "generation is stale",
+        }[failure]
+        with (
+            patch.object(
+                composition, "open_provider_response_store", side_effect=recording
+            ),
+            repositories,
+            pytest.raises(Exception, match=expected),
+        ):
+            composition.create_review_pipeline(
+                configuration,
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+                _reviewer_access(database, configuration),
+                private_root=private,
+                provider_recovery=recovery,
+            )
+        assert len(opened) == (0 if failure == "response_store" else 1)
+        for store in (recovery, *opened):
+            with pytest.raises(sqlite3.ProgrammingError):
+                store._connection.execute("SELECT 1")  # type: ignore[attr-defined]  # reason: both adapters keep their connection private
+
+
 def test_generation_rollback_rejects_before_cutover_delivery() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
