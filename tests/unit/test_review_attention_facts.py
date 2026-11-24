@@ -1362,8 +1362,8 @@ def test_a_changed_pin_on_a_kept_case_asks(tmp_path: Path) -> None:
     store.close()
 
 
-def _transition_reason(store: object) -> str:
-    return store.repository._connection.execute(  # type: ignore[attr-defined]  # reason: an OwnerStore, imported lazily like its siblings.
+def _transition_reason(connection: sqlite3.Connection) -> str:
+    return connection.execute(
         "SELECT transition.reason FROM current_review_case_lineages pointer "
         "JOIN review_case_transitions transition "
         "ON transition.transition_id=pointer.transition_id"
@@ -1386,7 +1386,7 @@ def test_a_changed_pin_keeps_a_case_with_nothing_else_to_decide(
         store.admit(_report("Changed Elsewhere", actionable=False), now=store.clock())
         == "superseded"
     )
-    assert _transition_reason(store) == "actionable"
+    assert _transition_reason(store.repository._connection) == "actionable"
     assert store.repository.review_case_kept(store.case.review_case_id)
     (pin,) = store.repository._connection.execute(
         "SELECT json_extract(document,'$.pin.in_force') FROM "
