@@ -2733,6 +2733,53 @@ def _review_objects() -> tuple[tuple[str, str, str | None], ...]:
     )
 
 
+# The ledger partition (ADR-0108): owner authority and its audit, safety
+# budgets and paid capped artefacts. Every other table and view is derived and
+# recomputed from the library, its providers and the ledger. A ledger row never
+# references a derived row; tests/unit/test_ledger_partition_schema.py pins the
+# derived list and both directions. Until the #2038 splits land, the owner
+# cover and description tables and the manual holds are listed whole.
+LEDGER_TABLES = frozenset(
+    {
+        "automatic_safety_state",
+        "cover_selection_authorities",
+        "cover_taste_builds",
+        "cover_taste_profile_versions",
+        "current_cover_selection_authorities",
+        "description_decisions",
+        "field_effect_actions",
+        "field_effect_authorities",
+        "field_effect_cleanups",
+        "field_effect_consents",
+        "field_effect_control",
+        "field_effect_events",
+        "field_effect_manual_holds",
+        "field_effect_no_changes",
+        "field_effect_suspensions",
+        "field_effects",
+        "human_decision_events",
+        "human_decisions",
+        "identifier_import_events",
+        "identifier_imports",
+        "metadata_policy_drafts",
+        "metadata_policy_resolutions",
+        "metadata_policy_state",
+        "metadata_policy_transitions",
+        "owner_links",
+        "owner_setting_secrets",
+        "owner_settings",
+        "retained_cover_bindings",
+        "retained_cover_listings",
+        "retained_cover_removals",
+        "review_preparation_control",
+        "reviewer_access",
+        "reviewer_access_secrets",
+        "reviewer_task_requests",
+    }
+)
+LEDGER_VIEWS = frozenset({"current_owner_links"})
+
+
 def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
     """Return the one exact-current SQLite object contract."""
     return sorted(
