@@ -102,6 +102,7 @@ from mechanical_librarian.domain.preparation_presentation import (
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
+    ProposalValueError,
     evaluate_report,
     proposal_set_content_address,
 )
@@ -1299,7 +1300,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 interruption = error
             elif isinstance(error, MetadataReportError):
                 raise
-            elif isinstance(error, (sqlite3.Error, ReviewCaseValueError)):
+            elif isinstance(
+                error, (sqlite3.Error, ReviewCaseValueError, ProposalValueError)
+            ):
                 raise MetadataReportError(
                     "review preparation discovery failed"
                 ) from error
@@ -1592,7 +1595,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
 
         It stays complete while its current case or answer stands, is projected
         again for a pending description or a cover compared under another
-        policy, and is otherwise admitted again. Returns its stage, state,
+        policy when its ProposalSet has anything actionable (a kept case asks
+        no advice), and is otherwise admitted again. Returns its stage, state,
         outcome and case.
         """
         proposal_set_id, report_id, review_case_id = prepared
