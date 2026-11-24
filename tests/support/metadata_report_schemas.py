@@ -566,9 +566,94 @@ PRE_2038_REVIEW_CONTROL_SQL = _undone(
 )
 
 
+# Nor did it keep the owner's authored descriptions apart from Automatic's:
+# one table held both, and the case's chosen one named it by foreign key.
+_AUTOMATIC_DESCRIPTION_DECISIONS_SQL = persistence_schema._DESCRIPTION_ADVICE_TABLES[
+    "automatic_description_decisions"
+]
+PRE_2038_DESCRIPTION_DECISIONS_SQL = _undone(
+    _AUTOMATIC_DESCRIPTION_DECISIONS_SQL,
+    (
+        "CREATE TABLE automatic_description_decisions (decision_id TEXT PRIMARY KEY "
+        "NOT NULL CHECK(decision_id GLOB 'automatic_decision_[0-9a-f]*' AND "
+        "length(decision_id)=83), ",
+        "CREATE TABLE description_decisions (decision_id TEXT PRIMARY KEY NOT NULL, ",
+    ),
+)
+PRE_2038_CURRENT_DESCRIPTION_DECISIONS_SQL = _undone(
+    persistence_schema._DESCRIPTION_ADVICE_TABLES["current_description_decisions"],
+    (
+        "decision_id TEXT NOT NULL)",
+        "decision_id TEXT NOT NULL REFERENCES description_decisions(decision_id))",
+    ),
+)
+
+
+def _renamed(current: str, now: str, then: str) -> str:
+    """An object of the one table, named and placed on it as before."""
+    assert current.count(now) == 2, now
+    return current.replace(now, then)
+
+
+PRE_2038_DESCRIPTION_DECISION_TRIGGERS = tuple(
+    _renamed(
+        persistence_schema._DESCRIPTION_ADVICE_TRIGGERS[
+            f"automatic_description_decisions_no_{operation}"
+        ],
+        "automatic_description_decisions",
+        "description_decisions",
+    )
+    for operation in ("update", "delete")
+)
+PRE_2038_DESCRIPTION_DECISIONS_CASE_INDEX_SQL = _renamed(
+    persistence_schema._DESCRIPTION_DECISION_INDEXES[
+        "automatic_description_decisions_case"
+    ],
+    "automatic_description_decisions",
+    "description_decisions",
+)
+
+
+def _undo_description_split(connection: sqlite3.Connection) -> None:
+    """One description decisions table again, keeping every row and every
+    trigger a predecessor kept on the case's chosen one."""
+    kept = [
+        sql
+        for (sql,) in connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type='trigger' "
+            "AND tbl_name='current_description_decisions' "
+            "AND name NOT LIKE 'current_description_decisions_validate_%' ORDER BY rowid"
+        )
+    ]
+    connection.executescript(
+        "CREATE TEMP TABLE pre_2038_description AS SELECT decision_id,review_case_id,"
+        "candidate_id,idempotency_digest,document FROM owner_authored_descriptions "
+        "UNION ALL SELECT decision_id,review_case_id,candidate_id,idempotency_digest,"
+        "document FROM automatic_description_decisions;"
+        "CREATE TEMP TABLE pre_2038_current_description AS "
+        "SELECT * FROM current_description_decisions;"
+        "DROP TABLE current_description_decisions;"
+        "DROP TABLE owner_authored_descriptions;"
+        "DROP TABLE automatic_description_decisions;"
+        + PRE_2038_DESCRIPTION_DECISIONS_SQL
+        + ";"
+        + PRE_2038_CURRENT_DESCRIPTION_DECISIONS_SQL
+        + ";INSERT INTO description_decisions SELECT * FROM pre_2038_description;"
+        "INSERT INTO current_description_decisions "
+        "SELECT * FROM pre_2038_current_description;"
+        + "".join(sql + ";" for sql in PRE_2038_DESCRIPTION_DECISION_TRIGGERS)
+        + PRE_2038_DESCRIPTION_DECISIONS_CASE_INDEX_SQL
+        + ";"
+        + "".join(sql + ";" for sql in kept)
+        + "DROP TABLE temp.pre_2038_description;"
+        "DROP TABLE temp.pre_2038_current_description;"
+    )
+
+
 def undo_2038_tables(connection: sqlite3.Connection) -> None:
-    """Merge the two preparation control rows back into the one row every
-    producer before #2038 kept, keeping their values."""
+    """Undo #2038's table splits as every producer before it kept them:
+    the two preparation control rows merged back into one row, and the
+    description decisions back in one table, keeping their values."""
     connection.executescript(
         "CREATE TEMP TABLE pre_2038_control AS SELECT 1 AS singleton,"
         "owner.paused,scheduling.claim_sequence,owner.first_boot_acknowledged,"
@@ -582,6 +667,7 @@ def undo_2038_tables(connection: sqlite3.Connection) -> None:
         + ";INSERT INTO review_preparation_control SELECT * FROM pre_2038_control;"
         "DROP TABLE temp.pre_2038_control;"
     )
+    _undo_description_split(connection)
 
 
 # Every producer before #1285 admitted only the three original human outcomes.

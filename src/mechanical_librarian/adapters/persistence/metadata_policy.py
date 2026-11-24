@@ -220,9 +220,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 # whatever the policy's destinations, so it always counts.
                 terms = [
                     "SELECT 1 FROM current_description_decisions current "
-                    "JOIN description_decisions decision ON decision.decision_id=current.decision_id "
-                    "WHERE CASE WHEN json_valid(decision.document) "
-                    "THEN json_extract(decision.document,'$.origin') END='automatic_policy'"
+                    "JOIN automatic_description_decisions decision ON decision.decision_id=current.decision_id"
                 ]
                 if any(
                     value == "automatic" for _, value in active_profile.destinations

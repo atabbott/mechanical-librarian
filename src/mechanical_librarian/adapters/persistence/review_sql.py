@@ -13,6 +13,23 @@ from __future__ import annotations
 
 from mechanical_librarian.domain.automatic_decision import SAFETY_CATEGORY_LANES
 
+# The owner's authored descriptions are ledger and Automatic's derived
+# (ADR-0108). A statement that reads a description decision of either origin
+# names `{table}` and runs once per half, joined by UNION ALL; each half is
+# keyed and indexed alike, so each arm keeps its own index.
+_AUTHORED_DESCRIPTION_TABLES = (
+    "owner_authored_descriptions",
+    "automatic_description_decisions",
+)
+
+
+def _authored_description_sql(select: str) -> str:
+    """`select`, naming `{table}`, over both halves of the description decisions."""
+    return " UNION ALL ".join(
+        select.replace("{table}", table) for table in _AUTHORED_DESCRIPTION_TABLES
+    )
+
+
 # The display title Activity reads for a report, the first target field's
 # value, copied onto the ledger rows that name the report (ADR-0108). Each
 # binds the report or the case whose report it is.
@@ -35,8 +52,9 @@ _PLAN_REPORT_JOIN_SQL = (
     "\n         LEFT JOIN cover_selection_authorities cover_selection ON cover_selection.decision_id=effect.decision_id AND cover_selection.kind='automatic'"
     "\n         LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id"
     "\n         LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id"
-    "\n         LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id"
-    "\n         LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id"
+    "\n         LEFT JOIN owner_authored_descriptions owner_description ON owner_description.decision_id=effect.decision_id"
+    "\n         LEFT JOIN automatic_description_decisions automatic_description ON automatic_description.decision_id=effect.decision_id"
+    "\n         LEFT JOIN review_cases description_review ON description_review.review_case_id=COALESCE(owner_description.review_case_id,automatic_description.review_case_id)"
     "\n         LEFT JOIN metadata_reports report ON report.report_id=COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id)"
 )
 # The title Activity shows for a plan's rows, binding its decision id.

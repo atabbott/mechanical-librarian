@@ -57,6 +57,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _SHADOW_OUTCOME_HISTORY_SQL,
     _WORK_LATEST_MANUAL_HOLDS_SQL,
     _active_generation_automatic_sql,
+    _authored_description_sql,
     _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -172,10 +173,15 @@ def _field_effect_authorities_sql(case: str, destination: str) -> str:
         + _episode_decision_sql("waiting_human")
         + " UNION ALL SELECT waiting_automatic.decision_id FROM automatic_decisions "
         f"waiting_automatic WHERE waiting_automatic.review_case_id={case} "
-        f"AND waiting_automatic.destination={destination} "
-        "UNION ALL SELECT waiting_authored.decision_id FROM description_decisions "
-        f"waiting_authored WHERE waiting_authored.review_case_id={case} "
-        f"AND {destination}='description'"
+        f"AND waiting_automatic.destination={destination} UNION ALL "
+        + _authored_description_sql(
+            "SELECT waiting_authored.decision_id FROM {table} waiting_authored "
+            "WHERE waiting_authored.review_case_id="
+            + case
+            + " AND "
+            + destination
+            + "='description'"
+        )
     )
 
 
@@ -301,10 +307,9 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
         # The owner's own choice of the advised description is recorded
         # apart from the field's answers, and a pin would replace it.
         + f" OR ({destination}='description' AND EXISTS (SELECT 1 FROM "
-        "current_description_decisions chosen_advice JOIN description_decisions "
+        "current_description_decisions chosen_advice JOIN owner_authored_descriptions "
         "advice ON advice.decision_id=chosen_advice.decision_id "
-        f"WHERE chosen_advice.review_case_id={case} "
-        "AND json_extract(advice.document,'$.origin')='human'))) END)"
+        f"WHERE chosen_advice.review_case_id={case}))) END)"
     )
 
 
@@ -724,8 +729,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 _automatic_decision_documents(self._connection, review_case_id)
             )
             for row in self._connection.execute(
-                "SELECT d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id WHERE p.review_case_id=?",
-                (review_case_id,),
+                _authored_description_sql(
+                    "SELECT d.document FROM current_description_decisions p JOIN {table} d ON d.decision_id=p.decision_id WHERE p.review_case_id=?"
+                ),
+                (review_case_id, review_case_id),
             ):
                 authored = AuthoredDescriptionDecision.from_json(row[0])
                 if (
@@ -2025,8 +2032,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
             candidate_document,
             selected_current,
         ) in self._connection.execute(
-            "SELECT d.document,c.document,EXISTS(SELECT 1 FROM current_description_decisions current WHERE current.decision_id=d.decision_id) FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.review_case_id=? ORDER BY json_extract(d.document,'$.occurred_at') DESC,d.decision_id DESC LIMIT ?",
-            (review_case_id, limit),
+            "SELECT document,candidate_document,selected_current FROM ("
+            + _authored_description_sql(
+                "SELECT d.decision_id,d.document,c.document candidate_document,EXISTS(SELECT 1 FROM current_description_decisions current WHERE current.decision_id=d.decision_id) selected_current FROM {table} d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.review_case_id=?"
+            )
+            + ") ORDER BY json_extract(document,'$.occurred_at') DESC,decision_id DESC LIMIT ?",
+            (review_case_id, review_case_id, limit),
         ):
             authored = AuthoredDescriptionDecision.from_json(document)
             candidate = DescriptionAdviceCandidate.from_json(candidate_document)
@@ -2055,16 +2066,19 @@ class SQLiteDecisionRepository(ConnectionScoped):
             document,
             candidate_document,
         ) in self._connection.execute(
-            "SELECT event.event_id,event.occurred_at,event.kind,decision.document,candidate.document "
-            "FROM field_effect_events event JOIN field_effects effect ON effect.plan_id=event.plan_id "
-            "JOIN description_decisions decision ON decision.decision_id=effect.decision_id "
-            "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
-            "WHERE decision.review_case_id=? UNION ALL "
-            "SELECT event.event_id,event.occurred_at,'no_change_required',decision.document,candidate.document "
-            "FROM field_effect_no_changes event JOIN description_decisions decision ON decision.decision_id=event.decision_id "
-            "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
-            "WHERE decision.review_case_id=? ORDER BY 2 DESC,1 DESC LIMIT ?",
-            (review_case_id, review_case_id, limit),
+            _authored_description_sql(
+                "SELECT event.event_id,event.occurred_at,event.kind,decision.document,candidate.document "
+                "FROM field_effect_events event JOIN field_effects effect ON effect.plan_id=event.plan_id "
+                "JOIN {table} decision ON decision.decision_id=effect.decision_id "
+                "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
+                "WHERE decision.review_case_id=? UNION ALL "
+                "SELECT event.event_id,event.occurred_at,'no_change_required',decision.document,candidate.document "
+                "FROM field_effect_no_changes event JOIN {table} decision ON decision.decision_id=event.decision_id "
+                "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
+                "WHERE decision.review_case_id=?"
+            )
+            + " ORDER BY 2 DESC,1 DESC LIMIT ?",
+            (review_case_id,) * 4 + (limit,),
         ):
             authored = AuthoredDescriptionDecision.from_json(document)
             candidate = DescriptionAdviceCandidate.from_json(candidate_document)

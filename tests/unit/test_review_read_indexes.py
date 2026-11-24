@@ -551,7 +551,8 @@ def test_indexes_preserve_exact_browse_search_detail_and_history_results() -> No
         connection.execute("DROP INDEX field_effects_ready")
         connection.execute("DROP INDEX field_effects_waiting")
         connection.execute("DROP INDEX field_effects_target")
-        connection.execute("DROP INDEX description_decisions_case")
+        connection.execute("DROP INDEX owner_authored_descriptions_case")
+        connection.execute("DROP INDEX automatic_description_decisions_case")
         connection.execute("DROP INDEX current_review_case_lineages_case")
         connection.execute("DROP INDEX current_review_packages_case")
         connection.commit()
@@ -609,7 +610,8 @@ def test_representative_attention_expectation_counts_only_remaining_owner_action
         "field_effects_ready",
         "field_effects_waiting",
         "field_effects_target",
-        "description_decisions_case",
+        "owner_authored_descriptions_case",
+        "automatic_description_decisions_case",
         "current_review_case_lineages_case",
         "current_review_packages_case",
     ],

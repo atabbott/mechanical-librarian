@@ -1660,14 +1660,33 @@ _DESCRIPTION_ADVICE_TABLES = {
     "description_advice_attempts": "CREATE TABLE description_advice_attempts (attempt_id TEXT PRIMARY KEY NOT NULL, request_identity TEXT NOT NULL CHECK(length(request_identity)=64), binding_document TEXT NOT NULL CHECK(length(CAST(binding_document AS BLOB)) BETWEEN 2 AND 4096), engine TEXT NOT NULL CHECK(engine IN ('codex','openrouter')), model TEXT NOT NULL CHECK(length(model) BETWEEN 1 AND 256), state TEXT NOT NULL CHECK(state IN ('requested','running','succeeded','failed','interrupted')), failure TEXT CHECK(failure IN ('unavailable','invalid_output','interrupted')), created_at INTEGER NOT NULL CHECK(created_at>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=created_at))",
     "description_advice_candidates": "CREATE TABLE description_advice_candidates (candidate_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL REFERENCES description_advice_attempts(attempt_id), request_identity TEXT NOT NULL CHECK(length(request_identity)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 131072))",
     "current_description_advice": "CREATE TABLE current_description_advice (review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), attempt_id TEXT NOT NULL REFERENCES description_advice_attempts(attempt_id), candidate_id TEXT REFERENCES description_advice_candidates(candidate_id), binding_document TEXT NOT NULL CHECK(length(CAST(binding_document AS BLOB)) BETWEEN 2 AND 4096))",
-    "description_decisions": "CREATE TABLE description_decisions (decision_id TEXT PRIMARY KEY NOT NULL, review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), candidate_id TEXT NOT NULL REFERENCES description_advice_candidates(candidate_id), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384))",
-    "current_description_decisions": "CREATE TABLE current_description_decisions (review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), decision_id TEXT NOT NULL REFERENCES description_decisions(decision_id))",
+    # The owner's choices of advised text are ledger (ADR-0108): they keep
+    # the case and candidate ids as plain provenance, their work, and the
+    # chosen candidate verbatim. Automatic's are derived.
+    "owner_authored_descriptions": "CREATE TABLE owner_authored_descriptions (decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), candidate_id TEXT NOT NULL CHECK(candidate_id GLOB 'description_candidate_[0-9a-f]*' AND length(candidate_id)=86), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384), connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, candidate_document TEXT NOT NULL CHECK(length(CAST(candidate_document AS BLOB)) BETWEEN 2 AND 131072))",
+    "automatic_description_decisions": "CREATE TABLE automatic_description_decisions (decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'automatic_decision_[0-9a-f]*' AND length(decision_id)=83), review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), candidate_id TEXT NOT NULL REFERENCES description_advice_candidates(candidate_id), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384))",
+    # The case's chosen advice, from either half; a trigger below requires
+    # the decision in exactly one.
+    "current_description_decisions": "CREATE TABLE current_description_decisions (review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), decision_id TEXT NOT NULL)",
     "description_preparation_pending": "CREATE TABLE description_preparation_pending (review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), retry INTEGER NOT NULL CHECK(retry IN (0,1)), requested_at INTEGER NOT NULL CHECK(requested_at>=0))",
 }
 _DESCRIPTION_ADVICE_TRIGGERS = {
-    f"{table}_no_{operation}": f"CREATE TRIGGER {table}_no_{operation} BEFORE {operation.upper()} ON {table} BEGIN SELECT RAISE(ABORT, 'description history is immutable'); END"
-    for table in ("description_advice_candidates", "description_decisions")
-    for operation in ("update", "delete")
+    **{
+        f"{table}_no_{operation}": f"CREATE TRIGGER {table}_no_{operation} BEFORE {operation.upper()} ON {table} BEGIN SELECT RAISE(ABORT, 'description history is immutable'); END"
+        for table in (
+            "description_advice_candidates",
+            "owner_authored_descriptions",
+            "automatic_description_decisions",
+        )
+        for operation in ("update", "delete")
+    },
+    **{
+        f"current_description_decisions_validate_{operation}": f"CREATE TRIGGER current_description_decisions_validate_{operation} BEFORE {operation.upper()} ON current_description_decisions "
+        "WHEN (SELECT count(*) FROM owner_authored_descriptions WHERE decision_id=NEW.decision_id)"
+        "+(SELECT count(*) FROM automatic_description_decisions WHERE decision_id=NEW.decision_id)<>1 "
+        "BEGIN SELECT RAISE(ABORT, 'current description decision disagrees'); END"
+        for operation in ("insert", "update")
+    },
 }
 # #1372: the taste profile's builds, its append-only versions and the durable
 # per-task, per-UTC-day request count every reviewer ceiling reads.
@@ -1710,11 +1729,13 @@ _COVER_TASTE_TRIGGERS = {
     for operation in ("update", "delete")
 }
 # A corrective keep_current's predecessor and an authored description's both
-# find a case's description decisions; without this the pending statements
-# built an automatic index over field_effects per call (#1204).
-_DESCRIPTION_DECISIONS_CASE_INDEX_SQL = (
-    "CREATE INDEX description_decisions_case ON description_decisions(review_case_id)"
-)
+# find a case's description decisions, in either half; without these the
+# pending statements built an automatic index over field_effects per call
+# (#1204).
+_DESCRIPTION_DECISION_INDEXES = {
+    f"{table}_case": f"CREATE INDEX {table}_case ON {table}(review_case_id)"
+    for table in ("owner_authored_descriptions", "automatic_description_decisions")
+}
 
 
 # #1232: Library, search, the attention lens and Attention read which fields
@@ -2085,7 +2106,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_FIELD_EFFECTS_READY_INDEX_SQL)
     connection.execute(_FIELD_EFFECTS_WAITING_INDEX_SQL)
     connection.execute(_FIELD_EFFECTS_TARGET_INDEX_SQL)
-    connection.execute(_DESCRIPTION_DECISIONS_CASE_INDEX_SQL)
+    for statement in _DESCRIPTION_DECISION_INDEXES.values():
+        connection.execute(statement)
     connection.execute(_FIELD_EFFECT_EVENTS_SQL)
     connection.execute(_FIELD_EFFECT_NO_CHANGES_SQL)
     connection.execute(_FIELD_EFFECT_ACTIONS_SQL)
@@ -2228,12 +2250,9 @@ def _description_advice_objects() -> tuple[tuple[str, str, str | None], ...]:
             ("index", f"sqlite_autoindex_{name}_1", None)
             for name in _DESCRIPTION_ADVICE_TABLES
         ),
-        ("index", "sqlite_autoindex_description_decisions_2", None),
-        (
-            "index",
-            "description_decisions_case",
-            _DESCRIPTION_DECISIONS_CASE_INDEX_SQL,
-        ),
+        ("index", "sqlite_autoindex_owner_authored_descriptions_2", None),
+        ("index", "sqlite_autoindex_automatic_description_decisions_2", None),
+        *_named_objects("index", _DESCRIPTION_DECISION_INDEXES),
         *_named_objects("trigger", _DESCRIPTION_ADVICE_TRIGGERS),
     )
 
@@ -2764,8 +2783,8 @@ def _review_objects() -> tuple[tuple[str, str, str | None], ...]:
 # budgets and paid capped artefacts. Every other table and view is derived and
 # recomputed from the library, its providers and the ledger. A ledger row never
 # references a derived row; tests/unit/test_ledger_partition_schema.py pins the
-# derived list and both directions. Until the #2038 splits land, the owner
-# cover and description tables and the manual holds are listed whole.
+# derived list and both directions. Until the #2038 cover split lands, the
+# cover selection tables are listed whole, and the manual holds until C2b.
 LEDGER_TABLES = frozenset(
     {
         "automatic_safety_state",
@@ -2773,7 +2792,6 @@ LEDGER_TABLES = frozenset(
         "cover_taste_builds",
         "cover_taste_profile_versions",
         "current_cover_selection_authorities",
-        "description_decisions",
         "field_effect_actions",
         "field_effect_authorities",
         "field_effect_cleanups",
@@ -2792,6 +2810,7 @@ LEDGER_TABLES = frozenset(
         "metadata_policy_resolutions",
         "metadata_policy_state",
         "metadata_policy_transitions",
+        "owner_authored_descriptions",
         "owner_links",
         "owner_setting_secrets",
         "owner_settings",

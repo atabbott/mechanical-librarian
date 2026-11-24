@@ -1290,7 +1290,8 @@ def test_authored_description_acknowledgement_retries_only_postcommit_confirmati
         )
         assert not repository._connection.in_transaction
         assert repository._connection.execute(
-            "SELECT count(*) FROM description_decisions"
+            "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+            "+(SELECT count(*) FROM automatic_description_decisions)"
         ).fetchone() == (1,)
         if fail_readback:
             raise RuntimeError("synthetic postcommit readback failure")
@@ -1321,7 +1322,8 @@ def test_authored_description_acknowledgement_retries_only_postcommit_confirmati
         )
         assert reads == 2 and not admission.held
         assert repository._connection.execute(
-            "SELECT count(*) FROM description_decisions"
+            "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+            "+(SELECT count(*) FROM automatic_description_decisions)"
         ).fetchone() == (1,)
     finally:
         application.stop()
@@ -1380,7 +1382,8 @@ def test_authored_description_chosen_after_the_channel_closes_names_no_position(
         confirmation = chosen["confirmation"]
         assert type(confirmation) is dict and confirmation["status"] == "confirmed"
         assert repository._connection.execute(
-            "SELECT count(*) FROM description_decisions"
+            "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+            "+(SELECT count(*) FROM automatic_description_decisions)"
         ).fetchone() == (1,)
     finally:
         application.stop()

@@ -31,7 +31,8 @@ _TABLES = (
     "field_effect_no_changes",
     "metadata_policy_drafts",
     "description_advice_candidates",
-    "description_decisions",
+    "owner_authored_descriptions",
+    "automatic_description_decisions",
     "field_effects",
     "description_advice_attempts",
     "metadata_policy_transitions",
@@ -301,7 +302,8 @@ def _bindings(
         "cover_considerations",
         "cover_consideration_events",
         "field_effect_no_changes",
-        "description_decisions",
+        "owner_authored_descriptions",
+        "automatic_description_decisions",
     }:
         dependency("review_cases", row.get("review_case_id"))
     if table == "shadow_decision_outcomes":
@@ -408,7 +410,8 @@ def _bindings(
             "human_identity",
             "automatic_decisions",
             "cover_identity",
-            "description_decisions",
+            "owner_authored_descriptions",
+            "automatic_description_decisions",
         ):
             dependency(name, row["decision_id"])
         candidate("field_effect", row["plan_id"])
@@ -423,7 +426,7 @@ def _bindings(
         candidate("description_preparation", row["attempt_id"])
     elif table == "description_advice_candidates":
         aliases.add(_key("candidate_attempt", row["attempt_id"]))
-    elif table == "description_decisions":
+    elif table in {"owner_authored_descriptions", "automatic_description_decisions"}:
         dependency("description_advice_candidates", row["candidate_id"])
         candidate("description_decision", row["decision_id"])
     elif table == "metadata_policy_transitions":

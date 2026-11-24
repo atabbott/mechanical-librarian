@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from typing import Any
+from typing import Any, cast
 
 from mechanical_librarian.adapters.persistence import field_effect_activity
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
+from mechanical_librarian.domain.description_advice import DescriptionAdviceCandidate
 from mechanical_librarian.domain.review_case import ReviewCase
 
 
@@ -32,7 +33,8 @@ def _origin(repository: SQLiteMetadataReportRepository, decision_id: str) -> str
         ("human_decisions", "human"),
         ("automatic_decisions", "automatic"),
         ("cover_selection_authorities", "automatic_cover"),
-        ("description_decisions", "description"),
+        ("owner_authored_descriptions", "owner_description"),
+        ("automatic_description_decisions", "automatic_description"),
     ):
         if repository._connection.execute(
             f"SELECT 1 FROM {table} WHERE decision_id=?", (decision_id,)
@@ -75,6 +77,37 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
             (row[0],),
         ).fetchone() == (row[11],)
         checked["activity_no_change_" + row[5]] += 1
+    # Activity: an owner's authored description reads its work from its
+    # case's report and its candidate from the candidate row.
+    owner_descriptions = {
+        row[0]: row[1:]
+        for row in connection.execute(
+            "SELECT decision_id,connection_name,library_name,item_id,candidate_document "
+            "FROM owner_authored_descriptions"
+        )
+    }
+    for row in _arm(repository, field_effect_activity._description_decision_arm):
+        if row[0] in owner_descriptions:
+            assert owner_descriptions[row[0]] == (row[1], row[3], row[8], row[14])
+            checked["activity_owner_description"] += 1
+    # Review history: each authored description shows the candidate it chose.
+    for decision_id, (*_, candidate_document) in owner_descriptions.items():
+        (case_id,) = connection.execute(
+            "SELECT review_case_id FROM owner_authored_descriptions WHERE decision_id=?",
+            (decision_id,),
+        ).fetchone()
+        (selected,) = (
+            entry
+            for entry in repository.get_review_case_history(case_id, 100)
+            if entry.get("kind") == "description_selected"
+            and cast("dict[str, object]", entry["decision"])["decision_id"]
+            == decision_id
+        )
+        assert (
+            selected["candidate"]
+            == DescriptionAdviceCandidate.from_json(candidate_document).model_dump()
+        )
+        checked["history_owner_description"] += 1
     # Review history: every decision, with an event or not, reads its case's
     # target field; an accepted description shows the copy its offer chose.
     histories: dict[str, dict[str, dict[str, object]]] = {}

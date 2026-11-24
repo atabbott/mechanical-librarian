@@ -199,14 +199,18 @@ def test_real_service_candidate_admits_through_persisted_authority(
         )
         assert authority.resolve(next_decision).pre_value == snapshot.pre_value
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone() == (1,)
     assert repository._connection.execute(
         "SELECT count(*) FROM current_description_decisions"
     ).fetchone() == (0,)
     # The authored write's copy is the title Activity shows for it now
     # (ADR-0108).
-    assert assert_ledger_copies(repository)["activity_field_effect_description"] > 0
+    assert (
+        assert_ledger_copies(repository)["activity_field_effect_automatic_description"]
+        > 0
+    )
 
     repository.close()
     reopened = open_repository(tmp_path / "reports.sqlite", create=False)
@@ -226,7 +230,8 @@ def test_parked_advice_preserves_deterministic_authority(
         store.admit(candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11)
     assert PersistedFieldEffectAuthority(repository).resolve(deterministic)
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone() == (0,)
     repository.close()
 
@@ -262,7 +267,8 @@ def test_mismatched_candidate_contract_cannot_gain_authority(
     with pytest.raises(ValueError, match="candidate request mismatch"):
         store.admit(altered.candidate_id, binding, "human", "a" * 64, 15)
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone() == (0,)
     repository.close()
 
@@ -301,7 +307,8 @@ def test_automatic_admission_refuses_rewrite_below_description_floor(
     with pytest.raises(ValueError, match="description automatic admission unavailable"):
         store.admit(candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11)
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone() == (0,)
     advice = store.read(binding.review_case_id)
     assert advice["candidate"]["candidate_id"] == candidate.candidate_id
@@ -348,7 +355,8 @@ def test_advice_the_reader_refuses_cannot_be_chosen(
     with pytest.raises(ValueError, match="description advice unreadable"):
         store.admit(candidate.candidate_id, binding, "human", "b" * 64, 12)
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone() == (0,)
     repository.close()
 
@@ -481,7 +489,8 @@ def test_owner_can_choose_advice_on_a_description_every_source_repeats(
         is not None
     )
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone() == (1,)
     description = next(
         field
@@ -917,7 +926,8 @@ def test_invalid_adviser_output_is_bounded_failed_history_without_retry(
         "SELECT count(*) FROM description_advice_candidates"
     ).fetchone() == (0,)
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone() == (0,)
     assert "private raw failure canary" not in str(store.read(binding.review_case_id))
     repository.close()
@@ -992,7 +1002,8 @@ def test_owner_decision_during_transport_wins_without_holding_sqlite_write_lock(
     with pytest.raises(ValueError):
         store.admit(candidate.candidate_id, binding, "automatic_policy", "e" * 64, 11)
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone() == (0,)
     assert repository._connection.execute(
         "SELECT count(*) FROM human_decisions"
@@ -1599,7 +1610,8 @@ def test_parked_and_failed_preparation_are_authored_activity_without_authority(
         else "prepared for review" in event["change"]
     )
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone() == (0,)
     repository.close()
 
@@ -1678,7 +1690,8 @@ def test_verified_deterministic_fill_retires_advice_before_successor_scan(
         "SELECT count(*) FROM description_advice_attempts"
     ).fetchone() == (1,)
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone() == (0,)
     reopened = open_repository(
         tmp_path / "reports.sqlite", create=False, authority=repository.authority
@@ -2732,7 +2745,8 @@ def test_attempt_transition_drift_never_publishes_or_admits_stale_request(
         "SELECT count(*) FROM description_advice_candidates"
     ).fetchone() == (1 + int(dispatched),)
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone() == (0,)
     with pytest.raises(ValueError):
         store.admit(candidate.candidate_id, binding, "human", "f" * 64, 31)
@@ -3148,11 +3162,14 @@ def test_configured_activity_preserves_candidate_timestamp_exclusion(tmp_path):
         connection = repository._connection
         columns = [
             row[1]
-            for row in connection.execute("PRAGMA table_info(description_decisions)")
+            for row in connection.execute(
+                "PRAGMA table_info(automatic_description_decisions)"
+            )
         ]
         values = list(
             connection.execute(
-                "SELECT * FROM description_decisions WHERE decision_id=?", (identity,)
+                "SELECT * FROM automatic_description_decisions WHERE decision_id=?",
+                (identity,),
             ).fetchone()
         )
         malformed = json.loads(values[columns.index("document")])
@@ -3160,7 +3177,7 @@ def test_configured_activity_preserves_candidate_timestamp_exclusion(tmp_path):
         values[columns.index("document")] = json.dumps(malformed)
         cookie = connection.execute("PRAGMA schema_version").fetchone()
         connection.execute(
-            "INSERT OR REPLACE INTO description_decisions VALUES("
+            "INSERT OR REPLACE INTO automatic_description_decisions VALUES("
             + ",".join("?" for _ in values)
             + ")",
             values,
@@ -3483,10 +3500,9 @@ def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
         return connection.execute(
             "SELECT d.decision_id,"
             "json_extract(d.document,'$.binding.policy_generation'),"
-            "current.decision_id IS NOT NULL FROM description_decisions d "
+            "current.decision_id IS NOT NULL FROM automatic_description_decisions d "
             "LEFT JOIN current_description_decisions current "
             "ON current.decision_id=d.decision_id "
-            "WHERE json_extract(d.document,'$.origin')='automatic_policy' "
             "ORDER BY d.rowid"
         ).fetchall()
 

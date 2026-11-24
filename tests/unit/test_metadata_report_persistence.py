@@ -636,6 +636,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
         connection.close()
         assert tables == [
             ("automatic_decisions",),
+            ("automatic_description_decisions",),
             ("automatic_safety_state",),
             ("browse_fact_identity",),
             ("cover_automatic_held",),
@@ -656,7 +657,6 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("current_review_packages",),
             ("description_advice_attempts",),
             ("description_advice_candidates",),
-            ("description_decisions",),
             ("description_preparation_pending",),
             ("field_effect_actions",),
             ("field_effect_authorities",),
@@ -685,6 +685,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("metadata_report_cover_references",),
             ("metadata_report_value_flags",),
             ("metadata_reports",),
+            ("owner_authored_descriptions",),
             ("owner_links",),
             ("owner_setting_secrets",),
             ("owner_settings",),

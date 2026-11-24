@@ -374,7 +374,10 @@ def _case_decisions(connection: sqlite3.Connection) -> list[_Decision]:
         latest[case_id] = _Decision(case_id, occurred_at, outcome, None)
     for case_id, document in connection.execute(
         "SELECT current.review_case_id,decision.document "
-        "FROM current_description_decisions current JOIN description_decisions "
+        "FROM current_description_decisions current JOIN owner_authored_descriptions "
+        "decision ON decision.decision_id=current.decision_id UNION ALL "
+        "SELECT current.review_case_id,decision.document "
+        "FROM current_description_decisions current JOIN automatic_description_decisions "
         "decision ON decision.decision_id=current.decision_id"
     ):
         authored = AuthoredDescriptionDecision.from_json(document)

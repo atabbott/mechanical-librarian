@@ -235,7 +235,8 @@ _INDEXES_1204 = (
     "field_effects_ready",
     "field_effects_waiting",
     "field_effects_target",
-    "description_decisions_case",
+    "owner_authored_descriptions_case",
+    "automatic_description_decisions_case",
 )
 
 
@@ -1303,24 +1304,35 @@ def test_description_decision_history_breaks_tied_times_by_decision_id(
                     **admitted.model_dump(exclude={"decision_id"}),
                     "idempotency_digest": digit * 64,
                     "occurred_at": 10**9,
+                    "origin": origin,
                 }
             )
-            for digit in "bcdef0"
+            for digit, origin in zip(
+                "bcdef0", ("human", "automatic_policy") * 3, strict=True
+            )
         ),
         key=lambda decision: decision.decision_id,
     )
-    # Six decisions tie on one second, stored in ascending decision-id order.
+    # Six decisions tie on one second, stored in ascending decision-id order,
+    # the owner's and Automatic's in their own halves (#2038).
     for decision in tied:
-        repository._connection.execute(
-            "INSERT INTO description_decisions VALUES(?,?,?,?,?)",
-            (
-                decision.decision_id,
-                binding.review_case_id,
-                candidate.candidate_id,
-                decision.idempotency_digest,
-                decision.to_json(),
-            ),
+        values = (
+            decision.decision_id,
+            binding.review_case_id,
+            candidate.candidate_id,
+            decision.idempotency_digest,
+            decision.to_json(),
         )
+        if decision.origin == "human":
+            repository._connection.execute(
+                "INSERT INTO owner_authored_descriptions VALUES(?,?,?,?,?,?,?,?,?)",
+                (*values, "primary", "ebooks", "item-1", candidate.to_json()),
+            )
+        else:
+            repository._connection.execute(
+                "INSERT INTO automatic_description_decisions VALUES(?,?,?,?,?)",
+                values,
+            )
     repository._connection.commit()
     limited = repository.get_review_case_history(binding.review_case_id, 4)
     assert [
@@ -1483,6 +1495,47 @@ def _before_1205(name: str, statement: str) -> str:
     return statement
 
 
+# #2038 split the description decisions into the owner's ledger half and
+# Automatic's derived half; one table held both, told apart by origin.
+_SPLIT_2038 = (
+    (
+        "'description','human' FROM current_description_decisions p JOIN "
+        "owner_authored_descriptions d ON d.decision_id=p.decision_id UNION ALL "
+        "SELECT d.decision_id,d.review_case_id,'description','automatic' FROM "
+        "current_description_decisions p JOIN automatic_description_decisions d "
+        "ON d.decision_id=p.decision_id WHERE NOT EXISTS (",
+        "'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN "
+        "'human' ELSE 'automatic' END FROM current_description_decisions p JOIN "
+        "description_decisions d ON d.decision_id=p.decision_id WHERE "
+        "(json_extract(d.document,'$.origin')='human' OR (NOT EXISTS (",
+    ),
+    (
+        "FROM current_description_decisions p JOIN owner_authored_descriptions d "
+        "ON d.decision_id=p.decision_id JOIN current_review_case_lineages l "
+        "ON l.review_case_id=d.review_case_id UNION ALL SELECT d.decision_id,"
+        "json_extract(d.document,'$.occurred_at'),d.document FROM "
+        "current_description_decisions p JOIN automatic_description_decisions d "
+        "ON d.decision_id=p.decision_id JOIN current_review_case_lineages l "
+        "ON l.review_case_id=d.review_case_id WHERE NOT EXISTS (",
+        "FROM current_description_decisions p JOIN description_decisions d "
+        "ON d.decision_id=p.decision_id JOIN current_review_case_lineages l "
+        "ON l.review_case_id=d.review_case_id WHERE "
+        "(json_extract(d.document,'$.origin')='human' OR (NOT EXISTS (",
+    ),
+)
+
+
+def _before_2038(statement: str) -> str:
+    """One description decisions table again, told apart by origin."""
+    (now, then), *_ = (step for step in _SPLIT_2038 if step[0] in statement)
+    assert statement.count(now) == 1
+    closing = _ACTIVE_GENERATION_DESCRIPTION_SQL + ")"
+    assert statement.count(closing) == 1
+    return statement.replace(now, then).replace(
+        closing, _ACTIVE_GENERATION_DESCRIPTION_SQL + ")))"
+    )
+
+
 def _before_1568(statement: str) -> str:
     """Remove the Automatic-posture test #1568 added to each automatic arm."""
     held = "hold.active=1) AND " + _AUTOMATIC_POSTURE_SQL + "))"
@@ -1564,7 +1617,9 @@ def test_lineage_membership_restores_the_1204_text(
         name: hashlib.sha256(
             _before_1523(
                 _before_frozen_follows(
-                    _before_1568(_before_1573(_before_1205(name, statement)))
+                    _before_1568(
+                        _before_1573(_before_1205(name, _before_2038(statement)))
+                    )
                 )
             )
             .replace(_HUMAN_PLANS, "human.outcome='accept'", 1)

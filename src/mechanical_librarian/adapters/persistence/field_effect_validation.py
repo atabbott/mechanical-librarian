@@ -16,6 +16,9 @@ from typing import Final, cast
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
     expand_cover_consideration,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _authored_description_sql,
+)
 from mechanical_librarian.adapters.providers.visible_text import read_description
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.audiobook_corroboration import (
@@ -974,8 +977,10 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             if row[9] != record.origin or row[11] != record.event_id:
                 raise FieldEffectError("persistence")
             authored_row = connection.execute(
-                "SELECT d.document,c.document,r.document FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id JOIN metadata_reports r ON r.report_id=? WHERE d.decision_id=?",
-                (record.report_id, record.decision_id),
+                _authored_description_sql(
+                    "SELECT d.document,c.document,r.document FROM {table} d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id JOIN metadata_reports r ON r.report_id=? WHERE d.decision_id=?"
+                ),
+                (record.report_id, record.decision_id) * 2,
             ).fetchone()
             if authored_row is not None:
                 authored = AuthoredDescriptionDecision.from_json(authored_row[0])

@@ -13,6 +13,7 @@ from typing import Literal
 from mechanical_librarian.adapters.persistence.owner_links import owner_link_bound
 from mechanical_librarian.adapters.persistence.review_sql import (
     _AUTOMATIC_SAFETY_ROW_SQL,
+    _authored_description_sql,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -275,8 +276,10 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         try:
             transaction.begin()
             replay = self._connection.execute(
-                "SELECT document FROM description_decisions WHERE idempotency_digest=?",
-                (idempotency_digest,),
+                _authored_description_sql(
+                    "SELECT document FROM {table} WHERE idempotency_digest=?"
+                ),
+                (idempotency_digest, idempotency_digest),
             ).fetchone()
             if replay is not None:
                 decision = AuthoredDescriptionDecision.from_json(replay[0])
@@ -299,7 +302,8 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 or not self.binding_is_current(expected_binding)
             ):
                 raise ValueError("description advice is stale")
-            candidate = DescriptionAdviceCandidate.from_json(row[0])
+            candidate_document = row[0]
+            candidate = DescriptionAdviceCandidate.from_json(candidate_document)
             if not self._candidate_is_current(candidate, expected_binding):
                 raise ValueError("description candidate request mismatch")
             if advised_description(candidate.output.description) is None:
@@ -316,8 +320,10 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 (case_id, case_id),
             ).fetchone()
             prior = self._connection.execute(
-                "SELECT d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id WHERE p.review_case_id=?",
-                (case_id,),
+                _authored_description_sql(
+                    "SELECT d.document FROM current_description_decisions p JOIN {table} d ON d.decision_id=p.decision_id WHERE p.review_case_id=?"
+                ),
+                (case_id, case_id),
             ).fetchone()
             choosable = self._description_choosable(case_id)
             if origin == "automatic_policy":
@@ -406,16 +412,38 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 if self._revoke is None:
                     raise ValueError("description revocation unavailable")
                 self._revoke(decision_id, now)
-            self._connection.execute(
-                "INSERT INTO description_decisions VALUES(?,?,?,?,?)",
-                (
-                    decision.decision_id,
-                    case_id,
-                    candidate_id,
-                    idempotency_digest,
-                    decision.to_json(),
-                ),
+            row_values = (
+                decision.decision_id,
+                case_id,
+                candidate_id,
+                idempotency_digest,
+                decision.to_json(),
             )
+            if origin == "human":
+                # The owner's choice is ledger: it keeps its work and the
+                # chosen candidate verbatim (ADR-0108).
+                work = self._connection.execute(
+                    "SELECT json_extract(document,'$.target.connection'),"
+                    "json_extract(document,'$.target.library'),"
+                    "json_extract(document,'$.target.item') "
+                    "FROM review_cases WHERE review_case_id=?",
+                    (case_id,),
+                ).fetchone()
+                if work is None:
+                    raise ValueError("description advice is stale")
+                self._connection.execute(
+                    "INSERT INTO owner_authored_descriptions(decision_id,review_case_id,"
+                    "candidate_id,idempotency_digest,document,connection_name,"
+                    "library_name,item_id,candidate_document) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (*row_values, *work, candidate_document),
+                )
+            else:
+                self._connection.execute(
+                    "INSERT INTO automatic_description_decisions(decision_id,"
+                    "review_case_id,candidate_id,idempotency_digest,document) "
+                    "VALUES(?,?,?,?,?)",
+                    row_values,
+                )
             self._connection.execute(
                 "INSERT INTO current_description_decisions VALUES(?,?) ON CONFLICT(review_case_id) DO UPDATE SET decision_id=excluded.decision_id",
                 (case_id, decision.decision_id),
@@ -474,8 +502,10 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         ):
             raise FieldEffectError("authority_binding")
         row = self._connection.execute(
-            "SELECT d.document,c.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE p.review_case_id=? AND p.decision_id=?",
-            (decision.review_case_id, decision.decision_id),
+            _authored_description_sql(
+                "SELECT d.document,c.document FROM current_description_decisions p JOIN {table} d ON d.decision_id=p.decision_id JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE p.review_case_id=? AND p.decision_id=?"
+            ),
+            (decision.review_case_id, decision.decision_id) * 2,
         ).fetchone()
         if row is None or row[0] != decision.to_json():
             raise FieldEffectError("authority_binding")
@@ -833,11 +863,13 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             return None
         binding = DescriptionAdviceBinding.model_validate_json(row[6])
         selected = self._connection.execute(
-            "SELECT d.document,c.document FROM current_description_decisions p "
-            "JOIN description_decisions d ON d.decision_id=p.decision_id "
-            "JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id "
-            "WHERE p.review_case_id=?",
-            (review_case_id,),
+            _authored_description_sql(
+                "SELECT d.document,c.document FROM current_description_decisions p "
+                "JOIN {table} d ON d.decision_id=p.decision_id "
+                "JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id "
+                "WHERE p.review_case_id=?"
+            ),
+            (review_case_id, review_case_id),
         ).fetchone()
         selection = (
             None
@@ -1061,14 +1093,32 @@ def validate_description_history(connection: sqlite3.Connection) -> None:
             or description_document(binding.model_dump()) != binding_document
         ):
             raise ValueError("invalid description binding")
-    for (
+    # The owner's half keeps its work and the chosen candidate; Automatic's
+    # names the candidate row. Each row's origin is its half's (ADR-0108).
+    for origin, (
         decision_id,
         case_id,
         candidate_id,
         idempotency_digest,
         document,
-    ) in connection.execute(
-        "SELECT decision_id,review_case_id,candidate_id,idempotency_digest,document FROM description_decisions"
+        work,
+        candidate_document,
+    ) in (
+        *(
+            ("human", row)
+            for row in connection.execute(
+                "SELECT decision_id,review_case_id,candidate_id,idempotency_digest,document,"
+                "json_array(connection_name,library_name,item_id),candidate_document "
+                "FROM owner_authored_descriptions"
+            )
+        ),
+        *(
+            ("automatic_policy", row)
+            for row in connection.execute(
+                "SELECT decision_id,review_case_id,candidate_id,idempotency_digest,document,"
+                "NULL,NULL FROM automatic_description_decisions"
+            )
+        ),
     ):
         decision = AuthoredDescriptionDecision.from_json(document)
         validate_binding(description_document(decision.binding.model_dump()))
@@ -1077,13 +1127,39 @@ def validate_description_history(connection: sqlite3.Connection) -> None:
             decision.review_case_id,
             decision.candidate_id,
             decision.idempotency_digest,
-        ) != (decision_id, case_id, candidate_id, idempotency_digest):
+            decision.origin,
+        ) != (decision_id, case_id, candidate_id, idempotency_digest, origin):
             raise ValueError("invalid description decision")
+        if origin == "human":
+            # The copies are its own: the candidate is the one it names and
+            # the work its case's. Until #2038 relaxes provenance, the case
+            # and the candidate must be there, as their keys required.
+            copied = DescriptionAdviceCandidate.from_json(candidate_document)
+            target = connection.execute(
+                "SELECT json_array(json_extract(document,'$.target.connection'),"
+                "json_extract(document,'$.target.library'),"
+                "json_extract(document,'$.target.item')) "
+                "FROM review_cases WHERE review_case_id=?",
+                (case_id,),
+            ).fetchone()
+            named = connection.execute(
+                "SELECT document FROM description_advice_candidates WHERE candidate_id=?",
+                (candidate_id,),
+            ).fetchone()
+            if (
+                copied.candidate_id != candidate_id
+                or target != (work,)
+                or named != (candidate_document,)
+            ):
+                raise ValueError("invalid description decision")
 
     if (
         connection.execute(
-            "SELECT 1 FROM current_description_decisions current JOIN description_decisions decision "
-            "ON decision.decision_id=current.decision_id WHERE current.review_case_id<>decision.review_case_id LIMIT 1"
+            _authored_description_sql(
+                "SELECT 1 FROM current_description_decisions current JOIN {table} decision "
+                "ON decision.decision_id=current.decision_id WHERE current.review_case_id<>decision.review_case_id"
+            )
+            + " LIMIT 1"
         ).fetchone()
         is not None
     ):

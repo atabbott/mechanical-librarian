@@ -1798,7 +1798,8 @@ def _server(
                 "SELECT count(*) FROM description_advice_candidates"
             ).fetchone() == (0,)
             assert repository._connection.execute(
-                "SELECT count(*) FROM description_decisions"
+                "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+                "+(SELECT count(*) FROM automatic_description_decisions)"
             ).fetchone() == (0,)
         if candidate is not None and description_fixture.startswith("retry_"):
             selected = store.admit(

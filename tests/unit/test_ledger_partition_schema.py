@@ -22,8 +22,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.review_preparation import (
     request_matching_check,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from tests.support.activity_seed import seed_activity
+from tests.support.description_advice import _prepared
 from tests.support.genre_reports import (
     OFFERED_DESCRIPTION_COPY,
     formatted_description_report,
@@ -35,6 +37,7 @@ from tests.support.owner_values import OwnerStore
 DERIVED_TABLES = frozenset(
     {
         "automatic_decisions",
+        "automatic_description_decisions",
         "browse_fact_identity",
         "cover_automatic_held",
         "cover_consideration_events",
@@ -88,10 +91,6 @@ KNOWN_LEDGER_TO_DERIVED_KEYS = frozenset(
         # #2038 C2a's cover split: owner selections keep the consideration id
         # as plain provenance.
         ("cover_selection_authorities", "consideration_id", "cover_considerations"),
-        # #2038 C2a's description split: owner authored descriptions keep the
-        # case and candidate ids as plain provenance.
-        ("description_decisions", "candidate_id", "description_advice_candidates"),
-        ("description_decisions", "review_case_id", "review_cases"),
         # #2038 C2b deletes the manual holds; the record replaces them.
         ("field_effect_manual_holds", "review_case_id", "review_cases"),
     }
@@ -314,3 +313,55 @@ def test_the_owner_preparation_controls_are_their_own_ledger_row(
         ).fetchall() == [(0, 5)]
     finally:
         repository.close()
+
+
+def test_an_owner_authored_description_is_a_ledger_row_with_its_copies(
+    tmp_path: Path,
+) -> None:
+    """The owner's choice of advised text keeps its work and the chosen
+    candidate verbatim, the copies Activity and history read now, and the
+    case's chosen advice names a decision of exactly one half (#2038)."""
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    try:
+        owner = store.admit(candidate.candidate_id, binding, "human", "b" * 64, 11)
+        connection = repository._connection
+        assert connection.execute(
+            "SELECT decision_id FROM owner_authored_descriptions"
+        ).fetchall() == [(owner.decision_id,)]
+        assert connection.execute(
+            "SELECT count(*) FROM automatic_description_decisions"
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT decision_id FROM current_description_decisions"
+        ).fetchall() == [(owner.decision_id,)]
+        with pytest.raises(sqlite3.IntegrityError, match="description decision"):
+            connection.execute(
+                "UPDATE current_description_decisions SET decision_id=?",
+                ("automatic_decision_" + "0" * 64,),
+            )
+        checked = assert_ledger_copies(repository)
+    finally:
+        repository.close()
+    assert checked["activity_owner_description"] == 1
+    assert checked["history_owner_description"] == 1
+
+
+def test_open_refuses_an_owner_authored_description_whose_copy_disagrees(
+    tmp_path: Path,
+) -> None:
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    store.admit(candidate.candidate_id, binding, "human", "b" * 64, 11)
+    connection = repository._connection
+    (guard,) = connection.execute(
+        "SELECT sql FROM sqlite_schema WHERE name='owner_authored_descriptions_no_update'"
+    ).fetchone()
+    connection.execute("DROP TRIGGER owner_authored_descriptions_no_update")
+    connection.execute(
+        "UPDATE owner_authored_descriptions SET candidate_document=json_set("
+        "candidate_document,'$.model','another-model')"
+    )
+    connection.execute(guard)
+    connection.commit()
+    repository.close()
+    with pytest.raises(MetadataReportError):
+        open_repository(tmp_path / "reports.sqlite", create=False)

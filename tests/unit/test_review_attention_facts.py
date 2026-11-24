@@ -420,7 +420,12 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
             repository, quiet, (("description", "abstention", "ask"),)
         ),
     )
-    authored = f"description_decision_{_hex('authored')}"
+    # The chosen advice names a decision of one half (#2038).
+    authored = f"automatic_decision_{_hex('authored')}"
+    run(
+        "INSERT INTO automatic_description_decisions VALUES(?,?,?,?,?)",
+        (authored, quiet, f"description_candidate_{_hex('authored')}", "a" * 64, "{}"),
+    )
     yield (
         "description authored",
         (("current_description_decisions", "insert"),),

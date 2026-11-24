@@ -333,7 +333,8 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
         "description_advice_attempts",
         "description_advice_candidates",
         "current_description_advice",
-        "description_decisions",
+        "owner_authored_descriptions",
+        "automatic_description_decisions",
         "current_description_decisions",
         "description_preparation_pending",
     ):
