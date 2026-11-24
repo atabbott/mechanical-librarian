@@ -3127,19 +3127,24 @@ _OWNER_ITEM_KEY_DISAGREES_SQL = (
 # A ledger copy that disagrees with the derived row it was copied from while
 # that row is there (ADR-0108). Cases, reports and decisions never change, so
 # each copy equals them for as long as they exist: an owner decision's work,
-# title and target field are its case's; an authored description's title its
-# case's; a plan's and a no-change row's title the report they name; and a
-# transition's settled counts its items'.
-_CASE_TARGET_SQL = "json_extract(review.document,'$.target.{}')"
+# fingerprint, title and target field are its case's; an authored
+# description's title its case's; a plan's and a no-change row's title the
+# report they name; and a transition's size and settled counts its items'.
+# Items or not, an owner decision's event names the decision's case and a
+# transition's state is the one its counts give.
+_CASE_FACT_SQL = "json_extract(review.document,'$.{}')"
 _LEDGER_COPY_DISAGREES_SQL = (
     "SELECT 1 FROM human_decisions decision JOIN review_cases review "
     "ON review.review_case_id=decision.review_case_id "
     "JOIN metadata_reports report ON report.report_id=review.report_id "
     "WHERE (decision.connection_name,decision.library_name,decision.item_id) IS NOT ("
     + ",".join(
-        _CASE_TARGET_SQL.format(key) for key in ("connection", "library", "item")
+        _CASE_FACT_SQL.format("target." + key)
+        for key in ("connection", "library", "item")
     )
-    + ") OR decision.display_title IS NOT "
+    + ") OR decision.target_fingerprint IS NOT "
+    + _CASE_FACT_SQL.format("target_fingerprint")
+    + " OR decision.display_title IS NOT "
     + _REPORT_TITLE_VALUE_SQL
     # The target's field for the destination, the first that names it, as
     # `decision_copies` reads it; json() renders both texts alike.
@@ -3161,10 +3166,18 @@ _LEDGER_COPY_DISAGREES_SQL = (
     + " WHERE report.report_id IS NOT NULL AND effect.display_title IS NOT "
     + _REPORT_TITLE_VALUE_SQL
     + " UNION ALL SELECT 1 FROM metadata_policy_transitions transition "
-    "JOIN (SELECT transition_id,sum(state='complete') AS completed,"
+    "JOIN (SELECT transition_id,count(*) AS total,sum(state='complete') AS completed,"
     "sum(state='failed') AS failed FROM metadata_policy_transition_items "
     "GROUP BY transition_id) item ON item.transition_id=transition.transition_id "
-    "WHERE (transition.completed,transition.failed) IS NOT (item.completed,item.failed)"
+    "WHERE (transition.total,transition.completed,transition.failed) "
+    "IS NOT (item.total,item.completed,item.failed) "
+    "UNION ALL SELECT 1 FROM human_decision_events event JOIN human_decisions "
+    "decision ON decision.decision_id=event.decision_id "
+    "WHERE event.review_case_id IS NOT decision.review_case_id "
+    # As `_refresh_metadata_policy_transition` settles it.
+    "UNION ALL SELECT 1 FROM metadata_policy_transitions WHERE state IS NOT CASE "
+    "WHEN completed+failed<total THEN 'processing' "
+    "WHEN failed>0 THEN 'completed_with_failures' ELSE 'completed' END"
     " LIMIT 1"
 )
 # An owner selection whose copy disagrees with its comparison, or with its

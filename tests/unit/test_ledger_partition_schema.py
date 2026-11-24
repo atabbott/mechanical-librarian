@@ -455,9 +455,33 @@ _CASE_AND_ITEM_COPIES = {
         "target_field_document WHEN 'null' THEN '{}' ELSE 'null' END "
         f"WHERE decision_id={_UNWRITTEN}",
     ),
+    "target_fingerprint": (
+        f"UPDATE human_decisions SET target_fingerprint='{'0' * 64}',"
+        f"document=json_set(document,'$.target_fingerprint','{'0' * 64}') "
+        f"WHERE decision_id={_UNWRITTEN}",
+    ),
+    # Its state stays the one the counts give.
     "transition_counts": (
         "UPDATE metadata_policy_transitions SET completed=completed+1,"
-        "failed=failed-1 WHERE failed>0",
+        "failed=failed-1 WHERE failed>1",
+    ),
+}
+# Edits no store opens with, its derived rows there or not: an owner
+# decision's event names the decision's case, and a transition's state is the
+# one its size and settled counts give.
+_LEDGER_DISAGREEMENTS = {
+    "event_case": (
+        "UPDATE human_decision_events SET review_case_id='review_case_"
+        + "0" * 64
+        + "'",
+    ),
+    "transition_state": (
+        "UPDATE metadata_policy_transitions SET state=CASE state "
+        "WHEN 'processing' THEN 'completed' ELSE 'processing' END",
+    ),
+    "transition_total": (
+        "UPDATE metadata_policy_transitions SET total=total+1 "
+        "WHERE state<>'processing'",
     ),
 }
 
@@ -477,15 +501,44 @@ def activity(tmp_path: Path) -> Path:
 def test_a_ledger_copy_agrees_with_its_derived_row_while_it_is_there(
     activity: Path, copy: str
 ) -> None:
-    """An owner decision's work, title and target field are its case's, and
-    a transition's settled counts its items': cases never change and the
-    counts settle with the items, so while they are there each copy equals
-    them; once a regeneration took them, the copy stands."""
+    """An owner decision's work, fingerprint, title and target field are its
+    case's, and a transition's settled counts its items': cases never change
+    and the counts settle with the items, so while they are there each copy
+    equals them; once a regeneration took them, the copy stands."""
     for sql in _CASE_AND_ITEM_COPIES[copy]:
         rewrite(activity, sql)
     assert not opens(activity)
     regenerate(activity)
     assert opens(activity)
+
+
+@pytest.mark.parametrize("disagreement", sorted(_LEDGER_DISAGREEMENTS))
+def test_an_event_and_a_transition_state_agree_with_the_ledger_always(
+    activity: Path, disagreement: str
+) -> None:
+    for sql in _LEDGER_DISAGREEMENTS[disagreement]:
+        rewrite(activity, sql)
+    assert not opens(activity)
+    regenerate(activity)
+    assert not opens(activity)
+
+
+def _owner_genres(root: Path) -> Path:
+    """A copy of a store whose owner wrote genres and then accepted the
+    written value again: a plan and a no-change row, both the owner's."""
+    root.mkdir(mode=0o700)
+    genres = {"kind": "list", "value": ["Fantasy"]}
+    store = OwnerStore(root, genre_report())
+    try:
+        first = store.decide("accept", genres, destination="genres")
+        store.write(first)
+        assert store.repository.clear_field_effect_manual_hold(
+            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        )
+        store.decide("accept", genres, destination="genres")
+        return copied_store(store.repository, root / "copy")
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize("table", ["field_effects", "field_effect_no_changes"])
@@ -495,18 +548,7 @@ def test_a_plan_and_a_no_change_title_agree_with_their_report(
     """A write plan and a no-change row show the title of the report their
     decision was made over; reports never change, so while it is there the
     copy equals it, and once a regeneration took it the copy stands."""
-    genres = {"kind": "list", "value": ["Fantasy"]}
-    store = OwnerStore(tmp_path, genre_report())
-    try:
-        first = store.decide("accept", genres, destination="genres")
-        store.write(first)
-        assert store.repository.clear_field_effect_manual_hold(
-            store.case.review_case_id, "genres", store.clock(), first.decision_id
-        )
-        store.decide("accept", genres, destination="genres")
-        path = copied_store(store.repository, tmp_path / "changed")
-    finally:
-        store.close()
+    path = _owner_genres(tmp_path / "genres")
     rewrite(path, f"UPDATE {table} SET display_title='Another title'")
     assert not opens(path)
     regenerate(path)
