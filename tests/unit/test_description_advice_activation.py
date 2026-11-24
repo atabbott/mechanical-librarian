@@ -23,6 +23,7 @@ from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceSettings,
 )
+from tests.support.cover_selections import ALL_COVER_POINTERS
 from tests.support.description_advice import (
     _guarded_application,
     _prepared,
@@ -1253,7 +1254,7 @@ def test_leaving_automatic_reconciles_a_store_whose_only_automatic_record_is_a_d
         "SELECT count(*) FROM automatic_decisions"
     ).fetchone() == (0,)
     assert connection.execute(
-        "SELECT count(*) FROM current_cover_selection_authorities"
+        "SELECT count(*) FROM " + ALL_COVER_POINTERS
     ).fetchone() == (0,)
     assert decision.to_json() in repository.pending_field_effect_decision_documents(100)
     policy_id, generation, posture = connection.execute(
@@ -3537,7 +3538,7 @@ def test_confirming_automatic_decides_a_description_again_in_the_new_generation(
     assert (earlier_generation, earlier_current) == (2, True)
     assert field_generations() == fields
     assert connection.execute(
-        "SELECT count(*) FROM current_cover_selection_authorities"
+        "SELECT count(*) FROM " + ALL_COVER_POINTERS
     ).fetchone() == (0,)
     assert [item.decision_id for item in pending_descriptions()] == [earlier]
 

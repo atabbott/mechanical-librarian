@@ -36,6 +36,8 @@ from tests.support.owner_values import OwnerStore
 
 DERIVED_TABLES = frozenset(
     {
+        "automatic_cover_pointers",
+        "automatic_cover_selections",
         "automatic_decisions",
         "automatic_description_decisions",
         "browse_fact_identity",
@@ -88,9 +90,6 @@ DERIVED_VIEWS = frozenset({"review_attention_refresh"})
 # entry is (table, column, referenced table).
 KNOWN_LEDGER_TO_DERIVED_KEYS = frozenset(
     {
-        # #2038 C2a's cover split: owner selections keep the consideration id
-        # as plain provenance.
-        ("cover_selection_authorities", "consideration_id", "cover_considerations"),
         # #2038 C2b deletes the manual holds; the record replaces them.
         ("field_effect_manual_holds", "review_case_id", "review_cases"),
     }
@@ -189,12 +188,12 @@ def test_triggers_writing_derived_state_are_derived_and_ledger_triggers_read_led
             assert _references(_body(sql), names) <= _LEDGER, name
     assert derived_on_ledger == {
         "automatic_safety_state",
-        "current_cover_selection_authorities",
         "field_effect_manual_holds",
         "field_effect_suspensions",
         "human_decisions",
         "metadata_policy_resolutions",
         "metadata_policy_state",
+        "owner_cover_pointers",
     }
 
 

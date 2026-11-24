@@ -92,6 +92,7 @@ from tests.support.audiobook_covers import (
     SYNTHETIC_UNCONFIRMED_RECORD,
 )
 from tests.support.cover_producers import incumbent_identity
+from tests.support.cover_selections import ALL_COVER_POINTERS, ALL_COVER_SELECTIONS
 from tests.support.field_effects import CAPABILITY, Clock
 from tests.unit.test_shadow_outcome_persistence import (
     _pipeline_configuration,
@@ -114,8 +115,8 @@ def _selections(repository: SQLiteMetadataReportRepository) -> list[dict[str, An
     return [
         json.loads(row[0])
         for row in repository._connection.execute(
-            "SELECT selection.document FROM current_cover_selection_authorities "
-            "current JOIN cover_selection_authorities selection "
+            "SELECT selection.document FROM " + ALL_COVER_POINTERS + " "
+            "current JOIN " + ALL_COVER_SELECTIONS + " selection "
             "ON selection.selection_id=current.selection_id"
         )
     ]
@@ -414,7 +415,7 @@ def test_a_current_covers_change_stales_an_admitted_switch_before_it_writes(
         )
         # Nothing new is admitted, and the staled switch is not planned again.
         assert repository._connection.execute(
-            "SELECT count(*) FROM cover_selection_authorities"
+            "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
         ).fetchone() == (1,)
         assert not authority.current(operation.plan.authority)
         assert repository.pending_field_effect_decision_documents(1) == ()
@@ -1390,7 +1391,7 @@ def test_a_keep_naming_no_cover_is_refused_unless_the_current_cover_was_unread(
         assert selection["candidate_reference"] is not None
     database = readable / "reports.sqlite"
     hostile = sqlite3.connect(database)
-    hostile.execute("DROP TRIGGER cover_selection_authorities_no_update")
+    hostile.execute("DROP TRIGGER owner_cover_selections_no_update")
     for key in (
         "candidate_artifact_id",
         "rank_key",
@@ -1401,7 +1402,7 @@ def test_a_keep_naming_no_cover_is_refused_unless_the_current_cover_was_unread(
     ):
         selection[key] = None
     hostile.execute(
-        "UPDATE cover_selection_authorities SET document=? WHERE selection_id=?",
+        "UPDATE owner_cover_selections SET document=? WHERE selection_id=?",
         (_canonical_json(selection), selection["selection_id"]),
     )
     hostile.commit()

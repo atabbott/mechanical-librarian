@@ -127,6 +127,7 @@ from tests.support.audiobookshelf_targets import (
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.cover_images import synthetic_image
 from tests.support.cover_producers import _qualified_cover_report, adapter_cover_value
+from tests.support.cover_selections import ALL_COVER_POINTERS
 from tests.support.field_effects import (
     CAPABILITY,
     DEPENDENCY,
@@ -6877,7 +6878,7 @@ def test_guarded_audiobook_cover_replacement_boundaries(
                     cover_consideration_id=state.consideration["consideration_id"],
                     cover_confirmation={
                         "expected_selection_id": state.repo._connection.execute(
-                            "SELECT selection_id FROM current_cover_selection_authorities"
+                            "SELECT selection_id FROM " + ALL_COVER_POINTERS
                         ).fetchone()[0],
                         "confirm_unverified_match": False,
                     },

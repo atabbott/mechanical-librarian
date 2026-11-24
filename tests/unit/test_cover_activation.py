@@ -86,6 +86,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.cover_producers import adapter_cover_value
+from tests.support.cover_selections import ALL_COVER_POINTERS, ALL_COVER_SELECTIONS
 from tests.support.field_effects import CAPABILITY, Clock
 from tests.support.ledger_copies import assert_ledger_copies
 from tests.unit.test_cover_packets import _preview, _report, _source
@@ -226,8 +227,8 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
         assert terminal[5] is None
 
         selection_rows = repository._connection.execute(
-            "SELECT selection.document FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities selection "
+            "SELECT selection.document FROM " + ALL_COVER_POINTERS + " current "
+            "JOIN " + ALL_COVER_SELECTIONS + " selection "
             "ON selection.selection_id=current.selection_id"
         ).fetchall()
         if scenario in {"downgrade", "unconfirmed_no_record"}:
@@ -584,7 +585,7 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
         reopened = open_repository(database)
         try:
             retained = reopened._connection.execute(
-                "SELECT document FROM cover_selection_authorities WHERE decision_id=?",
+                "SELECT document FROM " + ALL_COVER_SELECTIONS + " WHERE decision_id=?",
                 (automatic.decision_id,),
             ).fetchone()[0]
             assert (
@@ -690,8 +691,8 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
             ).fetchone()
             ((document,),) = repository._connection.execute(
                 "SELECT json_extract(selection.document,'$.decision_document') "
-                "FROM current_cover_selection_authorities current "
-                "JOIN cover_selection_authorities selection "
+                "FROM " + ALL_COVER_POINTERS + " current "
+                "JOIN " + ALL_COVER_SELECTIONS + " selection "
                 "ON selection.selection_id=current.selection_id "
                 "WHERE selection.kind='automatic'"
             ).fetchall()
@@ -1215,7 +1216,7 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
             cover_consideration_id=str(successor["consideration_id"]),
             cover_confirmation={
                 "expected_selection_id": repository._connection.execute(
-                    "SELECT selection_id FROM current_cover_selection_authorities"
+                    "SELECT selection_id FROM " + ALL_COVER_POINTERS
                 ).fetchone()[0],
                 "confirm_unverified_match": False,
             },
@@ -1302,6 +1303,7 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         checked = assert_ledger_copies(repository)
         assert checked["activity_field_effect_human"] > 0
         assert checked["activity_human_decision"] > 0
+        assert checked["taste_owner_selection"] > 0
         repository.close()
 
 
@@ -1708,22 +1710,21 @@ def test_cover_selection_sql_requires_explicit_current_automatic_document(nested
     import sqlite3
 
     from mechanical_librarian.adapters.persistence.schema import (
-        _COVER_SELECTION_AUTHORITIES_SQL,
+        _AUTOMATIC_COVER_SELECTIONS_SQL,
     )
 
     connection = sqlite3.connect(":memory:")
     try:
-        connection.execute(_COVER_SELECTION_AUTHORITIES_SQL)
+        connection.execute(_AUTOMATIC_COVER_SELECTIONS_SQL)
         document = {} if nested is None else {"decision_document": nested}
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                "INSERT INTO cover_selection_authorities VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO automatic_cover_selections VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     "cover_selection_" + "a" * 64,
                     "primary",
                     "ebooks",
                     "item",
-                    "automatic",
                     "automatic_decision_" + "b" * 64,
                     "consideration",
                     None,

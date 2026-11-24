@@ -14,7 +14,7 @@ import json
 from collections import Counter
 from typing import Any, cast
 
-from mechanical_librarian.adapters.persistence import field_effect_activity
+from mechanical_librarian.adapters.persistence import cover_taste, field_effect_activity
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
@@ -32,7 +32,7 @@ def _origin(repository: SQLiteMetadataReportRepository, decision_id: str) -> str
     for table, origin in (
         ("human_decisions", "human"),
         ("automatic_decisions", "automatic"),
-        ("cover_selection_authorities", "automatic_cover"),
+        ("automatic_cover_selections", "automatic_cover"),
         ("owner_authored_descriptions", "owner_description"),
         ("automatic_description_decisions", "automatic_description"),
     ):
@@ -108,6 +108,76 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
             == DescriptionAdviceCandidate.from_json(candidate_document).model_dump()
         )
         checked["history_owner_description"] += 1
+    # Taste: each owner cover choice copies the facts the taste profile
+    # counts it by, as the comparison and report read now.
+    taste_copies = {
+        row[0]: row[1:]
+        for row in connection.execute(
+            "SELECT selection_id,transport_sha256,width,height,offered_arts,"
+            "report_format FROM owner_cover_selections"
+        )
+    }
+    for selection_id, (
+        selection_document,
+        consideration_document,
+        currentness_document,
+        report_format,
+    ) in (
+        (row[0], row[1:])
+        for row in connection.execute(
+            "SELECT selection.selection_id,selection.document,"
+            "consideration.document,consideration.currentness_document,"
+            "facts.format FROM owner_cover_selections selection "
+            "JOIN cover_considerations consideration "
+            "ON consideration.consideration_id=selection.consideration_id "
+            "LEFT JOIN metadata_report_browse_facts facts "
+            "ON facts.report_id=consideration.report_id"
+        )
+    ):
+        chosen = json.loads(selection_document).get("candidate_reference")
+        offered: dict[str, Any] = next(
+            (
+                candidate
+                for candidate in json.loads(consideration_document)["candidates"]
+                if candidate.get("reference") == chosen
+                and candidate.get("candidate_kind") == "candidate"
+            ),
+            {},
+        )
+        stage = json.loads(currentness_document).get("cover_stage")
+        arts = stage.get("arts") if isinstance(stage, dict) else None
+        assert taste_copies[selection_id] == (
+            offered.get("transport_sha256")
+            if type(offered.get("transport_sha256")) is str
+            else None,
+            offered.get("width") if type(offered.get("width")) is int else None,
+            offered.get("height") if type(offered.get("height")) is int else None,
+            arts if type(arts) is int else None,
+            report_format if type(report_format) is str else None,
+        )
+        checked["taste_owner_selection"] += 1
+    # Taste: the build's decisions read the chosen cover's digest and size,
+    # and its eligibility the art count and format, as the copies hold them.
+    for source in repository.cover_taste_store().decisions():
+        chosen_source = next(
+            candidate
+            for candidate in source.candidates
+            if candidate.reference == source.chosen_reference
+        )
+        assert taste_copies[source.selection_id][:3] == (
+            chosen_source.transport_sha256,
+            chosen_source.width,
+            chosen_source.height,
+        )
+        checked["taste_decision"] += 1
+    for selection_id, arts, report_format in connection.execute(
+        "SELECT selection.selection_id,json_extract("
+        "consideration.currentness_document,'$.cover_stage.arts'),facts.format "
+        + cover_taste._ELIGIBLE,
+        (cover_taste.TASTE_MIN_ARTS,),
+    ):
+        assert taste_copies[selection_id][3:] == (arts, report_format)
+        checked["taste_eligible"] += 1
     # Review history: every decision, with an event or not, reads its case's
     # target field; an accepted description shows the copy its offer chose.
     histories: dict[str, dict[str, dict[str, object]]] = {}

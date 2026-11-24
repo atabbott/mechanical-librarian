@@ -107,6 +107,53 @@ _UNWRITTEN_SQL = (
     "FROM field_effect_events event WHERE event.plan_id=effect.plan_id "
     "AND event.kind='applying'))))"
 )
+# The document of a work's current cover selection, given its connection,
+# library and item twice: the owner's pointer or Automatic's, never both.
+_CURRENT_SELECTION_DOCUMENT_SQL = " UNION ALL ".join(
+    f"SELECT selection.document FROM {kind}_cover_pointers current "
+    f"JOIN {kind}_cover_selections selection "
+    "ON selection.selection_id=current.selection_id "
+    "WHERE current.connection_name=? AND current.library_name=? "
+    "AND current.item_id=?"
+    for kind in ("owner", "automatic")
+)
+# What the taste profile counts an owner's choice by, copied when the owner
+# chooses as its eligibility reads them (ADR-0108): the offered candidate's
+# transport digest and size, the comparison's art count and the report's
+# file format.
+_OFFERED_COPY_SQL = (
+    "(SELECT json_extract(offered.value,'$.{key}') "
+    "FROM json_each(consideration.document,'$.candidates') offered "
+    "WHERE json_extract(offered.value,'$.reference')="
+    "json_extract(selection.document,'$.candidate_reference') "
+    "AND json_extract(offered.value,'$.candidate_kind')='candidate' "
+    "AND json_type(offered.value,'$.{key}')='{kind}' "
+    "ORDER BY offered.key LIMIT 1)"
+)
+_OWNER_SELECTION_INSERT_SQL = (
+    "INSERT INTO owner_cover_selections(selection_id,connection_name,"
+    "library_name,item_id,decision_id,consideration_id,supersedes_selection_id,"
+    "occurred_at,document,transport_sha256,width,height,offered_arts,"
+    "report_format) WITH selection(selection_id,connection_name,library_name,"
+    "item_id,decision_id,consideration_id,supersedes_selection_id,occurred_at,"
+    "document) AS (VALUES(?,?,?,?,?,?,?,?,?)) SELECT selection.*,"
+    + ",".join(
+        _OFFERED_COPY_SQL.format(key=key, kind=kind)
+        for key, kind in (
+            ("transport_sha256", "text"),
+            ("width", "integer"),
+            ("height", "integer"),
+        )
+    )
+    + ",CASE WHEN json_type(consideration.currentness_document,"
+    "'$.cover_stage.arts')='integer' THEN json_extract("
+    "consideration.currentness_document,'$.cover_stage.arts') END,"
+    "CASE WHEN typeof(facts.format)='text' THEN facts.format END "
+    "FROM selection LEFT JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=selection.consideration_id "
+    "LEFT JOIN metadata_report_browse_facts facts "
+    "ON facts.report_id=consideration.report_id"
+)
 
 
 def taste_switch_candidate(
@@ -339,13 +386,13 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         )
         owner = self._connection.execute(
             "SELECT selection_id,connection_name,library_name,item_id "
-            "FROM cover_selection_authorities WHERE kind='owner' AND decision_id=?",
+            "FROM owner_cover_selections WHERE decision_id=?",
             (decision_id,),
         ).fetchone()
         if owner is None:
             return
         self._connection.execute(
-            "DELETE FROM current_cover_selection_authorities WHERE connection_name=? "
+            "DELETE FROM owner_cover_pointers WHERE connection_name=? "
             "AND library_name=? AND item_id=? AND selection_id=?",
             (*owner[1:], owner[0]),
         )
@@ -424,11 +471,11 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             return False
         current = self._connection.execute(
             "SELECT json_extract(json_extract(selection.document,'$.decision_document'),"
-            "'$.verdict_id') FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities selection "
+            "'$.verdict_id') FROM automatic_cover_pointers current "
+            "JOIN automatic_cover_selections selection "
             "ON selection.selection_id=current.selection_id "
             "WHERE current.connection_name=? AND current.library_name=? "
-            "AND current.item_id=? AND selection.kind='automatic'",
+            "AND current.item_id=?",
             lineage,
         ).fetchone()
         if current is not None and current[0] == verdict_id:
@@ -482,21 +529,20 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             "json_extract(json_extract(selection.document,'$.decision_document'),"
             "'$.policy_reference'),current.connection_name,current.library_name,"
             "current.item_id FROM current_review_case_lineages lineage "
-            "JOIN current_cover_selection_authorities current "
+            "JOIN automatic_cover_pointers current "
             "ON current.connection_name=lineage.connection_name "
             "AND current.library_name=lineage.library_name "
             "AND current.item_id=lineage.item_id "
-            "JOIN cover_selection_authorities selection "
+            "JOIN automatic_cover_selections selection "
             "ON selection.selection_id=current.selection_id "
-            "WHERE lineage.review_case_id=? AND selection.kind='automatic' "
-            + _UNWRITTEN_SQL,
+            "WHERE lineage.review_case_id=? " + _UNWRITTEN_SQL,
             (review_case_id,),
         ).fetchone()
         if row is None or row[1] == policy_reference:
             return
         self._revoke_automatic(row[0], occurred_at)
         self._connection.execute(
-            "DELETE FROM current_cover_selection_authorities "
+            "DELETE FROM automatic_cover_pointers "
             "WHERE connection_name=? AND library_name=? AND item_id=?",
             row[2:],
         )
@@ -510,11 +556,10 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         rows = self._connection.execute(
             "SELECT selection.decision_id,current.connection_name,"
             "current.library_name,current.item_id "
-            "FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities selection "
+            "FROM automatic_cover_pointers current "
+            "JOIN automatic_cover_selections selection "
             "ON selection.selection_id=current.selection_id "
-            "WHERE selection.kind='automatic' "
-            "AND json_extract(json_extract(selection.document,'$.decision_document'),"
+            "WHERE json_extract(json_extract(selection.document,'$.decision_document'),"
             "'$.qualification_identity')=? "
             "AND (?=0 OR json_extract(json_extract(selection.document,"
             "'$.decision_document'),'$.taste_version')<"
@@ -526,7 +571,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         for decision_id, *lineage in rows:
             self._revoke_automatic(decision_id, occurred_at)
             self._connection.execute(
-                "DELETE FROM current_cover_selection_authorities "
+                "DELETE FROM automatic_cover_pointers "
                 "WHERE connection_name=? AND library_name=? AND item_id=?",
                 lineage,
             )
@@ -702,10 +747,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         if alternative is None or proposal_id != value["proposal_id"]:
             return False
         current = self._connection.execute(
-            "SELECT selection.document FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
-            "WHERE current.connection_name=? AND current.library_name=? AND current.item_id=?",
-            lineage,
+            _CURRENT_SELECTION_DOCUMENT_SQL, (*lineage, *lineage)
         ).fetchone()
         prior = None if current is None else json.loads(current[0])
         if prior is not None and prior["kind"] == "owner":
@@ -750,7 +792,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             taste_version=taste_version,
         )
         existing = self._connection.execute(
-            "SELECT document FROM cover_selection_authorities WHERE decision_id=?",
+            "SELECT document FROM automatic_cover_selections WHERE decision_id=?",
             (decision.decision_id,),
         ).fetchone()
         if existing is not None:
@@ -784,13 +826,12 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             }
         )
         self._connection.execute(
-            "INSERT INTO cover_selection_authorities(selection_id,connection_name,library_name,item_id,kind,decision_id,consideration_id,supersedes_selection_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO automatic_cover_selections(selection_id,connection_name,library_name,item_id,decision_id,consideration_id,supersedes_selection_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?,?)",
             (
                 selection_id,
                 connection_name,
                 library_name,
                 item_id,
-                "automatic",
                 decision.decision_id,
                 decision.consideration_id,
                 None if prior is None else prior["selection_id"],
@@ -799,7 +840,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             ),
         )
         self._connection.execute(
-            "INSERT INTO current_cover_selection_authorities(connection_name,library_name,item_id,selection_id) VALUES(?,?,?,?) "
+            "INSERT INTO automatic_cover_pointers(connection_name,library_name,item_id,selection_id) VALUES(?,?,?,?) "
             "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET selection_id=excluded.selection_id",
             (connection_name, library_name, item_id, selection_id),
         )
@@ -1144,7 +1185,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             if existing != (consideration_id, kind):
                 raise HumanDecisionError("idempotency_conflict")
         recorded = self._connection.execute(
-            "SELECT document FROM cover_selection_authorities WHERE decision_id=?",
+            "SELECT document FROM owner_cover_selections WHERE decision_id=?",
             (decision.decision_id,),
         ).fetchone()
         if (
@@ -1194,10 +1235,8 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         ):
             raise MetadataReportError("cover consideration is unavailable")
         current = self._connection.execute(
-            "SELECT selection.document FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
-            "WHERE current.connection_name=? AND current.library_name=? AND current.item_id=?",
-            (connection_name, library_name, item_id),
+            _CURRENT_SELECTION_DOCUMENT_SQL,
+            (connection_name, library_name, item_id) * 2,
         ).fetchone()
         prior = None if current is None else json.loads(current[0])
         confirmation = validate_cover_confirmation(confirmation)
@@ -1270,13 +1309,12 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             None if prior is None else cast(str, prior["selection_id"]),
         )
         self._connection.execute(
-            "INSERT INTO cover_selection_authorities(selection_id,connection_name,library_name,item_id,kind,decision_id,consideration_id,supersedes_selection_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            _OWNER_SELECTION_INSERT_SQL,
             (
                 selection_id,
                 connection_name,
                 library_name,
                 item_id,
-                "owner",
                 decision.decision_id,
                 consideration_id,
                 None if prior is None else prior["selection_id"],
@@ -1284,8 +1322,15 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 selection_document,
             ),
         )
+        # The owner's choice takes the work from Automatic in the same
+        # transaction: no work has both pointers (ADR-0108).
         self._connection.execute(
-            "INSERT INTO current_cover_selection_authorities(connection_name,library_name,item_id,selection_id) VALUES(?,?,?,?) "
+            "DELETE FROM automatic_cover_pointers WHERE connection_name=? "
+            "AND library_name=? AND item_id=?",
+            (connection_name, library_name, item_id),
+        )
+        self._connection.execute(
+            "INSERT INTO owner_cover_pointers(connection_name,library_name,item_id,selection_id) VALUES(?,?,?,?) "
             "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET selection_id=excluded.selection_id",
             (connection_name, library_name, item_id, selection_id),
         )

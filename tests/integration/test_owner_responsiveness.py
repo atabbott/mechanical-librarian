@@ -32,6 +32,7 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.infrastructure.settings_authority import (
     REVIEW_BOOTSTRAP_SCHEMA,
 )
+from tests.support.cover_selections import ALL_COVER_SELECTIONS
 from tests.support.owner_responsiveness import (
     OwnerResponsivenessFixture,
     running_owner_fixture,
@@ -2198,7 +2199,7 @@ def test_cover_confirmation_refreshes_reviewer_authority_before_transaction(
                 with pytest.raises(ReviewWebError, match="stale"):
                     second.result(timeout=5)
                 assert fixture.repository._connection.execute(
-                    "SELECT count(*) FROM cover_selection_authorities"
+                    "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
                 ).fetchone() == (0,)
                 fresh = fixture.application.prepare_cover_consideration(
                     case.review_case_id
@@ -2209,7 +2210,7 @@ def test_cover_confirmation_refreshes_reviewer_authority_before_transaction(
                 second.result(timeout=5)
         assert calls
         assert fixture.repository._connection.execute(
-            "SELECT count(*) FROM cover_selection_authorities"
+            "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
         ).fetchone() == (1,)
         assert not fixture.repository._connection.in_transaction
     finally:

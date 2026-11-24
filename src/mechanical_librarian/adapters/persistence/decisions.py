@@ -388,9 +388,9 @@ def _automatic_decision_documents(
             "UNION ALL SELECT selection.decision_id,'cover',"
             "json_extract(json_extract(selection.document,'$.decision_document'),'$.idempotency_digest'),"
             "selection.occurred_at,json_extract(selection.document,'$.decision_document') "
-            "FROM cover_selection_authorities selection JOIN cover_considerations consideration "
+            "FROM automatic_cover_selections selection JOIN cover_considerations consideration "
             "ON consideration.consideration_id=selection.consideration_id "
-            "WHERE selection.kind='automatic' AND consideration.review_case_id=? "
+            "WHERE consideration.review_case_id=? "
             "ORDER BY occurred_at,decision_id",
             (review_case_id, review_case_id),
         ).fetchall()
@@ -1385,13 +1385,16 @@ class SQLiteDecisionRepository(ConnectionScoped):
         if decision.destination == "cover":
             target = case.target
             cover_automatic = self._connection.execute(
-                "SELECT selection.decision_id,selection.kind "
-                "FROM current_cover_selection_authorities current "
-                "JOIN cover_selection_authorities selection "
-                "ON selection.selection_id=current.selection_id "
-                "WHERE current.connection_name=? AND current.library_name=? "
-                "AND current.item_id=?",
-                (target["connection"], target["library"], target["item"]),
+                " UNION ALL ".join(
+                    f"SELECT selection.decision_id,'{kind}' "
+                    f"FROM {kind}_cover_pointers current "
+                    f"JOIN {kind}_cover_selections selection "
+                    "ON selection.selection_id=current.selection_id "
+                    "WHERE current.connection_name=? AND current.library_name=? "
+                    "AND current.item_id=?"
+                    for kind in ("owner", "automatic")
+                ),
+                (target["connection"], target["library"], target["item"]) * 2,
             ).fetchone()
         # Only this episode's decision is replaced; an earlier
         # episode's is history (#1358).

@@ -386,10 +386,10 @@ def _owner_put_back(
     connection = sqlite3.connect(effects.database_path)
     try:
         connection.execute(
-            "INSERT INTO cover_selection_authorities(selection_id,connection_name,"
-            "library_name,item_id,kind,decision_id,consideration_id,"
+            "INSERT INTO owner_cover_selections(selection_id,connection_name,"
+            "library_name,item_id,decision_id,consideration_id,"
             "supersedes_selection_id,occurred_at,document) "
-            "VALUES(?,?,?,?,'owner',?,?,NULL,1,?)",
+            "VALUES(?,?,?,?,?,?,NULL,1,?)",
             (
                 "cover_selection_" + "5" * 64,
                 "primary",

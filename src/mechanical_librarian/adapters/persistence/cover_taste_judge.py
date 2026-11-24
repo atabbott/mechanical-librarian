@@ -99,22 +99,24 @@ _ELIGIBLE_FROM_SQL = (
     "AND json_extract(consideration.currentness_document,'$.cover_stage.reason') "
     f"IN ({','.join(repr(fault) for fault in TASTE_JUDGE_FAULTS)}) "
     "AND json_extract(consideration.currentness_document,'$.cover_stage.arts')>=?)) "
-    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities answered "
+    "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers current "
+    "WHERE current.connection_name=ml.connection_name "
+    "AND current.library_name=ml.library_name AND current.item_id=ml.item_id) "
+    "AND NOT EXISTS (SELECT 1 FROM automatic_cover_pointers current "
+    "JOIN automatic_cover_selections answered "
     "ON answered.selection_id=current.selection_id "
     "WHERE current.connection_name=ml.connection_name "
     "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
-    "AND (answered.kind='owner' "
-    "OR (answered.consideration_id=consideration.consideration_id "
+    "AND answered.consideration_id=consideration.consideration_id "
     # An unwritten taste switch under an older version no longer answers
     # its comparison: it is judged again (#1372 PR 5, K6).
-    "AND NOT (answered.kind='automatic' AND json_type(json_extract("
+    "AND NOT (json_type(json_extract("
     "answered.document,'$.decision_document'),'$.taste_version') IS 'integer' "
     "AND json_extract(json_extract("
     "answered.document,'$.decision_document'),'$.taste_version')<"
     "(SELECT max(version) FROM cover_taste_profile_versions) "
     + _UNWRITTEN_SQL.replace("selection.decision_id", "answered.decision_id")
-    + ")))) "
+    + ")) "
     "AND NOT EXISTS (SELECT 1 FROM human_decisions decided "
     "WHERE decided.review_case_id=ml.review_case_id AND decided.destination='cover') "
     "AND NOT EXISTS (SELECT 1 FROM field_effect_manual_holds held "
@@ -148,13 +150,18 @@ _SWITCH_CANDIDATES_SQL = (
     "AND verdict.rowid=(SELECT newest.rowid FROM cover_taste_verdicts newest "
     "WHERE newest.consideration_id=verdict.consideration_id "
     "ORDER BY newest.created_at DESC,newest.rowid DESC LIMIT 1) "
-    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities answered "
-    "ON answered.selection_id=current.selection_id "
-    "WHERE current.connection_name=lineage.connection_name "
-    "AND current.library_name=lineage.library_name "
-    "AND current.item_id=lineage.item_id "
-    "AND answered.consideration_id=verdict.consideration_id) "
+    "AND NOT EXISTS ("
+    + " UNION ALL ".join(
+        f"SELECT 1 FROM {kind}_cover_pointers current "
+        f"JOIN {kind}_cover_selections answered "
+        "ON answered.selection_id=current.selection_id "
+        "WHERE current.connection_name=lineage.connection_name "
+        "AND current.library_name=lineage.library_name "
+        "AND current.item_id=lineage.item_id "
+        "AND answered.consideration_id=verdict.consideration_id"
+        for kind in ("owner", "automatic")
+    )
+    + ") "
     "ORDER BY verdict.created_at,verdict.rowid LIMIT ?"
 )
 # The preview walk (K7): each current comparison's newest verdict under one
@@ -184,13 +191,13 @@ _PREVIEW_ANSWER_SQL = (
     "json_extract(json_extract(selection.document,'$.decision_document'),"
     "'$.outcome'),json_extract(selection.document,'$.candidate_reference') "
     "FROM current_review_case_lineages lineage "
-    "JOIN current_cover_selection_authorities current "
+    "JOIN owner_cover_pointers current "
     "ON current.connection_name=lineage.connection_name "
     "AND current.library_name=lineage.library_name "
     "AND current.item_id=lineage.item_id "
-    "JOIN cover_selection_authorities selection "
+    "JOIN owner_cover_selections selection "
     "ON selection.selection_id=current.selection_id "
-    "WHERE lineage.review_case_id=? AND selection.kind='owner'"
+    "WHERE lineage.review_case_id=?"
 )
 # A judgement under one version in flight on a work's current comparison:
 # the preview is still checking until it ends (K7). A waiting Try again is
@@ -239,10 +246,9 @@ _CONFIRMED_SQL = (
     "SELECT count(*),COALESCE(sum(json_extract(selection.document,"
     "'$.candidate_reference')=json_extract(in_force,'$.candidate_reference')),0) "
     f"FROM (SELECT selection.document,{VERDICT_IN_FORCE_SQL} AS in_force "
-    "FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities selection "
-    "ON selection.selection_id=current.selection_id "
-    "WHERE selection.kind='owner') selection "
+    "FROM owner_cover_pointers current "
+    "JOIN owner_cover_selections selection "
+    "ON selection.selection_id=current.selection_id) selection "
     "WHERE json_extract(in_force,'$.decision')='choose'"
 )
 # One scan for a batch of due fields: pending suggestions first, oldest

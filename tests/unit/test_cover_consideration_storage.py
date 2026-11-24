@@ -27,6 +27,7 @@ from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY
 from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 from tests.support.cover_retention import retained_cover_case
 from tests.support.metadata_report_schemas import (
+    PRE_2038_COVER_SELECTION_AUTHORITIES_SQL,
     PRE_2038_SCHEMA,
     PRIOR_ATTENTION_FACT_OBJECTS,
     PRIOR_ATTENTION_FACT_SOURCE_SQL,
@@ -38,6 +39,7 @@ from tests.support.metadata_report_schemas import (
     PRIOR_REVIEW_SCANS_SQL,
     PRIOR_REVIEW_TRANSITIONS_SQL,
     PRIOR_REVIEW_WORK_SQL,
+    pre_2038_attention_objects,
     undo_2038_tables,
 )
 from tests.support.report_schema_version import CURRENT_REPORT_SCHEMA
@@ -225,17 +227,6 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             schema, "_CURRENT_REVIEW_PACKAGES_SQL", PRIOR_CURRENT_REVIEW_PACKAGES_SQL
         ),
         patch.object(schema, "_PACKAGE_POSITION_OBJECTS", ()),
-        # The owner selection CHECK names the version this inventory recorded.
-        patch.object(
-            schema,
-            "_COVER_SELECTION_AUTHORITIES_SQL",
-            schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
-                f"'{COVER_SELECTION_AUTHORITY_SCHEMA}'",
-                "'cover-selection-authority-v2'",
-            ).replace(
-                f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v3'"
-            ),
-        ),
         # Its reviewer access CHECK names v3 (#1372 moved it).
         patch.object(
             schema,
@@ -246,14 +237,24 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         ),
     ):
         schema._create_schema(connection)
-    undo_2038_tables(connection)
+    # The owner selection CHECK names the version this inventory recorded.
+    undo_2038_tables(
+        connection,
+        PRE_2038_COVER_SELECTION_AUTHORITIES_SQL.replace(
+            f"'{COVER_SELECTION_AUTHORITY_SCHEMA}'", "'cover-selection-authority-v2'"
+        ).replace(
+            f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v3'"
+        ),
+    )
     # The producer predates #1199's report browse facts, #1202's
     # history indexes, #1204's indexes, #1211's case indexes, #1232's
     # attention facts, #1363's retained covers and #1355's level storage.
     connection.executescript(
         "".join(
             f"DROP {kind.upper()} {name};"
-            for kind, name, _ in reversed(PRIOR_ATTENTION_FACT_OBJECTS)
+            for kind, name, _ in reversed(
+                pre_2038_attention_objects(PRIOR_ATTENTION_FACT_OBJECTS)
+            )
         )
         + "DROP TABLE library_visit;"
         "DROP VIEW current_owner_links;"

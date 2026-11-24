@@ -467,10 +467,10 @@ def _cover_ledger(
         ("f", tied, at),
     ):
         connection.execute(
-            "INSERT INTO cover_selection_authorities(selection_id,connection_name,"
-            "library_name,item_id,kind,decision_id,consideration_id,"
+            "INSERT INTO automatic_cover_selections(selection_id,connection_name,"
+            "library_name,item_id,decision_id,consideration_id,"
             "supersedes_selection_id,occurred_at,document) "
-            "VALUES(?,'primary','ebooks','item-1','automatic',?,?,NULL,?,?)",
+            "VALUES(?,'primary','ebooks','item-1',?,?,NULL,?,?)",
             (
                 "cover_selection_" + selection * 64,
                 decision,
@@ -768,7 +768,7 @@ def test_candidate_projection_drives_every_arm_from_its_identity(
         index.format("attempt", "description_advice_attempts_1", "attempt_id"),
         index.format("decision", "owner_authored_descriptions_1", "decision_id"),
         index.format("decision", "automatic_description_decisions_1", "decision_id"),
-        index.format("selection", "cover_selection_authorities_2", "decision_id"),
+        index.format("selection", "automatic_cover_selections_2", "decision_id"),
         index.format("no_change", "field_effect_no_changes_2", "event_id"),
         index.format("event", "cover_consideration_events_1", "event_id"),
         index.format("transition", "metadata_policy_transitions_1", "transition_id"),

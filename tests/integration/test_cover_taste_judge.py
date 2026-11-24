@@ -45,6 +45,7 @@ from mechanical_librarian.domain.cover_taste import (
     TASTE_JUDGE_SETTLE_SECONDS,
 )
 from tests.integration.test_cover_taste_build import _Built, _client
+from tests.support.cover_selections import ALL_COVER_SELECTIONS
 from tests.unit.test_cover_taste_judge import WORKS, _Library, _library
 from tests.unit.test_cover_taste_suggestions import _choose
 from tests.unit.test_reviewer_access_application import _Auth
@@ -243,7 +244,7 @@ def test_fields_are_judged_once_and_a_new_version_rejudges_only_suggestions(
 ) -> None:
     with _judged(tmp_path) as judged:
         unchanged = (
-            "SELECT (SELECT count(*) FROM cover_selection_authorities),"
+            "SELECT (SELECT count(*) FROM " + ALL_COVER_SELECTIONS + "),"
             "(SELECT count(*) FROM human_decisions),"
             "(SELECT group_concat(currentness_document) FROM cover_considerations)"
         )

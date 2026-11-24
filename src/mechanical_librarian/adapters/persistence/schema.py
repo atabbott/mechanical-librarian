@@ -993,38 +993,103 @@ _CURRENT_COVER_CONSIDERATIONS_SQL = (
     "review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), "
     "consideration_id TEXT NOT NULL UNIQUE REFERENCES cover_considerations(consideration_id))"
 )
-_COVER_SELECTION_AUTHORITIES_SQL = (
-    "CREATE TABLE cover_selection_authorities ("
+_COVER_SELECTION_KEY_SQL = (
     "selection_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(selection_id)='text' AND selection_id GLOB 'cover_selection_[0-9a-f]*' AND length(selection_id)=80), "
     "connection_name TEXT NOT NULL CHECK(typeof(connection_name)='text' AND length(CAST(connection_name AS BLOB)) BETWEEN 1 AND 128), "
     "library_name TEXT NOT NULL CHECK(typeof(library_name)='text' AND length(CAST(library_name AS BLOB)) BETWEEN 1 AND 128), "
     "item_id TEXT NOT NULL CHECK(typeof(item_id)='text' AND length(CAST(item_id AS BLOB)) BETWEEN 1 AND 512), "
-    "kind TEXT NOT NULL CHECK(kind IN ('automatic','owner')), "
-    "decision_id TEXT NOT NULL UNIQUE CHECK((kind='automatic' AND decision_id GLOB 'automatic_decision_[0-9a-f]*' AND length(decision_id)=83) OR (kind='owner' AND decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79)), "
-    "consideration_id TEXT NOT NULL REFERENCES cover_considerations(consideration_id), "
-    "supersedes_selection_id TEXT REFERENCES cover_selection_authorities(selection_id), "
+)
+_COVER_SELECTION_DOCUMENT_SQL = (
     "occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer' AND occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072), "
-    f"CHECK(kind<>'owner' OR (CASE WHEN json_valid(document) THEN json_extract(document,'$.schema_version')='{COVER_SELECTION_AUTHORITY_SCHEMA}' ELSE 0 END) IS 1), "
-    "CHECK(kind<>'automatic' OR (CASE WHEN json_valid(document) "
+)
+# The owner's cover choices are ledger (ADR-0108): the decision they record
+# is owner authority, so the comparison and the selection they replaced are
+# kept by id only, and the facts the taste profile counts a choice by are
+# copied from the comparison as it read them when the owner chose.
+_OWNER_COVER_SELECTIONS_SQL = (
+    "CREATE TABLE owner_cover_selections ("
+    + _COVER_SELECTION_KEY_SQL
+    + "decision_id TEXT NOT NULL UNIQUE REFERENCES human_decisions(decision_id) CHECK(typeof(decision_id)='text' AND decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), "
+    "consideration_id TEXT NOT NULL CHECK(typeof(consideration_id)='text' AND consideration_id GLOB 'cover_consideration_[0-9a-f]*' AND length(consideration_id)=84), "
+    "supersedes_selection_id TEXT CHECK(supersedes_selection_id IS NULL OR (typeof(supersedes_selection_id)='text' AND supersedes_selection_id GLOB 'cover_selection_[0-9a-f]*' AND length(supersedes_selection_id)=80)), "
+    + _COVER_SELECTION_DOCUMENT_SQL
+    + "transport_sha256 TEXT CHECK(transport_sha256 IS NULL OR typeof(transport_sha256)='text'), "
+    "width INTEGER CHECK(width IS NULL OR typeof(width)='integer'), "
+    "height INTEGER CHECK(height IS NULL OR typeof(height)='integer'), "
+    "offered_arts INTEGER CHECK(offered_arts IS NULL OR typeof(offered_arts)='integer'), "
+    "report_format TEXT CHECK(report_format IS NULL OR typeof(report_format)='text'), "
+    f"CHECK((CASE WHEN json_valid(document) THEN json_extract(document,'$.schema_version')='{COVER_SELECTION_AUTHORITY_SCHEMA}' ELSE 0 END) IS 1), "
+    "CHECK(supersedes_selection_id IS NULL OR supersedes_selection_id<>selection_id))"
+)
+_AUTOMATIC_COVER_SELECTIONS_SQL = (
+    "CREATE TABLE automatic_cover_selections ("
+    + _COVER_SELECTION_KEY_SQL
+    + "decision_id TEXT NOT NULL UNIQUE CHECK(typeof(decision_id)='text' AND decision_id GLOB 'automatic_decision_[0-9a-f]*' AND length(decision_id)=83), "
+    "consideration_id TEXT NOT NULL REFERENCES cover_considerations(consideration_id), "
+    "supersedes_selection_id TEXT REFERENCES automatic_cover_selections(selection_id), "
+    + _COVER_SELECTION_DOCUMENT_SQL
+    + "CHECK((CASE WHEN json_valid(document) "
     "AND json_type(document,'$.decision_document')='text' "
     "THEN CASE WHEN json_valid(json_extract(document,'$.decision_document')) "
     f"THEN json_extract(json_extract(document,'$.decision_document'),'$.schema_version')='{COVER_AUTOMATIC_DECISION_SCHEMA}' "
     "ELSE 0 END ELSE 0 END) IS 1), "
     "CHECK(supersedes_selection_id IS NULL OR supersedes_selection_id<>selection_id))"
 )
-_CURRENT_COVER_SELECTION_AUTHORITIES_SQL = (
-    "CREATE TABLE current_cover_selection_authorities ("
-    "connection_name TEXT NOT NULL CHECK(typeof(connection_name)='text' AND length(CAST(connection_name AS BLOB)) BETWEEN 1 AND 128), "
-    "library_name TEXT NOT NULL CHECK(typeof(library_name)='text' AND length(CAST(library_name AS BLOB)) BETWEEN 1 AND 128), "
-    "item_id TEXT NOT NULL CHECK(typeof(item_id)='text' AND length(CAST(item_id AS BLOB)) BETWEEN 1 AND 512), "
-    "selection_id TEXT NOT NULL UNIQUE REFERENCES cover_selection_authorities(selection_id), "
-    "PRIMARY KEY(connection_name,library_name,item_id))"
+
+
+def _cover_pointers_sql(kind: str) -> str:
+    return (
+        f"CREATE TABLE {kind}_cover_pointers ("
+        "connection_name TEXT NOT NULL CHECK(typeof(connection_name)='text' AND length(CAST(connection_name AS BLOB)) BETWEEN 1 AND 128), "
+        "library_name TEXT NOT NULL CHECK(typeof(library_name)='text' AND length(CAST(library_name AS BLOB)) BETWEEN 1 AND 128), "
+        "item_id TEXT NOT NULL CHECK(typeof(item_id)='text' AND length(CAST(item_id AS BLOB)) BETWEEN 1 AND 512), "
+        f"selection_id TEXT NOT NULL UNIQUE REFERENCES {kind}_cover_selections(selection_id), "
+        "PRIMARY KEY(connection_name,library_name,item_id))"
+    )
+
+
+_COVER_POINTERS_SQL = {
+    kind: _cover_pointers_sql(kind) for kind in ("owner", "automatic")
+}
+_COVER_SELECTION_TRIGGERS = (
+    {
+        f"{kind}_cover_selections_no_{operation}": (
+            f"CREATE TRIGGER {kind}_cover_selections_no_{operation} BEFORE "
+            f"{operation.upper()} ON {kind}_cover_selections BEGIN SELECT "
+            "RAISE(ABORT, 'cover selection authorities are append-only'); END"
+        )
+        for kind in ("owner", "automatic")
+        for operation in ("update", "delete")
+    }
+    | {
+        f"{kind}_cover_pointers_validate_{operation}": (
+            f"CREATE TRIGGER {kind}_cover_pointers_validate_{operation} BEFORE "
+            f"{operation.upper()} ON {kind}_cover_pointers WHEN NOT EXISTS (SELECT 1 "
+            f"FROM {kind}_cover_selections selection WHERE "
+            "selection.selection_id=NEW.selection_id AND "
+            "selection.connection_name=NEW.connection_name AND "
+            "selection.library_name=NEW.library_name AND "
+            "selection.item_id=NEW.item_id) BEGIN SELECT "
+            "RAISE(ABORT, 'cover selection authority target disagrees'); END"
+        )
+        for kind in ("owner", "automatic")
+        for operation in ("insert", "update")
+    }
+    | {
+        # An owner's choice holds its work: Automatic never points at a cover
+        # the owner's pointer already names (ADR-0108).
+        f"automatic_cover_pointers_owner_{operation}": (
+            f"CREATE TRIGGER automatic_cover_pointers_owner_{operation} BEFORE "
+            f"{operation.upper()} ON automatic_cover_pointers WHEN EXISTS (SELECT 1 "
+            "FROM owner_cover_pointers owner WHERE "
+            "owner.connection_name=NEW.connection_name AND "
+            "owner.library_name=NEW.library_name AND owner.item_id=NEW.item_id) "
+            "BEGIN SELECT RAISE(ABORT, 'cover selection is the owner''s'); END"
+        )
+        for operation in ("insert", "update")
+    }
 )
-_COVER_SELECTION_AUTHORITY_NO_UPDATE_SQL = "CREATE TRIGGER cover_selection_authorities_no_update BEFORE UPDATE ON cover_selection_authorities BEGIN SELECT RAISE(ABORT, 'cover selection authorities are append-only'); END"
-_COVER_SELECTION_AUTHORITY_NO_DELETE_SQL = "CREATE TRIGGER cover_selection_authorities_no_delete BEFORE DELETE ON cover_selection_authorities BEGIN SELECT RAISE(ABORT, 'cover selection authorities are append-only'); END"
-_CURRENT_COVER_SELECTION_AUTHORITY_INSERT_SQL = "CREATE TRIGGER current_cover_selection_authorities_validate_insert BEFORE INSERT ON current_cover_selection_authorities WHEN NOT EXISTS (SELECT 1 FROM cover_selection_authorities selection WHERE selection.selection_id=NEW.selection_id AND selection.connection_name=NEW.connection_name AND selection.library_name=NEW.library_name AND selection.item_id=NEW.item_id) BEGIN SELECT RAISE(ABORT, 'cover selection authority target disagrees'); END"
-_CURRENT_COVER_SELECTION_AUTHORITY_UPDATE_SQL = "CREATE TRIGGER current_cover_selection_authorities_validate_update BEFORE UPDATE ON current_cover_selection_authorities WHEN NOT EXISTS (SELECT 1 FROM cover_selection_authorities selection WHERE selection.selection_id=NEW.selection_id AND selection.connection_name=NEW.connection_name AND selection.library_name=NEW.library_name AND selection.item_id=NEW.item_id) BEGIN SELECT RAISE(ABORT, 'cover selection authority target disagrees'); END"
 _COVER_CONSIDERATION_EVENTS_SQL = (
     "CREATE TABLE cover_consideration_events ("
     "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'cover_consideration_event_[0-9a-f]*' AND length(event_id)=90), "
@@ -1272,8 +1337,8 @@ _FIELD_EFFECTS_SQL = (
 # boolean extracts as 1 or 0), which no decision id can be. Every authority id
 # carries the human_decision_ or automatic_decision_ prefix: the human,
 # automatic and description decision domain types derive and validate it, and
-# the human_decisions, automatic_decisions and cover_selection_authorities GLOB
-# checks enforce it.
+# the human_decisions, automatic_decisions and both cover selection tables'
+# GLOB checks enforce it.
 _FIELD_EFFECT_COMPANION_DECISION_SQL = "CAST(json_extract(document,'$.plan.subtitle_companion.authority.decision_id') AS TEXT)"
 _FIELD_EFFECTS_DECISION_INDEX_SQL = (
     "CREATE INDEX field_effects_decision ON field_effects(decision_id)"
@@ -1865,10 +1930,13 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
         ("insert", "update", "delete"),
         _packages_of_case("'cover'"),
     ),
-    "current_cover_selection_authorities": (
-        ("insert", "update", "delete"),
-        "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,'cover'",
-    ),
+    **{
+        f"{kind}_cover_pointers": (
+            ("insert", "update", "delete"),
+            "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,'cover'",
+        )
+        for kind in ("owner", "automatic")
+    },
     "field_effect_suspensions": (
         ("insert", "update", "delete"),
         "SELECT c.connection_name,c.library_name,c.item_id,"
@@ -1922,7 +1990,9 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
     "metadata_policy_state": ("generation",),
     "current_description_decisions": ("review_case_id",),
     "current_cover_considerations": ("review_case_id", "consideration_id"),
-    "current_cover_selection_authorities": (
+    # Any owner's choice settles its work's cover, whichever it names.
+    "owner_cover_pointers": ("connection_name", "library_name", "item_id"),
+    "automatic_cover_pointers": (
         "connection_name",
         "library_name",
         "item_id",
@@ -2082,8 +2152,10 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REVIEW_CASE_EPISODES_SQL)
     connection.execute(_COVER_CONSIDERATIONS_SQL)
     connection.execute(_CURRENT_COVER_CONSIDERATIONS_SQL)
-    connection.execute(_COVER_SELECTION_AUTHORITIES_SQL)
-    connection.execute(_CURRENT_COVER_SELECTION_AUTHORITIES_SQL)
+    connection.execute(_OWNER_COVER_SELECTIONS_SQL)
+    connection.execute(_AUTOMATIC_COVER_SELECTIONS_SQL)
+    for sql in _COVER_POINTERS_SQL.values():
+        connection.execute(sql)
     connection.execute(_COVER_CONSIDERATION_EVENTS_SQL)
     connection.execute(_AUTOMATIC_DECISIONS_SQL)
     connection.execute(_AUTOMATIC_SAFETY_SQL)
@@ -2147,10 +2219,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_HUMAN_DECISION_EVENT_NO_DELETE_SQL)
     connection.execute(_COVER_CONSIDERATION_NO_UPDATE_SQL)
     connection.execute(_COVER_CONSIDERATION_NO_DELETE_SQL)
-    connection.execute(_COVER_SELECTION_AUTHORITY_NO_UPDATE_SQL)
-    connection.execute(_COVER_SELECTION_AUTHORITY_NO_DELETE_SQL)
-    connection.execute(_CURRENT_COVER_SELECTION_AUTHORITY_INSERT_SQL)
-    connection.execute(_CURRENT_COVER_SELECTION_AUTHORITY_UPDATE_SQL)
+    for sql in _COVER_SELECTION_TRIGGERS.values():
+        connection.execute(sql)
     connection.execute(_COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL)
     connection.execute(_COVER_CONSIDERATION_EVENT_NO_DELETE_SQL)
     connection.execute(_RETAINED_COVER_BINDING_NO_UPDATE_SQL)
@@ -2293,11 +2363,11 @@ def _cover_objects() -> tuple[tuple[str, str, str | None], ...]:
             "current_cover_considerations",
             _CURRENT_COVER_CONSIDERATIONS_SQL,
         ),
-        ("table", "cover_selection_authorities", _COVER_SELECTION_AUTHORITIES_SQL),
-        (
-            "table",
-            "current_cover_selection_authorities",
-            _CURRENT_COVER_SELECTION_AUTHORITIES_SQL,
+        ("table", "owner_cover_selections", _OWNER_COVER_SELECTIONS_SQL),
+        ("table", "automatic_cover_selections", _AUTOMATIC_COVER_SELECTIONS_SQL),
+        *(
+            ("table", f"{kind}_cover_pointers", sql)
+            for kind, sql in _COVER_POINTERS_SQL.items()
         ),
         ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),
         ("table", "retained_cover_bindings", _RETAINED_COVER_BINDINGS_SQL),
@@ -2319,17 +2389,11 @@ def _cover_objects() -> tuple[tuple[str, str, str | None], ...]:
         ("index", "sqlite_autoindex_cover_considerations_1", None),
         ("index", "sqlite_autoindex_current_cover_considerations_1", None),
         ("index", "sqlite_autoindex_current_cover_considerations_2", None),
-        ("index", "sqlite_autoindex_cover_selection_authorities_1", None),
-        ("index", "sqlite_autoindex_cover_selection_authorities_2", None),
-        (
-            "index",
-            "sqlite_autoindex_current_cover_selection_authorities_1",
-            None,
-        ),
-        (
-            "index",
-            "sqlite_autoindex_current_cover_selection_authorities_2",
-            None,
+        *(
+            ("index", f"sqlite_autoindex_{kind}_cover_{table}_{number}", None)
+            for kind in ("owner", "automatic")
+            for table in ("selections", "pointers")
+            for number in (1, 2)
         ),
         ("index", "sqlite_autoindex_cover_consideration_events_1", None),
         (
@@ -2362,26 +2426,7 @@ def _cover_objects() -> tuple[tuple[str, str, str | None], ...]:
             "cover_considerations_no_update",
             _COVER_CONSIDERATION_NO_UPDATE_SQL,
         ),
-        (
-            "trigger",
-            "cover_selection_authorities_no_delete",
-            _COVER_SELECTION_AUTHORITY_NO_DELETE_SQL,
-        ),
-        (
-            "trigger",
-            "cover_selection_authorities_no_update",
-            _COVER_SELECTION_AUTHORITY_NO_UPDATE_SQL,
-        ),
-        (
-            "trigger",
-            "current_cover_selection_authorities_validate_insert",
-            _CURRENT_COVER_SELECTION_AUTHORITY_INSERT_SQL,
-        ),
-        (
-            "trigger",
-            "current_cover_selection_authorities_validate_update",
-            _CURRENT_COVER_SELECTION_AUTHORITY_UPDATE_SQL,
-        ),
+        *_named_objects("trigger", _COVER_SELECTION_TRIGGERS),
         (
             "trigger",
             "cover_consideration_events_no_delete",
@@ -2783,15 +2828,13 @@ def _review_objects() -> tuple[tuple[str, str, str | None], ...]:
 # budgets and paid capped artefacts. Every other table and view is derived and
 # recomputed from the library, its providers and the ledger. A ledger row never
 # references a derived row; tests/unit/test_ledger_partition_schema.py pins the
-# derived list and both directions. Until the #2038 cover split lands, the
-# cover selection tables are listed whole, and the manual holds until C2b.
+# derived list and both directions. Until C2b the manual holds are listed
+# whole.
 LEDGER_TABLES = frozenset(
     {
         "automatic_safety_state",
-        "cover_selection_authorities",
         "cover_taste_builds",
         "cover_taste_profile_versions",
-        "current_cover_selection_authorities",
         "field_effect_actions",
         "field_effect_authorities",
         "field_effect_cleanups",
@@ -2811,6 +2854,8 @@ LEDGER_TABLES = frozenset(
         "metadata_policy_state",
         "metadata_policy_transitions",
         "owner_authored_descriptions",
+        "owner_cover_pointers",
+        "owner_cover_selections",
         "owner_links",
         "owner_setting_secrets",
         "owner_settings",
@@ -3018,9 +3063,12 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
         selection_decision_ids: dict[str, str] = {}
         automatic_supersessions: dict[str, str | None] = {}
         for row in connection.execute(
-            "SELECT selection_id,connection_name,library_name,item_id,kind,decision_id,"
-            "consideration_id,supersedes_selection_id,occurred_at,document "
-            "FROM cover_selection_authorities"
+            " UNION ALL ".join(
+                "SELECT selection_id,connection_name,library_name,item_id,"
+                f"'{kind}',decision_id,consideration_id,supersedes_selection_id,"
+                f"occurred_at,document FROM {kind}_cover_selections"
+                for kind in ("owner", "automatic")
+            )
         ):
             document = json.loads(row[9])
             if (
@@ -3158,12 +3206,22 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 != expected_predecessor_decision_id
             ):
                 raise ValueError
-        for row in connection.execute(
-            "SELECT connection_name,library_name,item_id,selection_id "
-            "FROM current_cover_selection_authorities"
-        ):
-            if row[3] not in selections or selections[row[3]][:3] != row[:3]:
-                raise ValueError
+        # Each pointer names a selection of its own kind for its work, and
+        # no work has both: an owner's choice removes Automatic's pointer.
+        pointed: set[tuple[str, str, str]] = set()
+        for kind in ("owner", "automatic"):
+            for row in connection.execute(
+                "SELECT connection_name,library_name,item_id,selection_id "
+                f"FROM {kind}_cover_pointers"
+            ):
+                if (
+                    row[3] not in selections
+                    or selections[row[3]][:3] != row[:3]
+                    or selections[row[3]][3].get("kind") != kind
+                    or row[:3] in pointed
+                ):
+                    raise ValueError
+                pointed.add(row[:3])
     except (
         AutomaticDecisionError,
         HumanDecisionError,

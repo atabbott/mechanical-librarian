@@ -126,10 +126,10 @@ def release_put_back_retained_cover(
     connection.execute(
         "INSERT INTO retained_cover_removals(plan_id,reason,state,attempt,updated_at) "
         "SELECT listing.plan_id,'released','pending',0,? "
-        "FROM cover_selection_authorities selection "
+        "FROM owner_cover_selections selection "
         "JOIN retained_cover_listings listing "
         "ON listing.plan_id=json_extract(selection.document,'$.retained_plan_id') "
-        "WHERE selection.decision_id=? AND selection.kind='owner' "
+        "WHERE selection.decision_id=? "
         "AND json_extract(selection.document,'$.candidate_kind')='retained' "
         "ON CONFLICT(plan_id) DO NOTHING",
         (changed_at, decision_id),

@@ -203,6 +203,7 @@ from tests.support.audiobook_reports import (
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.cover_producers import _qualified_cover_report, held_measured_stage
+from tests.support.cover_selections import ALL_COVER_POINTERS, ALL_COVER_SELECTIONS
 from tests.support.proposal_evidence import (
     _claim,
     _exact_edition_cover,
@@ -1116,7 +1117,7 @@ def test_first_automatic_cover_compares_the_actual_target_after_typed_timeout(
             else {"source_timeout"}
         )
         assert repository._connection.execute(
-            "SELECT count(*) FROM cover_selection_authorities"
+            "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
         ).fetchone() == (expected_rows,)
         repository.close()
 
@@ -4192,8 +4193,10 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             ]
         dispatch.assert_not_called()
         selection_rows = repository._connection.execute(
-            "SELECT selection.document FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id"
+            "SELECT selection.document FROM " + ALL_COVER_POINTERS + " current "
+            "JOIN "
+            + ALL_COVER_SELECTIONS
+            + " selection ON selection.selection_id=current.selection_id"
         ).fetchall()
         assert 1 == len(selection_rows)
         selection = json.loads(selection_rows[0][0])
@@ -4399,7 +4402,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         )
         confirmation = {
             "expected_selection_id": repository._connection.execute(
-                "SELECT selection_id FROM current_cover_selection_authorities"
+                "SELECT selection_id FROM " + ALL_COVER_POINTERS
             ).fetchone()[0],
             "confirm_unverified_match": False,
         }
@@ -4423,14 +4426,56 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             automatic.review_case_id, "cover"
         ) == (snapshot.connection, snapshot.library)
         current = repository._connection.execute(
-            "SELECT selection.kind FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id"
+            "SELECT selection.kind FROM " + ALL_COVER_POINTERS + " current "
+            "JOIN "
+            + ALL_COVER_SELECTIONS
+            + " selection ON selection.selection_id=current.selection_id"
         ).fetchone()
         assert current == ("owner",)
+        # The owner's choice took the work from Automatic in its own
+        # transaction: only the owner's pointer is left (ADR-0108).
+        assert repository._connection.execute(
+            "SELECT (SELECT count(*) FROM owner_cover_pointers),"
+            "(SELECT count(*) FROM automatic_cover_pointers)"
+        ).fetchone() == (1, 0)
+        # Automatic never points at a work the owner's choice holds, and open
+        # refuses a store where both pointers name one work.
+        automatic_pointer = repository._connection.execute(
+            "SELECT connection_name,library_name,item_id,selection_id "
+            "FROM automatic_cover_selections"
+        ).fetchone()
+        with pytest.raises(
+            sqlite3.IntegrityError, match="^cover selection is the owner's$"
+        ):
+            repository._connection.execute(
+                "INSERT INTO automatic_cover_pointers VALUES(?,?,?,?)",
+                automatic_pointer,
+            )
+        repository._connection.rollback()
+        (root / "both-pointers").mkdir(mode=0o700)
+        both_pointers = root / "both-pointers" / "reports.sqlite"
+        hostile = sqlite3.connect(both_pointers)
+        repository._connection.backup(hostile)
+        (guard,) = hostile.execute(
+            "SELECT sql FROM sqlite_schema "
+            "WHERE name='automatic_cover_pointers_owner_insert'"
+        ).fetchone()
+        hostile.execute("DROP TRIGGER automatic_cover_pointers_owner_insert")
+        hostile.execute(
+            "INSERT INTO automatic_cover_pointers VALUES(?,?,?,?)", automatic_pointer
+        )
+        hostile.execute(guard)
+        hostile.commit()
+        hostile.close()
+        both_pointers.chmod(0o600)
+        with pytest.raises(
+            MetadataReportError, match="database is unavailable or incompatible"
+        ):
+            open_repository(both_pointers)
         assert (
             2
             == repository._connection.execute(
-                "SELECT count(*) FROM cover_selection_authorities"
+                "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
             ).fetchone()[0]
         )
         repository.close()
@@ -4514,7 +4559,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         assert (
             2
             == repository._connection.execute(
-                "SELECT count(*) FROM cover_selection_authorities"
+                "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
             ).fetchone()[0]
         )
         pending = repository.pending_field_effect_decision_documents(1)
@@ -4536,7 +4581,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
                 cover_consideration_id=consideration["consideration_id"],
                 cover_confirmation={
                     "expected_selection_id": repository._connection.execute(
-                        "SELECT selection_id FROM current_cover_selection_authorities"
+                        "SELECT selection_id FROM " + ALL_COVER_POINTERS
                     ).fetchone()[0],
                     "confirm_unverified_match": False,
                 },
@@ -4545,7 +4590,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         repository.close()
         reopened = open_repository(database)
         assert reopened._connection.execute(
-            "SELECT count(*) FROM cover_selection_authorities"
+            "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
         ).fetchone() == (4,)
         reopened.close()
         lineage_database = root / "lineage.sqlite"
@@ -4555,13 +4600,13 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         source.close()
         destination.close()
         hostile = sqlite3.connect(lineage_database)
-        hostile.execute("DROP TRIGGER cover_selection_authorities_no_update")
+        hostile.execute("DROP TRIGGER automatic_cover_selections_no_update")
         automatic_row = hostile.execute(
-            "SELECT selection_id,document FROM cover_selection_authorities "
+            "SELECT selection_id,document FROM " + ALL_COVER_SELECTIONS + " "
             "WHERE kind='automatic'"
         ).fetchone()
         owner_row = hostile.execute(
-            "SELECT selection_id FROM cover_selection_authorities "
+            "SELECT selection_id FROM " + ALL_COVER_SELECTIONS + " "
             "WHERE kind='owner' ORDER BY occurred_at DESC LIMIT 1"
         ).fetchone()
         assert automatic_row is not None
@@ -4569,7 +4614,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         authority_document = json.loads(automatic_row[1])
         authority_document["supersedes_selection_id"] = owner_row[0]
         hostile.execute(
-            "UPDATE cover_selection_authorities SET supersedes_selection_id=?,document=? "
+            "UPDATE automatic_cover_selections SET supersedes_selection_id=?,document=? "
             "WHERE selection_id=?",
             (
                 owner_row[0],
@@ -4584,10 +4629,9 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         ):
             open_repository(lineage_database)
         hostile = sqlite3.connect(database)
-        hostile.execute("DROP TRIGGER cover_selection_authorities_no_update")
+        hostile.execute("DROP TRIGGER automatic_cover_selections_no_update")
         hostile.execute(
-            "UPDATE cover_selection_authorities SET occurred_at=occurred_at+1 "
-            "WHERE kind='automatic'"
+            "UPDATE automatic_cover_selections SET occurred_at=occurred_at+1"
         )
         hostile.commit()
         hostile.close()
@@ -4651,8 +4695,8 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                     assert advances < 10
             dispatch.assert_not_called()
             selected = repository._connection.execute(
-                "SELECT selection.document FROM current_cover_selection_authorities current "
-                "JOIN cover_selection_authorities selection "
+                "SELECT selection.document FROM " + ALL_COVER_POINTERS + " current "
+                "JOIN " + ALL_COVER_SELECTIONS + " selection "
                 "ON selection.selection_id=current.selection_id"
             ).fetchone()
             assert selected is not None
@@ -4701,7 +4745,7 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
             dispatch.assert_not_called()
 
             assert repository._connection.execute(
-                "SELECT count(*) FROM cover_selection_authorities"
+                "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
             ).fetchone() == (1,)
             reviewer_access = _test_reviewer_access(repository)
             cover_considerations = composition._compose_cover_considerations(
@@ -5285,8 +5329,10 @@ def test_later_cover_case_supersedes_automatic_only_with_a_measured_replacement(
             _test_reviewer_access(repository),
         )
         prior_document = repository._connection.execute(
-            "SELECT selection.document FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id"
+            "SELECT selection.document FROM " + ALL_COVER_POINTERS + " current "
+            "JOIN "
+            + ALL_COVER_SELECTIONS
+            + " selection ON selection.selection_id=current.selection_id"
         ).fetchone()
         assert prior_document is not None
         prior_selection = json.loads(prior_document[0])
@@ -5361,14 +5407,16 @@ def test_later_cover_case_supersedes_automatic_only_with_a_measured_replacement(
         )
 
         current_document = repository._connection.execute(
-            "SELECT selection.document FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id"
+            "SELECT selection.document FROM " + ALL_COVER_POINTERS + " current "
+            "JOIN "
+            + ALL_COVER_SELECTIONS
+            + " selection ON selection.selection_id=current.selection_id"
         ).fetchone()
         assert current_document is not None
         current = json.loads(current_document[0])
         assert current["kind"] == expected_kind
         assert repository._connection.execute(
-            "SELECT count(*) FROM cover_selection_authorities"
+            "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
         ).fetchone() == (expected_rows,)
         pending = repository.pending_field_effect_decision_documents(1)
 
@@ -5404,8 +5452,8 @@ def test_later_cover_case_supersedes_automatic_only_with_a_measured_replacement(
         if later_faulty and not owner_final:
             reopened = open_repository(database)
             reopened_document = reopened._connection.execute(
-                "SELECT selection.document FROM current_cover_selection_authorities current "
-                "JOIN cover_selection_authorities selection "
+                "SELECT selection.document FROM " + ALL_COVER_POINTERS + " current "
+                "JOIN " + ALL_COVER_SELECTIONS + " selection "
                 "ON selection.selection_id=current.selection_id"
             ).fetchone()
             assert reopened_document is not None
@@ -5506,7 +5554,7 @@ def test_cover_automatic_admission_abstains_before_unready_authority() -> None:
             1,
         )
         assert repository._connection.execute(
-            "SELECT count(*) FROM cover_selection_authorities"
+            "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
         ).fetchone() == (0,)
         repository.close()
 
@@ -10117,8 +10165,8 @@ def test_image_unavailable_isbn_persists_exact_owner_authority(
     assert field.policy_destination == mode
     assert (
         repository._connection.execute(
-            "SELECT (SELECT count(*) FROM cover_selection_authorities) + "
-            "(SELECT count(*) FROM current_cover_selection_authorities)"
+            "SELECT (SELECT count(*) FROM " + ALL_COVER_SELECTIONS + ") + "
+            "(SELECT count(*) FROM " + ALL_COVER_POINTERS + ")"
         ).fetchone()[0]
         == 0
     )

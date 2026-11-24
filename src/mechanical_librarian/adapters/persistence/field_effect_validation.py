@@ -1032,7 +1032,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             decision_row = connection.execute(
                 "SELECT document FROM automatic_decisions WHERE decision_id=? "
                 "UNION ALL SELECT json_extract(document,'$.decision_document') "
-                "FROM cover_selection_authorities WHERE kind='automatic' AND decision_id=?",
+                "FROM automatic_cover_selections WHERE decision_id=?",
                 (record.decision_id, record.decision_id),
             ).fetchone()
             case_row = connection.execute(

@@ -48,7 +48,9 @@ from mechanical_librarian.application.reviewer_contracts import (
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.interfaces.web.app import REVIEW_TASTE_PROFILE_SCHEMA
+from tests.support.cover_selections import ALL_COVER_SELECTIONS
 from tests.support.cover_taste import record_owner_cover_decisions
+from tests.support.ledger_copies import assert_ledger_copies
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
@@ -191,8 +193,13 @@ def _built(
 def test_a_profile_is_written_from_owner_choices_and_shown(tmp_path) -> None:
     with _built(tmp_path) as built:
         before = built.repository._connection.execute(
-            "SELECT count(*) FROM cover_selection_authorities"
+            "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
         ).fetchone()
+        # Each owner choice the build sends carries the facts it is counted
+        # and sent by (ADR-0108).
+        checked = assert_ledger_copies(built.repository)
+        assert checked["taste_decision"] > 0
+        assert checked["taste_eligible"] > 0
         built.service.wake(NOW)
         [client] = built.openrouter
         [request] = client.requests
@@ -226,7 +233,7 @@ def test_a_profile_is_written_from_owner_choices_and_shown(tmp_path) -> None:
         # It influences nothing: no selection, stage or decision moved.
         assert (
             built.repository._connection.execute(
-                "SELECT count(*) FROM cover_selection_authorities"
+                "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
             ).fetchone()
             == before
         )

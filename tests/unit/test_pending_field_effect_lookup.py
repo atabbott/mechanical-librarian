@@ -580,12 +580,16 @@ _RECORDED_AUTHORITY = (
 )
 _RECORDED_CASE = (
     "SELECT destination,decision_id FROM automatic_decisions WHERE review_case_id=? "
-    "UNION ALL SELECT 'cover',selection.decision_id FROM current_review_case_lineages lineage "
-    "JOIN current_cover_selection_authorities current ON "
-    "current.connection_name=lineage.connection_name AND "
-    "current.library_name=lineage.library_name AND current.item_id=lineage.item_id "
-    "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
-    "WHERE lineage.review_case_id=? UNION ALL "
+    + "".join(
+        "UNION ALL SELECT 'cover',selection.decision_id FROM current_review_case_lineages "
+        f"lineage JOIN {kind}_cover_pointers current ON "
+        "current.connection_name=lineage.connection_name AND "
+        "current.library_name=lineage.library_name AND current.item_id=lineage.item_id "
+        f"JOIN {kind}_cover_selections selection ON selection.selection_id=current.selection_id "
+        "WHERE lineage.review_case_id=? "
+        for kind in ("owner", "automatic")
+    )
+    + "UNION ALL "
     "SELECT destination,decision_id FROM human_decisions WHERE review_case_id=?"
 )
 _ORIGINAL_LOOKUPS = {
@@ -704,7 +708,7 @@ def _lookups(
         "revoke": (earlier_id, earlier_id),
         "replacement": (earlier_id, earlier_id, False),
         "authority": (case_id, destination, later.decision_id, case_id, destination),
-        "override": (case_id, case_id, case_id),
+        "override": (case_id,) * 4,
     }
     lookups = {}
     for name, statements in traced.items():
@@ -1525,15 +1529,37 @@ _SPLIT_2038 = (
 )
 
 
+# It split the cover selections too: Automatic's current one had been read
+# from the one pointer and selection table by kind.
+_COVER_SPLIT_2038 = (
+    (
+        "FROM automatic_cover_pointers current JOIN automatic_cover_selections "
+        "selection ON",
+        "FROM current_cover_selection_authorities current JOIN "
+        "cover_selection_authorities selection ON",
+    ),
+    (
+        "ON lineage.review_case_id=consideration.review_case_id WHERE ",
+        "ON lineage.review_case_id=consideration.review_case_id WHERE "
+        "selection.kind='automatic' AND ",
+    ),
+)
+
+
 def _before_2038(statement: str) -> str:
-    """One description decisions table again, told apart by origin."""
+    """One description decisions table again, told apart by origin, and
+    one cover selection table told apart by kind."""
     (now, then), *_ = (step for step in _SPLIT_2038 if step[0] in statement)
     assert statement.count(now) == 1
     closing = _ACTIVE_GENERATION_DESCRIPTION_SQL + ")"
     assert statement.count(closing) == 1
-    return statement.replace(now, then).replace(
+    statement = statement.replace(now, then).replace(
         closing, _ACTIVE_GENERATION_DESCRIPTION_SQL + ")))"
     )
+    for now, then in _COVER_SPLIT_2038:
+        assert statement.count(now) == 1, now
+        statement = statement.replace(now, then)
+    return statement
 
 
 def _before_1568(statement: str) -> str:

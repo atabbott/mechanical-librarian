@@ -361,8 +361,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     (
                         row
                         for row in self._connection.execute(
-                            "SELECT current.selection_id,selection.kind,json_extract(selection.document,'$.candidate_artifact_id') FROM current_cover_selection_authorities current JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id JOIN current_review_case_lineages lineage ON lineage.connection_name=current.connection_name AND lineage.library_name=current.library_name AND lineage.item_id=current.item_id WHERE lineage.review_case_id=?",
-                            (review_case_id,),
+                            " UNION ALL ".join(
+                                f"SELECT current.selection_id,'{kind}',json_extract(selection.document,'$.candidate_artifact_id') FROM {kind}_cover_pointers current JOIN {kind}_cover_selections selection ON selection.selection_id=current.selection_id JOIN current_review_case_lineages lineage ON lineage.connection_name=current.connection_name AND lineage.library_name=current.library_name AND lineage.item_id=current.item_id WHERE lineage.review_case_id=?"
+                                for kind in ("owner", "automatic")
+                            ),
+                            (review_case_id, review_case_id),
                         )
                     ),
                     None,
@@ -753,13 +756,17 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "WHERE newest.consideration_id=pointer.consideration_id "
             "ORDER BY newest.created_at DESC,newest.rowid DESC LIMIT 1) "
             "AND json_extract(verdict.document,'$.decision')='choose' "
-            "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities answered "
+            "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers current "
+            "WHERE current.connection_name=lineage.connection_name "
+            "AND current.library_name=lineage.library_name "
+            "AND current.item_id=lineage.item_id "
+            "UNION ALL SELECT 1 FROM automatic_cover_pointers current "
+            "JOIN automatic_cover_selections answered "
             "ON answered.selection_id=current.selection_id "
             "WHERE current.connection_name=lineage.connection_name "
             "AND current.library_name=lineage.library_name "
-            "AND current.item_id=lineage.item_id AND (answered.kind='owner' "
-            "OR answered.consideration_id=pointer.consideration_id))",
+            "AND current.item_id=lineage.item_id "
+            "AND answered.consideration_id=pointer.consideration_id)",
             (review_case_id,),
         ).fetchone()
         if row is None:
@@ -773,14 +780,14 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "SELECT selection.decision_id FROM current_review_case_lineages lineage "
             "JOIN current_cover_considerations current_cover "
             "ON current_cover.review_case_id=lineage.review_case_id "
-            "JOIN current_cover_selection_authorities current_selection ON "
+            "JOIN automatic_cover_pointers current_selection ON "
             "current_selection.connection_name=lineage.connection_name AND "
             "current_selection.library_name=lineage.library_name AND "
             "current_selection.item_id=lineage.item_id "
-            "JOIN cover_selection_authorities selection ON "
+            "JOIN automatic_cover_selections selection ON "
             "selection.selection_id=current_selection.selection_id AND "
             "selection.consideration_id=current_cover.consideration_id "
-            "WHERE lineage.review_case_id=? AND selection.kind='automatic'",
+            "WHERE lineage.review_case_id=?",
             (review_case_id,),
         ).fetchone()
         if row is None:
@@ -1139,12 +1146,16 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "SELECT DISTINCT recorded.destination FROM ("
             "SELECT destination,decision_id FROM automatic_decisions WHERE review_case_id=? "
             "UNION ALL "
-            "SELECT 'cover',selection.decision_id FROM current_review_case_lineages lineage "
-            "JOIN current_cover_selection_authorities current ON "
-            "current.connection_name=lineage.connection_name AND "
-            "current.library_name=lineage.library_name AND current.item_id=lineage.item_id "
-            "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
-            "WHERE lineage.review_case_id=? "
+            + " UNION ALL ".join(
+                "SELECT 'cover',selection.decision_id FROM current_review_case_lineages lineage "
+                f"JOIN {kind}_cover_pointers current ON "
+                "current.connection_name=lineage.connection_name AND "
+                "current.library_name=lineage.library_name AND current.item_id=lineage.item_id "
+                f"JOIN {kind}_cover_selections selection ON selection.selection_id=current.selection_id "
+                "WHERE lineage.review_case_id=?"
+                for kind in ("owner", "automatic")
+            )
+            + " "
             "UNION ALL "
             "SELECT destination,decision_id FROM human_decisions WHERE review_case_id=?"
             ") recorded JOIN field_effects effect ON (effect.decision_id=recorded.decision_id OR "
@@ -1153,7 +1164,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "WHERE effect.state IN ('claimed','applying','reconciling') OR "
             "(effect.state='verified' AND recorded.destination='cover') "
             "ORDER BY recorded.destination",
-            (review_case_id, review_case_id, review_case_id),
+            (review_case_id,) * 4,
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):
             raise MetadataReportError("review attention is unavailable")

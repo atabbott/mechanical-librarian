@@ -41,6 +41,7 @@ from mechanical_librarian.domain.owner_link import (
 )
 from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 from tests.support.metadata_report_schemas import (
+    PRE_2038_COVER_SELECTION_AUTHORITIES_SQL,
     PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL,
     PRIOR_REVIEW_CASE_EPISODES_SQL,
     PRIOR_REVIEW_SCANS_SQL,
@@ -749,14 +750,6 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
     monkeypatch.setattr(
         schema, "_HUMAN_DECISIONS_SQL", PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL
     )
-    # Its automatic cover selection CHECK named decision v5 (#1372 PR 5).
-    monkeypatch.setattr(
-        schema,
-        "_COVER_SELECTION_AUTHORITIES_SQL",
-        schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
-            f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v5'"
-        ),
-    )
     # Nor did it record an unread item or a discovery reason (#2013).
     monkeypatch.setattr(schema, "_REVIEW_WORK_SQL", WITHOUT_UNREAD_REVIEW_WORK_SQL)
     monkeypatch.setattr(schema, "_REVIEW_SCANS_SQL", PRIOR_REVIEW_SCANS_SQL)
@@ -776,7 +769,13 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
     monkeypatch.undo()
     connection = sqlite3.connect(path, isolation_level=None)
     try:
-        undo_2038_tables(connection)
+        # Its automatic cover selection CHECK named decision v5 (#1372 PR 5).
+        undo_2038_tables(
+            connection,
+            PRE_2038_COVER_SELECTION_AUTHORITIES_SQL.replace(
+                f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v5'"
+            ),
+        )
         # Every owner_links object but the table itself reads as it did then.
         kept = connection.execute(
             "SELECT sql FROM sqlite_schema WHERE tbl_name IN "

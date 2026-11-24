@@ -351,8 +351,11 @@ def _cover_selection(
     case_id: str,
     kind: str,
     consideration_case_id: str,
-) -> None:
-    """Select a cover for the case's work, bound to another case's consideration."""
+    *,
+    point: bool = True,
+) -> str:
+    """Select a cover for the case's work, bound to another case's
+    consideration, and point the work at it unless `point` is false."""
     consideration_id, _ = _consideration(repository, consideration_case_id)
     _, target = _consideration(repository, case_id)
     key = _hex(f"selection:{case_id}:{kind}")
@@ -371,25 +374,35 @@ def _cover_selection(
         f"human_decision_{key}" if kind == "owner" else f"automatic_decision_{key}"
     )
     target_key = (target["connection"], target["library"], target["item"])
-    repository._connection.execute(
-        "INSERT INTO cover_selection_authorities(selection_id,connection_name,"
-        "library_name,item_id,kind,decision_id,consideration_id,"
-        "supersedes_selection_id,occurred_at,document) "
-        "VALUES(?,?,?,?,?,?,?,NULL,1,?)",
-        (
-            f"cover_selection_{key}",
-            *target_key,
-            kind,
-            decision,
-            consideration_id,
-            document,
-        ),
-    )
-    repository._connection.execute(
-        "INSERT INTO current_cover_selection_authorities"
-        "(connection_name,library_name,item_id,selection_id) VALUES(?,?,?,?)",
-        (*target_key, f"cover_selection_{key}"),
-    )
+    # The owner's selection names a decision this seed does not record, so
+    # its foreign key is not enforced on these statements.
+    connection = repository._connection
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys=OFF")
+    try:
+        connection.execute(
+            f"INSERT INTO {kind}_cover_selections(selection_id,connection_name,"
+            "library_name,item_id,decision_id,consideration_id,"
+            "supersedes_selection_id,occurred_at,document) "
+            "VALUES(?,?,?,?,?,?,NULL,1,?)",
+            (
+                f"cover_selection_{key}",
+                *target_key,
+                decision,
+                consideration_id,
+                document,
+            ),
+        )
+        if point:
+            connection.execute(
+                f"INSERT INTO {kind}_cover_pointers"
+                "(connection_name,library_name,item_id,selection_id) VALUES(?,?,?,?)",
+                (*target_key, f"cover_selection_{key}"),
+            )
+        connection.commit()
+    finally:
+        connection.execute("PRAGMA foreign_keys=ON")
+    return f"cover_selection_{key}"
 
 
 def _shadow_outcome(

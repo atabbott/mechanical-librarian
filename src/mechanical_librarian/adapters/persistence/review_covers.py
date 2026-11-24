@@ -84,12 +84,12 @@ _SWITCH_SQL = (
     # The owner's answer is read through the work's current selection, a
     # primary-key search: automation never supersedes an owner selection, so
     # an owner answer after the write is always the current one.
-    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities answered "
+    "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers current "
+    "JOIN owner_cover_selections answered "
     "ON answered.selection_id=current.selection_id "
     "WHERE current.connection_name=effect.connection_name "
     "AND current.library_name=effect.library_name "
-    "AND current.item_id=effect.work_id AND answered.kind='owner' "
+    "AND current.item_id=effect.work_id "
     "AND answered.occurred_at>=effect.updated_at "
     "AND json_extract(answered.document,'$.retained_plan_id') IS NOT effect.plan_id))"
 )
@@ -98,13 +98,13 @@ _SWITCH_SQL = (
 _PUT_BACK_SQL = (
     "SELECT json_object('state',COALESCE(effect.state,'planned'),"
     "'failure',json_extract(effect.document,'$.failure')) "
-    "FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities answered "
+    "FROM owner_cover_pointers current "
+    "JOIN owner_cover_selections answered "
     "ON answered.selection_id=current.selection_id "
     "LEFT JOIN field_effects effect ON effect.decision_id=answered.decision_id "
     "AND effect.destination='cover' "
     "WHERE current.connection_name=? AND current.library_name=? "
-    "AND current.item_id=? AND answered.kind='owner' "
+    "AND current.item_id=? "
     "AND json_extract(answered.document,'$.retained_plan_id')=? "
     "ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
 )
@@ -148,12 +148,15 @@ _STAGE_SQL = (
     "IN ('suggest','replace','hold') "
     "AND json_extract(pointed.document,'$.policy_reference')=? "
     "AND ml_cover_consideration_current(pointed.currentness_document,?)=1 "
-    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities answered "
+    "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers current "
+    "WHERE current.connection_name=ml.connection_name "
+    "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
+    "UNION ALL SELECT 1 FROM automatic_cover_pointers current "
+    "JOIN automatic_cover_selections answered "
     "ON answered.selection_id=current.selection_id "
     "WHERE current.connection_name=ml.connection_name "
     "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
-    "AND (answered.kind='owner' OR answered.consideration_id=pointed.consideration_id)))"
+    "AND answered.consideration_id=pointed.consideration_id))"
 )
 # The taste judge's current suggestion (#1372 PR 4b, J8): the confidence of
 # the newest verdict on the work's current comparison, when that verdict
@@ -173,12 +176,15 @@ _TASTE_SQL = (
     "AND json_extract(verdict.document,'$.decision')='choose' "
     "AND json_extract(pointed.document,'$.policy_reference')=? "
     "AND ml_cover_consideration_current(pointed.currentness_document,?)=1 "
-    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities answered "
+    "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers current "
+    "WHERE current.connection_name=ml.connection_name "
+    "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
+    "UNION ALL SELECT 1 FROM automatic_cover_pointers current "
+    "JOIN automatic_cover_selections answered "
     "ON answered.selection_id=current.selection_id "
     "WHERE current.connection_name=ml.connection_name "
     "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
-    "AND (answered.kind='owner' OR answered.consideration_id=pointed.consideration_id)))"
+    "AND answered.consideration_id=pointed.consideration_id))"
 )
 # The measured rule's reason an automatic switch recorded, and the edition
 # language that reason names, from the decision and its comparison.
@@ -189,8 +195,8 @@ _SWITCH_REASON_SQL = (
     "json_extract(json_extract(selection.document,'$.decision_document'),"
     "'$.verdict_id'),json_extract(json_extract(selection.document,"
     "'$.decision_document'),'$.taste_version') "
-    "FROM field_effects effect JOIN cover_selection_authorities selection "
-    "ON selection.decision_id=effect.decision_id AND selection.kind='automatic' "
+    "FROM field_effects effect JOIN automatic_cover_selections selection "
+    "ON selection.decision_id=effect.decision_id "
     "JOIN cover_considerations consideration "
     "ON consideration.consideration_id=selection.consideration_id "
     "WHERE effect.plan_id=?"
@@ -214,12 +220,11 @@ _CHOOSABLE_SQL = (
 # current comparison. A Put back stays with its switch, which the CASE reads
 # first; once the write verifies, the work reads as kept.
 _CHOSEN_SQL = (
-    "EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities answered "
+    "EXISTS (SELECT 1 FROM owner_cover_pointers current "
+    "JOIN owner_cover_selections answered "
     "ON answered.selection_id=current.selection_id "
     "WHERE current.connection_name=ml.connection_name "
     "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
-    "AND answered.kind='owner' "
     "AND json_extract(answered.document,'$.candidate_kind') IS NOT NULL "
     "AND NOT EXISTS (SELECT 1 FROM field_effects effect "
     "WHERE effect.decision_id=answered.decision_id "
@@ -312,12 +317,9 @@ _CALIBRATION_SQL = (
     # pick would not count; a work with no cover at all offers no keep (S2).
     "AND json_extract(consideration.document,'$.incumbent.state') "
     "IS NOT 'unavailable' "
-    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities answered "
-    "ON answered.selection_id=current.selection_id "
+    "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers current "
     "WHERE current.connection_name=work.connection_name "
-    "AND current.library_name=work.library_name AND current.item_id=work.item_id "
-    "AND answered.kind='owner') "
+    "AND current.library_name=work.library_name AND current.item_id=work.item_id) "
     "AND NOT EXISTS (SELECT 1 FROM json_each(consideration.document,'$.candidates') "
     "offered WHERE json_extract(offered.value,'$.candidate_kind') "
     "IN ('retained','larger_copy')) "

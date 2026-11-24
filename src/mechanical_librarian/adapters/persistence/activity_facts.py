@@ -26,7 +26,8 @@ _TABLES = (
     "human_decision_events",
     "cover_considerations",
     "cover_consideration_events",
-    "cover_selection_authorities",
+    "owner_cover_selections",
+    "automatic_cover_selections",
     "field_effect_events",
     "field_effect_no_changes",
     "metadata_policy_drafts",
@@ -382,10 +383,10 @@ def _bindings(
         dependency("cover_considerations", row["consideration_id"])
         dependency("cover_identity", row["decision_id"])
         candidate("cover_safeguard", row["event_id"])
-    elif table == "cover_selection_authorities":
+    elif table in {"owner_cover_selections", "automatic_cover_selections"}:
         dependency("cover_considerations", row["consideration_id"])
         aliases.add(_key("cover_identity", row["decision_id"]))
-        if row["kind"] == "automatic":
+        if table == "automatic_cover_selections":
             document = json.loads(json.loads(row["document"])["decision_document"])
             for name, field in (
                 ("review_cases", "review_case_id"),

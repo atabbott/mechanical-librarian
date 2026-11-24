@@ -17,6 +17,9 @@ from typing import Any, cast
 import pytest
 
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.cover_considerations import (
+    _OWNER_SELECTION_INSERT_SQL,
+)
 from mechanical_librarian.adapters.persistence.cover_taste import (
     _ELIGIBLE,
     _INHERITED,
@@ -51,7 +54,9 @@ from mechanical_librarian.domain.cover_taste import (
     TasteRule,
 )
 from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
+from tests.support.cover_selections import ALL_COVER_POINTERS, ALL_COVER_SELECTIONS
 from tests.support.cover_taste import canonical, stored_preview
+from tests.support.ledger_copies import assert_ledger_copies
 
 DAY = 86_400
 NOW = 10 * DAY + 100
@@ -135,7 +140,7 @@ class _Seed:
             (report, item, file_format, file_format or ""),
         )
         previous = self.connection.execute(
-            "SELECT selection_id FROM current_cover_selection_authorities WHERE item_id=?",
+            "SELECT selection_id FROM " + ALL_COVER_POINTERS + " WHERE item_id=?",
             (item,),
         ).fetchone()
         document = {
@@ -155,14 +160,17 @@ class _Seed:
                     {"schema_version": COVER_AUTOMATIC_DECISION_SCHEMA}
                 )
             }
+        # An owner's choice copies its taste facts as the product writes
+        # them, and takes the work from Automatic.
         self.connection.execute(
-            "INSERT INTO cover_selection_authorities VALUES(?,?,?,?,?,?,?,?,?,?)",
+            _OWNER_SELECTION_INSERT_SQL
+            if kind == "owner"
+            else "INSERT INTO automatic_cover_selections VALUES(?,?,?,?,?,?,?,?,?)",
             (
                 selection,
                 "primary",
                 "books",
                 item,
-                kind,
                 decision,
                 consideration,
                 None if previous is None else previous[0],
@@ -170,8 +178,12 @@ class _Seed:
                 json.dumps(document),
             ),
         )
+        if kind == "owner":
+            self.connection.execute(
+                "DELETE FROM automatic_cover_pointers WHERE item_id=?", (item,)
+            )
         self.connection.execute(
-            "INSERT INTO current_cover_selection_authorities VALUES(?,?,?,?) "
+            f"INSERT INTO {kind}_cover_pointers VALUES(?,?,?,?) "
             "ON CONFLICT(connection_name,library_name,item_id) "
             "DO UPDATE SET selection_id=excluded.selection_id",
             ("primary", "books", item, selection),
@@ -234,6 +246,37 @@ def test_eligibility_excludes_one_art_retained_preview_less_and_automatic(
     seed.decision("item-0")
     seed.decision("item-0", arts=1)
     assert _store(repository).eligible_count() == 19
+
+
+def test_each_owner_choice_copies_the_facts_the_profile_counts_it_by(
+    repository,
+) -> None:
+    """An owner's cover choice is ledger: it keeps the chosen cover's digest
+    and size, the comparison's art count and the report's format as the
+    taste profile reads them when the owner chose (ADR-0108, #2038)."""
+    seed = _Seed(repository)
+    seed.many(3)
+    seed.decision("one-art", arts=1)
+    seed.decision("no-stage", arts=None)
+    seed.decision("larger-copy", offered_kind="larger_copy")
+    seed.decision("no-format", file_format=None)
+    seed.decision("automatic", kind="automatic")
+    checked = assert_ledger_copies(repository)
+    assert (checked["taste_owner_selection"], checked["taste_eligible"]) == (7, 3)
+    copies = dict(
+        (row[0], row[1:])
+        for row in repository._connection.execute(
+            "SELECT item_id,transport_sha256,width,height,offered_arts,report_format "
+            "FROM owner_cover_selections"
+        )
+    )
+    assert copies == {
+        **{f"item-{index}": ("5" * 64, 600, 900, 2, "epub") for index in range(3)},
+        "one-art": ("5" * 64, 600, 900, 1, "epub"),
+        "no-stage": ("5" * 64, 600, 900, None, "epub"),
+        "larger-copy": (None, None, None, 2, "epub"),
+        "no-format": ("5" * 64, 600, 900, 2, None),
+    }
 
 
 def test_count_and_thresholds_read_only_decisions_a_build_sends(repository) -> None:
@@ -799,7 +842,7 @@ def test_a_lost_write_after_claim_never_leaves_the_build_running(
 def _built_version(repository, rules: dict[str, list[str]] | None = None) -> str:
     """Schedule, claim and write one build from 25 seeded decisions."""
     seen = repository._connection.execute(
-        "SELECT count(*) FROM cover_selection_authorities"
+        "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
     ).fetchone()[0]
     _Seed(repository).many(25, start=1000 + seen)
     store = _store(repository)

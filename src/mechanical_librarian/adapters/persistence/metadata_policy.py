@@ -227,9 +227,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 ):
                     terms[:0] = [
                         "SELECT 1 FROM automatic_decisions",
-                        "SELECT 1 FROM current_cover_selection_authorities current "
-                        "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
-                        "WHERE selection.kind='automatic'",
+                        "SELECT 1 FROM automatic_cover_pointers",
                     ]
                 affected = self._connection.execute(
                     " UNION ALL ".join(terms) + " LIMIT 1"
