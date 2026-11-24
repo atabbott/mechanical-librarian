@@ -273,9 +273,16 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             # Automatic reactivates the unchanged policy, so that successor is
             # this same proposal set, admitted again as its same case (#1568).
             # Nor is a case kept for a recent write replayed once that write
-            # is 30 days old: the same proposal set then retires it (#1523).
+            # is 30 days old: the same proposal set then retires it (#1523),
+            # unless a pin on the work has changed, which keeps it open.
             recent = now is not None and self._written_since(
                 lineage, now - KEPT_CASE_SECONDS
+            )
+            actionable = is_actionable(proposal_set)
+            # A pin whose value changed asks however little else is left to
+            # decide, so the work keeps its case while one does (ADR-0105).
+            pin_changed = not actionable and self._work_pin_changed(
+                ReviewCase.create(proposal_set, report), lineage
             )
             if prior is not None and prior[0] == proposal_set.proposal_set_id:
                 # ``prior`` is None exactly when ``validated`` is None, so
@@ -288,7 +295,12 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 replays = actor not in {
                     "review-preparation-v1",
                     "policy-activation-v1",
-                } and not (now is not None and not recent and reason == "recent_write")
+                } and not (
+                    now is not None
+                    and not recent
+                    and not pin_changed
+                    and reason == "recent_write"
+                )
             else:
                 replays = False
             if replays:
@@ -303,8 +315,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 return _admission_json(
                     replay_status, cast(_ReviewPointer, validated)[2]
                 )
-            kept = recent and not is_actionable(proposal_set)
-            if not kept and not is_actionable(proposal_set):
+            kept = not actionable and (recent or pin_changed)
+            if not actionable and not kept:
                 outcome = self._record_nonactionable_admission(
                     proposal_set,
                     report,
@@ -338,7 +350,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 prior_case_id,
                 case.review_case_id,
                 outcome,
-                "recent_write" if kept else "actionable",
+                "recent_write" if kept and recent else "actionable",
                 owns_transaction,
             )
             if self._binding is not None:
@@ -363,6 +375,29 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         except BaseException:
             transaction.rollback()
             raise
+
+    def _work_pin_changed(
+        self, case: ReviewCase, lineage: tuple[str, str, str]
+    ) -> bool:
+        """Whether a pin the work carries would read changed on ``case``.
+
+        It compares as `_carry_manual_holds_forward` does: the latest active
+        hold per field with no return pending, whose pin keeps a value the
+        case does not show (ADR-0085, Amendment 2).
+        """
+        for destination, active, document in self._connection.execute(
+            _WORK_LATEST_MANUAL_HOLDS_SQL, lineage
+        ).fetchall():
+            hold = json.loads(document)
+            if (
+                active
+                and hold["pending_return"] is None
+                and type(hold["pin"]) is dict
+                and pinned_field_fingerprint(case, destination)
+                != hold["pin"]["fingerprint"]
+            ):
+                return True
+        return False
 
     def _written_since(self, lineage: tuple[str, str, str], since: int) -> bool:
         """Whether the work's latest verified write is later than ``since``."""
@@ -699,20 +734,25 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
 
     @local_operation
     def review_case_kept(self, review_case_id: str) -> bool:
-        """Whether the case is current only for its work's recent write (#1523)."""
+        """Whether the case is current with nothing in its ProposalSet to decide.
+
+        Such a case is kept only for its work's recent write (#1523) or for a
+        pin whose value changed (ADR-0105).
+        """
         try:
-            return (
-                self._connection.execute(
-                    "SELECT 1 FROM current_review_case_lineages pointer "
-                    "JOIN review_case_transitions transition "
-                    "ON transition.transition_id=pointer.transition_id "
-                    "WHERE pointer.review_case_id=? "
-                    "AND transition.reason='recent_write'",
-                    (review_case_id,),
-                ).fetchone()
-                is not None
+            row = self._connection.execute(
+                "SELECT proposal.proposal_set_id,proposal.report_id,"
+                "proposal.policy_version,proposal.document "
+                "FROM current_review_case_lineages pointer "
+                "JOIN proposal_sets proposal "
+                "ON proposal.proposal_set_id=pointer.proposal_set_id "
+                "WHERE pointer.review_case_id=?",
+                (review_case_id,),
+            ).fetchone()
+            return row is not None and not is_actionable(
+                ProposalSet.from_json(_validate_proposal_row(row))
             )
-        except sqlite3.Error as error:
+        except (sqlite3.Error, ProposalValueError) as error:
             raise MetadataReportError("review case is unavailable") from error
 
     @local_operation

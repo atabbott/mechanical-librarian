@@ -12,6 +12,10 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- A pinned field whose value changed elsewhere is now asked even when nothing
+  else about the book is left to decide. The book keeps its review open while
+  the pin reads changed, instead of closing it and never asking, including
+  once the 30 days after a write have passed (#2035).
 - Policy › Curation's Current covers, Description advice and Book matching
   now line up with the policy fields: one width, one control column, labels
   level with their controls and one heading and text size. Each Save sits
