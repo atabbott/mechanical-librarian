@@ -141,6 +141,27 @@ def test_an_automatic_keep_on_a_repeated_description_becomes_changeable(
     repository.close()
 
 
+def test_an_automatic_keep_with_nothing_to_change_does_not_offer_a_change(
+    tmp_path: Path,
+) -> None:
+    # Without current advice the field offers no choice and no entry, so
+    # Automatic's reason does not say it can be changed here (BT F1).
+    repository, _store, binding, _candidate, _ = _prepared(
+        tmp_path,
+        automatic=False,
+        report_override=_preserved_description_report(),
+        output_transform=lambda _response: "not json",
+    )
+    field = _description(repository, binding.review_case_id)
+    assert field["automatic_decision"]["outcome"] == "keep_current"
+    assert field["classification"] == "automatic_recorded"
+    assert field["classification_reason"] == "Automatic decided this field."
+    assert field["editable"] is False
+    assert field["decision_actions"] == []
+    assert field["owner_control"] is None
+    repository.close()
+
+
 @pytest.mark.parametrize("advice", ["failed", "out_of_date"])
 def test_without_current_advice_a_repeated_description_reads_as_before(
     tmp_path: Path, advice: str
