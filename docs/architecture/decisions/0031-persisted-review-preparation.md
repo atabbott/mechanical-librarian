@@ -152,9 +152,13 @@ the work's current case was kept only for a recent write (transition reason
 `recent_write`) and the scan's time is at least 30 days after the work's
 latest verified write, the work goes back to admission instead of
 completing. Admission then declines to replay that case and retires it,
-because nothing is actionable. Reuse no longer projects a kept case again for
-a pending description or a cover compared under another policy, since a kept
-case takes no part in either. A kept case therefore lasts until the first scan
+because nothing is actionable, unless a pin on it reads changed, which keeps
+it until the pin no longer does (ADR-0105, Amendment 1). Reuse no longer
+projects a kept case again for a pending description or a cover compared under
+another policy, since a kept case takes no part in either. A kept case here is
+any current case whose ProposalSet has nothing actionable, whether kept for a
+recent write or for a changed pin; the scan consumes such a case's pending
+description request, since nothing else would. A kept case therefore lasts until the first scan
 of the work once its 30 days have passed
 ([ADR-0105](0105-going-back-after-a-write.md)).
 

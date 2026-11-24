@@ -289,6 +289,86 @@ def test_an_unchanged_scan_retires_the_kept_case_once_the_write_is_old(
     store.close()
 
 
+def test_a_changed_pin_keeps_an_expiring_kept_case_open(tmp_path: Path) -> None:
+    """Once the write is 30 days old, an unchanged scan keeps a kept case
+    whose pin changed elsewhere, still asking the pin, and retires it at the
+    first scan after the pin no longer reads changed (ADR-0105)."""
+    store = OwnerStore(tmp_path, None)
+    install_settings_authority(store.repository)
+    store.repository.enter_shadow_preview(1, ())
+    _drain(_pipeline(store.repository, _report(), 20))
+    store.load(str(_work(store)[3]))
+    decision = store.decide("owner_entered", {"kind": "text", "value": WRITTEN})
+    store.decide("pin")
+    store.write(decision)
+    written_at = store.repository._connection.execute(
+        "SELECT MAX(occurred_at) FROM field_effect_events WHERE kind='verified'"
+    ).fetchone()[0]
+    # The title changes elsewhere and no source proposes anything.
+    changed = _report("Changed Elsewhere", actionable=False)
+    _drain(_pipeline(store.repository, changed, written_at + 1))
+    kept = _work(store)
+    assert kept[:3] == ("complete", "complete", "case")
+    assert _reason(store) == "recent_write"
+    store.repository._connection.execute(
+        "UPDATE review_preparation_work SET research_not_before=?",
+        (written_at + 10 * KEPT_CASE_SECONDS,),
+    )
+
+    def asked() -> int:
+        return store.repository.count_current_attention_fields(None, ())
+
+    assert asked() == 1
+    # At 30 days the same answer keeps the case open, still asking.
+    _drain(_pipeline(store.repository, changed, written_at + KEPT_CASE_SECONDS))
+    assert _work(store) == kept
+    assert _current(store, str(kept[3]))
+    assert store.repository.review_case_kept(str(kept[3]))
+    assert asked() == 1
+    # Unpinned, nothing is asked, and the next scan retires the case.
+    store.load(str(kept[3]))
+    store.decide("unpin")
+    assert asked() == 0
+    _drain(_pipeline(store.repository, changed, written_at + KEPT_CASE_SECONDS + 1))
+    assert _work(store) == ("complete", "complete", "no_case", None)
+    assert not _current(store, str(kept[3]))
+    store.close()
+
+
+def test_a_case_kept_for_a_changed_pin_is_scanned_without_advice(
+    tmp_path: Path,
+) -> None:
+    """A work never written whose pinned title changed elsewhere keeps its
+    case, and an unchanged scan completes it in one step though a description
+    request is pending: a kept case asks no advice, so nothing would consume
+    the request (ADR-0105, Amendment 1)."""
+    store = OwnerStore(tmp_path, None)
+    install_settings_authority(store.repository)
+    store.repository.enter_shadow_preview(1, ())
+    _drain(_pipeline(store.repository, _report(), 20))
+    store.load(str(_work(store)[3]))
+    store.decide("pin")
+    changed = _report("Changed Elsewhere", actionable=False)
+    _drain(_pipeline(store.repository, changed, 100))
+    kept = _work(store)
+    assert kept[:3] == ("complete", "complete", "case")
+    assert _reason(store) == "actionable"
+    connection = store.repository._connection
+    connection.execute(
+        "UPDATE review_preparation_work SET research_not_before=?", (10**9,)
+    )
+    connection.execute(
+        "INSERT INTO description_preparation_pending VALUES(?,0,?)", (kept[3], 101)
+    )
+    assert _drain(_pipeline(store.repository, changed, 200)) == 1
+    assert _work(store) == kept
+    # The request is consumed, so the library no longer waits for it.
+    assert connection.execute(
+        "SELECT COUNT(*) FROM description_preparation_pending"
+    ).fetchone() == (0,)
+    store.close()
+
+
 def test_a_re_preparation_that_identifies_nothing_retires_the_kept_case(
     tmp_path: Path,
 ) -> None:

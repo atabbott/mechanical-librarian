@@ -101,6 +101,8 @@ from mechanical_librarian.domain.preparation_presentation import (
     PreparationTrigger,
 )
 from mechanical_librarian.domain.proposal_set import (
+    ProposalSet,
+    ProposalValueError,
     evaluate_report,
     proposal_set_content_address,
 )
@@ -110,6 +112,7 @@ from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
     ReviewTransition,
+    is_actionable,
 )
 
 # Each work whose current report and current case it prepared, in a package
@@ -1297,7 +1300,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 interruption = error
             elif isinstance(error, MetadataReportError):
                 raise
-            elif isinstance(error, (sqlite3.Error, ReviewCaseValueError)):
+            elif isinstance(
+                error, (sqlite3.Error, ReviewCaseValueError, ProposalValueError)
+            ):
                 raise MetadataReportError(
                     "review preparation discovery failed"
                 ) from error
@@ -1565,6 +1570,19 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             ),
         )
 
+    def _proposal_actionable(self, proposal_set_id: str | None) -> bool:
+        """Whether the stored ProposalSet has anything actionable.
+
+        A current case whose ProposalSet has nothing actionable is kept, for a
+        recent write or a changed pin, and asks no advice (ADR-0105), so a
+        pending description or a stale cover never projects it again.
+        """
+        row = self._connection.execute(
+            "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+            (proposal_set_id,),
+        ).fetchone()
+        return row is not None and is_actionable(ProposalSet.from_json(row[0]))
+
     def _settled_work_stage(
         self,
         action: PipelineAction,
@@ -1577,7 +1595,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
 
         It stays complete while its current case or answer stands, is projected
         again for a pending description or a cover compared under another
-        policy, and is otherwise admitted again. Returns its stage, state,
+        policy when its ProposalSet has anything actionable (a kept case asks
+        no advice), and is otherwise admitted again. Returns its stage, state,
         outcome and case.
         """
         proposal_set_id, report_id, review_case_id = prepared
@@ -1609,6 +1628,19 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             ).fetchone()
             is not None
         )
+        if (
+            pointer_matches
+            and pending_description
+            and not self._proposal_actionable(proposal_set_id)
+        ):
+            # A kept case asks no description advice, so nothing else would
+            # consume its request and its library would stay listed as
+            # waiting for description work (ADR-0105).
+            self._connection.execute(
+                "DELETE FROM description_preparation_pending WHERE review_case_id=?",
+                (review_case_id,),
+            )
+            pending_description = False
         stale_cover = (
             cover_policy_reference is not None
             and review_case_id is not None
@@ -1641,8 +1673,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             review_case_id = None
         elif (
             pointer_matches
-            and pointer[4] != "recent_write"
             and (pending_description or stale_cover)
+            and self._proposal_actionable(proposal_set_id)
         ):
             stage = "projection"
             state = "queued"
