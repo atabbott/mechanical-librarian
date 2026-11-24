@@ -1192,13 +1192,20 @@ def validate_description_history(connection: sqlite3.Connection) -> None:
             ):
                 raise ValueError("invalid description decision")
 
+    # The case's chosen advice names a decision of its own case in exactly
+    # one half; no key binds it to either, so open checks it (ADR-0108).
     if (
         connection.execute(
             _authored_description_sql(
                 "SELECT 1 FROM current_description_decisions current JOIN {table} decision "
                 "ON decision.decision_id=current.decision_id WHERE current.review_case_id<>decision.review_case_id"
             )
-            + " LIMIT 1"
+            + " UNION ALL SELECT 1 FROM current_description_decisions current "
+            "WHERE (SELECT count(*) FROM ("
+            + _authored_description_sql(
+                "SELECT 1 FROM {table} WHERE decision_id=current.decision_id"
+            )
+            + "))<>1 LIMIT 1"
         ).fetchone()
         is not None
     ):

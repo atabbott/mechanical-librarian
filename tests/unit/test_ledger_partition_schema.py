@@ -390,6 +390,38 @@ def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
     assert opens(path) is regenerated_opens
 
 
+@pytest.mark.parametrize(
+    "edits",
+    [
+        (
+            "DELETE FROM owner_authored_descriptions",
+            "DELETE FROM owner_field_answers",
+        ),
+        (
+            "UPDATE current_description_decisions "
+            "SET decision_id='human_decision_" + "0" * 64 + "'",
+        ),
+    ],
+    ids=["decision_deleted", "pointer_moved"],
+)
+def test_a_case_chosen_description_names_a_decision_of_one_half(
+    tmp_path: Path, edits: tuple[str, ...]
+) -> None:
+    """The case's chosen advice is derived and goes with a regeneration;
+    while it is there it names a decision in exactly one half (#2038)."""
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    try:
+        store.admit(candidate.candidate_id, binding, "human", "b" * 64, 11)
+        path = copied_store(repository, tmp_path / "changed")
+    finally:
+        repository.close()
+    for sql in edits:
+        rewrite(path, sql)
+    assert not opens(path)
+    regenerate(path)
+    assert opens(path)
+
+
 # What open validation cannot check once the derived rows a copy was made
 # from are gone (ADR-0108). Each entry names a ledger edit that, on a store
 # whose derived partition was regenerated, still opens. A check added for one
