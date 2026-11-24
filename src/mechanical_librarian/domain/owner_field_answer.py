@@ -294,4 +294,3 @@ def owner_field_event_id(
             ).encode("utf-8")
         ).hexdigest()
     )
-
