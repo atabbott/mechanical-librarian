@@ -560,3 +560,29 @@ To see which tables a bounded set of public tests writes, run:
 
 It reports committed row-count deltas per table against a fresh schema. It
 cannot see update-only changes or rolled-back work.
+
+### Planned: ledger and derived state
+
+Not built yet ([ADR-0108](decisions/0108-ledger-and-derived-state.md),
+proposed). Until it lands, every schema change stays a clean rebuild.
+
+- The application database keeps one file in two partitions. The **ledger**
+  holds owner authority and its audit, safety budgets and paid artefacts
+  that cannot be rebuilt: settings and secrets, policy, controls, consents,
+  suspensions, owner decisions, owner cover and description choices, write
+  plans and their events, taste profiles, retained originals and owner links.
+  Everything else is **derived** and rebuilt by preparation.
+- No ledger row references a derived row by foreign key; it keeps derived ids
+  as plain provenance and copies the values its readers need, keyed by
+  connection, library and item.
+- `ledger_meta` records the ledger format version, the derived version and
+  schema digest, and the derived epoch, which proposal identity binds so no
+  case id recurs across a regeneration. `derived_regenerations` is the
+  append-only audit of each run.
+- One ledger row per field records the owner's latest answer
+  (`owner_field_answers`, with the append-only `owner_field_events` for
+  Resume), replacing `field_effect_manual_holds`.
+- Startup refuses derived state from another build and names the offline
+  `regenerate-derived` command, which keeps a verified backup, drops and
+  recreates derived state in one transaction, and keeps the ledger. Ledger
+  changes become code-defined migrations inside that command before 1.0.

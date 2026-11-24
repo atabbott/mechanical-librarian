@@ -5,6 +5,13 @@
 - Owners: project maintainers
 - Supersedes: the pre-release schema-compatibility provisions of ADR-0003,
   ADR-0006, ADR-0009, and ADR-0012
+- Amended by: [ADR-0108](0108-ledger-and-derived-state.md) (proposed: this
+  decision is superseded for the application database from the C-minus
+  cutover, and every other store, report, configuration and document schema
+  keeps it; from then startup admits a ledger and names the offline
+  `regenerate-derived` for derived state, the derived-only adoption route is
+  retired, and the ledger later takes code-defined exact-predecessor
+  migrations run only by that command)
 
 ## Context
 
