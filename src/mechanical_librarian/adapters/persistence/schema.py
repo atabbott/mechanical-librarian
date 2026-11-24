@@ -476,7 +476,9 @@ _METADATA_POLICY_TRANSITIONS_SQL = (
     "generation INTEGER NOT NULL UNIQUE CHECK(generation>=1), "
     "state TEXT NOT NULL CHECK(state IN ('processing','completed','completed_with_failures')), "
     "total INTEGER NOT NULL CHECK(total>=0), acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN (0,1)), "
-    "created_at INTEGER NOT NULL CHECK(created_at>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=created_at))"
+    "created_at INTEGER NOT NULL CHECK(created_at>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=created_at), "
+    "completed INTEGER NOT NULL DEFAULT 0 CHECK(completed>=0), failed INTEGER NOT NULL DEFAULT 0 CHECK(failed>=0), "
+    "CHECK(completed+failed<=total))"
 )
 _METADATA_POLICY_TRANSITION_ITEMS_SQL = (
     "CREATE TABLE metadata_policy_transition_items ("

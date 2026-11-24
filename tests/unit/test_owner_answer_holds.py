@@ -480,7 +480,7 @@ def test_a_withdrawal_that_restores_an_earlier_hold_still_refuses_automatic(
         (transition,),
     )
     connection.execute(
-        "UPDATE metadata_policy_transitions SET state='completed' "
+        "UPDATE metadata_policy_transitions SET state='completed',completed=total,failed=0 "
         "WHERE transition_id=?",
         (transition,),
     )

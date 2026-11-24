@@ -1120,18 +1120,18 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             else ("completed_with_failures" if counts[2] else "completed")
         )
         self._connection.execute(
-            "UPDATE metadata_policy_transitions SET state=?,updated_at=? WHERE transition_id=?",
-            (state, updated_at, transition_id),
+            "UPDATE metadata_policy_transitions SET state=?,completed=?,failed=?,"
+            "updated_at=? WHERE transition_id=?",
+            (state, counts[1], counts[2], updated_at, transition_id),
         )
 
     @local_operation
     def metadata_policy_transition(self) -> PolicyTransition | None:
         try:
             row = self._connection.execute(
-                "SELECT t.transition_id,t.from_policy_id,t.to_policy_id,t.generation,t.state,t.total,t.acknowledged,"
-                "COALESCE(SUM(i.state='complete'),0),COALESCE(SUM(i.state='failed'),0) "
-                "FROM metadata_policy_transitions t LEFT JOIN metadata_policy_transition_items i ON i.transition_id=t.transition_id "
-                "GROUP BY t.transition_id ORDER BY t.generation DESC LIMIT 1"
+                "SELECT transition_id,from_policy_id,to_policy_id,generation,state,total,"
+                "acknowledged,completed,failed FROM metadata_policy_transitions "
+                "ORDER BY generation DESC LIMIT 1"
             ).fetchone()
             if row is None:
                 return None

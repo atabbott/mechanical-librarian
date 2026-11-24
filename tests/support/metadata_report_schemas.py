@@ -517,6 +517,15 @@ PRE_2038_FIELD_EFFECT_NO_CHANGES_SQL = _undone(
 PRE_2038_FIELD_EFFECTS_SQL = _undone(
     persistence_schema._FIELD_EFFECTS_SQL, (", " + _DISPLAY_TITLE + ")", ")")
 )
+PRE_2038_METADATA_POLICY_TRANSITIONS_SQL = _undone(
+    persistence_schema._METADATA_POLICY_TRANSITIONS_SQL,
+    (
+        ", completed INTEGER NOT NULL DEFAULT 0 CHECK(completed>=0), "
+        "failed INTEGER NOT NULL DEFAULT 0 CHECK(failed>=0), "
+        "CHECK(completed+failed<=total))",
+        ")",
+    ),
+)
 # What a reconstruction of any earlier producer sets first, before its own
 # older forms (#2038).
 PRE_2038_SCHEMA = {
@@ -524,6 +533,7 @@ PRE_2038_SCHEMA = {
     "_HUMAN_DECISION_EVENTS_SQL": PRE_2038_HUMAN_DECISION_EVENTS_SQL,
     "_FIELD_EFFECT_NO_CHANGES_SQL": PRE_2038_FIELD_EFFECT_NO_CHANGES_SQL,
     "_FIELD_EFFECTS_SQL": PRE_2038_FIELD_EFFECTS_SQL,
+    "_METADATA_POLICY_TRANSITIONS_SQL": PRE_2038_METADATA_POLICY_TRANSITIONS_SQL,
 }
 
 
