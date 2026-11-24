@@ -395,7 +395,9 @@ def test_a_pipeline_opens_the_response_store_and_closes_it_on_stop() -> None:
 
 
 @pytest.mark.parametrize(
-    "failure", ("response_store", "repositories", "stale_generation")
+    "failure",
+    ("response_store", "repositories", "stale_generation"),
+    ids=("response_store", "repositories", "stale_generation"),
 )
 def test_a_pipeline_that_fails_to_compose_closes_both_private_stores(
     failure: str,
