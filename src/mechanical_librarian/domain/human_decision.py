@@ -35,7 +35,7 @@ COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v3"
 # An automatic cover choice keeps the first selection version.
 AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v1"
 
-HUMAN_DECISION_SCHEMA: Final = "human-decision-v7"
+HUMAN_DECISION_SCHEMA: Final = "human-decision-v8"
 HumanDecisionEventSchemaVersion = Literal["human-decision-event-v1"]
 HUMAN_DECISION_EVENT_SCHEMA: Final[HumanDecisionEventSchemaVersion] = (
     "human-decision-event-v1"
@@ -606,7 +606,14 @@ def pinned_field_fingerprint(case: ReviewCase, destination: str) -> str | None:
     stays pinned however the library stores nothing; ``restorable`` and other
     metadata are left out (ADR-0085, Amendment 2).
     """
-    field = _target_field(case, destination)
+    return field_fingerprint(destination, _target_field(case, destination))
+
+
+def field_fingerprint(
+    destination: str, field: Mapping[str, object] | None
+) -> str | None:
+    """`pinned_field_fingerprint` of one recorded target field, as a case or
+    a decision's `target_field_document` copy holds it (ADR-0108)."""
     state = field.get("state") if field is not None else None
     value = field.get("value") if field is not None else None
     # A target value is never empty (`TargetField` refuses one), so only these
@@ -1015,6 +1022,9 @@ class HumanDecision:
     # names none when that write already holds the value the case read
     # (#1523). Never part of the request, so a replay stays the same request.
     follows: str | None = None
+    # The case episode it was recorded in, the case's decision floor then
+    # (0 before any re-admission), frozen like `follows` (ADR-0108).
+    episode: int = 0
 
     @staticmethod
     def idempotency_digest_for(idempotency_key: str) -> str:
@@ -1382,6 +1392,7 @@ class HumanDecision:
             "cause": self.cause,
             "decision_id": self.decision_id,
             "destination": self.destination,
+            "episode": self.episode,
             "follows": self.follows,
             "idempotency_digest": self.idempotency_digest,
             "occurred_at": self.occurred_at,
@@ -1424,11 +1435,14 @@ class HumanDecision:
                 raw["offered_alternatives_digest"],
                 raw["cause"],
                 raw["follows"],
+                raw["episode"],
             )
             if (
                 re.fullmatch(r"human_decision_[0-9a-f]{64}", value.decision_id) is None
                 or type(value.occurred_at) is not int
                 or value.occurred_at < 0
+                or type(value.episode) is not int
+                or value.episode < 0
                 or any(
                     type(item) is not str or _DIGEST.fullmatch(item) is None
                     for item in (
@@ -1489,6 +1503,7 @@ _DOCUMENT_KEYS = frozenset(
         "cause",
         "decision_id",
         "destination",
+        "episode",
         "follows",
         "idempotency_digest",
         "occurred_at",

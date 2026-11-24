@@ -28,6 +28,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
@@ -35,6 +36,10 @@ from mechanical_librarian.adapters.persistence.level_sql import (
     _TARGET_LEVEL_SQL,
     _reconciled_level_sql,
     _unreconciled_case_sql,
+)
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    case_episode,
+    next_ordinal,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CASE_TITLE_SQL,
@@ -214,17 +219,17 @@ def _write_marker(
     )
 
 
-# Every owner decision is inserted with its work and copies (ADR-0108): the
-# decision's own columns, then its item key, its case's display title (bound to
+# Every owner decision is inserted with its work and copies (ADR-0108): its
+# ordinal from the owner-answer counter, the decision's own columns, then its item key, its case's display title (bound to
 # the case) and target field, and an accepted description's chosen copy.
 HUMAN_DECISION_INSERT_SQL = (
-    "INSERT INTO human_decisions("
+    "INSERT INTO human_decisions(ordinal,"
     "decision_id,review_case_id,proposal_id,target_fingerprint,"
     "destination,actor,outcome,selected_value_document,"
     "idempotency_digest,request_digest,occurred_at,document,"
     "connection_name,library_name,item_id,display_title,"
     "target_field_document,selected_form) "
-    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?," + _CASE_TITLE_SQL + ",?,?)"
+    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?," + _CASE_TITLE_SQL + ",?,?)"
 )
 
 
@@ -303,14 +308,18 @@ def _ask_changed_fields(
                 == offer_digest(offer, destination)
             ):
                 continue
-            cause = HumanDecision.matching_changed(
-                case, standing, level.value, offer, occurred_at
+            cause = replace(
+                HumanDecision.matching_changed(
+                    case, standing, level.value, offer, occurred_at
+                ),
+                episode=case_episode(connection, case.review_case_id),
             )
         except HumanDecisionError as error:
             raise MetadataReportError("level reconciliation failed") from error
         connection.execute(
             HUMAN_DECISION_INSERT_SQL + " ON CONFLICT DO NOTHING",
             (
+                next_ordinal(connection),
                 cause.decision_id,
                 cause.review_case_id,
                 cause.proposal_id,

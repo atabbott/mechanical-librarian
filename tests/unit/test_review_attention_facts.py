@@ -30,6 +30,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
     _COVER_UNRESOLVED_OUTCOME_SQL,
@@ -1038,6 +1039,7 @@ def test_one_decision_refreshes_one_field_at_any_library_size() -> None:
                     "WHERE review_case_id IS NOT NULL ORDER BY item_id LIMIT 1"
                 ).fetchone()[0]
                 steps = 0
+                ordinal = next_ordinal(connection)
 
                 def progress() -> int:
                     nonlocal steps
@@ -1046,13 +1048,14 @@ def test_one_decision_refreshes_one_field_at_any_library_size() -> None:
 
                 connection.set_progress_handler(progress, 100)
                 connection.execute(
-                    "INSERT INTO human_decisions(decision_id,review_case_id,"
+                    "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,"
                     "proposal_id,target_fingerprint,destination,actor,outcome,"
                     "selected_value_document,idempotency_digest,request_digest,"
                     "occurred_at,document,connection_name,library_name,item_id,"
-                    "target_field_document) VALUES(?,?,?,?,'title','owner','accept',"
+                    "target_field_document) VALUES(?,?,?,?,?,'title','owner','accept',"
                     "'null',?,?,1,'{}','primary','books','work','null')",
                     (
+                        ordinal,
                         f"human_decision_{_hex(case_id)}",
                         case_id,
                         f"review_proposal_{_hex(case_id)}",

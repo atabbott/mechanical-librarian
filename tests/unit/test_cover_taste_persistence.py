@@ -176,6 +176,7 @@ class _Seed:
                 None if previous is None else previous[0],
                 1,
                 json.dumps(document),
+                *((0,) if kind == "owner" else ()),
             ),
         )
         if kind == "owner":

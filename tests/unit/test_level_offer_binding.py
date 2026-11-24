@@ -29,6 +29,7 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
     decision_copies,
     stored_level_offer_documents,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
@@ -244,6 +245,7 @@ def seed(store: OwnerStore, decision: HumanDecision) -> None:
     store.repository._connection.execute(
         HUMAN_DECISION_INSERT_SQL,
         (
+            next_ordinal(store.repository._connection),
             decision.decision_id,
             decision.review_case_id,
             decision.proposal_id,

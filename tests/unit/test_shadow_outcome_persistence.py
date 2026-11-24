@@ -47,6 +47,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
     _COVER_UNRESOLVED_OUTCOME_SQL,
@@ -422,6 +423,7 @@ def test_only_a_retained_recorded_decision_is_kept_out_of_pending_work() -> None
         repository._connection.execute(
             HUMAN_DECISION_INSERT_SQL,
             (
+                next_ordinal(repository._connection),
                 retained.decision_id,
                 retained.review_case_id,
                 retained.proposal_id,

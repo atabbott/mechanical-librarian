@@ -19,6 +19,7 @@ import pytest
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from tests.unit.test_pending_field_effect_lookup import (  # noqa: F401
     _companion,
@@ -181,13 +182,14 @@ def test_reader_equals_recomputation_across_pending_changes(
     )
     step(
         (
-            "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
+            "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,proposal_id,"
             "target_fingerprint,destination,actor,outcome,selected_value_document,"
             "idempotency_digest,request_digest,occurred_at,document,"
             "connection_name,library_name,item_id,target_field_document) "
-            "VALUES(?,?,?,?,'genres','owner','accept','null',?,?,1,'{}',"
+            "VALUES(?,?,?,?,?,'genres','owner','accept','null',?,?,1,'{}',"
             "'primary','books','work','null')",
             (
+                next_ordinal(writer),
                 "human_decision_" + _digest("new"),
                 case,
                 "review_proposal_" + _digest("new"),

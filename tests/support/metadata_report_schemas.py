@@ -541,9 +541,13 @@ def set_pre_2038_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     """Undo #2038's schema change for a reconstructed earlier producer."""
     for name, sql in PRE_2038_SCHEMA.items():
         monkeypatch.setattr(persistence_schema, name, sql)
-    # Its rows carried no item key, so its open had none to compare.
+    # Its rows carried no item key, so its open had none to compare, and it
+    # kept no record of the owner's answers to validate.
     monkeypatch.setattr(
         persistence_schema, "_OWNER_ITEM_KEY_DISAGREES_SQL", "SELECT 1 WHERE 0"
+    )
+    monkeypatch.setattr(
+        persistence_schema, "validate_owner_field_answers", lambda connection: None
     )
 
 
@@ -827,9 +831,12 @@ def undo_2038_tables(
     """Undo #2038's table splits as every producer before it kept them:
     the two preparation control rows merged back into one row, and the
     description decisions and cover selections each back in one table,
-    keeping their values. A producer's own cover selection table, when it
-    kept an older one, is `cover_selections_sql`."""
+    keeping their values, and no record of the owner's answers, its counter
+    or its events. A producer's own cover selection table, when it kept an
+    older one, is `cover_selections_sql`."""
     connection.executescript(
+        "DROP TABLE owner_field_answers;DROP TABLE owner_field_events;"
+        "DROP TABLE owner_answer_ordinal;"
         "CREATE TEMP TABLE pre_2038_control AS SELECT 1 AS singleton,"
         "owner.paused,scheduling.claim_sequence,owner.first_boot_acknowledged,"
         "scheduling.last_library,scheduling.circuit_failures,"

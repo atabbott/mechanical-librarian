@@ -20,6 +20,7 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
     decision_copies,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
@@ -224,6 +225,7 @@ def _insert(store: OwnerStore, outcome: str, selected: str) -> None:
     store.repository._connection.execute(
         HUMAN_DECISION_INSERT_SQL,
         (
+            next_ordinal(store.repository._connection),
             "human_decision_" + "f" * 64,
             store.case.review_case_id,
             "review_proposal_" + "e" * 64,

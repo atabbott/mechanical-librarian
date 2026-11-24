@@ -43,6 +43,10 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
     stored_level_offer_documents,
     target_level,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    case_episode,
+    next_ordinal,
+)
 from mechanical_librarian.adapters.persistence.owner_links import (
     OwnerLinkItem,
     owner_link_bound,
@@ -913,7 +917,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
             # planning reads now, so neither a later return nor a later write
             # changes what it replaced or a keep goes back on (#1523, #1973).
             follows, nothing_to_write = self._recorded_follows(decision)
-            decision = replace(decision, follows=follows)
+            decision = replace(
+                decision,
+                follows=follows,
+                episode=case_episode(self._connection, case.review_case_id),
+            )
             if (
                 decision.outcome == "keep_current"
                 and decision.follows is not None
@@ -957,6 +965,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             self._connection.execute(
                 HUMAN_DECISION_INSERT_SQL,
                 (
+                    next_ordinal(self._connection),
                     decision.decision_id,
                     decision.review_case_id,
                     decision.proposal_id,
@@ -979,7 +988,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 ),
             )
             self._record_cover_decision_outcome(
-                decision, cover_consideration_id, cover_confirmation
+                decision,
+                cover_consideration_id,
+                cover_confirmation,
+                took_over=automatic is not None,
             )
             self._record_human_decision_event(decision, copies[:3])
             if annotation:

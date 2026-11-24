@@ -712,12 +712,15 @@ def test_an_unreadable_value_cannot_be_pinned() -> None:
     _owner(case, "title", None, outcome="unpin")
 
 
-@pytest.mark.parametrize("version", ("human-decision-v5", "human-decision-v6"))
+@pytest.mark.parametrize(
+    "version", ("human-decision-v5", "human-decision-v6", "human-decision-v7")
+)
 def test_an_earlier_decision_document_is_refused(
     case: ReviewCase, version: str
 ) -> None:
     """A v6 decision named `follows` on a keep only, so its null on another
-    outcome would read as following no write (#1973)."""
+    outcome would read as following no write (#1973); a v7 decision named no
+    episode (ADR-0108)."""
     raw = json.loads(_owner(case, "title", None, outcome="keep_current").to_json())
     with pytest.raises(HumanDecisionError):
         HumanDecision.from_json(
@@ -1221,6 +1224,35 @@ def test_every_decision_names_the_write_it_follows(case: ReviewCase) -> None:
         {**raw, "follows": ""},
         {**raw, "follows": 1},
         {key: value for key, value in raw.items() if key != "follows"},
+    ):
+        with pytest.raises(HumanDecisionError):
+            HumanDecision.from_json(
+                json.dumps(document, separators=(",", ":"), sort_keys=True)
+            )
+
+
+def test_every_decision_names_the_episode_it_was_recorded_in(
+    case: ReviewCase,
+) -> None:
+    """`episode` is frozen by the store like `follows` and is no part of the
+    request: it round-trips, leaves the identity and request digest alone,
+    and is refused when it is not a whole number of at least 0 (ADR-0108)."""
+    keep = _owner(case, "title", None, outcome="keep_current")
+    assert keep.episode == 0
+    later = dataclasses.replace(keep, episode=7)
+    assert HumanDecision.from_json(later.to_json()) == later
+    assert (later.decision_id, later.request_digest) == (
+        keep.decision_id,
+        keep.request_digest,
+    )
+    raw = json.loads(keep.to_json())
+    assert raw["episode"] == 0
+    for document in (
+        {**raw, "episode": -1},
+        {**raw, "episode": True},
+        {**raw, "episode": "0"},
+        {**raw, "episode": None},
+        {key: value for key, value in raw.items() if key != "episode"},
     ):
         with pytest.raises(HumanDecisionError):
             HumanDecision.from_json(

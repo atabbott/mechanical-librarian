@@ -31,6 +31,7 @@ from mechanical_librarian.adapters.persistence.field_effect_activity import (
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.adapters.persistence.review_sql import (
     _active_generation_automatic_sql,
     _episode_decision_sql,
@@ -124,13 +125,14 @@ def store(tmp_path: Path) -> Iterator[tuple[sqlite3.Connection, list[str]]]:
             ),
         )
         connection.execute(
-            "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
+            "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,proposal_id,"
             "target_fingerprint,destination,actor,outcome,selected_value_document,"
             "idempotency_digest,request_digest,occurred_at,document,"
             "connection_name,library_name,item_id,target_field_document) "
-            "VALUES(?,?,?,?,'authors','owner','accept','null',?,?,?,?,"
+            "VALUES(?,?,?,?,?,'authors','owner','accept','null',?,?,?,?,"
             "'primary','books','work','null')",
             (
+                next_ordinal(connection),
                 human_id,
                 case,
                 "review_proposal_" + _digest(f"proposal-{index}"),
@@ -1329,8 +1331,17 @@ def test_description_decision_history_breaks_tied_times_by_decision_id(
         )
         if decision.origin == "human":
             repository._connection.execute(
-                "INSERT INTO owner_authored_descriptions VALUES(?,?,?,?,?,?,?,?,?)",
-                (*values, "primary", "ebooks", "item-1", candidate.to_json()),
+                "INSERT INTO owner_authored_descriptions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    *values,
+                    "primary",
+                    "ebooks",
+                    "item-1",
+                    candidate.to_json(),
+                    next_ordinal(repository._connection),
+                    0,
+                    None,
+                ),
             )
         else:
             repository._connection.execute(
@@ -1715,13 +1726,14 @@ def test_lineage_membership_equals_the_correlated_test_across_lineage_shapes(
     ).fetchone()
     cover_id = "human_decision_" + _digest("cover-owner")
     connection.execute(
-        "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
+        "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,proposal_id,"
         "target_fingerprint,destination,actor,outcome,selected_value_document,"
         "idempotency_digest,request_digest,occurred_at,document,"
         "connection_name,library_name,item_id,target_field_document) "
-        "VALUES(?,?,?,?,'cover','owner','accept','null',?,?,0,?,"
+        "VALUES(?,?,?,?,?,'cover','owner','accept','null',?,?,0,?,"
         "'primary','books','work','null')",
         (
+            next_ordinal(connection),
             cover_id,
             cover_case,
             "review_proposal_" + _digest("cover-proposal"),
@@ -1786,15 +1798,16 @@ def test_lineage_membership_refuses_malformed_documents_as_before(
     # earlier owner decision reads the case's review document.
     later_id = "human_decision_" + _digest("corrective")
     connection.execute(
-        "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
+        "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,proposal_id,"
         "target_fingerprint,destination,actor,outcome,selected_value_document,"
         "idempotency_digest,request_digest,occurred_at,document,"
         "connection_name,library_name,item_id,target_field_document) "
-        "SELECT ?,review_case_id,proposal_id,target_fingerprint,destination,actor,"
+        "SELECT ?,?,review_case_id,proposal_id,target_fingerprint,destination,actor,"
         "'keep_current',selected_value_document,?,?,occurred_at+1,?,"
         "connection_name,library_name,item_id,target_field_document "
         "FROM human_decisions WHERE ordinal=?",
         (
+            next_ordinal(connection),
             later_id,
             _digest("corrective-idempotency"),
             _digest("corrective-request"),

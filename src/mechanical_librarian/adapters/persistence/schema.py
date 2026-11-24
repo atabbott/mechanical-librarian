@@ -56,6 +56,16 @@ from mechanical_librarian.adapters.persistence.level_sql import (
     _reconciled_level_sql,
     _unreconciled_case_sql,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    OWNER_ANSWER_ORDINAL_SQL,
+    OWNER_FIELD_ANSWERS_SQL,
+    OWNER_FIELD_EVENT_TRIGGERS,
+    OWNER_FIELD_EVENTS_KEY_INDEX_SQL,
+    OWNER_FIELD_EVENTS_REQUEST_INDEX_SQL,
+    OWNER_FIELD_EVENTS_SQL,
+    SETUP_OWNER_ANSWER_ORDINAL_ROW,
+    validate_owner_field_answers,
+)
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _validate_owner_settings_content,
 )
@@ -1021,6 +1031,10 @@ _OWNER_COVER_SELECTIONS_SQL = (
     "height INTEGER CHECK(height IS NULL OR typeof(height)='integer'), "
     "offered_arts INTEGER CHECK(offered_arts IS NULL OR typeof(offered_arts)='integer'), "
     "report_format TEXT CHECK(report_format IS NULL OR typeof(report_format)='text'), "
+    # Whether the answer took the cover over from Automatic: an automatic
+    # cover decision on its case, or a record answer that already had
+    # (ADR-0108, S9).
+    "cover_took_over INTEGER NOT NULL CHECK(cover_took_over IN (0,1)), "
     f"CHECK((CASE WHEN json_valid(document) THEN json_extract(document,'$.schema_version')='{COVER_SELECTION_AUTHORITY_SCHEMA}' ELSE 0 END) IS 1), "
     "CHECK(supersedes_selection_id IS NULL OR supersedes_selection_id<>selection_id))"
 )
@@ -1730,7 +1744,7 @@ _DESCRIPTION_ADVICE_TABLES = {
     # The owner's choices of advised text are ledger (ADR-0108): they keep
     # the case and candidate ids as plain provenance, their work, and the
     # chosen candidate verbatim. Automatic's are derived.
-    "owner_authored_descriptions": "CREATE TABLE owner_authored_descriptions (decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), candidate_id TEXT NOT NULL CHECK(candidate_id GLOB 'description_candidate_[0-9a-f]*' AND length(candidate_id)=86), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384), connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, candidate_document TEXT NOT NULL CHECK(length(CAST(candidate_document AS BLOB)) BETWEEN 2 AND 131072))",
+    "owner_authored_descriptions": "CREATE TABLE owner_authored_descriptions (decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), candidate_id TEXT NOT NULL CHECK(candidate_id GLOB 'description_candidate_[0-9a-f]*' AND length(candidate_id)=86), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384), connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, candidate_document TEXT NOT NULL CHECK(length(CAST(candidate_document AS BLOB)) BETWEEN 2 AND 131072), ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal)='integer' AND ordinal>0), episode INTEGER NOT NULL CHECK(typeof(episode)='integer' AND episode>=0 AND episode<ordinal), display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'))",
     "automatic_description_decisions": "CREATE TABLE automatic_description_decisions (decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'automatic_decision_[0-9a-f]*' AND length(decision_id)=83), review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), candidate_id TEXT NOT NULL REFERENCES description_advice_candidates(candidate_id), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384))",
     # The case's chosen advice, from either half; a trigger below requires
     # the decision in exactly one.
@@ -2152,12 +2166,21 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_HUMAN_DECISIONS_CASE_DESTINATION_INDEX_SQL)
     connection.execute(_HUMAN_DECISION_EVENTS_SQL)
     connection.execute(_REVIEW_CASE_EPISODES_SQL)
+    connection.execute(OWNER_ANSWER_ORDINAL_SQL)
+    connection.execute(
+        "INSERT INTO owner_answer_ordinal(singleton,ordinal) VALUES(?,?)",
+        SETUP_OWNER_ANSWER_ORDINAL_ROW,
+    )
+    connection.execute(OWNER_FIELD_EVENTS_SQL)
+    connection.execute(OWNER_FIELD_EVENTS_KEY_INDEX_SQL)
+    connection.execute(OWNER_FIELD_EVENTS_REQUEST_INDEX_SQL)
     connection.execute(_COVER_CONSIDERATIONS_SQL)
     connection.execute(_CURRENT_COVER_CONSIDERATIONS_SQL)
     connection.execute(_OWNER_COVER_SELECTIONS_SQL)
     connection.execute(_AUTOMATIC_COVER_SELECTIONS_SQL)
     for sql in _COVER_POINTERS_SQL.values():
         connection.execute(sql)
+    connection.execute(OWNER_FIELD_ANSWERS_SQL)
     connection.execute(_COVER_CONSIDERATION_EVENTS_SQL)
     connection.execute(_AUTOMATIC_DECISIONS_SQL)
     connection.execute(_AUTOMATIC_SAFETY_SQL)
@@ -2217,6 +2240,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REVIEW_TRANSITION_NO_DELETE_SQL)
     connection.execute(_HUMAN_DECISION_NO_UPDATE_SQL)
     connection.execute(_HUMAN_DECISION_NO_DELETE_SQL)
+    for sql in OWNER_FIELD_EVENT_TRIGGERS.values():
+        connection.execute(sql)
     connection.execute(_HUMAN_DECISION_EVENT_NO_UPDATE_SQL)
     connection.execute(_HUMAN_DECISION_EVENT_NO_DELETE_SQL)
     connection.execute(_COVER_CONSIDERATION_NO_UPDATE_SQL)
@@ -2323,6 +2348,7 @@ def _description_advice_objects() -> tuple[tuple[str, str, str | None], ...]:
             for name in _DESCRIPTION_ADVICE_TABLES
         ),
         ("index", "sqlite_autoindex_owner_authored_descriptions_2", None),
+        ("index", "sqlite_autoindex_owner_authored_descriptions_3", None),
         ("index", "sqlite_autoindex_automatic_description_decisions_2", None),
         *_named_objects("index", _DESCRIPTION_DECISION_INDEXES),
         *_named_objects("trigger", _DESCRIPTION_ADVICE_TRIGGERS),
@@ -2468,6 +2494,16 @@ def _decision_and_field_effect_objects() -> tuple[tuple[str, str, str | None], .
         ("table", "human_decision_events", _HUMAN_DECISION_EVENTS_SQL),
         ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
         ("table", "review_case_episodes", _REVIEW_CASE_EPISODES_SQL),
+        ("table", "owner_answer_ordinal", OWNER_ANSWER_ORDINAL_SQL),
+        ("table", "owner_field_answers", OWNER_FIELD_ANSWERS_SQL),
+        ("index", "sqlite_autoindex_owner_field_answers_1", None),
+        ("index", "sqlite_autoindex_owner_field_answers_2", None),
+        ("index", "sqlite_autoindex_owner_field_answers_3", None),
+        ("table", "owner_field_events", OWNER_FIELD_EVENTS_SQL),
+        ("index", "sqlite_autoindex_owner_field_events_1", None),
+        ("index", "owner_field_events_key", OWNER_FIELD_EVENTS_KEY_INDEX_SQL),
+        ("index", "owner_field_events_request", OWNER_FIELD_EVENTS_REQUEST_INDEX_SQL),
+        *_named_objects("trigger", OWNER_FIELD_EVENT_TRIGGERS),
         ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
         ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
         ("table", "field_effect_control", _FIELD_EFFECT_CONTROL_SQL),
@@ -2855,9 +2891,12 @@ LEDGER_TABLES = frozenset(
         "metadata_policy_resolutions",
         "metadata_policy_state",
         "metadata_policy_transitions",
+        "owner_answer_ordinal",
         "owner_authored_descriptions",
         "owner_cover_pointers",
         "owner_cover_selections",
+        "owner_field_answers",
+        "owner_field_events",
         "owner_links",
         "owner_setting_secrets",
         "owner_settings",
@@ -3047,6 +3086,7 @@ def _validate_schema_contents_without_review_field_facts(
     _validate_field_effect_state(connection)
     if connection.execute(_OWNER_ITEM_KEY_DISAGREES_SQL).fetchone():
         raise MetadataReportError("database is unavailable or incompatible")
+    validate_owner_field_answers(connection)
     validate_preparation_presentation(connection)
     try:
         _validate_owner_settings_content(connection)

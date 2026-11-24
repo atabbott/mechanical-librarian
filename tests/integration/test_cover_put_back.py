@@ -388,8 +388,8 @@ def _owner_put_back(
         connection.execute(
             "INSERT INTO owner_cover_selections(selection_id,connection_name,"
             "library_name,item_id,decision_id,consideration_id,"
-            "supersedes_selection_id,occurred_at,document) "
-            "VALUES(?,?,?,?,?,?,NULL,1,?)",
+            "supersedes_selection_id,occurred_at,document,cover_took_over) "
+            "VALUES(?,?,?,?,?,?,NULL,1,?,0)",
             (
                 "cover_selection_" + "5" * 64,
                 "primary",

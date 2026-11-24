@@ -122,16 +122,17 @@ _CURRENT_SELECTION_DOCUMENT_SQL = " UNION ALL ".join(
 # What the taste profile counts an owner's choice by, copied when the owner
 # chooses as its eligibility reads them (ADR-0108): the offered candidate's
 # transport digest and size, the comparison's art count and the report's
-# file format.
+# file format. The last parameter is whether the choice took the cover over
+# from Automatic (S9).
 _OWNER_SELECTION_INSERT_SQL = (
     "INSERT INTO owner_cover_selections(selection_id,connection_name,"
     "library_name,item_id,decision_id,consideration_id,supersedes_selection_id,"
     "occurred_at,document,transport_sha256,width,height,offered_arts,"
-    "report_format) WITH selection(selection_id,connection_name,library_name,"
+    "report_format,cover_took_over) WITH selection(selection_id,connection_name,library_name,"
     "item_id,decision_id,consideration_id,supersedes_selection_id,occurred_at,"
     "document) AS (VALUES(?,?,?,?,?,?,?,?,?)) SELECT selection.*,"
     + ",".join(sql for _, sql in _OWNER_SELECTION_COPIES)
-    + " FROM selection "
+    + ",? FROM selection "
     + _OWNER_SELECTION_COPY_JOIN_SQL
 )
 
@@ -1141,6 +1142,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         confirmation: dict[str, object] | None,
         *,
         validate_only: bool = False,
+        took_over: bool = False,
     ) -> None:
         if decision.destination != "cover":
             if consideration_id is not None or confirmation is not None:
@@ -1300,6 +1302,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 None if prior is None else prior["selection_id"],
                 decision.occurred_at,
                 selection_document,
+                int(took_over),
             ),
         )
         # The owner's choice takes the work from Automatic in the same

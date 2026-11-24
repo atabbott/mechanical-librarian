@@ -10,9 +10,14 @@ import uuid
 from collections.abc import Callable
 from typing import Literal
 
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    case_episode,
+    next_ordinal,
+)
 from mechanical_librarian.adapters.persistence.owner_links import owner_link_bound
 from mechanical_librarian.adapters.persistence.review_sql import (
     _AUTOMATIC_SAFETY_ROW_SQL,
+    _CASE_TITLE_SQL,
     _authored_description_sql,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
@@ -431,11 +436,23 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 ).fetchone()
                 if work is None:
                     raise ValueError("description advice is stale")
+                # It is an owner answer: its ordinal is the counter's and
+                # its episode and title are its case's now (ADR-0108).
                 self._connection.execute(
                     "INSERT INTO owner_authored_descriptions(decision_id,review_case_id,"
                     "candidate_id,idempotency_digest,document,connection_name,"
-                    "library_name,item_id,candidate_document) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (*row_values, *work, candidate_document),
+                    "library_name,item_id,candidate_document,ordinal,episode,"
+                    "display_title) VALUES(?,?,?,?,?,?,?,?,?,?,?,"
+                    + _CASE_TITLE_SQL
+                    + ")",
+                    (
+                        *row_values,
+                        *work,
+                        candidate_document,
+                        next_ordinal(self._connection),
+                        case_episode(self._connection, case_id),
+                        case_id,
+                    ),
                 )
             else:
                 self._connection.execute(
