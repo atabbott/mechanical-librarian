@@ -549,6 +549,8 @@ def _field(
         "This field needs your review."
         if needs_attention
         else "Automatic decided this field. You can change it here."
+        if automatic_decision is not None and (decision_actions or owner_control)
+        else "Automatic decided this field."
         if automatic_decision is not None
         else "Nothing to decide for this field."
     )

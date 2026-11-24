@@ -143,11 +143,15 @@ Each lineage change is an append-only transition: `admitted`, `superseded`,
 superseded case is `actionable`, or `recent_write`: nothing is actionable but
 the work's latest verified write is under 30 days old, so the case is kept
 for going back ([ADR-0105](decisions/0105-going-back-after-a-write.md)).
+A pin on the work whose value changed also keeps a case with nothing
+actionable, as `recent_write` beside a recent write and as `actionable`
+otherwise (ADR-0105, Amendment 1).
 `nonactionable` retires a case or makes none, `absent` tombstones one, and
 `ineligible`, `unidentified` (a new report admits no work identity) and
 `policy_changed` retire one. Admitting the same ProposalSet
 again is reported as `replayed` and records nothing new, except that a kept
-case whose write has turned 30 days old retires instead. A newer report makes an
+case whose write has turned 30 days old retires instead unless a pin on it
+reads changed. A newer report makes an
 older case historical without rewriting it. An audiobook whose recording is
 not admitted gets at most a work-only case (series, title, description,
 genre, publication date, cover and edition narrator choices, with no automatic

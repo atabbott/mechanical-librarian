@@ -33,6 +33,11 @@ changed, and preparation asks no cover or description advice for it. An
 actionable result replaces it as usual. The first scan of the unchanged work
 once the write is 30 days old sends it back to admission, which retires the
 case ([ADR-0105](../architecture/decisions/0105-going-back-after-a-write.md)).
+A pinned field whose value changed also keeps the work's case while nothing
+is actionable, on any admission, so the change is asked instead of retiring
+with the case. Without a recent write the reason is `actionable`; a case kept
+for its write and a changed pin replays after the 30 days until the pin no
+longer reads changed (ADR-0105, Amendment 1).
 A re-preparation that identifies nothing retires a kept case like any other
 (below); if the work is identified again while the write is under 30 days
 old, admission keeps its case again.
