@@ -171,8 +171,9 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
   the owner pins the clear.
 - Any later verified write, a cover included, restarts the 30 days, and a
   kept case can outlive them until the next scan.
-- When a kept case expires, a pinned field whose value changed leaves
-  Attention with it, unasked, as a retired case's does today.
+- A case kept only for a changed pin stays current once the owner unpins
+  or answers, as any answered case does, until the work next changes
+  (Amendment 1).
 - While a re-preparation identifies nothing, a written work has no case to
   go back from; the way back returns when the work is identified again
   within the 30 days. An owner answer recorded on the kept case but not yet
@@ -209,6 +210,30 @@ owner pins the clear if wanted.
 Keeping every written work's case for good would fill Library with works
 that have nothing to decide and never leave. Thirty days from the latest verified write covers going back after a review
 session without that cost.
+
+## Amendment 1: a changed pin keeps the case open (#2035)
+
+A pinned field whose value changed asks however little else is left to
+decide, but a work whose scan found nothing actionable lost its case, and the
+pin was never asked: when its kept case expired, or when it had no recent
+write at all. Admission now keeps the case while a pin the work carries would
+read changed on it, compared as the hold's carry compares it (ADR-0085,
+Amendment 2):
+
+- With a recent write the case is kept as above, with the reason
+  `recent_write`. Once the write is 30 days old the same ProposalSet replays
+  while the pin still reads changed, and retires at the first scan after it
+  no longer does.
+- Without one the case is admitted with the reason `actionable`, on any
+  admission, with or without the scan's time.
+- Either way it is a kept case: preparation asks no cover or description
+  advice for a current case whose ProposalSet has nothing actionable; an
+  unchanged scan consumes a pending description request for it instead of
+  projecting it again, and it adds no attention fact except the changed pin.
+
+No table, `CHECK` or document version changes, so no clean rebuild is needed.
+A work that retired with a changed pin before this amendment is asked once
+the work next changes.
 
 ## Validation
 

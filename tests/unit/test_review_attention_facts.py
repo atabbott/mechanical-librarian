@@ -1360,3 +1360,68 @@ def test_a_changed_pin_on_a_kept_case_asks(tmp_path: Path) -> None:
     assert store.repository.review_case_kept(store.case.review_case_id)
     assert asked() == ("title",)
     store.close()
+
+
+def _transition_reason(connection: sqlite3.Connection) -> str:
+    return connection.execute(
+        "SELECT transition.reason FROM current_review_case_lineages pointer "
+        "JOIN review_case_transitions transition "
+        "ON transition.transition_id=pointer.transition_id"
+    ).fetchone()[0]
+
+
+def test_a_changed_pin_keeps_a_case_with_nothing_else_to_decide(
+    tmp_path: Path,
+) -> None:
+    """A work never written, whose pinned value changed elsewhere while no
+    source proposes anything, keeps a case that asks the pin instead of
+    retiring silently. It is kept like a written work's case, so it asks for
+    no cover or description advice (ADR-0105)."""
+    from tests.support.owner_values import OwnerStore
+    from tests.support.review_cases import _report
+
+    store = OwnerStore(tmp_path, _report())
+    store.decide("pin")
+    assert (
+        store.admit(_report("Changed Elsewhere", actionable=False), now=store.clock())
+        == "superseded"
+    )
+    assert _transition_reason(store.repository._connection) == "actionable"
+    assert store.repository.review_case_kept(store.case.review_case_id)
+    (pin,) = store.repository._connection.execute(
+        "SELECT json_extract(document,'$.pin.in_force') FROM "
+        "field_effect_manual_holds WHERE review_case_id=? AND active=1",
+        (store.case.review_case_id,),
+    ).fetchall()
+    assert pin == (0,)
+    assert [fact[4] for fact in _facts(store.repository._connection)] == ["title"]
+    # Read back with the pinned value, the work has nothing to ask again.
+    assert store.admit(_report(actionable=False), now=store.clock()) == "retired"
+    assert _facts(store.repository._connection) == []
+    store.close()
+
+
+def test_a_pin_still_in_force_lets_a_case_with_nothing_to_decide_retire(
+    tmp_path: Path,
+) -> None:
+    """A pin that still holds its value asks nothing, so the work retires
+    when nothing is left to decide, with or without a scan time."""
+    from tests.support.owner_values import OwnerStore
+    from tests.support.review_cases import _report
+
+    store = OwnerStore(tmp_path, _report())
+    store.decide("pin")
+    assert store.admit(_report(actionable=False), now=store.clock()) == "retired"
+    store.close()
+
+
+def test_a_changed_pin_keeps_the_case_without_a_scan_time(tmp_path: Path) -> None:
+    """Only the recent-write rule needs the scan's time; a changed pin keeps
+    the case on any admission."""
+    from tests.support.owner_values import OwnerStore
+    from tests.support.review_cases import _report
+
+    store = OwnerStore(tmp_path, _report())
+    store.decide("pin")
+    assert store.admit(_report("Changed Elsewhere", actionable=False)) == "superseded"
+    store.close()
