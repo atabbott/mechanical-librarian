@@ -882,7 +882,7 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
 ) -> None:
     """C2b-15, as C2b-25 narrows it: while the record holds an answer from an
     earlier case or episode, the field never reads "Nothing to decide for
-    this field.". An answer of the case and its episode reads decided, an
+    this field.". A choice of the case and its episode reads decided, an
     accepted answer pinned and unpinned among them; one from an earlier case
     or episode, which nothing carried, asks the field with Resume offered
     once Automatic is on where the case offers a decision on it (S16), and
@@ -890,9 +890,10 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
     `test_a_case_kept_for_a_write_reads_its_answer_as_decided`). Driven over
     the same case, a pin taken back, an open and a failed Resume, a later
     case and a return to the first case as a new episode, in Preview and in
-    Automatic. A case's own answer left by a pin taken back on it, with no
-    decision of the case to show and no source offering another value, has
-    nothing to decide and is not in Attention, as on main (C2b-25)."""
+    Automatic. A pin taken back with no decision of the case under it
+    settles nothing, so the field reads as it would without the pin, as on
+    main (C2b-25, C2b-27): the publisher, which no source offers another
+    value for, has nothing to decide and is not in Attention."""
     automatic = posture == "automatic"
     seen: list[dict[str, tuple[str, str, bool]]] = []
     with prepared(

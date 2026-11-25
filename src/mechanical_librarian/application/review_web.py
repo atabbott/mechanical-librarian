@@ -384,10 +384,11 @@ class CurrentReviewCaseSnapshot:
     # `resume_offer`); a cover, where the owner's cover took it over.
     resume_offer_destinations: tuple[str, ...] = ()
     # Held destinations whose unpinned answer was given on this case in its
-    # current episode and not since withdrawn there, Book matching's
-    # `matching_changed` row included: it decides the field here, and a
-    # pin's answer after its unpin is asked nowhere, reading held or with
-    # nothing to decide (`_classify_field`, C2b-25). Any other unpinned
+    # current episode and not since withdrawn there (Book matching's
+    # `matching_changed` row is a withdrawal): it decides the field here. A pin's
+    # answer after its unpin, with no decision of the case, decides it only
+    # where Automatic decided it, and otherwise the field reads as it would
+    # without the answer (`_classify_field`, C2b-27). Any other unpinned
     # answer asks the field where the case offers a decision on it, and
     # settles it where none is offered (C2b-15, C2b-18, S16).
     own_answer_destinations: tuple[str, ...] = ()
@@ -1437,8 +1438,13 @@ def _classify_field(
     actions: tuple[HumanDecisionAction, ...],
     owner_entry: bool,
     pin: Literal["in_force", "changed"] | None,
+    automatic_decides: bool,
 ) -> ReviewFieldClassification:
-    """Classify one field from its proposal, decisions and cover state."""
+    """Classify one field from its proposal, decisions and cover state.
+
+    `automatic_decides` says Automatic decided the field on this case, whether
+    or not the record's answer lets that decision settle it.
+    """
     snapshot = context.snapshot
     current_cover_consideration = context.current_cover_consideration
     cover_is_current = context.cover_is_current
@@ -1620,27 +1626,22 @@ def _classify_field(
     )
     decided = classify(has_human_decision=other_human or own_answer)
     # The case's own answer with no decision of the case to show (a pin taken
-    # back) reads as main did (C2b-25): in Preview it still holds the field,
-    # so turning on Automatic leaves it as it is, where nothing else would
-    # decide it and a source offers another value (ADR-0085, Amendment 6),
-    # with no Resume while Automatic is off (C0 `resume_offer`); where no
-    # source offers another value, in either posture, it has nothing to
-    # decide. A requested Resume is already on its way and reads decided, as
-    # does the answer anywhere else. Only an answer from an earlier case or
-    # episode never reads as having nothing to decide (C2b-15).
+    # back) reads as main did (C2b-25, C2b-27): it holds the field only where
+    # Automatic decided it, as an ordinary hold (ADR-0085, Amendment 6).
+    # Anywhere else the field reads as it would without the answer: asked,
+    # abstained, optional or with nothing to decide, and in Preview held
+    # beside another offered value, so turning on Automatic leaves it as it
+    # is. A requested Resume is already on its way and reads decided. An
+    # answer from an earlier case or episode reads by its own rules
+    # (C2b-15).
     if (
         not own_answer
         or other_human
+        or automatic_decides
         or destination in snapshot.return_requested_destinations
     ):
         return decided
-    held = classify(has_human_decision=False, held_in_preview=snapshot.preview)
-    if held.cause == "held_in_preview" or (
-        held.cause == "nothing_to_decide"
-        and (not alternatives or held.preservation_only)
-    ):
-        return held
-    return decided
+    return classify(has_human_decision=False, held_in_preview=snapshot.preview)
 
 
 def _automatic_settles(snapshot: CurrentReviewCaseSnapshot, destination: str) -> bool:
@@ -2104,6 +2105,14 @@ class InspectCurrentReviewCase:
         # while the record holds the field's answer against it (ADR-0108,
         # Attention); the page still shows it as the held choice.
         settles = _automatic_settles(snapshot, destination)
+        # Automatic decided the field on this case, an automatic authored
+        # description among them: main's condition for carrying the owner's
+        # hold, which a case's own answer with no decision of the case to show
+        # (a pin taken back) needs to decide the field (C2b-27).
+        automatic_decides = automatic_decision is not None or (
+            type(authored_selection) is dict
+            and authored_selection.get("origin") == "automatic_policy"
+        )
         owner_entry = owner_control is not None and any(
             owner_control[part] is not None for part in ("entry", "subset", "names")
         )
@@ -2120,6 +2129,7 @@ class InspectCurrentReviewCase:
             cover_preparation_available=cover_preparation_available,
             actions=actions,
             owner_entry=owner_entry,
+            automatic_decides=automatic_decides,
         )
         # A waiting pin leaves the field as its answer reads.
         classification = classify(pin=None if pin_state == "waiting" else pin_state)
@@ -2160,7 +2170,16 @@ class InspectCurrentReviewCase:
             actions=actions,
             owner_control=owner_control,
             inventory_role=inventory_role,
-            manual_hold=pin_state is None and _resume_offered(snapshot, destination),
+            # Such an answer that Automatic never decided is no hold Resume
+            # releases, as on main (C2b-27).
+            manual_hold=pin_state is None
+            and _resume_offered(snapshot, destination)
+            and (
+                automatic_decides
+                or decision is not None
+                or destination not in snapshot.own_answer_destinations
+                or destination in snapshot.return_requested_destinations
+            ),
             has_owner_action=has_owner_action,
             needs_attention=needs_attention,
             pin=None

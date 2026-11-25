@@ -698,7 +698,14 @@ _RECORD_ANSWER_STEPS = (
         + ")",
         ")",
     ),
-    ("AND NOT " + review_sql._record_case_answer_sql(own=True) + " ", ""),
+    (
+        "AND NOT ("
+        + review_sql._record_case_answer_sql(own=True)
+        + " AND "
+        + review_sql._AUTOMATIC_DECIDED_SQL
+        + ") ",
+        "",
+    ),
 )
 _RECORD_ATTENTION_STEPS = (
     *_RECORD_ANSWER_STEPS,

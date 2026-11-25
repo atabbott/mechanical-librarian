@@ -605,12 +605,31 @@ def _resumed_decision_sql(item: str) -> str:
     )
 
 
+# Automatic decided the field on case `rc`: an active-generation automatic
+# decision, or Automatic's authored description, whether or not the record's
+# answer lets it settle the field (main's condition for carrying the owner's
+# hold, C2b-27).
+_AUTOMATIC_DECIDED_SQL = (
+    "(EXISTS (SELECT 1 FROM automatic_decisions decided "
+    "WHERE decided.review_case_id=rc.review_case_id "
+    "AND decided.destination=result.destination AND "
+    + _active_generation_automatic_sql("decided")
+    + ") OR EXISTS (SELECT 1 FROM current_description_decisions decided "
+    "WHERE decided.review_case_id=rc.review_case_id "
+    "AND result.destination='description' AND NOT EXISTS (SELECT 1 FROM "
+    "owner_authored_descriptions owner_authored WHERE "
+    "owner_authored.decision_id=decided.decision_id)))"
+)
+
+
 # A field is decided by its latest owner decision of the case's episode unless
 # that withdrew it (ADR-0085); an earlier decision never settles a field the
 # owner took back, nor one the work has since left and returned to, nor one a
 # completed Resume took back (ADR-0108). The record's answer the case holds as
-# its own settles its field too, a pin's answer after its unpin among them;
-# one the case's latest row withdrew does not (C2b-15). An automatic decision,
+# its own settles its field too, but with no decision of the case standing
+# (a pin's answer after its unpin) only where Automatic decided the field, as
+# main's carried hold did (`_AUTOMATIC_DECIDED_SQL`, C2b-27); one the case's
+# latest row withdrew does not (C2b-15). An automatic decision,
 # or Automatic's authored description, settles its field only in the active
 # generation and only while the record holds no answer for the field against
 # Automatic: none, or one with a Resume open that has not failed; and never
@@ -631,9 +650,11 @@ _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     + " AND NOT "
     + _resumed_decision_sql("c")
     + " ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
-    "AND NOT "
+    "AND NOT ("
     + _record_case_answer_sql(own=True)
-    + " AND NOT "
+    + " AND "
+    + _AUTOMATIC_DECIDED_SQL
+    + ") AND NOT "
     + _pin_record_sql("rc.review_case_id", "result.destination", True, item="c")
     + " "
     "AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description'"

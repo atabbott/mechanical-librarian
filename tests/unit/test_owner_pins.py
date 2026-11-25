@@ -58,7 +58,10 @@ from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.support.audiobook_reports import synthetic_audiobook_bibliographic_report
 from tests.support.evidence_led_titles import isbn_title_report
 from tests.support.genre_reports import genre_report
-from tests.support.owner_field_record import record_recomputes  # noqa: F401
+from tests.support.owner_field_record import (
+    assert_record_recomputes,
+    record_recomputes,  # noqa: F401
+)
 from tests.support.owner_field_record import resume as resume_field
 from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
 from tests.unit.test_owner_answer_holds import (
@@ -834,6 +837,95 @@ def test_a_pinned_title_is_not_asked_again_when_automatic_abstains(
     store.publish(rewritten(report, publisher="Changed Elsewhere"))
     assert _asked(store) is False
     assert _field(store, "title")["classification_cause"] == "pinned"
+    store.close()
+
+
+def _in_attention(store: OwnerStore, destination: str = "title") -> bool:
+    """Whether `library.attention()` lists the field of the store's case."""
+    page = BrowseReviewLibrary(store.repository).attention(
+        search=None, limit=50, cursor=None
+    )
+    return any(
+        item["review_case_id"] == store.case.review_case_id
+        and item["destination"] == destination
+        for item in cast("list[dict[str, object]]", page["items"])
+    )
+
+
+def _read(store: OwnerStore, destination: str = "title") -> tuple[object, ...]:
+    """The field as the case page shows it, and whether Attention lists it,
+    live, persisted and in `library.attention()`."""
+    field = _field(store, destination)
+    asked = _asked(store, destination)
+    assert _in_attention(store, destination) is asked
+    return (
+        field["inventory_role"],
+        field["classification"],
+        field["classification_cause"],
+        field["needs_attention"],
+        field["manual_hold"],
+        asked,
+    )
+
+
+_ASKED_AGAIN = ("primary", "needs_attention", "review_needed", True, False, True)
+
+
+# C2b-27, ADR-0085 Amendment 2: an unpin row settles nothing, so a pin taken
+# back on the case leaves the field as it would read without the pin, as on
+# main 946921c. A title the case asks under Ask me is asked again and is in
+# Attention in either posture. It reads decided, with Resume, only where
+# Automatic decided it (Amendment 6); Preview records no automatic decision,
+# so there the answer holds the field beside the offered value, with no
+# Resume (Amendment 5).
+@pytest.mark.parametrize(
+    ("title", "posture", "read"),
+    [
+        ("ask", "automatic", _ASKED_AGAIN),
+        ("ask", "preview", _ASKED_AGAIN),
+        (
+            "automatic",
+            "automatic",
+            ("primary", "human_recorded", "human_decided", False, True, False),
+        ),
+        (
+            "automatic",
+            "preview",
+            ("primary", "unsupported", "held_in_preview", False, False, False),
+        ),
+    ],
+    ids=["ask_me-automatic", "ask_me-preview", "automatic", "automatic-preview"],
+)
+def test_a_pin_taken_back_reads_as_the_field_would_without_it(
+    tmp_path: Path, title: str, posture: str, read: tuple[object, ...]
+) -> None:
+    store, report, _ = _store(tmp_path, title=title, posture=posture)
+    store.publish(report)
+    if title == "ask":
+        assert _read(store) == _ASKED_AGAIN
+    store.decide("pin")
+    store.decide("unpin")
+    assert _read(store) == read
+    assert_record_recomputes(store.repository._connection)
+    store.close()
+
+
+# C2b-27: where Automatic abstained, the pin taken back asks the field again
+# as the abstention did, with no Resume, as on main 946921c.
+@pytest.mark.parametrize("posture", ["automatic", "preview"])
+def test_a_pin_taken_back_where_automatic_abstained_asks_again(
+    tmp_path: Path, posture: str
+) -> None:
+    store, _, _ = _store(tmp_path, posture=posture)
+    report = isbn_title_report(empty_target_title=True, titles=(None,))
+    store.publish(report)
+    asked = ("primary", "manual_fallback", "automatic_abstained", True, False, True)
+    assert _read(store) == asked
+    store.decide("pin")
+    store.decide("unpin")
+    assert _read(store) == asked
+    assert _field(store, "title")["pin_control"] == {"pin": "available", "unpin": False}
+    assert_record_recomputes(store.repository._connection)
     store.close()
 
 
