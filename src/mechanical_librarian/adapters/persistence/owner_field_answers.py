@@ -146,7 +146,8 @@ def next_ordinal(connection: sqlite3.Connection) -> int:
 
 def case_episode(connection: sqlite3.Connection, review_case_id: str) -> int:
     """The case's episode an answer is given in: its decision floor, 0 before
-    it was ever admitted again (#1358)."""
+    it was ever admitted again (#1358). The floor counts every owner answer
+    on the case, an authored description's too (ADR-0108)."""
     return int(
         connection.execute(
             "SELECT COALESCE((SELECT decision_floor FROM review_case_episodes "

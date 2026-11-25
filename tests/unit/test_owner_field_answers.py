@@ -54,6 +54,8 @@ from tests.support.owner_field_record import (
     record_recomputes,  # noqa: F401
 )
 from tests.support.owner_values import OwnerStore
+from tests.unit.test_description_advice_labels import _readmit, prepared_report
+from tests.unit.test_description_advice_labels import _store as _labels_store
 
 _CASE = "review_case_" + "a" * 64
 _OTHER_CASE = "review_case_" + "b" * 64
@@ -82,6 +84,7 @@ def _decision(
     case: str = _CASE,
     episode: int = 0,
     cause: str | None = None,
+    key: tuple[str, str, str] = _KEY,
 ) -> str:
     """A ledger decision row as the store writes its columns; the document
     carries only what the record reads."""
@@ -102,7 +105,7 @@ def _decision(
             "f" * 64,
             7,
             json.dumps({"cause": cause, "episode": episode}),
-            *_KEY,
+            *key,
             case,
             "null",
             None,
@@ -1056,3 +1059,52 @@ def test_a_ledger_edit_the_record_disagrees_with_is_refused_once_regenerated(
     assert opens(path)
     rewrite(path, edit)
     assert not opens(path)
+
+
+def test_a_case_admitted_again_after_only_an_authored_description_starts_an_episode(
+    tmp_path: Path,
+) -> None:
+    """The authored description takes an ordinal, so the case's next episode
+    starts after it: a later answer there restores it (ADR-0108, O1).
+
+    The owner cannot withdraw a description (UNREVERSIBLE_DESTINATIONS), so
+    the withdrawal is the ledger row the store's withdrawal path writes."""
+    prepared = _labels_store(tmp_path)
+    prepared.choose()
+    connection = prepared.repository._connection
+    ((authored, ordinal),) = connection.execute(
+        "SELECT decision_id,ordinal FROM owner_authored_descriptions"
+    ).fetchall()
+    assert _readmit(prepared, prepared_report(prepared)) == prepared.case
+    assert connection.execute(
+        "SELECT decision_floor FROM review_case_episodes WHERE review_case_id=?",
+        (prepared.case,),
+    ).fetchone() == (ordinal,)
+    prepared.decide("keep_current")
+    (record,) = stored_answers(connection)
+    assert (record.outcome, record.episode, record.previous_answer_id) == (
+        "keep_current",
+        ordinal,
+        authored,
+    )
+    assert_record_recomputes(connection)
+    with connection:
+        withdrawal = _decision(
+            connection,
+            "withdraw",
+            destination="description",
+            outcome="withdraw",
+            selected="null",
+            case=prepared.case,
+            episode=ordinal,
+            key=record.key[:3],
+        )
+        owner_field_answers.withdraw_answer(connection, withdrawal)
+    (record,) = stored_answers(connection)
+    assert (record.answer_id, record.source, record.carry_eligible) == (
+        authored,
+        "authored_description",
+        False,
+    )
+    assert_record_recomputes(connection)
+    prepared.repository.close()

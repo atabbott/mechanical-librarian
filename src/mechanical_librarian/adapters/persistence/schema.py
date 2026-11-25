@@ -970,8 +970,9 @@ _HUMAN_DECISIONS_CASE_DESTINATION_INDEX_SQL = (
 )
 # A case admitted again after the work left it starts a new episode (#1358).
 # Its owner decisions up to `decision_floor` and the writes that landed up to
-# `event_floor`, the latest ordinal and field-effect event rowid when it was
-# admitted again, are history. Only re-admission writes a row.
+# `event_floor`, the latest owner-answer ordinal on the case (an authored
+# description's included) and field-effect event rowid when it was admitted
+# again, are history. Only re-admission writes a row.
 _REVIEW_CASE_EPISODES_SQL = (
     "CREATE TABLE review_case_episodes ("
     "review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), "
