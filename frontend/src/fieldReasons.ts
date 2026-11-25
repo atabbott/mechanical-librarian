@@ -50,9 +50,9 @@ export const fieldReason = (field: ReviewField) =>
         ? field.classificationReason || automaticReasons[field.automaticDecision.outcome]
         : actionable(field)
           ? field.classificationReason || dispositionReasons[field.disposition]
-          : field.classificationReason && field.classificationCause !== 'review_needed'
-            ? field.classificationReason
-            : 'Nothing to decide for this field.',
+          : // An asked field with nothing to choose says why it is asked, in
+            // the server's words (#2038).
+            field.classificationReason || 'Nothing to decide for this field.',
     'No reason can be shown.',
   )
 // A field with nothing to decide is either unchanged, because no source

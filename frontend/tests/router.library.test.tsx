@@ -13367,11 +13367,20 @@ describe('Library route', () => {
       expect(within(row).queryByText(/Waiting|Unavailable/u)).toBeNull()
     })
 
-    it('hides a reworded review reason on a field with nothing to decide', async () => {
-      const { row } = await shown('review_needed', 'Reworded attention line.')
+    // An asked field with nothing to choose, such as a kept case's title,
+    // says why it is asked in the server's words, never that nothing is to
+    // be decided (#2038).
+    it('shows the server reason on an asked field with nothing to choose', async () => {
+      const { row } = await shown('review_needed', 'This field needs your review.')
+      expect(row).toHaveClass('is-unavailable')
+      expect(row).toHaveTextContent('This field needs your review.')
+      expect(row).not.toHaveTextContent('Nothing to decide for this field.')
+    })
+
+    it('says nothing is to decide where the server gives no reason', async () => {
+      const { row } = await shown('unsupported', '')
       expect(row).toHaveClass('is-unavailable')
       expect(row).toHaveTextContent('Nothing to decide for this field.')
-      expect(row).not.toHaveTextContent('Reworded attention line.')
     })
 
     it('shows a review-worded reason when the code is not a review', async () => {
