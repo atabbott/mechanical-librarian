@@ -2143,9 +2143,14 @@ _ATTENTION_FACT_OBJECTS: tuple[tuple[str, str, str], ...] = (
 
 
 def _create_attention_facts(connection: sqlite3.Connection) -> None:
-    """Create #1232's objects and derive every fact from the current rows."""
+    """Create #1232's objects and derive every fact from the current rows.
+
+    Deriving them reads a pin's fingerprint from the record (ADR-0108), so
+    the creating connection registers the functions the facts are derived by.
+    """
     for _kind, _name, statement in _ATTENTION_FACT_OBJECTS:
         connection.execute(statement)
+    _register_casefold(connection)
     connection.execute(
         "INSERT INTO review_attention_refresh(connection_name,library_name,item_id,"
         "destination) SELECT connection_name,library_name,item_id,NULL "

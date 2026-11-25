@@ -24,6 +24,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.reviewer_access import (
     ReviewerAccessStore,
 )
+from mechanical_librarian.adapters.persistence.schema import _register_casefold
 from mechanical_librarian.application.cover_observation import (
     OUTPUT_SCHEMA_VERSION,
     REVISED_CONTRACT,
@@ -78,6 +79,8 @@ def _write_library(
     finally:
         repository.close()
     connection = sqlite3.connect(database, isolation_level=None)
+    # A writer of an Attention input reads the record's pins (ADR-0108).
+    _register_casefold(connection)
     try:
         # Publishing makes each item current; item-d leaves the library, so
         # its report is never sent.

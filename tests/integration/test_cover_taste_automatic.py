@@ -1117,8 +1117,8 @@ def test_an_answer_after_resume_was_asked_is_not_released(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
     """Review B1: the owner presses Resume, then answers the cover in To
-    decide before the fresh checks complete. The answer takes the hold over,
-    so the pending return drops and the completed checks, naming the old
+    decide before the fresh checks complete. The answer takes the record over,
+    so the open Resume closes and the completed checks, naming the old
     token, release nothing: the owner's new choice stays. Put back is an
     accept naming a retained candidate, so it takes this same branch."""
     monkeypatch.setattr(
@@ -1185,15 +1185,14 @@ def test_an_answer_after_resume_was_asked_is_not_released(
             "SELECT selection_id,cover_took_over FROM owner_cover_selections "
             "ORDER BY occurred_at"
         ).fetchall() == [(kept["selection_id"], 1), (answered["selection_id"], 1)]
-        hold = json.loads(
-            repository._connection.execute(
-                "SELECT document FROM field_effect_manual_holds "
-                "WHERE review_case_id=? AND destination='cover' AND active=1",
-                (prepared.review_case_id,),
-            ).fetchone()[0]
-        )
-        assert hold["decision_id"] != token
-        assert hold["pending_return"] is None
+        # The record holds the new answer, with no Resume open over it
+        # (ADR-0108); no manual hold is written any more.
+        (answer_id, open_resume_id) = repository._connection.execute(
+            "SELECT answer_id,open_resume_id FROM owner_field_answers "
+            "WHERE destination='cover'"
+        ).fetchone()
+        assert answer_id != token
+        assert open_resume_id is None
         # The answer closed the request, so the checks Resume asked for
         # complete nothing.
         assert not complete_resume(repository, request, 20)

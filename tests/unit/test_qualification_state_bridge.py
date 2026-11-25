@@ -19,7 +19,10 @@ from scripts.qualification_state_bridge import (
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.adapters.persistence.schema import _expected_schema_objects
+from mechanical_librarian.adapters.persistence.schema import (
+    _expected_schema_objects,
+    _register_casefold,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -816,6 +819,8 @@ def test_changed_exact_schema_output_is_not_accepted_as_current(
         source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
     with sqlite3.connect(output) as connection:
+        # A writer of an Attention input reads the record's pins (ADR-0108).
+        _register_casefold(connection)
         if mutation == "review-package":
             connection.execute("DELETE FROM current_review_packages")
         elif mutation == "cover-reference":
