@@ -1646,17 +1646,20 @@ def _owner_authored(selection: object) -> bool:
 
 def _resume_offered(snapshot: CurrentReviewCaseSnapshot, destination: str) -> bool:
     """Whether the field shows Resume automatic handling: offered from the
-    record (C0 `resume_offer`) or already asked; a cover only where the stage
-    would switch it but for the owner, never for a cover chosen in To decide
-    (K9). A pinned field offers Unpin instead (ADR-0085, Amendment 2)."""
+    record (C0 `resume_offer`), where a failed request is asked again, or
+    already requested, which shows as requested with nothing to press. A
+    failed request outside the offer shows no Resume, since the store would
+    refuse it (C0). A cover only where the stage would switch it but for the
+    owner, never for a cover chosen in To decide (K9). A pinned field offers
+    Unpin instead (ADR-0085, Amendment 2)."""
     if destination == "cover":
         return (
             snapshot.cover_automatic_held
             and destination in snapshot.resume_offer_destinations
         )
-    return destination in snapshot.resume_offer_destinations or destination in (
-        *snapshot.return_requested_destinations,
-        *snapshot.return_failed_destinations,
+    return (
+        destination in snapshot.resume_offer_destinations
+        or destination in snapshot.return_requested_destinations
     )
 
 

@@ -733,6 +733,25 @@ def _held_reads(library: Library) -> dict[str, tuple[str, str, bool]]:
     }
 
 
+def _resume_control_reaches_the_offer(library: Library) -> None:
+    """A held field whose Resume control can be pressed (shown, and not
+    already requested) is in C0 `resume_offer`, which the store checks before
+    it asks a scan: no control on the page leads to a refused request."""
+    from mechanical_librarian.adapters.persistence.schema import _resume_offer_sql
+
+    case_id = library.case_id()
+    for name, field in _fields(library).items():
+        if name == "cover" or not field["manual_hold"]:
+            continue
+        if field["manual_return_requested"]:
+            continue
+        (offered,) = library.root._connection.execute(
+            "SELECT " + _resume_offer_sql(":case", ":destination"),
+            {"case": case_id, "destination": name},
+        ).fetchone()
+        assert offered == 1, name
+
+
 _DECIDED = ("human_recorded", "human_decided")
 _ASKED = ("needs_attention", "review_needed")
 
@@ -813,6 +832,7 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
         def reads() -> dict[str, tuple[str, str, bool]]:
             value = _held_reads(library)
             seen.append(value)
+            _resume_control_reaches_the_offer(library)
             return value
 
         root = library.root
@@ -853,13 +873,15 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
         assert library.case_id() == first
         assert reads() == {"authors": (*_ASKED, automatic)}
 
-        # The other posture, with the record unchanged: Preview still shows
-        # the failed Resume, to be asked again; Automatic offers Resume.
+        # The other posture, with the record unchanged. Preview leaves the
+        # failed Resume with nothing to ask again, which the store would
+        # refuse outside the offer (C0 `resume_offer`); Automatic offers
+        # Resume.
         if automatic:
             library.leave_automatic()
         else:
             _confirm_automatic(library, 40)
-        assert reads() == {"authors": (*_ASKED, True)}
+        assert reads() == {"authors": (*_ASKED, not automatic)}
         assert all(
             cause != "nothing_to_decide"
             for value in seen
@@ -1192,7 +1214,9 @@ def test_a_new_case_after_an_answer_asks_the_field(
 def test_a_failed_resume_asks_the_field(tmp_path: Path, posture: str) -> None:
     """P8: a Resume whose scan ends with failures leaves the record holding
     the answer: the field is asked, shows the failed Resume to ask again,
-    and nothing of Automatic's is pending; the same once Automatic is left."""
+    and nothing of Automatic's is pending. Once Automatic is left the field
+    is still asked and nothing is pending, but no Resume is shown: outside C0
+    `resume_offer` the store refuses to ask it again."""
     with prepared(tmp_path, automatic=True, library_model="publication") as library:
         root = library.root
         root.record_human_decision(
@@ -1209,7 +1233,11 @@ def test_a_failed_resume_asks_the_field(tmp_path: Path, posture: str) -> None:
             library.leave_automatic()
         field = _fields(library)["authors"]
         assert (field["classification"], field["classification_cause"]) == _ASKED
-        assert field["manual_return_failed"] is True
+        offered = posture == "automatic"
+        assert (field["manual_hold"], field["manual_return_failed"]) == (
+            offered,
+            offered,
+        )
         page, attention = _asked(library)
         assert "authors" in page and "authors" in attention
         assert library.pending() == []
