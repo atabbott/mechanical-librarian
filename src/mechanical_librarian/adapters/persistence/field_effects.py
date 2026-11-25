@@ -55,6 +55,10 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
     _consent_state,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    complete_resume,
+    request_resume,
+)
 from mechanical_librarian.adapters.persistence.retained_covers import (
     release_put_back_retained_cover,
     release_unlisted_retained_covers,
@@ -896,6 +900,15 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "active,updated_at,document) VALUES(?,?,1,?,?)",
                 (review_case_id, destination, changed_at, document),
             )
+            # The record mirrors the request where it holds an unpinned
+            # answer for the field; the hold still decides (ADR-0108, C2b).
+            request_resume(
+                self._connection,
+                self._case_item(review_case_id),
+                destination,
+                scan_id,
+                changed_at,
+            )
             if scan[0] == "completed_with_failures":
                 requeued = self._connection.execute(
                     "UPDATE review_preparation_scans SET state='queued',discovery_failure=NULL,"
@@ -910,9 +923,26 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     return False
             transaction.commit()
             return True
-        except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            sqlite3.Error,
+            TypeError,
+            MetadataReportError,
+        ) as error:
             transaction.rollback()
             raise FieldEffectError("persistence") from error
+
+    def _case_item(self, review_case_id: str) -> tuple[str, str, str]:
+        """The book of a current case, as the record keys it."""
+        row = self._connection.execute(
+            "SELECT connection_name,library_name,item_id "
+            "FROM current_review_case_lineages WHERE review_case_id=?",
+            (review_case_id,),
+        ).fetchone()
+        if row is None:
+            raise FieldEffectError("persistence")
+        return (row[0], row[1], row[2])
 
     def _has_pending_field_effect_manual_return(self, scan_id: str) -> bool:
         return bool(
@@ -979,6 +1009,13 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
                     "active,updated_at,document) VALUES(?,?,0,?,?)",
                     (review_case_id, destination, changed_at, document),
+                )
+                # The record's open request completes with the release.
+                complete_resume(
+                    self._connection,
+                    self._case_item(review_case_id),
+                    destination,
+                    changed_at,
                 )
             # Only the active generation's decision is held (#1573).
             automatic = self._connection.execute(

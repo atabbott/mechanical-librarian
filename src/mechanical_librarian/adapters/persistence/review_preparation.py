@@ -24,6 +24,9 @@ aggregate moves, as long as its delegating stub stays on the repository.
 
 - `_has_pending_field_effect_manual_return` reads the field-effect holds that
   requeue a failed action instead of retiring it.
+- `_fail_open_resumes_for_scan` writes, in the transaction that settles a scan
+  with failures, `resume_failed` for each open Resume request on it. The
+  record of the owner's answers owns those events (ADR-0108).
 - `_require_staged_shadow_projection_current` re-checks the claimed staged case
   before package-internal projection.
 - `_refresh_metadata_policy_transition` settles the policy transition an
@@ -605,6 +608,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         binding: _LinuxDatabaseBinding | None = None,
         *,
         has_pending_field_effect_manual_return: Callable[[str], bool],
+        fail_open_resumes_for_scan: Callable[[str, int], int],
         require_staged_shadow_projection_current: Callable[[str, PipelineAction], None],
         refresh_metadata_policy_transition: Callable[[str, int], None],
         enqueue_provider_recovery_outbox: Callable[
@@ -622,6 +626,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         self._has_pending_field_effect_manual_return = (
             has_pending_field_effect_manual_return
         )
+        self._fail_open_resumes_for_scan = fail_open_resumes_for_scan
         self._require_staged_shadow_projection_current = (
             require_staged_shadow_projection_current
         )
@@ -915,6 +920,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "rescan_requested=0,updated_at=? WHERE scan_id=?",
                     (claimed_at, scan_id),
                 )
+                self._fail_open_resumes_for_scan(scan_id, claimed_at)
             elif rescan_requested:
                 self._connection.execute(
                     "UPDATE review_preparation_scans SET state='queued',"
@@ -935,6 +941,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "UPDATE review_preparation_scans SET state=?,updated_at=? WHERE scan_id=?",
                     (state, claimed_at, scan_id),
                 )
+                if stale:
+                    self._fail_open_resumes_for_scan(scan_id, claimed_at)
 
     @local_operation
     def claim_review_pipeline_work(
@@ -2505,6 +2513,12 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 ).rowcount
                 if updated != 1:
                     raise MetadataReportError("review preparation state changed")
+                if self._connection.execute(
+                    "SELECT 1 FROM review_preparation_scans "
+                    "WHERE scan_id=? AND state='completed_with_failures'",
+                    (action.scan_id,),
+                ).fetchone():
+                    self._fail_open_resumes_for_scan(action.scan_id, completed_at)
                 refresh_preparation_run_state(self._connection, completed_at)
                 self._pending_claim = (None,)
                 transaction.commit(after_commit=self.commit_review_pipeline_claim)

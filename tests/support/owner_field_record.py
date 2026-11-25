@@ -1,8 +1,10 @@
 """Prove the stored record of the owner's answers is the ledger's fold (ADR-0108).
 
 Every answer site writes `owner_field_answers` incrementally beside the
-hold. `assert_record_recomputes` recomputes the whole record from the ledger
-alone and compares it with what was stored, by the comparison open makes;
+hold, and every hold Resume site writes Resume's `owner_field_events`.
+`assert_record_recomputes` recomputes the whole record from the ledger alone,
+the owner's answers and Resume's events together, and compares it with what
+was stored, by the comparison open makes, `open_resume_id` included;
 `assert_records_recompute` does that for every store a test left under its
 directory, which the hold modules run at teardown so each of their scenarios
 is checked, including stores no test opens again.
@@ -25,8 +27,8 @@ _SIDE_FILES = ("-wal", "-shm", "-journal")
 
 
 def assert_record_recomputes(connection: sqlite3.Connection) -> None:
-    """The stored record equals the fold of the ledger's owner answers, by
-    the comparison open makes."""
+    """The stored record equals the fold of the ledger's owner answers and
+    Resume's events, by the comparison open makes."""
     differing = record_differences(connection)
     assert not differing, f"record differs from the ledger's fold: {differing}"
 

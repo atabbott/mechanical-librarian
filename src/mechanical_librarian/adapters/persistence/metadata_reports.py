@@ -73,6 +73,9 @@ from mechanical_librarian.adapters.persistence.library_visit import (
 from mechanical_librarian.adapters.persistence.metadata_policy import (
     SQLiteMetadataPolicyRepository,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    fail_open_resumes_for_scan,
+)
 from mechanical_librarian.adapters.persistence.owner_links import (
     OwnerLinkChanged,
     OwnerLinkIdempotencyConflict,
@@ -444,16 +447,16 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
         )
-        # Every injected callable resolves its target through this repository at
-        # call time rather than capturing a bound method here.  Three review
-        # pipeline tests substitute `_has_pending_field_effect_manual_return` on
-        # the repository and drive it through a claimed action; a captured bound
-        # method would leave them passing while testing nothing.
+        # Each injected callable resolves through this repository at call time,
+        # so tests substituting a seam here still bite (review_preparation.py).
         self._review_preparation = SQLiteReviewPreparationRepository(
             connection,
             binding,
             has_pending_field_effect_manual_return=(
                 lambda scan_id: self._has_pending_field_effect_manual_return(scan_id)
+            ),
+            fail_open_resumes_for_scan=(
+                lambda scan_id, at: self._fail_open_resumes_for_scan(scan_id, at)
             ),
             require_staged_shadow_projection_current=(
                 lambda review_case_id, action: (
@@ -1136,6 +1139,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def _has_pending_field_effect_manual_return(self, scan_id: str) -> bool:
         return self._field_effects._has_pending_field_effect_manual_return(scan_id)
+
+    def _fail_open_resumes_for_scan(self, scan_id: str, at: int) -> int:
+        return fail_open_resumes_for_scan(self._connection, scan_id, at)
 
     def clear_field_effect_manual_hold(
         self,

@@ -39,8 +39,10 @@ from mechanical_librarian.domain.human_decision import (
     pinned_field_fingerprint,
 )
 from mechanical_librarian.domain.owner_field_answer import (
+    OWNER_FIELD_EVENT_SCHEMA,
     OwnerAnswerRow,
     OwnerFieldAnswer,
+    OwnerFieldEventRow,
     fold_owner_field_answers,
     owner_field_event_id,
     restored_answer,
@@ -365,7 +367,7 @@ def test_an_event_id_is_the_digest_of_its_columns_and_the_keys_previous_event() 
                 '"library_name":"books","occurred_at":11,"over_ordinal":4,'
                 '"previous_event_id":"owner_field_event_' + "2" * 64 + '",'
                 '"request_id":"owner_field_event_' + "1" * 64 + '","scan_id":null,'
-                '"schema_version":"owner-field-event-v1"}'
+                '"schema_version":"' + OWNER_FIELD_EVENT_SCHEMA + '"}'
             ).encode()
         ).hexdigest()
     )
@@ -574,9 +576,13 @@ def test_an_open_resume_names_an_unclosed_request_over_its_answer(
             ("owner_field_event_" + "9" * 64,),
         )
     if fault == "none":
-        # The fold sees no Resume event until C2b, so only the comparison
-        # with it refuses an open Resume this rule admits.
-        assert _firing(ledger) == [-2]
+        # The fold opens the same request over the answer it covers.
+        assert _firing(ledger) == []
+    elif fault == "below":
+        # An answer above an unclosed request's bound breaks the ledger's
+        # own rule too (10); the record naming it as open breaks this one,
+        # and the fold, which covers only answers at or below it, leaves it out.
+        assert _firing(ledger) == [6, 10, -2]
     else:
         _refused(ledger, 6)
 
@@ -591,24 +597,81 @@ def test_an_event_answering_another_fields_request_is_refused(
     _refused(ledger, 7)
 
 
-def test_a_request_closed_twice_is_refused(ledger: sqlite3.Connection) -> None:
-    request = _event(ledger, "resume_requested")
-    _event(ledger, "resume_superseded", request=request)
+@pytest.mark.parametrize("kind", ("resume_completed", "resume_superseded"))
+def test_a_request_closed_twice_the_same_way_is_refused(
+    ledger: sqlite3.Connection, kind: str
+) -> None:
+    request = _event(ledger, "resume_requested", destination="title")
+    _event(ledger, kind, request=request, destination="title")
     assert _firing(ledger) == []
-    _event(ledger, "resume_completed", request=request)
+    _event(ledger, kind, request=request, destination="title")
     _refused(ledger, 8)
+
+
+@pytest.mark.parametrize("order", ("superseded-first", "completed-first"))
+def test_a_superseded_request_that_completes_is_refused(
+    ledger: sqlite3.Connection, order: str
+) -> None:
+    request = _event(ledger, "resume_requested", destination="title")
+    kinds = ["resume_superseded", "resume_completed"]
+    if order == "completed-first":
+        kinds.reverse()
+    _event(ledger, kinds[0], request=request, destination="title")
+    assert _firing(ledger) == []
+    _event(ledger, kinds[1], request=request, destination="title")
+    _refused(ledger, 11)
+
+
+def test_a_field_with_two_unclosed_requests_is_refused(
+    ledger: sqlite3.Connection,
+) -> None:
+    first = _event(ledger, "resume_requested", destination="title")
+    _event(ledger, "resume_failed", request=first, destination="title")
+    assert _firing(ledger) == []
+    _event(ledger, "resume_requested", destination="title")
+    _refused(ledger, 9)
+
+
+@pytest.mark.parametrize(
+    "answer", ("human", "authored"), ids=("human-answer", "authored-answer")
+)
+def test_an_answer_above_an_unclosed_requests_bound_is_refused(
+    ledger: sqlite3.Connection, answer: str
+) -> None:
+    """Every answer closes an open request first (S10); withdrawals and Book
+    matching's rows may follow one, so only the fold judges those."""
+    destination = "title" if answer == "human" else "description"
+    _event(ledger, "resume_requested", destination=destination)
+    _decision(ledger, "withdrawal", destination=destination, outcome="withdraw")
+    assert _firing(ledger) == []
+    if answer == "human":
+        _decision(ledger, "late", destination="title", outcome="keep_current")
+    else:
+        _authored(ledger)
+    _refused(ledger, 10)
+
+
+def test_an_event_written_before_its_requests_bound_is_refused(
+    ledger: sqlite3.Connection,
+) -> None:
+    request = _event(ledger, "resume_requested", destination="title")
+    _event(ledger, "resume_failed", request=request, destination="title")
+    assert _firing(ledger) == []
+    _event(ledger, "resume_failed", request=request, destination="title", over=1)
+    _refused(ledger, 12)
 
 
 @pytest.mark.parametrize("fault", ("digest", "reordered"))
 def test_an_event_whose_id_does_not_recompute_is_refused(
     ledger: sqlite3.Connection, fault: str
 ) -> None:
-    first = _event(ledger, "resume_requested")
+    first = _event(ledger, "resume_requested", destination="title")
     if fault == "digest":
         _event(
             ledger,
             "resume_failed",
             request=first,
+            destination="title",
             event_id="owner_field_event_" + "0" * 64,
         )
     else:
@@ -618,7 +681,7 @@ def test_an_event_whose_id_does_not_recompute_is_refused(
             connection_name="primary",
             library_name="books",
             item_id="work",
-            destination="genres",
+            destination="title",
             kind="resume_failed",
             request_id=first,
             over_ordinal=2,
@@ -627,7 +690,9 @@ def test_an_event_whose_id_does_not_recompute_is_refused(
             occurred_at=9,
             previous_event_id=None,
         )
-        _event(ledger, "resume_failed", request=first, event_id=second)
+        _event(
+            ledger, "resume_failed", request=first, destination="title", event_id=second
+        )
     _refused(ledger, -1)
 
 
@@ -702,7 +767,7 @@ def _row(
 
 
 def _record(*rows: OwnerAnswerRow) -> dict[str, object] | None:
-    folded = fold_owner_field_answers(rows)
+    folded = fold_owner_field_answers(rows, ())
     assert len(folded) <= 1
     answer = next(iter(folded.values()), None)
     return (
@@ -721,7 +786,7 @@ def _record(*rows: OwnerAnswerRow) -> dict[str, object] | None:
 def test_each_answer_outcome_is_the_fields_answer_with_its_copies() -> None:
     for outcome in ("accept", "keep_current", "reject", "owner_entered"):
         row = _row("a", 3, outcome)
-        (answer,) = fold_owner_field_answers((row,)).values()
+        (answer,) = fold_owner_field_answers((row,), ()).values()
         assert (
             answer.source,
             answer.answer_id,
@@ -878,11 +943,126 @@ def test_an_authored_description_and_a_human_answer_replace_each_other() -> None
 def test_a_cover_answer_names_its_selection_and_fields_fold_apart() -> None:
     cover = _row("c", 1, "keep_current", destination="cover", selection=_SELECTION)
     title = _row("t", 2)
-    folded = fold_owner_field_answers((title, cover))
+    folded = fold_owner_field_answers((title, cover), ())
     assert {key[3]: answer.cover_selection_id for key, answer in folded.items()} == {
         "cover": _SELECTION,
         "title": None,
     }
+
+
+# -- the fold with Resume's events -------------------------------------------
+
+
+def _ev(
+    tag: str,
+    kind: str,
+    over: int,
+    *,
+    request: OwnerFieldEventRow | None = None,
+    answer: str | None = None,
+) -> OwnerFieldEventRow:
+    return OwnerFieldEventRow(
+        "owner_field_event_" + hashlib.sha256(tag.encode()).hexdigest(),
+        *_KEY,
+        "title",
+        kind,
+        None if request is None else request.event_id,
+        over,
+        "scan-1" if kind == "resume_requested" else None,
+        None if answer is None else _id(answer),
+        9,
+    )
+
+
+def _resumed(
+    rows: tuple[OwnerAnswerRow, ...], events: tuple[OwnerFieldEventRow, ...]
+) -> tuple[str, str | None, bool] | None:
+    folded = fold_owner_field_answers(rows, events)
+    answer = next(iter(folded.values()), None)
+    return (
+        None
+        if answer is None
+        else (answer.answer_id, answer.open_resume_id, answer.carry_eligible)
+    )
+
+
+def test_a_request_stays_open_over_the_answer_it_covers() -> None:
+    a = _row("a", 1)
+    request = _ev("r", "resume_requested", 1)
+    assert _resumed((a,), (request,)) == (_id("a"), request.event_id, True)
+    # A failure changes nothing: the request is still open.
+    failed = _ev("f", "resume_failed", 1, request=request)
+    assert _resumed((a,), (request, failed)) == (_id("a"), request.event_id, True)
+
+
+def test_an_answer_after_a_request_supersedes_it() -> None:
+    a, b = _row("a", 1), _row("b", 2)
+    request = _ev("r", "resume_requested", 1)
+    superseded = _ev("s", "resume_superseded", 2, request=request, answer="b")
+    assert _resumed((a, b), (request, superseded)) == (_id("b"), None, True)
+    # Even unclosed, a request never names an answer above its bound.
+    assert _resumed((a, b), (request,)) == (_id("b"), None, True)
+
+
+def test_a_withdrawal_while_open_restores_and_keeps_it_or_empties_and_closes_it() -> (
+    None
+):
+    earlier = _row("e", 1, case=_OTHER_CASE)
+    b = _row("b", 2)
+    request = _ev("r", "resume_requested", 2)
+    withdraw = _row("w", 3, "withdraw")
+    # Restored, the earlier answer is covered too: the request stays open.
+    assert _resumed((earlier, b, withdraw), (request,)) == (
+        _id("e"),
+        request.event_id,
+        False,
+    )
+    # Nothing to restore: the field is left without an answer and the
+    # withdrawal closed the request.
+    superseded = _ev("s", "resume_superseded", 3, request=request, answer="w")
+    assert _resumed((b, withdraw), (request, superseded)) is None
+
+
+def test_book_matching_while_open_keeps_the_request_and_stops_carrying() -> None:
+    a = _row("a", 1)
+    request = _ev("r", "resume_requested", 1)
+    matching = _row("m", 2, "withdraw", cause="matching_changed")
+    assert _resumed((a, matching), (request,)) == (_id("a"), request.event_id, False)
+
+
+def test_completion_hands_back_what_its_request_covers_by_position() -> None:
+    a = _row("a", 1)
+    request = _ev("r", "resume_requested", 1)
+    completed = _ev("c", "resume_completed", 1, request=request, answer="a")
+    assert _resumed((a,), (request, completed)) is None
+    # An answer given after the completion is above its position, so it
+    # stands, whichever order the rows arrive in.
+    later = _row("l", 2, case=_OTHER_CASE)
+    assert _resumed((later, a), (request, completed)) == (_id("l"), None, True)
+    # A row that changed nothing to hand back between the request and the
+    # completion is gone with the answer it covered.
+    matching = _row("m", 2, "withdraw", cause="matching_changed")
+    late = _ev("c2", "resume_completed", 2, request=request, answer="a")
+    assert _resumed((a, matching), (request, late)) is None
+
+
+def test_resume_asked_again_supersedes_the_open_request() -> None:
+    a = _row("a", 1)
+    first = _ev("r1", "resume_requested", 1)
+    again = _ev("s", "resume_superseded", 1, request=first)
+    second = _ev("r2", "resume_requested", 1)
+    assert _resumed((a,), (first, again, second)) == (_id("a"), second.event_id, True)
+    # Completing the new request hands the answer back.
+    done = _ev("c", "resume_completed", 1, request=second, answer="a")
+    assert _resumed((a,), (first, again, second, done)) is None
+
+
+def test_a_failed_request_still_completes_on_a_later_successful_run() -> None:
+    a = _row("a", 1)
+    request = _ev("r", "resume_requested", 1)
+    failed = _ev("f", "resume_failed", 1, request=request)
+    completed = _ev("c", "resume_completed", 1, request=request, answer="a")
+    assert _resumed((a,), (request, failed, completed)) is None
 
 
 # -- the store writes the record beside the hold (C2a) ------------------------
@@ -1145,3 +1325,208 @@ def test_a_record_unlike_the_ledgers_fold_is_refused(
     assert opens(path)
     assert rewrite(path, edit) == 1
     assert not opens(path)
+
+
+# -- Resume's events in the store (C2b) ---------------------------------------
+
+
+def _kinds(connection: sqlite3.Connection) -> list[tuple[str, str | None]]:
+    return connection.execute(
+        "SELECT kind,answer_id FROM owner_field_events ORDER BY rowid"
+    ).fetchall()
+
+
+def test_resume_is_requested_failed_asked_again_superseded_and_completed(
+    tmp_path: Path,
+) -> None:
+    """Each Resume operation writes its event and the record in the caller's
+    transaction, and the stored record stays the fold of the ledger (S10)."""
+    store = OwnerStore(tmp_path, genre_report())
+    connection = store.repository._connection
+    try:
+        kept = store.decide("keep_current", destination="genres")
+        item = _stored(store)["genres"].key[:3]
+        with connection:
+            first = owner_field_answers.request_resume(
+                connection, item, "genres", "scan-a", 50
+            )
+        assert first is not None
+        assert _stored(store)["genres"].open_resume_id == first
+        assert_record_recomputes(connection)
+        with connection:
+            assert (
+                owner_field_answers.fail_open_resumes_for_scan(connection, "scan-a", 51)
+                == 1
+            )
+            # Already failed since its latest event: not written again.
+            assert (
+                owner_field_answers.fail_open_resumes_for_scan(connection, "scan-a", 52)
+                == 0
+            )
+        assert owner_field_answers.has_open_resume_for_scan(connection, "scan-a")
+        assert not owner_field_answers.has_open_resume_for_scan(connection, "scan-b")
+        assert _stored(store)["genres"].open_resume_id == first
+        with connection:
+            second = owner_field_answers.request_resume(
+                connection, item, "genres", "scan-b", 53
+            )
+        assert _stored(store)["genres"].open_resume_id == second != first
+        assert not owner_field_answers.has_open_resume_for_scan(connection, "scan-a")
+        assert_record_recomputes(connection)
+        accepted = store.decide("accept", json.loads(_GENRES), destination="genres")
+        assert _stored(store)["genres"].open_resume_id is None
+        assert_record_recomputes(connection)
+        with connection:
+            owner_field_answers.request_resume(connection, item, "genres", "scan-c", 54)
+            assert owner_field_answers.complete_resume(connection, item, "genres", 55)
+            assert not owner_field_answers.complete_resume(
+                connection, item, "genres", 56
+            )
+        assert "genres" not in _stored(store)
+        assert _kinds(connection) == [
+            ("resume_requested", kept.decision_id),
+            ("resume_failed", None),
+            ("resume_superseded", None),
+            ("resume_requested", kept.decision_id),
+            ("resume_superseded", accepted.decision_id),
+            ("resume_requested", accepted.decision_id),
+            ("resume_completed", accepted.decision_id),
+        ]
+        assert_record_recomputes(connection)
+        validate_owner_field_answers(connection)
+    finally:
+        store.close()
+
+
+def test_the_stores_events_chain_each_to_the_fields_previous_one(
+    tmp_path: Path,
+) -> None:
+    """Every event the store writes is the digest of its columns and the
+    field's previous event, at the counter's value, read and never taken."""
+    store = OwnerStore(tmp_path, genre_report())
+    connection = store.repository._connection
+    try:
+        store.decide("keep_current", destination="genres")
+        item = _stored(store)["genres"].key[:3]
+        with connection:
+            owner_field_answers.request_resume(connection, item, "genres", "scan-a", 50)
+            owner_field_answers.fail_open_resumes_for_scan(connection, "scan-a", 51)
+            owner_field_answers.complete_resume(connection, item, "genres", 52)
+        previous = None
+        rows = list(owner_field_answers.ledger_events(connection))
+        for event in rows:
+            assert event.event_id == owner_field_event_id(
+                connection_name=event.connection_name,
+                library_name=event.library_name,
+                item_id=event.item_id,
+                destination=event.destination,
+                kind=event.kind,
+                request_id=event.request_id,
+                over_ordinal=event.over_ordinal,
+                scan_id=event.scan_id,
+                answer_id=event.answer_id,
+                occurred_at=event.occurred_at,
+                previous_event_id=previous,
+            )
+            previous = event.event_id
+        assert [(event.kind, event.over_ordinal, event.scan_id) for event in rows] == [
+            ("resume_requested", 1, "scan-a"),
+            ("resume_failed", 1, "scan-a"),
+            ("resume_completed", 1, "scan-a"),
+        ]
+        assert [event.request_id for event in rows[1:]] == [rows[0].event_id] * 2
+        assert connection.execute(
+            "SELECT ordinal FROM owner_answer_ordinal"
+        ).fetchone() == (1,)
+    finally:
+        store.close()
+
+
+def test_resume_is_not_recorded_without_an_unpinned_answer(tmp_path: Path) -> None:
+    store = OwnerStore(tmp_path, genre_report())
+    connection = store.repository._connection
+    try:
+        store.decide("accept", json.loads(_GENRES), destination="genres")
+        item = _stored(store)["genres"].key[:3]
+        store.decide("pin", destination="genres")
+        with connection:
+            for destination in ("genres", "title"):
+                assert (
+                    owner_field_answers.request_resume(
+                        connection, item, destination, "scan-a", 50
+                    )
+                    is None
+                )
+            assert not owner_field_answers.complete_resume(
+                connection, item, "genres", 51
+            )
+        assert _kinds(connection) == []
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("earlier", (True, False), ids=("restores", "empties"))
+def test_a_withdrawal_while_resume_is_open_keeps_or_closes_it(earlier: bool) -> None:
+    """A withdrawal that restores an earlier answer keeps the request open
+    over it; one that leaves no answer closes it, naming the withdrawal."""
+    connection = _bare()
+    try:
+        if earlier:
+            owner_field_answers.record_answer(
+                connection, "human", _decision(connection, "earlier", case=_OTHER_CASE)
+            )
+        owner_field_answers.record_answer(
+            connection, "human", _decision(connection, "answer")
+        )
+        request = owner_field_answers.request_resume(
+            connection, _KEY, "genres", "scan-a", 50
+        )
+        withdrawal = _decision(connection, "withdrawal", outcome="withdraw")
+        owner_field_answers.withdraw_answer(connection, withdrawal)
+        stored = list(stored_answers(connection))
+        if earlier:
+            assert [
+                (answer.answer_id, answer.open_resume_id, answer.carry_eligible)
+                for answer in stored
+            ] == [(_id("earlier"), request, False)]
+            assert _kinds(connection) == [("resume_requested", _id("answer"))]
+        else:
+            assert stored == []
+            assert _kinds(connection) == [
+                ("resume_requested", _id("answer")),
+                ("resume_superseded", withdrawal),
+            ]
+        assert _firing(connection) == []
+    finally:
+        connection.close()
+
+
+def test_an_answers_supersession_rolls_back_with_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The S10 supersession is written in the answer's own transaction, so a
+    failure after it leaves the request open and the record unchanged."""
+    store = OwnerStore(tmp_path, genre_report())
+    connection = store.repository._connection
+    try:
+        store.decide("keep_current", destination="genres")
+        item = _stored(store)["genres"].key[:3]
+        with connection:
+            request = owner_field_answers.request_resume(
+                connection, item, "genres", "scan-a", 50
+            )
+        before = _stored(store)["genres"]
+
+        def then_fail(*args: object, **kwargs: object) -> None:
+            owner_field_answers.record_answer(*args, **kwargs)  # type: ignore[arg-type]  # reason: forwards the product call unchanged.
+            raise sqlite3.OperationalError("after the supersession")
+
+        monkeypatch.setattr(decisions, "record_answer", then_fail)
+        with pytest.raises(MetadataReportError):
+            store.decide("accept", json.loads(_GENRES), destination="genres")
+        assert _stored(store)["genres"] == before
+        assert before.open_resume_id == request
+        assert _kinds(connection) == [("resume_requested", before.answer_id)]
+        assert_record_recomputes(connection)
+    finally:
+        store.close()

@@ -2,24 +2,27 @@
 
 Every owner answer takes its ordinal from `owner_answer_ordinal` in its own
 transaction, and every answer site writes `owner_field_answers` through this
-module in that same transaction. Until Resume and the readers move to it (C2b)
-nothing decides anything from the record: manual holds stay authoritative and
-the record is written beside them. `domain.owner_field_answer` folds the same
-rows from the ledger; a withdrawal restores through that fold, and open
-refuses a store whose record is not that fold.
+module in that same transaction. Resume's requests, completions, failures and
+supersessions are written here too, as `owner_field_events`, at today's hold
+Resume sites. Until the readers move to it nothing decides anything from the
+record: manual holds stay authoritative and the record is written beside them.
+`domain.owner_field_answer` folds the same rows from the ledger; a withdrawal
+restores through that fold, and open refuses a store whose record is not that
+fold.
 """
 
 from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from dataclasses import astuple
+from dataclasses import astuple, replace
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.owner_field_answer import (
     ItemKey,
     OwnerAnswerRow,
     OwnerFieldAnswer,
+    OwnerFieldEventRow,
     answer_from,
     fold_owner_field_answers,
     owner_field_event_id,
@@ -29,6 +32,12 @@ from mechanical_librarian.domain.owner_field_answer import (
 _HEX64 = "length({0})=64 AND {0} NOT GLOB '*[^0-9a-f]*'"
 _HUMAN_ID = "{0} GLOB 'human_decision_[0-9a-f]*' AND length({0})=79"
 _EVENT_KINDS = "'resume_requested','resume_completed','resume_failed','resume_superseded','retired'"
+# A request is open until it completes or is superseded; a failure leaves it.
+_UNCLOSED = (
+    "NOT EXISTS (SELECT 1 FROM owner_field_events closing WHERE "
+    "closing.request_id={0}.event_id "
+    "AND closing.kind IN ('resume_completed','resume_superseded'))"
+)
 
 OWNER_ANSWER_ORDINAL_SQL = (
     "CREATE TABLE owner_answer_ordinal ("
@@ -178,6 +187,30 @@ def ledger_answers(
         yield OwnerAnswerRow(*row)
 
 
+_EVENT_COLUMNS = (
+    "event_id,connection_name,library_name,item_id,destination,kind,"
+    "request_id,over_ordinal,scan_id,answer_id,occurred_at"
+)
+
+
+def ledger_events(
+    connection: sqlite3.Connection, key: ItemKey | None = None
+) -> Iterator[OwnerFieldEventRow]:
+    """Resume's events, every field's or one field's, in the order written."""
+    if key is None:
+        rows = connection.execute(
+            f"SELECT {_EVENT_COLUMNS} FROM owner_field_events ORDER BY rowid"
+        )
+    else:
+        rows = connection.execute(
+            f"SELECT {_EVENT_COLUMNS} FROM owner_field_events WHERE {_KEY_SQL} "
+            "ORDER BY rowid",
+            key,
+        )
+    for row in rows:
+        yield OwnerFieldEventRow(*row)
+
+
 def stored_answers(connection: sqlite3.Connection) -> Iterator[OwnerFieldAnswer]:
     for row in connection.execute(f"SELECT {_RECORD_COLUMNS} FROM owner_field_answers"):
         values = list(row)
@@ -191,14 +224,16 @@ def record_differences(
     """Every field whose stored record is not the ledger's fold, as
     (folded, stored); None where one of them has no row.
 
-    The fold sees no Resume event in C2a, so `open_resume_id`,
-    `offer_digest` and `seen_target_digest` compare as it gives them, null.
-    C2b: once Resume writes events, they must enter the fold (or this
-    comparison must take those columns from them), or every store holding
-    an open request is refused.
+    The fold takes the owner's answers and Resume's events, so every column
+    compares, `open_resume_id` included: a completion the record missed, a
+    request it does not name as open or one it names after the request
+    closed all differ. `offer_digest` and `seen_target_digest` compare as the
+    fold gives them, null, until the question check (C4') writes them.
     """
     stored = {answer.key: answer for answer in stored_answers(connection)}
-    folded = fold_owner_field_answers(ledger_answers(connection))
+    folded = fold_owner_field_answers(
+        ledger_answers(connection), ledger_events(connection)
+    )
     return {
         key: (folded.get(key), stored.get(key))
         for key in folded.keys() | stored.keys()
@@ -247,21 +282,38 @@ def record_answer(
 ) -> None:
     """Make the just-recorded owner answer the field's answer.
 
-    A pin that stands in place of an answer passes what it keeps.
+    A pin that stands in place of an answer passes what it keeps. An answer
+    while a Resume is open closes it `resume_superseded`, naming the answer,
+    so an open request never covers less than the record's answer (S10).
     """
     row = _ledger_row(connection, source, answer_id)
+    request = _open_request(connection, row.key)
+    if request is not None:
+        _append_event(
+            connection,
+            row.key,
+            "resume_superseded",
+            request_id=request[0],
+            scan_id=None,
+            answer_id=answer_id,
+            at=row.recorded_at,
+        )
     _write(connection, answer_from(row, _current(connection, row.key), pin_fingerprint))
 
 
-def _decision_key(connection: sqlite3.Connection, decision_id: str) -> ItemKey:
+def _decision(connection: sqlite3.Connection, decision_id: str) -> tuple[ItemKey, int]:
     row = connection.execute(
-        "SELECT connection_name,library_name,item_id,destination "
+        "SELECT connection_name,library_name,item_id,destination,occurred_at "
         "FROM human_decisions WHERE decision_id=?",
         (decision_id,),
     ).fetchone()
     if row is None:
         raise MetadataReportError("database is unavailable or incompatible")
-    return (row[0], row[1], row[2], row[3])
+    return (row[0], row[1], row[2], row[3]), int(row[4])
+
+
+def _decision_key(connection: sqlite3.Connection, decision_id: str) -> ItemKey:
+    return _decision(connection, decision_id)[0]
 
 
 def mark_pin(
@@ -295,9 +347,11 @@ def withdraw_answer(connection: sqlite3.Connection, decision_id: str) -> None:
 
     Where that is the field's answer, the field goes back to the answer from
     an earlier case it replaced, no longer carried, or is left without one.
-    Another answer's withdrawal leaves the record alone.
+    Another answer's withdrawal leaves the record alone. An open Resume stays
+    open over the restored answer, which it covers; one left with no answer
+    closes `resume_superseded`, naming the withdrawal (ADR-0108).
     """
-    key = _decision_key(connection, decision_id)
+    key, occurred_at = _decision(connection, decision_id)
     current = _current(connection, key)
     withdrawn = connection.execute(_WITHDRAWN_SQL, (decision_id,)).fetchone()
     if current is None or withdrawn is None or current.answer_id != withdrawn[0]:
@@ -306,9 +360,20 @@ def withdraw_answer(connection: sqlite3.Connection, decision_id: str) -> None:
         ledger_answers(connection, key), current.previous_answer_id
     )
     if restored is None:
+        request = _open_request(connection, key)
+        if request is not None:
+            _append_event(
+                connection,
+                key,
+                "resume_superseded",
+                request_id=request[0],
+                scan_id=None,
+                answer_id=decision_id,
+                at=occurred_at,
+            )
         connection.execute(f"DELETE FROM owner_field_answers WHERE {_KEY_SQL}", key)
     else:
-        _write(connection, restored)
+        _write(connection, replace(restored, open_resume_id=current.open_resume_id))
 
 
 def matching_changed(
@@ -321,6 +386,190 @@ def matching_changed(
         f"UPDATE owner_field_answers SET carry_eligible=0 WHERE {_KEY_SQL} "
         "AND answer_id=?",
         (*_decision_key(connection, decision_id), superseded),
+    )
+
+
+# The field's request with no completion or supersession; failure leaves it open.
+_OPEN_REQUEST_SQL = (
+    "SELECT request.event_id,request.over_ordinal,request.scan_id "
+    "FROM owner_field_events request WHERE request.connection_name=? "
+    "AND request.library_name=? AND request.item_id=? AND request.destination=? "
+    "AND request.kind='resume_requested' AND "
+    + _UNCLOSED.format("request")
+    + " ORDER BY request.rowid DESC LIMIT 1"
+)
+
+
+def _open_request(
+    connection: sqlite3.Connection, key: ItemKey
+) -> tuple[str, int, str | None] | None:
+    row = connection.execute(_OPEN_REQUEST_SQL, key).fetchone()
+    return None if row is None else (row[0], int(row[1]), row[2])
+
+
+def _append_event(
+    connection: sqlite3.Connection,
+    key: ItemKey,
+    kind: str,
+    *,
+    request_id: str | None,
+    scan_id: str | None,
+    answer_id: str | None,
+    at: int,
+) -> str:
+    """Append one event to the field's chain, at the counter's value now
+    (read, never taken), inside the caller's transaction."""
+    counter = connection.execute(
+        "SELECT ordinal FROM owner_answer_ordinal WHERE singleton=1"
+    ).fetchone()
+    if counter is None:
+        raise MetadataReportError("database is unavailable or incompatible")
+    previous = connection.execute(
+        f"SELECT event_id FROM owner_field_events WHERE {_KEY_SQL} "
+        "ORDER BY rowid DESC LIMIT 1",
+        key,
+    ).fetchone()
+    connection_name, library_name, item_id, destination = key
+    event_id = owner_field_event_id(
+        connection_name=connection_name,
+        library_name=library_name,
+        item_id=item_id,
+        destination=destination,
+        kind=kind,
+        request_id=request_id,
+        over_ordinal=int(counter[0]),
+        scan_id=scan_id,
+        answer_id=answer_id,
+        occurred_at=at,
+        previous_event_id=None if previous is None else previous[0],
+    )
+    connection.execute(
+        f"INSERT INTO owner_field_events({_EVENT_COLUMNS}) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (event_id, *key, kind, request_id, int(counter[0]), scan_id, answer_id, at),
+    )
+    return event_id
+
+
+def request_resume(
+    connection: sqlite3.Connection,
+    item: tuple[str, str, str],
+    destination: str,
+    scan_id: str,
+    at: int,
+) -> str | None:
+    """Ask Resume of the field's answer, inside the caller's transaction.
+
+    The request covers every answer up to the counter's value now. One asked
+    again closes the open request `resume_superseded`, naming no answer,
+    before the new one is written. Returns the request, or None where the
+    record holds no answer for the field or a pin is on it, which Resume
+    never hands back (ADR-0085, Amendment 2): today's hold decides whether
+    Resume is asked, so the record mirrors it only where it can.
+    """
+    key = (*item, destination)
+    current = _current(connection, key)
+    if current is None or current.pin_fingerprint is not None:
+        return None
+    previous = _open_request(connection, key)
+    if previous is not None:
+        _append_event(
+            connection,
+            key,
+            "resume_superseded",
+            request_id=previous[0],
+            scan_id=None,
+            answer_id=None,
+            at=at,
+        )
+    request = _append_event(
+        connection,
+        key,
+        "resume_requested",
+        request_id=None,
+        scan_id=scan_id,
+        answer_id=current.answer_id,
+        at=at,
+    )
+    _write(connection, replace(current, open_resume_id=request))
+    return request
+
+
+def complete_resume(
+    connection: sqlite3.Connection,
+    item: tuple[str, str, str],
+    destination: str,
+    at: int,
+) -> bool:
+    """Complete the field's open Resume, inside the caller's transaction:
+    the record's answer goes when the request covers it, and
+    `resume_completed` names the answer handed back. False with no open
+    request."""
+    key = (*item, destination)
+    request = _open_request(connection, key)
+    if request is None:
+        return False
+    current = _current(connection, key)
+    handed_back = None
+    if current is not None and current.ordinal <= request[1]:
+        handed_back = current.answer_id
+        connection.execute(f"DELETE FROM owner_field_answers WHERE {_KEY_SQL}", key)
+    _append_event(
+        connection,
+        key,
+        "resume_completed",
+        request_id=request[0],
+        scan_id=request[2],
+        answer_id=handed_back,
+        at=at,
+    )
+    return True
+
+
+# Each request on the scan with no completion or supersession, whose latest
+# event is not already its failure.
+_FAILING_REQUESTS_SQL = (
+    "SELECT request.event_id,request.connection_name,request.library_name,"
+    "request.item_id,request.destination FROM owner_field_events request "
+    "WHERE request.kind='resume_requested' AND request.scan_id=? AND "
+    + _UNCLOSED.format("request")
+    + " AND COALESCE((SELECT latest.kind FROM owner_field_events latest "
+    "WHERE latest.request_id=request.event_id ORDER BY latest.rowid DESC LIMIT 1),"
+    "'')<>'resume_failed' ORDER BY request.rowid"
+)
+
+
+def fail_open_resumes_for_scan(
+    connection: sqlite3.Connection, scan_id: str, at: int
+) -> int:
+    """The scan ended with failures: each open request on it, not already
+    failed since, writes `resume_failed`, inside the caller's transaction.
+    The record and the request stay; a later successful run still completes
+    it. Returns how many were written."""
+    failing = connection.execute(_FAILING_REQUESTS_SQL, (scan_id,)).fetchall()
+    for request_id, *key in failing:
+        _append_event(
+            connection,
+            (key[0], key[1], key[2], key[3]),
+            "resume_failed",
+            request_id=request_id,
+            scan_id=scan_id,
+            answer_id=None,
+            at=at,
+        )
+    return len(failing)
+
+
+def has_open_resume_for_scan(connection: sqlite3.Connection, scan_id: str) -> bool:
+    """Whether any request on the scan has no completion or supersession."""
+    return bool(
+        connection.execute(
+            "SELECT EXISTS(SELECT 1 FROM owner_field_events request "
+            "WHERE request.kind='resume_requested' AND request.scan_id=? AND "
+            + _UNCLOSED.format("request")
+            + ")",
+            (scan_id,),
+        ).fetchone()[0]
     )
 
 
@@ -396,9 +645,36 @@ _RECORD_RULES = (
     "AND request.connection_name=event.connection_name "
     "AND request.library_name=event.library_name AND request.item_id=event.item_id "
     "AND request.destination=event.destination)",
-    # A request closes at most once.
+    # A request completes at most once and is superseded at most once.
     "SELECT 1 FROM owner_field_events WHERE kind IN "
-    "('resume_completed','resume_superseded') GROUP BY request_id HAVING COUNT(*)>1",
+    "('resume_completed','resume_superseded') GROUP BY request_id,kind "
+    "HAVING COUNT(*)>1",
+    # A field has at most one unclosed request.
+    "SELECT 1 FROM owner_field_events request WHERE request.kind='resume_requested' "
+    f"AND {_UNCLOSED.format('request')} GROUP BY request.connection_name,"
+    "request.library_name,request.item_id,request.destination HAVING COUNT(*)>1",
+    # No answer is given above an unclosed request's bound on its field: an
+    # answer closes it first (S10). Withdrawals, Book matching's rows, pins
+    # and unpins may follow an open request and are left to the fold.
+    "SELECT 1 FROM owner_field_events request WHERE request.kind='resume_requested' "
+    f"AND {_UNCLOSED.format('request')} AND (EXISTS (SELECT 1 FROM human_decisions "
+    "decision WHERE decision.connection_name=request.connection_name "
+    "AND decision.library_name=request.library_name "
+    "AND decision.item_id=request.item_id AND decision.destination=request.destination "
+    "AND decision.ordinal>request.over_ordinal "
+    "AND decision.outcome NOT IN ('withdraw','pin','unpin')) OR EXISTS (SELECT 1 FROM "
+    "owner_authored_descriptions authored WHERE request.destination='description' "
+    "AND authored.connection_name=request.connection_name "
+    "AND authored.library_name=request.library_name "
+    "AND authored.item_id=request.item_id AND authored.ordinal>request.over_ordinal))",
+    # A completed request was never superseded.
+    "SELECT 1 FROM owner_field_events completed WHERE completed.kind='resume_completed' "
+    "AND EXISTS (SELECT 1 FROM owner_field_events superseded WHERE "
+    "superseded.request_id=completed.request_id AND superseded.kind='resume_superseded')",
+    # An event closing or failing a request is written at or after it.
+    "SELECT 1 FROM owner_field_events closing JOIN owner_field_events request "
+    "ON request.event_id=closing.request_id "
+    "WHERE closing.over_ordinal<request.over_ordinal",
 )
 
 
@@ -450,12 +726,17 @@ __all__ = [
     "OWNER_FIELD_EVENT_TRIGGERS",
     "SETUP_OWNER_ANSWER_ORDINAL_ROW",
     "case_episode",
+    "complete_resume",
+    "fail_open_resumes_for_scan",
+    "has_open_resume_for_scan",
     "ledger_answers",
+    "ledger_events",
     "mark_pin",
     "matching_changed",
     "next_ordinal",
     "record_answer",
     "record_differences",
+    "request_resume",
     "stored_answers",
     "validate_owner_field_answers",
     "withdraw_answer",

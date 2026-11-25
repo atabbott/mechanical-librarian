@@ -18,7 +18,8 @@ fixtures are compared with the real server, so a response version move shows
 there too.
 
 `PINS` covers every document whose current version is v2 or later. A v1
-document joins when it first changes version.
+document joins when it first changes version, or earlier where its label is
+hashed into stored ids (`owner-field-event-v1`, #2038).
 """
 
 from __future__ import annotations
@@ -222,6 +223,11 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "mechanical_librarian.adapters.persistence.field_effect_validation",
         "FIELD_EFFECT_MANUAL_HOLD_SCHEMA",
         "field-effect-manual-hold-v3",
+    ),
+    (
+        "mechanical_librarian.domain.owner_field_answer",
+        "OWNER_FIELD_EVENT_SCHEMA",
+        "owner-field-event-v1",
     ),
     (
         "mechanical_librarian.application.batch",
