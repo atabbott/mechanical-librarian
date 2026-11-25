@@ -120,12 +120,17 @@ def test_an_automatic_plan_the_record_holds_is_refused_at_authority_time(
     assert_record_recomputes(root._connection)
 
 
-def test_an_automatic_cover_switch_the_record_holds_is_refused_at_authority_time(
+def test_an_owner_cover_keep_revokes_automatics_switch_until_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Automatic's planned cover switch writes nothing once the owner keeps
-    the cover over it; after cover Resume completes, the stage's switch of
-    the current comparison is admitted again and plans."""
+    the cover over it: the keep revokes the switch's authority and takes the
+    book's cover pointer, so a later comparison plans nothing either. After
+    cover Resume completes, the stage's switch of the current comparison is
+    admitted again and plans. The apply-time refusal's cover clause is not
+    reached here, nor can it be past the pointer check: a trigger refuses an
+    automatic cover pointer on a book the owner's cover pointer names, so no
+    automatic cover plan reaches it while the owner's cover holds."""
     monkeypatch.setattr(
         cover_qualification_policy,
         "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",

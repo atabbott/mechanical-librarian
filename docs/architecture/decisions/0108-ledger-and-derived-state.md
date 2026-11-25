@@ -502,8 +502,8 @@ a hold on the case: both copies of the planning query (the automatic arm, the
 description arm and the cover arm), the title and subtitle bundle, the
 apply-time refusal of an automatic plan, the automatic field, cover and
 description mints, automatic description advice's authority, the Attention
-clear test and reasons, the case page's held state, the pending Resume work
-list and Activity's Resume history. Title recovery keeps today's case-scoped
+clear test and reasons, the case page's held state and the pending Resume
+work list. Title recovery keeps today's case-scoped
 clause: it does not requeue a case holding an owner decision on its title.
 The hold table, its
 document and validator, its writers and readers, the hold carry at admission,
