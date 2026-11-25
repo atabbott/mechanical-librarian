@@ -1,9 +1,9 @@
 """The field-effect aggregate: the writes and the aggregate's own reads.
 
 Owns `field_effects` and every table that hangs off one plan -- the actions
-queue, the authorities, the consents, the manual holds, the capability
-suspensions, the no-change records, the cleanups, the append-only events, and
-the singleton `field_effect_control` pause. Thirty-eight methods move verbatim,
+queue, the authorities, the consents, the capability suspensions, the
+no-change records, the cleanups, the append-only events, and the singleton
+`field_effect_control` pause. Thirty-eight methods move verbatim,
 every `except` block and message intact.
 
 The cross-aggregate query and projection side -- the activity page and the

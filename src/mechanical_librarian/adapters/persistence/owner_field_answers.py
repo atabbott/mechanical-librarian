@@ -5,8 +5,8 @@ transaction, and every answer site writes `owner_field_answers` through this
 module in that same transaction. Resume's requests, completions, failures and
 supersessions are written here too, as `owner_field_events`, keyed by the
 work's field. What Automatic records, plans and writes, Resume itself, and
-what the owner sees and may do read the record (#2038 C2b); no manual hold is
-written or read any more, and the hold table goes in a later change.
+what the owner sees and may do read the record (#2038 C2b), which replaced
+the manual holds.
 `domain.owner_field_answer` folds the same rows from the ledger; a withdrawal
 restores through that fold, and open refuses a store whose record is not that
 fold.

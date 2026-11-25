@@ -277,8 +277,8 @@ def _ask_changed_fields(
     field is compared with the field's offer at ``level`` by digest. Where they
     differ, the valueless ``matching_changed`` row is appended (no event, so no
     Activity row) and the superseded choice's pending effect closes as
-    ``matching_changed``. Automatic decisions, consents and the manual hold
-    are untouched, so a field asked again stays the owner's to decide.
+    ``matching_changed``. Automatic decisions, consents and the record of the
+    owner's answer are untouched, so a field asked again stays the owner's to decide.
     """
     destinations = {
         cast("str", proposal["destination"])

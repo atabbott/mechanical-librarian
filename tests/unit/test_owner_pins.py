@@ -1,7 +1,7 @@
 """An owner pin keeps one field's value and stops the question (#1346).
 
-ADR-0085, Amendment 2: a `pin` decision sets the field's manual hold with a
-digest of the case's value. Every later case of the work compares its value
+ADR-0085, Amendment 2: a `pin` decision puts a digest of the case's value on
+the record of the owner's answer for the field (ADR-0108). Every later case of the work compares its value
 with that digest, so the field is neither asked nor decided automatically
 while the value stays, and asks again, showing the pinned value, once
 Audiobookshelf holds something else. Each test here fails before the change,
