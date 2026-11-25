@@ -276,8 +276,8 @@ Each tab names the field's status:
 - Pinned means Audiobookshelf shows the value you pinned.
 - Automatic means Automatic decided the field, and it is not in Attention.
 - Optional means you can choose, but the field is not counted and the canvas
-  skips it. Its one reason says why no review is needed, and
-  it shows no condition asking you to choose.
+  skips it when it moves on. Its one reason says why no review is needed; it
+  shows no condition asking you to choose.
 - No change means the field is there for reference. Keeping the current value
   is a choice only beside another eligible value or description advice. Each
   such field shows its value, never a selectable `Not set`. In Preview, a
