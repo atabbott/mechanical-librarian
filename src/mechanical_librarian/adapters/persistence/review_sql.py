@@ -388,23 +388,46 @@ _PIN_CHANGED_SQL = _pin_record_sql(
 )
 
 
+def _own_answer_sql(answer: str, case: str, destination: str) -> str:
+    """Whether the record row `answer`, for the field `destination`, is the
+    answer case `case` holds as its own: given on it in its current episode,
+    while the episode's latest owner row for the field other than a pin or
+    unpin is not a withdrawal (C2b-15). A withdrawal there, Book matching's
+    `matching_changed` row among them, gave the field back to the owner, so
+    the answer is then read as one from elsewhere (ADR-0108, Attention). The
+    case page's own answers read this term too (`review_projections`)."""
+    return (
+        f"({answer}.review_case_id={case} AND {answer}.episode=COALESCE((SELECT "
+        "answer_episode.decision_floor FROM review_case_episodes answer_episode "
+        f"WHERE answer_episode.review_case_id={case}),0) AND COALESCE((SELECT "
+        "latest.outcome FROM human_decisions latest WHERE "
+        f"latest.review_case_id={case} AND latest.destination={destination} "
+        "AND latest.outcome NOT IN ('pin','unpin') AND "
+        + _episode_decision_sql("latest")
+        + " ORDER BY latest.ordinal DESC LIMIT 1),'')<>'withdraw')"
+    )
+
+
 def _record_case_answer_sql(own: bool, item: str = "c") -> str:
     """Whether the record holds an answer for the field of case `rc` (book
-    row `c`) given on this case in its current episode (`own`), or one given
-    elsewhere, on an earlier case or episode, that nothing carried here
-    (C2b-15, S16). A pinned answer is neither: its pin settles or asks the
-    field (ADR-0085, Amendment 2), and once unpinned an answer of the case is
-    its own. A cover's answer is the book's own pointer, so neither reads it
-    (ADR-0108). `item` names a row with the book's item key columns."""
+    row `c`) that the case holds as its own (`own`, `_own_answer_sql`), or one
+    that it does not: pinned, given on an earlier case or episode and carried
+    by nothing here, or withdrawn on this one (C2b-15, S16). A pinned answer
+    is never the case's own: its pin settles or asks the field ahead of this
+    (ADR-0085, Amendment 2), and once unpinned an answer of the case is its
+    own. The case page's `_record_answered_elsewhere` leaves pins out; the
+    two agree, since a pin in force clears the field and a changed one asks
+    it by its own reason. A cover's answer is the book's own pointer, so
+    neither reads it (ADR-0108). `item` names a row with the book's item key
+    columns."""
     return (
         "EXISTS (SELECT 1 FROM owner_field_answers answered WHERE "
         "result.destination<>'cover' AND "
         + _record_key_sql("answered", item, "result.destination")
         + (" AND (" if own else " AND NOT (")
-        + "answered.pin_fingerprint IS NULL "
-        "AND answered.review_case_id=rc.review_case_id AND answered.episode="
-        "COALESCE((SELECT answer_episode.decision_floor FROM review_case_episodes "
-        "answer_episode WHERE answer_episode.review_case_id=rc.review_case_id),0)))"
+        + "answered.pin_fingerprint IS NULL AND "
+        + _own_answer_sql("answered", "rc.review_case_id", "result.destination")
+        + "))"
     )
 
 
@@ -493,17 +516,17 @@ def _resumed_decision_sql(item: str) -> str:
 # A field is decided by its latest owner decision of the case's episode unless
 # that withdrew it (ADR-0085); an earlier decision never settles a field the
 # owner took back, nor one the work has since left and returned to, nor one a
-# completed Resume took back (ADR-0108). The record's answer given on the
-# case in its episode settles its field too, a pin's answer after its unpin
-# among them (C2b-15). An automatic decision, or Automatic's
-# authored description, settles its field only in the active generation and
-# only while the record holds no answer for the field against Automatic: none,
-# or one with a Resume open that has not failed. A pin in force settles its
-# field. A pin or unpin row is never the latest decision, so an answer under a
-# pin settles its field as it would without one, including while its pin
-# waits for the chosen value to be read back. A changed pin with no answer
-# standing asks again over an automatic, authored or cover decision a
-# returning case still carries (ADR-0085, Amendment 2). A suspension still
+# completed Resume took back (ADR-0108). The record's answer the case holds as
+# its own settles its field too, a pin's answer after its unpin among them;
+# one the case's latest row withdrew does not (C2b-15). An automatic decision,
+# or Automatic's authored description, settles its field only in the active
+# generation and only while the record holds no answer for the field against
+# Automatic: none, or one with a Resume open that has not failed. A pin in
+# force settles its field. A pin or unpin row is never the latest decision, so
+# an answer under a pin settles its field as it would without one, including
+# while its pin waits for the chosen value to be read back. A changed pin with
+# no answer standing asks again over an automatic, authored or cover decision
+# a returning case still carries (ADR-0085, Amendment 2). A suspension still
 # wins.
 _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
@@ -808,6 +831,7 @@ __all__ = [
     "_SHADOW_OUTCOME_HISTORY_SQL",
     "_active_generation_automatic_sql",
     "_episode_decision_sql",
+    "_own_answer_sql",
 ]
 
 

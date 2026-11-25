@@ -331,6 +331,8 @@ def test_level_change_reasks_only_changed_offer(tmp_path: Path, case: str) -> No
         ]
         events = counts(store)[1]
         before = offer_digest(offer_of(store), destination)
+        asked_before = _attention_of(store)
+        assert destination not in asked_before
 
         _change(store, changed_to, 60)
         with pytest.raises(GuardedApplicationError) as deferred:
@@ -363,6 +365,16 @@ def test_level_change_reasks_only_changed_offer(tmp_path: Path, case: str) -> No
             notes = {event["event_id"]: event["note"] for event in _activity(client)}
         assert detail["checking"] is False
         assert field_of(detail, destination)["human_decision"] is None
+        # Asked again, the field is the owner's to decide on the case that
+        # holds the answer: the page and Attention both ask it (ADR-0108,
+        # Attention: "Book matching changed it", asked).
+        changed = field_of(detail, destination)
+        assert (
+            changed["classification"],
+            changed["classification_cause"],
+            changed["needs_attention"],
+        ) == ("needs_attention", "review_needed", True)
+        assert _attention_of(store) == asked_before | {destination}
         assert notes[_event_id(standing)] == "asked_again_matching"
         # A replayed check asks nothing twice.
         assert _check(store, 62) == "reconciled"
@@ -378,6 +390,18 @@ def test_level_change_reasks_only_changed_offer(tmp_path: Path, case: str) -> No
         )
     finally:
         store.close()
+
+
+def _attention_of(store: OwnerStore) -> set[str]:
+    """The fields of the store's case that Attention lists."""
+    page = BrowseReviewLibrary(store.repository).attention(
+        search=None, limit=50, cursor=None
+    )
+    return {
+        str(item["destination"])
+        for item in cast(list[dict[str, object]], page["items"])
+        if item["review_case_id"] == store.case.review_case_id
+    }
 
 
 @pytest.mark.parametrize("written", [True, False], ids=["written", "unwritten"])

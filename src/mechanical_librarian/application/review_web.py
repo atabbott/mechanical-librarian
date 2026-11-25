@@ -385,10 +385,11 @@ class CurrentReviewCaseSnapshot:
     # `resume_offer`); a cover, where the owner's cover took it over.
     resume_offer_destinations: tuple[str, ...] = ()
     # Held destinations whose unpinned answer was given on this case in its
-    # current episode: it decides the field here, a pin's answer after its
-    # unpin among them. One from elsewhere asks the field where the case
-    # offers a decision on it, and settles it where none is offered (C2b-15,
-    # C2b-18, S16).
+    # current episode and not since withdrawn there, Book matching's
+    # `matching_changed` row included: it decides the field here, a pin's
+    # answer after its unpin among them. Any other unpinned answer asks the
+    # field where the case offers a decision on it, and settles it where none
+    # is offered (C2b-15, C2b-18, S16).
     own_answer_destinations: tuple[str, ...] = ()
     # This case's owner decisions a completed Resume took back: they no
     # longer decide their field, and keep only a recorded line (D3).

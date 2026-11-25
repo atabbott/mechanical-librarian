@@ -70,6 +70,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _LATEST_PREPARATION_WORK_SQL,
     _POLICY_ASK_ATTENTION_SQL,
     _episode_decision_sql,
+    _own_answer_sql,
     _resumed_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -501,8 +502,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         open over it, as requested or, once its scan ended with failures, as
         failed (the owner asks again, which requeues the scan, #1755); each
         that offers Resume (C0 `resume_offer`; a cover where the owner's
-        cover took it over from Automatic, S9); each whose answer was given
-        on this case in its current episode, which decides the field here
+        cover took it over from Automatic, S9); each whose answer the case
+        holds as its own (`_own_answer_sql`), which decides the field here
         (C2b-15); and the case's owner
         decisions a completed Resume took back, which no longer decide their
         field (D3). Kept apart so `read_current_review_case` stays under the
@@ -523,10 +524,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "WHERE took.selection_id=held.cover_selection_id "
             "AND took.cover_took_over=1) ELSE "
             + _resume_offer_sql(":case", "held.destination")
-            + " END,held.pin_fingerprint IS NULL AND held.review_case_id=:case "
-            "AND held.episode=COALESCE((SELECT "
-            "episode.decision_floor FROM review_case_episodes episode "
-            "WHERE episode.review_case_id=:case),0) FROM "
+            + " END,held.pin_fingerprint IS NULL AND "
+            + _own_answer_sql("held", ":case", "held.destination")
+            + " FROM "
             + _CASE_RECORD_ROWS_SQL.format(alias="held")
             + " ORDER BY held.destination",
             {"case": review_case_id},
