@@ -909,7 +909,20 @@ def test_browse_probes_decision_and_policy_history_by_index() -> None:
                 if "review_attention_facts" in statement
             )
             assert len(membership) >= 6
-            assert not any("human_decisions" in statement for statement in membership)
+            # Membership and counts read no decision history. Only the
+            # Attention page's flag on its own rows, the record's answer
+            # withdrawn on its case or a withdrawal beside Automatic
+            # (`_ASKED_BESIDE_PROPOSAL_SQL`), probes a page row's decisions,
+            # and by index.
+            asking = tuple(
+                statement for statement in membership if "human_decisions" in statement
+            )
+            assert len(asking) == 1 and "AS policy_attention" in asking[0]
+            assert all(
+                "human_decisions_case_destination" in step
+                for step in _plan(connection, asking[0], ())
+                if re.match(r"(SEARCH|SCAN) (latest|withdrawn)\b", step)
+            )
             probing = tuple(
                 statement
                 for statement in statements
