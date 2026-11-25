@@ -451,10 +451,6 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     },
                 ),
                 written_values=tuple(written.items()),
-                preview=self._connection.execute(
-                    "SELECT posture FROM metadata_policy_state WHERE singleton=1"
-                ).fetchone()
-                == ("preview",),
             )
         return snapshot
 

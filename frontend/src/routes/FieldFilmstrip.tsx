@@ -17,10 +17,7 @@ const fieldStatus = (field: ReviewField) =>
     ? (['needs', 'Needs you'] as const)
     : field.pin?.state === 'in_force'
       ? (['pinned', 'Pinned'] as const)
-      : field.humanDecision ||
-          authoredOwnerRecorded(field) ||
-          field.manualHold ||
-          field.classificationCause === 'held_in_preview'
+      : field.humanDecision || authoredOwnerRecorded(field) || field.manualHold
         ? (['decided', 'Decided'] as const)
         : field.classification === 'automatic_recorded' || field.automaticDecision
           ? (['automatic', 'Automatic'] as const)

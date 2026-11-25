@@ -74,8 +74,6 @@ const contextKinds = {
   nothing_to_decide: 'unchanged',
   pinned: 'unchanged',
   pin_changed: 'unavailable',
-  // Never contextual: a held field needs a value a source offered.
-  held_in_preview: 'unchanged',
 } as const satisfies Record<FieldCause, 'unchanged' | 'waiting' | 'unavailable'>
 // A held field never reads unchanged.
 export const contextKind = (field: ReviewField) => {

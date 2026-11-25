@@ -76,9 +76,8 @@ brackets are GitHub issues.
   the field, with Automatic's choice and Resume automatic handling, on the
   same work. A field set to Ignore says "Set to Ignore in Policy." with a
   link, instead of claiming no source offered a value (#2009).
-- In Preview, a field your earlier answer or a taken-back pin still holds
-  reads Decided and says turning on Automatic leaves it as it is. A field
-  no longer says no source offered a different value when one did (#2007).
+- A field no longer says no source offered a different value when one did
+  (#2007).
 - Activity marks an automatic choice your earlier decision keeps unwritten
   "Held by you" until you choose Resume automatic handling (#2007).
 - History and Activity show a description's paragraphs, bold, italics and
