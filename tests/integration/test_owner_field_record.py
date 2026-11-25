@@ -15,7 +15,10 @@ import pytest
 
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.domain import cover_qualification_policy
-from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
+)
 from mechanical_librarian.domain.metadata_report import TargetDestination
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.integration.test_cover_rules_activation import (
@@ -340,10 +343,13 @@ def test_completion_waits_on_a_claimed_owner_write_and_revokes_a_planned_one(
 def test_resume_with_nothing_to_rearm_settles_nothing(
     preview_library: Library, tmp_path: Path, plan: bool
 ) -> None:
-    """P3b: in Preview Automatic decides nothing, so Resume has nothing to
-    re-arm. Once it completes the owner's answer no longer stands as the
-    field's decision: nothing is pending or written, and an unwritten plan
-    of the answer is closed superseded (the variant)."""
+    """P3b: the owner answers in Preview, where Automatic decides nothing,
+    and Automatic is then confirmed: the record holds the field, so
+    Automatic decides nothing for it and Resume (offered only once Automatic
+    is on, C0 `resume_offer`) has nothing to re-arm. Once it completes the
+    owner's answer no longer stands as the field's decision: nothing is
+    pending or written, and an unwritten plan of the answer is closed
+    superseded (the variant)."""
     library = preview_library
     root = library.root
     owner = accept(library.case(), "authors", "owner-answers-authors", 11)
@@ -355,14 +361,16 @@ def test_resume_with_nothing_to_rearm_settles_nothing(
         library.now[0] = 13
         scheduler.schedule()
         assert planned(library)[owner.decision_id].state == "planned"
+    _confirm_automatic(library, 14)
+    assert library.pending() == ([] if plan else [owner.decision_id])
 
-    _resume(library, "authors", 14)
+    _resume(library, "authors", 16)
 
     assert _record_row(root, "authors") is None
     assert library.pending() == []
     if plan:
         assert planned(library)[owner.decision_id].state == "superseded"
-    _write_all(library, scheduler, service, target, 15)
+    _write_all(library, scheduler, service, target, 17)
     assert writes == []
     assert set(planned(library)) <= {owner.decision_id}
     assert_record_recomputes(root._connection)
@@ -578,3 +586,648 @@ def test_asking_resume_requeues_the_case_with_no_trigger(
         "SELECT scan_id,stage,state FROM review_preparation_work"
     ).fetchall() == [(scan.scan_id, "projection", "queued")]
     assert_record_recomputes(root._connection)
+
+
+def _fields(library: Library) -> dict[str, dict[str, Any]]:
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    detail = InspectCurrentReviewCase(library.root).run(library.case_id())
+    return {
+        str(field["destination"]): field
+        for field in cast(list[dict[str, Any]], detail["fields"])
+    }
+
+
+def _asked(library: Library) -> tuple[set[str], set[str]]:
+    """The fields the case page asks for, and the ones Attention lists."""
+    return (
+        {name for name, field in _fields(library).items() if field["needs_attention"]},
+        {str(destination) for _, destination in library.attention()},
+    )
+
+
+def _owner_command(library: Library, outcome: str, key: str, at: int) -> HumanDecision:
+    """An owner command on the case's authors that carries no value: a pin,
+    an unpin, keep current or a withdrawal."""
+    case = library.case()
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "authors"
+    )
+    return HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="authors",
+        actor="owner",
+        outcome=outcome,
+        selected_value=None,
+        idempotency_key=key,
+        occurred_at=at,
+    )
+
+
+def _held_reads(library: Library) -> dict[str, tuple[str, str, bool]]:
+    """How each field the record holds an answer for reads on the current
+    case: its classification, the branch that chose its sentence, and
+    whether Resume is offered."""
+    held = {
+        str(destination)
+        for (destination,) in library.root._connection.execute(
+            "SELECT destination FROM owner_field_answers WHERE item_id='item-1'"
+        )
+    }
+    assert held
+    return {
+        name: (
+            str(field["classification"]),
+            str(field["classification_cause"]),
+            bool(field["manual_hold"]),
+        )
+        for name, field in _fields(library).items()
+        if name in held
+    }
+
+
+_DECIDED = ("human_recorded", "human_decided")
+_ASKED = ("needs_attention", "review_needed")
+
+
+@pytest.mark.parametrize(
+    "posture", ("automatic", "preview"), ids=("automatic", "preview")
+)
+def test_no_field_the_record_holds_reads_nothing_to_decide(
+    tmp_path: Path, posture: str
+) -> None:
+    """C2b-15: while the record holds an answer for a field, the field never
+    reads "Nothing to decide for this field.". An answer of the case and its
+    episode reads decided, a pin's answer after its unpin among them; one
+    from an earlier case or episode, which nothing carried, asks the field
+    with Resume offered once Automatic is on (S16). Driven over the same
+    case, a pin taken back, an open and a failed Resume, a later case and a
+    return to the first case as a new episode, in Preview and in Automatic."""
+    automatic = posture == "automatic"
+    seen: list[dict[str, tuple[str, str, bool]]] = []
+    with prepared(
+        tmp_path, automatic=automatic, library_model="publication"
+    ) as library:
+
+        def reads() -> dict[str, tuple[str, str, bool]]:
+            value = _held_reads(library)
+            seen.append(value)
+            return value
+
+        root = library.root
+        held = library.held
+        assert held is not None
+        original, first = held.authors, library.case_id()
+        owner = accept(library.case(), "authors", "owner-answers-authors", 11)
+        root.record_human_decision(owner)
+        assert reads() == {"authors": (*_DECIDED, automatic)}
+
+        # A pin taken back on the same case leaves the case's own answer.
+        for outcome, at in (("pin", 12), ("unpin", 13)):
+            root.record_human_decision(
+                _owner_command(library, outcome, f"owner-command-{outcome}-{at}", at)
+            )
+        assert reads() == {"authors": (*_DECIDED, automatic)}
+
+        if automatic:
+            request = request_resume(root, first, "authors", 14)
+            assert request is not None
+            # Automatic's decision settles the field while Resume is open.
+            assert reads()["authors"][2] is True
+            (scan,) = root._connection.execute(
+                "SELECT scan_id FROM owner_field_events WHERE event_id=?", (request,)
+            ).fetchone()
+            assert root._fail_open_resumes_for_scan(scan, 15) == 1
+            assert reads() == {"authors": (*_DECIDED, True)}
+
+        # A later case: the answer is the earlier case's, and nothing carried.
+        _read_back(library, ("Someone Else",), 16)
+        assert library.case_id() != first
+        assert reads() == {"authors": (*_ASKED, automatic)}
+        # The case page and Attention ask it alike.
+        page, attention = _asked(library)
+        assert "authors" in page and "authors" in attention
+        # The work returns to the first case's content: a new episode.
+        _read_back(library, original, 18)
+        assert library.case_id() == first
+        assert reads() == {"authors": (*_ASKED, automatic)}
+
+        # The other posture, with the record unchanged: Preview still shows
+        # the failed Resume, to be asked again; Automatic offers Resume.
+        if automatic:
+            library.leave_automatic()
+        else:
+            _confirm_automatic(library, 40)
+        assert reads() == {"authors": (*_ASKED, True)}
+        assert all(
+            cause != "nothing_to_decide"
+            for value in seen
+            for _, cause, _ in value.values()
+        )
+        assert_record_recomputes(root._connection)
+
+
+def _audit_case(tmp_path: Path, case: str) -> tuple[Any, Any, str, dict[str, Any]]:
+    """One of the audit's cases (P1, P2), set up through the owner-values
+    store as its unit test sets it up: the store, its report, the field, and
+    the values a later read finds the library holding."""
+    from tests.support.owner_values import OwnerStore, rewritten
+    from tests.unit import test_owner_answer_holds as audit
+
+    if case.startswith("genres"):
+        store = OwnerStore(tmp_path, None)
+        if case == "genres_after_automatic":
+            store.automatic("genres", "replace", audit.GENRES.target.library)
+            store.publish(audit.GENRES)
+            queued = audit._queued(store, "genres")
+            assert queued is not None
+            store.write(queued)
+            store.publish(rewritten(audit.GENRES, genres=("Fantasy",)))
+            decision = store.decide(
+                "owner_entered",
+                {"kind": "list", "value": ["Drama"]},
+                destination="genres",
+            )
+            store.write(decision)
+            return store, audit.GENRES, "genres", {"genres": ("Drama",)}
+        library = audit.GENRES.target.library
+        store.automatic("genres", "replace", library)
+        store.repository.enter_shadow_preview(store.clock(), ())
+        first = store.publish(audit.GENRES)
+        store.decide("keep_current", destination="genres")
+        store.repository.activate_qualified_automatic(store.clock())
+        store.repository.persist_shadow_outcome(first.review_case_id, store.clock())
+        return store, audit.GENRES, "genres", {}
+    store, report, ask = audit._store(
+        tmp_path,
+        title="ask" if case == "kept_under_ask_me" else "automatic",
+        posture="preview" if case.endswith("in_preview") else "automatic",
+    )
+    if case in {"typed_after_automatic", "original_put_back"}:
+        audit._automatic_writes_first(store, report)
+        value = (
+            audit.OWN["value"] if case == "typed_after_automatic" else audit.ORIGINAL
+        )
+        store.write(store.decide("owner_entered", {"kind": "text", "value": value}))
+        return store, report, "title", {"title": value}
+    if case == "typed_in_preview":
+        store.publish(report)
+        store.write(store.decide("owner_entered", audit.OWN))
+        store.repository.activate_qualified_automatic(store.clock())
+        return store, report, "title", {"title": audit.OWN["value"]}
+    if case == "kept_while_paused":
+        store.repository.pause_automatic_safety(True, store.clock())
+        store.publish(report)
+        store.decide("keep_current", destination="title")
+        store.repository.pause_automatic_safety(False, store.clock())
+        return store, report, "title", {}
+    first = store.publish(report)
+    store.decide("keep_current", destination="title")
+    if case == "kept_in_preview":
+        store.repository.activate_qualified_automatic(store.clock())
+        store.repository.persist_shadow_outcome(first.review_case_id, store.clock())
+    else:
+        audit._activate(
+            store,
+            audit._profile("Second policy", "automatic"),
+            ask,
+            report.target.library,
+        )
+    return store, report, "title", {}
+
+
+_AUDIT_CASES = (
+    "typed_after_automatic",
+    "original_put_back",
+    "kept_in_preview",
+    "typed_in_preview",
+    "kept_while_paused",
+    "kept_under_ask_me",
+    "genres_after_automatic",
+    "genres_in_preview",
+)
+
+
+@pytest.mark.parametrize("case", _AUDIT_CASES, ids=_AUDIT_CASES)
+def test_the_audit_cases_write_nothing_of_automatic_over_the_answer(
+    tmp_path: Path, case: str
+) -> None:
+    """P1 and P2: the audit's six title cases and its two genres cases (the
+    working path, and the Preview case it fixes). On the read-back and every
+    later read nothing of Automatic's is planned or written over the owner's
+    answer, and Resume is offered on each case, never reading as nothing to
+    decide (ADR-0108, V1, C2b-15)."""
+    from tests.support.owner_values import rewritten
+    from tests.unit.test_owner_answer_holds import _field, _queued
+
+    store, report, destination, held = _audit_case(tmp_path, case)
+    try:
+        patches = list(store.patches)
+        for publisher in ("Read Back", "Later Read", "Another Later Read"):
+            store.publish(rewritten(report, publisher=publisher, **held))
+            assert _queued(store, destination) is None
+            field = _field(store, destination)
+            assert field["manual_hold"] is True
+            assert field["classification_cause"] != "nothing_to_decide"
+        assert store.patches == patches
+        assert_record_recomputes(store.repository._connection)
+    finally:
+        store.close()
+
+
+def _withdraw_command(library: Library, at: int) -> HumanDecision:
+    return _owner_command(library, "withdraw", f"owner-withdraws-authors-{at}", at)
+
+
+def _record_of(root: Any) -> tuple[object, ...] | None:
+    """The record's authors row: its answer, the case it was given on,
+    whether it may be carried, and its open Resume."""
+    row = root._connection.execute(
+        "SELECT answer_id,review_case_id,carry_eligible,open_resume_id "
+        "FROM owner_field_answers WHERE item_id='item-1' AND destination='authors'"
+    ).fetchone()
+    return None if row is None else tuple(row)
+
+
+@pytest.mark.parametrize(
+    "posture", ("automatic", "preview"), ids=("automatic", "preview")
+)
+def test_withdrawing_the_second_answer_on_one_case_empties_the_record(
+    tmp_path: Path, posture: str
+) -> None:
+    """P5: A then B on one case, withdraw B: the record is empty, so nothing
+    of the owner's holds the field; under Automatic the next case is decided
+    by Automatic and its decision is pending."""
+    automatic = posture == "automatic"
+    with prepared(
+        tmp_path, automatic=automatic, library_model="publication"
+    ) as library:
+        root = library.root
+        root.record_human_decision(
+            accept(library.case(), "authors", "owner-answers-a-at-11", 11)
+        )
+        root.record_human_decision(
+            _owner_command(library, "keep_current", "owner-answers-b-keeps-12", 12)
+        )
+        root.record_human_decision(_withdraw_command(library, 13))
+        assert _record_of(root) is None
+        assert "authors" not in _fields(library) or (
+            _fields(library)["authors"]["human_decision"] is None
+        )
+        if not automatic:
+            _confirm_automatic(library, 20)
+        _read_back(library, ("Someone Else",), 30)
+        later = [
+            str(row[0])
+            for row in root._connection.execute(
+                "SELECT decision_id FROM automatic_decisions WHERE review_case_id=? "
+                "AND destination='authors'",
+                (library.case_id(),),
+            )
+        ]
+        assert len(later) == 1
+        assert library.pending() == later
+        assert_record_recomputes(root._connection)
+
+
+@pytest.mark.parametrize(
+    "posture", ("automatic", "preview"), ids=("automatic", "preview")
+)
+def test_withdrawing_a_later_cases_answer_restores_the_earlier_one(
+    tmp_path: Path, posture: str
+) -> None:
+    """P5: A on X, B on Y, withdraw B: the record holds A again, as given on
+    X and not to be carried (the explicit restore assertion). Y asks the
+    field and nothing of Automatic's is pending (S16, C2b-15)."""
+    automatic = posture == "automatic"
+    with prepared(
+        tmp_path, automatic=automatic, library_model="publication"
+    ) as library:
+        root = library.root
+        first = library.case_id()
+        a = accept(library.case(), "authors", "owner-answers-a-on-x-11", 11)
+        root.record_human_decision(a)
+        _read_back(library, ("Someone Else",), 12)
+        assert library.case_id() != first
+        b = _owner_command(library, "keep_current", "owner-answers-b-on-y-14", 14)
+        root.record_human_decision(b)
+        assert _record_of(root) == (b.decision_id, library.case_id(), 1, None)
+
+        root.record_human_decision(_withdraw_command(library, 15))
+
+        assert _record_of(root) == (a.decision_id, first, 0, None)
+        field = _fields(library)["authors"]
+        assert (field["classification"], field["classification_cause"]) == _ASKED
+        assert field["manual_hold"] is automatic
+        page, attention = _asked(library)
+        assert "authors" in page and "authors" in attention
+        assert library.pending() == []
+        assert_record_recomputes(root._connection)
+
+
+@pytest.mark.parametrize(
+    "posture", ("automatic", "preview"), ids=("automatic", "preview")
+)
+def test_a_withdrawal_during_an_open_resume_still_completes_it(
+    tmp_path: Path, posture: str
+) -> None:
+    """P5: A on X, B on Y, Resume asked over B, then withdraw B. Resume is
+    asked under Automatic. In the Preview row Automatic is then left, so Y's
+    automatic decision is an earlier generation's: the withdrawal stands, the
+    record holds A again with the Resume still open over it. In the Automatic
+    row the open Resume lets Y's automatic decision settle the field, so the
+    store refuses the withdrawal as it does beside any settling automatic
+    decision (plan 3.6). Either way completing the Resume clears the
+    record."""
+    with prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root = library.root
+        first = library.case_id()
+        a = accept(library.case(), "authors", "owner-answers-a-on-x-11", 11)
+        root.record_human_decision(a)
+        _read_back(library, ("Someone Else",), 12)
+        root.record_human_decision(
+            _owner_command(library, "keep_current", "owner-answers-b-on-y-14", 14)
+        )
+        request = request_resume(root, library.case_id(), "authors", 15)
+        assert request is not None
+        if posture == "preview":
+            library.leave_automatic()
+
+        if posture == "preview":
+            root.record_human_decision(_withdraw_command(library, 31))
+            assert _record_of(root) == (a.decision_id, first, 0, request)
+        else:
+            held = _record_of(root)
+            with pytest.raises(HumanDecisionError, match="^automatic_hold$"):
+                root.record_human_decision(_withdraw_command(library, 31))
+            assert _record_of(root) == held
+        assert complete_resume(root, request, 32)
+        assert _record_of(root) is None
+        assert_record_recomputes(root._connection)
+
+
+@pytest.mark.parametrize(
+    "posture", ("automatic", "preview"), ids=("automatic", "preview")
+)
+def test_a_new_case_after_an_answer_asks_the_field(
+    tmp_path: Path, posture: str
+) -> None:
+    """P8 (S16): the owner answers on X and the work is read again as Y.
+    Nothing is carried, so Y asks the field, on the case page and in
+    Attention, Automatic's decision on Y settles nothing and is not pending,
+    and under Automatic Resume is offered."""
+    automatic = posture == "automatic"
+    with prepared(
+        tmp_path, automatic=automatic, library_model="publication"
+    ) as library:
+        root = library.root
+        root.record_human_decision(
+            accept(library.case(), "authors", "owner-answers-authors", 11)
+        )
+        _read_back(library, ("Someone Else",), 12)
+        field = _fields(library)["authors"]
+        assert (field["classification"], field["classification_cause"]) == _ASKED
+        assert field["manual_hold"] is automatic
+        page, attention = _asked(library)
+        assert "authors" in page and "authors" in attention
+        # Automatic decided the field again on Y; it settles nothing there.
+        assert root._connection.execute(
+            "SELECT count(*) FROM automatic_decisions WHERE review_case_id=? "
+            "AND destination='authors'",
+            (library.case_id(),),
+        ).fetchone() == ((1,) if automatic else (0,))
+        assert library.pending() == []
+        assert_record_recomputes(root._connection)
+
+
+@pytest.mark.parametrize(
+    "posture", ("automatic", "preview"), ids=("automatic", "preview")
+)
+def test_a_failed_resume_asks_the_field(tmp_path: Path, posture: str) -> None:
+    """P8: a Resume whose scan ends with failures leaves the record holding
+    the answer: the field is asked, shows the failed Resume to ask again,
+    and nothing of Automatic's is pending; the same once Automatic is left."""
+    with prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root = library.root
+        root.record_human_decision(
+            accept(library.case(), "authors", "owner-answers-authors", 11)
+        )
+        _read_back(library, ("Someone Else",), 12)
+        request = request_resume(root, library.case_id(), "authors", 14)
+        assert request is not None
+        (scan,) = root._connection.execute(
+            "SELECT scan_id FROM owner_field_events WHERE event_id=?", (request,)
+        ).fetchone()
+        assert root._fail_open_resumes_for_scan(scan, 15) == 1
+        if posture == "preview":
+            library.leave_automatic()
+        field = _fields(library)["authors"]
+        assert (field["classification"], field["classification_cause"]) == _ASKED
+        assert field["manual_return_failed"] is True
+        page, attention = _asked(library)
+        assert "authors" in page and "authors" in attention
+        assert library.pending() == []
+        assert_record_recomputes(root._connection)
+
+
+@pytest.mark.parametrize(
+    "posture", ("automatic", "preview"), ids=("automatic", "preview")
+)
+def test_resume_completed_with_nothing_to_rearm_asks_the_field(
+    tmp_path: Path, posture: str
+) -> None:
+    """P8: Resume completes on a field Automatic abstains on, so there is
+    nothing to re-arm: the record is empty and the field is asked, by
+    Automatic's abstention; the same once Automatic is left."""
+    from tests.support.evidence_led_titles import isbn_title_report
+    from tests.unit.test_owner_answer_holds import _field, _store
+    from tests.unit.test_owner_pins import _asked as asked_in_attention
+
+    store, _, _ = _store(tmp_path)
+    try:
+        store.publish(isbn_title_report(empty_target_title=True, titles=(None,)))
+        assert _field(store, "title")["classification_cause"] == "automatic_abstained"
+        store.decide("keep_current", destination="title")
+        assert _field(store, "title")["classification_cause"] == "human_decided"
+        assert resume(
+            store.repository, store.case.review_case_id, "title", store.clock()
+        )
+        if posture == "preview":
+            store.repository.enter_shadow_preview(store.clock(), ())
+        assert (
+            store.repository._connection.execute(
+                "SELECT count(*) FROM owner_field_answers"
+            ).fetchone()[0]
+            == 0
+        )
+        field = _field(store, "title")
+        assert (field["classification"], field["classification_cause"]) == (
+            "manual_fallback",
+            "automatic_abstained",
+        )
+        assert asked_in_attention(store) is True
+        assert_record_recomputes(store.repository._connection)
+    finally:
+        store.close()
+
+
+def test_resume_answered_in_preview_survives_leaving_and_reentering_automatic(
+    preview_library: Library,
+) -> None:
+    """P10: the owner answers in Preview, Automatic is confirmed, left and
+    confirmed again so the case is prepared again; Resume is still offered
+    and completes, handing the field to Automatic's decision."""
+    library = preview_library
+    root = library.root
+    root.record_human_decision(
+        accept(library.case(), "authors", "owner-answers-in-preview", 11)
+    )
+    _confirm_automatic(library, 14)
+    library.leave_automatic()
+    _confirm_automatic(library, 40)
+    assert _fields(library)["authors"]["manual_hold"] is True
+    _resume(library, "authors", 42)
+    library.now[0] = 50
+    library.drain()
+    assert _record_row(root, "authors") is None
+    decided = library.automatic(library.generation())
+    assert library.pending() == [decided.decision_id]
+    assert_record_recomputes(root._connection)
+
+
+def test_a_pin_in_force_follows_the_cases_field_with_no_stored_flag(
+    tmp_path: Path,
+) -> None:
+    """S15: whether a pin is in force is computed when it is read, from the
+    case's field: in force on the pinned value, changed on a case that reads
+    another, in force again when the work returns to it. The record stores
+    the pinned fingerprint alone, unchanged throughout."""
+    with prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root = library.root
+        held = library.held
+        assert held is not None
+        original = held.authors
+        # The pin is the owner's answer itself, so no write of it waits.
+        root.record_human_decision(
+            _owner_command(library, "pin", "owner-command-pin-12", 12)
+        )
+
+        def pin() -> tuple[object, str]:
+            (fingerprint,) = root._connection.execute(
+                "SELECT pin_fingerprint FROM owner_field_answers "
+                "WHERE item_id='item-1' AND destination='authors'"
+            ).fetchone()
+            return fingerprint, str(_fields(library)["authors"]["classification_cause"])
+
+        stored, cause = pin()
+        assert stored is not None and cause == "pinned"
+        _read_back(library, ("Someone Else",), 13)
+        assert pin() == (stored, "pin_changed")
+        _read_back(library, original, 15)
+        assert pin() == (stored, "pinned")
+        columns = {
+            str(row[1])
+            for row in root._connection.execute(
+                "PRAGMA table_info(owner_field_answers)"
+            )
+        }
+        assert not any("force" in column for column in columns)
+        assert_record_recomputes(root._connection)
+
+
+@pytest.mark.parametrize("source", ("authored", "human"), ids=("authored", "human"))
+def test_a_later_description_case_asks_and_a_failed_resume_keeps_asking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    """P11, the asked parts: the owner's description answer, authored or a
+    decision, given on the work's earlier case; Automatic's advice is
+    recorded on the later case. The later case asks the description with
+    Resume offered (S16, C2b-15), and a Resume that fails leaves the record
+    holding the answer and the field asked."""
+    from mechanical_librarian.application.description_advice import (
+        DescriptionAdviceService,
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from tests.support.description_advice import (
+        _prepared as _description_prepared,
+    )
+    from tests.support.description_advice import qualify_description_advice
+    from tests.unit.test_description_advice_persistence import _publish_successor
+
+    qualify_description_advice(monkeypatch)
+    access: list[Any] = []
+    repository, store, binding, original, _ = _description_prepared(
+        tmp_path,
+        automatic_policy=None
+        if source == "authored"
+        else ("cover_order", "fixed_source_order"),
+        pipeline_probe=lambda *values: access.append(values[3]),
+    )
+    try:
+        if source == "authored":
+            store.admit(original.candidate_id, binding, "human", "e" * 64, 11)
+        else:
+            case = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(binding.review_case_id))["case"]
+            )
+            proposal = next(
+                value
+                for value in case.proposals
+                if value["destination"] == "description"
+            )
+            repository.record_human_decision(
+                HumanDecision.create(
+                    case,
+                    proposal_id=str(proposal["proposal_id"]),
+                    target_fingerprint=case.target_fingerprint,
+                    destination="description",
+                    actor="owner",
+                    outcome="keep_current",
+                    selected_value=None,
+                    idempotency_key="owner-keeps-description",
+                    occurred_at=11,
+                )
+            )
+        report, fresh = _publish_successor(repository, binding)
+        candidate = DescriptionAdviceService(
+            store, access[0], store.current_settings, lambda: 12
+        ).prepare(report, fresh, lambda: store.binding_is_current(fresh))
+        assert candidate is not None
+        store.admit(candidate.candidate_id, fresh, "automatic_policy", "a" * 64, 15)
+
+        def field() -> dict[str, Any]:
+            return next(
+                value
+                for value in InspectCurrentReviewCase(repository).run(
+                    fresh.review_case_id
+                )["fields"]
+                if value["destination"] == "description"
+            )
+
+        def asked() -> None:
+            value = field()
+            assert (value["classification"], value["classification_cause"]) == _ASKED
+            assert value["needs_attention"] is True
+            assert repository._connection.execute(
+                "SELECT count(*) FROM review_attention_facts "
+                "WHERE destination='description'"
+            ).fetchone() == (1,)
+
+        asked()
+        assert field()["manual_hold"] is True
+        request = request_resume(repository, fresh.review_case_id, "description", 18)
+        assert request is not None
+        (scan,) = repository._connection.execute(
+            "SELECT scan_id FROM owner_field_events WHERE event_id=?", (request,)
+        ).fetchone()
+        assert repository._fail_open_resumes_for_scan(scan, 19) == 1
+        assert repository._connection.execute(
+            "SELECT count(*) FROM owner_field_answers WHERE destination='description'"
+        ).fetchone() == (1,)
+        asked()
+        assert field()["manual_return_failed"] is True
+        assert_record_recomputes(repository._connection)
+    finally:
+        repository.close()

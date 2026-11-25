@@ -54,6 +54,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
+from mechanical_librarian.application.description_advice import (
+    DescriptionAdviceService,
+)
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.automatic_decision import (
@@ -67,6 +70,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectOperation,
 )
+from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
@@ -75,10 +79,12 @@ from mechanical_librarian.domain.metadata_policy import (
     resolve_policy,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.support.author_evidence import author_report
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.description_advice import _prepared, qualify_description_advice
+from tests.support.prepared_library import accept as _accept
 from tests.unit.test_cover_activation import (
     _measured_record,
     _pipeline_configuration,
@@ -86,6 +92,7 @@ from tests.unit.test_cover_activation import (
     _run_qualified_cover_pipeline,
     _test_reviewer_access,
 )
+from tests.unit.test_description_advice_persistence import _publish_successor
 
 C = AutomaticCondition
 _REPOSITORY = Path(__file__).resolve().parents[2]
@@ -304,11 +311,6 @@ def test_field_sites_check_their_declared_sets(
         validated = repository._decisions._validated_automatic_decisions(outcome, 60)
         return "authors" in {value.destination for value in validated}
 
-    def held_note() -> bool:
-        repository._set_field_effect_manual_hold(case_id, "authors", 61, decision_id)
-        notes = activity._activity_page_notes_once([], [], (), [decision_id])
-        return notes.get(decision_id) == "held"
-
     observed: dict[str, Callable[[], bool]] = {
         "mint_posture": mints,
         "mint_field": decides,
@@ -323,7 +325,6 @@ def test_field_sites_check_their_declared_sets(
                 for value in repository.pending_field_effect_decision_documents(100)
             }
         ),
-        "held_note_field": held_note,
         "held_back_note": lambda: (
             not activity._activity_page_notes_once([], ["effect_event_x"])
         ),
@@ -335,7 +336,6 @@ def test_field_sites_check_their_declared_sets(
         "mint_field": ["MetadataReportError", "acts", "MetadataReportError"],
         "pending_counts": ["acts", "refuses", "acts"],
         "pending_documents": ["acts", "refuses", "acts"],
-        "held_note_field": ["acts", "refuses", "acts"],
         "held_back_note": ["acts", "acts", "acts"],
     }
 
@@ -376,6 +376,93 @@ def test_field_sites_check_their_declared_sets(
         "deferred": ["acts", "refuses", "acts"],
         "claim": ["refuses", "MetadataReportError", "JSONDecodeError"],
     }
+
+    # The held note reads an answer the record holds: the owner's own, on
+    # this case's authors (ADR-0108).
+    repository.record_human_decision(
+        _accept(_case(repository, case_id), "authors", "held-note-answer", 61)
+    )
+
+    def held_note() -> bool:
+        notes = activity._activity_page_notes_once([], [], (), [decision_id])
+        return notes.get(decision_id) == "held"
+
+    assert _mismatches("held_note_field", connection, own, held_note) == []
+    assert _edges(connection, held_note) == ["acts", "refuses", "acts"]
+    repository.close()
+
+
+def _case(repository: SQLiteMetadataReportRepository, case_id: str) -> ReviewCase:
+    return ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+
+
+def _resume_offer_acts(
+    repository: SQLiteMetadataReportRepository,
+    case_id: str,
+    answer: str,
+    scan: str,
+    destination: str = "authors",
+) -> Callable[[], bool]:
+    """Whether the case offers Resume for the field, and the request agrees:
+    asked inside the row's transaction, it is accepted exactly then."""
+
+    def acts() -> bool:
+        offered = (
+            destination
+            in repository._review_projections._record_states(case_id)[
+                "resume_offer_destinations"
+            ]
+        )
+        requested = repository.request_owner_field_resume(
+            case_id, destination, answer, scan, 62, 62
+        )
+        assert requested == offered
+        return offered
+
+    return acts
+
+
+def _resume_offer_store(
+    tmp_path: Path,
+) -> tuple[SQLiteMetadataReportRepository, Callable[[], bool]]:
+    """Automatic authors the owner answered, with a scan to ask Resume on."""
+    repository = _store(tmp_path, qualified=True)
+    (case_id,) = repository._connection.execute(
+        "SELECT review_case_id FROM current_review_case_lineages"
+    ).fetchone()
+    answer = _accept(_case(repository, case_id), "authors", "resume-offer-answer", 61)
+    repository.record_human_decision(answer)
+    scan = repository.request_review_scan(
+        "primary", "ebooks", "library-ebooks", "a" * 64, 61
+    ).scan_id
+    return repository, _resume_offer_acts(repository, case_id, answer.decision_id, scan)
+
+
+def test_the_resume_offer_checks_its_declared_set(tmp_path: Path) -> None:
+    """C0 `resume_offer`: the page offers Resume, and the request is taken,
+    exactly while Automatic is on and the case sets the field to Automatic;
+    a pause, a suspension or a stale qualification hides neither."""
+    repository, acts = _resume_offer_store(tmp_path)
+    connection = repository._connection
+    assert _mismatches("resume_offer", connection, "contributor_names", acts) == []
+
+    def field_not_automatic() -> bool:
+        connection.execute(
+            "UPDATE shadow_outcome_field_facts SET automatic_destination=0 "
+            "WHERE destination='authors'"
+        )
+        return acts()
+
+    held = {C.FIELD_AUTOMATIC: False}
+    assert (
+        _mismatches(
+            "resume_offer", connection, "contributor_names", field_not_automatic, held
+        )
+        == []
+    )
+    assert _edges(connection, acts) == ["acts", "refuses", "acts"]
     repository.close()
 
 
@@ -498,20 +585,44 @@ def test_description_sites_check_their_declared_sets(
             return False
         return True
 
+    check("description_authority", resolves)
+    assert _edges(connection, resolves) == ["refuses", "refuses", "refuses"]
+
+    repository.close()
+
+
+def test_the_held_description_note_checks_its_declared_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`held_note_description`: Automatic's advice admitted beside the owner's
+    description the record holds reads held exactly while the posture and the
+    field's Automatic setting stand (ADR-0108)."""
+    qualify_description_advice(monkeypatch)
+    access: list[Any] = []
+    repository, store, binding, original, _ = _prepared(
+        tmp_path, pipeline_probe=lambda *values: access.append(values[3])
+    )
+    connection = repository._connection
+    store.admit(original.candidate_id, binding, "human", "e" * 64, 11)
+    report, fresh = _publish_successor(repository, binding)
+    repository.persist_shadow_outcome(fresh.review_case_id, 12)
+    candidate = DescriptionAdviceService(
+        store, access[0], store.current_settings, lambda: 12
+    ).prepare(report, fresh, lambda: store.binding_is_current(fresh))
+    assert candidate is not None
+    decision = store.admit(
+        candidate.candidate_id, fresh, "automatic_policy", "a" * 64, 15
+    )
+
     def held_note() -> bool:
-        repository._set_field_effect_manual_hold(
-            decision.review_case_id, "description", 61, decision.decision_id
-        )
         notes = repository._field_effect_activity._activity_page_notes_once(
             [], [], (), [decision.decision_id]
         )
         return notes.get(decision.decision_id) == "held"
 
-    check("description_authority", resolves)
     assert (
         _mismatches("held_note_description", connection, "description", held_note) == []
     )
-    assert _edges(connection, resolves) == ["refuses", "refuses", "refuses"]
     assert _edges(connection, held_note) == ["acts", "refuses", "acts"]
     repository.close()
 
@@ -608,6 +719,123 @@ def test_a_site_that_skips_a_declared_condition_is_caught(
     bypassed = _mismatches(
         "pending_documents", connection, "contributor_names", pending
     )
+    assert {row[0] for row in bypassed} == {"review", "preview"}
+    assert len(bypassed) == 24
+    repository.close()
+
+
+def test_the_description_resume_offer_reads_its_advice_setting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C0 `resume_offer` for the description: the field is Automatic by the
+    owner's Automatic description advice setting, which admits Automatic's
+    description, not by the policy's category (C2b-13). Here the policy sets
+    no Automatic description, the owner kept the description on the work's
+    earlier case, and Automatic's advice is recorded on its next case: Resume
+    is offered and taken exactly while Automatic is on and the setting is,
+    saved or, before any owner settings are saved, bound."""
+    qualify_description_advice(monkeypatch)
+    access: list[Any] = []
+    repository, store, binding, _, _ = _prepared(
+        tmp_path,
+        automatic_policy=("cover_order", "fixed_source_order"),
+        pipeline_probe=lambda *values: access.append(values[3]),
+    )
+    connection = repository._connection
+    case = _case(repository, binding.review_case_id)
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "description"
+    )
+    owner = HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="description",
+        actor="owner",
+        outcome="keep_current",
+        selected_value=None,
+        idempotency_key="owner-keeps-description",
+        occurred_at=11,
+    )
+    repository.record_human_decision(owner)
+    report, fresh = _publish_successor(repository, binding)
+    candidate = DescriptionAdviceService(
+        store, access[0], store.current_settings, lambda: 12
+    ).prepare(report, fresh, lambda: store.binding_is_current(fresh))
+    assert candidate is not None
+    store.admit(candidate.candidate_id, fresh, "automatic_policy", "a" * 64, 15)
+    assert connection.execute(
+        "SELECT automatic_destination FROM shadow_outcome_field_facts "
+        "WHERE review_case_id=? AND destination='description'",
+        (fresh.review_case_id,),
+    ).fetchall() in ([], [(0,)])
+    (connection_name, library_name) = connection.execute(
+        "SELECT connection_name,library_name FROM current_review_case_lineages "
+        "WHERE review_case_id=?",
+        (fresh.review_case_id,),
+    ).fetchone()
+    scan = repository.request_review_scan(
+        connection_name, library_name, f"library-{library_name}", "a" * 64, 16
+    ).scan_id
+    acts = _resume_offer_acts(
+        repository, fresh.review_case_id, owner.decision_id, scan, "description"
+    )
+    bound = store.current_settings()
+    assert bound.automatic_application is True
+
+    def saved(application: bool) -> Callable[[], bool]:
+        def with_saved() -> bool:
+            connection.execute(
+                "INSERT INTO owner_settings(singleton,revision,document) VALUES(1,1,?)",
+                (
+                    json.dumps(
+                        {"description_advice": {"automatic_application": application}}
+                    ),
+                ),
+            )
+            return acts()
+
+        return with_saved
+
+    def unbound() -> bool:
+        store.bind_settings(bound.model_copy(update={"automatic_application": False}))
+        try:
+            return acts()
+        finally:
+            store.bind_settings(bound)
+
+    off = {C.FIELD_AUTOMATIC: False}
+    assert _mismatches("resume_offer", connection, "description", acts) == []
+    assert _mismatches("resume_offer", connection, "description", unbound, off) == []
+    assert (
+        _mismatches("resume_offer", connection, "description", saved(False), off) == []
+    )
+
+    def saved_over_unbound() -> bool:
+        store.bind_settings(bound.model_copy(update={"automatic_application": False}))
+        try:
+            return saved(True)()
+        finally:
+            store.bind_settings(bound)
+
+    assert (
+        _mismatches("resume_offer", connection, "description", saved_over_unbound) == []
+    )
+    assert _edges(connection, acts) == ["acts", "refuses", "acts"]
+    repository.close()
+
+
+def test_a_resume_offer_that_skips_its_posture_is_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The negative control at `resume_offer`: the offer and the request's
+    re-check compose the posture term when called, so bypassing it offers and
+    takes Resume in Review and Preview, which the declared set refuses."""
+    repository, acts = _resume_offer_store(tmp_path)
+    connection = repository._connection
+    assert _mismatches("resume_offer", connection, "contributor_names", acts) == []
+    monkeypatch.setattr(schema, "_AUTOMATIC_POSTURE_SQL", "1")
+    bypassed = _mismatches("resume_offer", connection, "contributor_names", acts)
     assert {row[0] for row in bypassed} == {"review", "preview"}
     assert len(bypassed) == 24
     repository.close()
