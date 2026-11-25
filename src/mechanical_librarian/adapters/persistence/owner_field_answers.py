@@ -42,15 +42,18 @@ _UNCLOSED = (
 
 
 # A work Resume's request requeued for projection (C2b-12), over the work row
-# `w`: queued or running there while a request on its book is open. Its scan
-# keeps counting it as it stood, checked and ready, so the scan's "X of Y
-# works checked" never goes backwards; projection ends it again.
+# `w`: queued or running there while a request on its book is still the
+# latest event of its chain, neither completed, superseded nor failed. Its
+# scan keeps counting it as it stood, checked and ready, so the scan's "X of Y
+# works checked" never goes backwards; projection ends it again. A failed
+# request stays open, but a requeue during it is ordinary projection.
 RESUME_REPROJECTION_SQL = (
     "(w.stage='projection' AND w.state IN ('queued','delayed','running') "
     "AND EXISTS (SELECT 1 FROM owner_field_events request "
     "WHERE request.connection_name=w.connection_name "
     "AND request.library_name=w.library_name AND request.item_id=w.item_id "
-    "AND request.kind='resume_requested' AND " + _UNCLOSED.format("request") + "))"
+    "AND request.kind='resume_requested' AND NOT EXISTS (SELECT 1 FROM "
+    "owner_field_events later WHERE later.request_id=request.event_id)))"
 )
 
 

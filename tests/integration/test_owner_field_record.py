@@ -570,6 +570,38 @@ def test_asking_resume_requeues_the_case_with_no_trigger(
     assert_record_recomputes(root._connection)
 
 
+def test_a_projection_requeue_during_a_failed_resume_counts_as_projection(
+    library: Library,
+) -> None:
+    """A failed Resume stays open, but its work waiting for projection again
+    is ordinary projection work: not checked, not ready (C2b-12)."""
+    from mechanical_librarian.adapters.persistence.owner_field_answers import (
+        fail_open_resumes_for_scan,
+    )
+
+    root = library.root
+    root.record_human_decision(
+        accept(library.case(), "authors", "owner-answers-authors", 11)
+    )
+    scan = root.request_review_scan("primary", "ebooks", "lib-1", PRODUCER, 12)
+    assert request_resume(root, library.case_id(), "authors", 12, scan_id=scan.scan_id)
+    requested = root.review_pipeline_progress("primary", "ebooks")
+    assert requested is not None and (requested.checked, requested.ready) == (1, 1)
+    with root._connection:
+        assert fail_open_resumes_for_scan(root._connection, scan.scan_id, 13) == 1
+
+    assert root._connection.execute(
+        "SELECT stage,state FROM review_preparation_work"
+    ).fetchall() == [("projection", "queued")]
+    progress = root.review_pipeline_progress("primary", "ebooks")
+    (status,), _paused = root.review_pipeline_status((("primary", "ebooks"),))
+    assert progress is not None and status is not None
+    assert (progress.checked, progress.ready) == (0, 0)
+    assert (status.checked, status.ready) == (0, 0)
+    assert dict(progress.stages)["projection"] == 1
+    assert_record_recomputes(root._connection)
+
+
 def test_a_scan_never_counts_fewer_works_checked_across_a_resume(
     tmp_path: Path,
 ) -> None:
