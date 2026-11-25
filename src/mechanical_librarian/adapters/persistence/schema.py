@@ -1341,16 +1341,6 @@ _FIELD_EFFECT_CONSENTS_SQL = (
     "current INTEGER NOT NULL CHECK(current IN (0,1)), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096))"
 )
-_FIELD_EFFECT_MANUAL_HOLDS_SQL = (
-    "CREATE TABLE field_effect_manual_holds ("
-    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
-    "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
-    "active INTEGER NOT NULL CHECK(active IN (0,1)), "
-    "updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
-    "document TEXT NOT NULL CHECK(typeof(document)='text' AND "
-    "length(CAST(document AS BLOB)) BETWEEN 2 AND 4096), "
-    "PRIMARY KEY(review_case_id,destination))"
-)
 _FIELD_EFFECTS_SQL = (
     "CREATE TABLE field_effects ("
     "plan_id TEXT PRIMARY KEY NOT NULL CHECK(plan_id GLOB 'effect_plan_[0-9a-f]*' AND length(plan_id)=76), "
@@ -2013,11 +2003,6 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
         "CASE WHEN {row}.scope='destination' THEN {row}.destination END "
         "FROM current_review_packages c WHERE c.connection_name={row}.connection_name",
     ),
-    # A pin in force settles its field and a changed one asks it again.
-    "field_effect_manual_holds": (
-        ("insert", "update", "delete"),
-        _packages_of_case("{row}.destination"),
-    ),
     # The record's answer for a field keeps Automatic's decision from
     # settling it, settles it on its own case and episode and asks it
     # elsewhere, and its pin settles or asks it; Resume's events open, fail
@@ -2083,12 +2068,6 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
         "selection_id",
     ),
     "field_effect_suspensions": ("scope", "connection_name", "destination"),
-    "field_effect_manual_holds": (
-        "review_case_id",
-        "destination",
-        "active",
-        "document",
-    ),
     "owner_field_answers": (
         "connection_name",
         "library_name",
@@ -2279,7 +2258,6 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_FIELD_EFFECT_SUSPENSIONS_SQL)
     connection.execute(_FIELD_EFFECT_AUTHORITIES_SQL)
     connection.execute(_FIELD_EFFECT_CONSENTS_SQL)
-    connection.execute(_FIELD_EFFECT_MANUAL_HOLDS_SQL)
     connection.execute(_FIELD_EFFECTS_SQL)
     connection.execute(_FIELD_EFFECTS_DECISION_INDEX_SQL)
     connection.execute(_FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL)
@@ -2625,7 +2603,6 @@ def _decision_and_field_effect_objects() -> tuple[tuple[str, str, str | None], .
         ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),
         ("table", "field_effect_cleanups", _FIELD_EFFECT_CLEANUPS_SQL),
         ("table", "field_effect_consents", _FIELD_EFFECT_CONSENTS_SQL),
-        ("table", "field_effect_manual_holds", _FIELD_EFFECT_MANUAL_HOLDS_SQL),
         ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
         ("table", "field_effect_no_changes", _FIELD_EFFECT_NO_CHANGES_SQL),
         ("table", "field_effects", _FIELD_EFFECTS_SQL),
@@ -2652,7 +2629,6 @@ def _decision_and_field_effect_objects() -> tuple[tuple[str, str, str | None], .
         ("index", "sqlite_autoindex_field_effect_authorities_1", None),
         ("index", "sqlite_autoindex_field_effect_cleanups_1", None),
         ("index", "sqlite_autoindex_field_effect_consents_1", None),
-        ("index", "sqlite_autoindex_field_effect_manual_holds_1", None),
         ("index", "sqlite_autoindex_field_effects_1", None),
         ("index", "field_effects_decision", _FIELD_EFFECTS_DECISION_INDEX_SQL),
         (
@@ -2949,8 +2925,7 @@ def _review_objects() -> tuple[tuple[str, str, str | None], ...]:
 # budgets and paid capped artefacts. Every other table and view is derived and
 # recomputed from the library, its providers and the ledger. A ledger row never
 # references a derived row; tests/unit/test_ledger_partition_schema.py pins the
-# derived list and both directions. Until C2b the manual holds are listed
-# whole.
+# derived list and both directions.
 LEDGER_TABLES = frozenset(
     {
         "automatic_safety_state",
@@ -2962,7 +2937,6 @@ LEDGER_TABLES = frozenset(
         "field_effect_consents",
         "field_effect_control",
         "field_effect_events",
-        "field_effect_manual_holds",
         "field_effect_no_changes",
         "field_effect_suspensions",
         "field_effects",

@@ -35,9 +35,6 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
 )
 
-# Ledger tables that still reference a derived row, so a regeneration takes
-# their rows too. #2038 C2b deletes the manual holds; the record replaces them.
-UNTIL_C2B = frozenset({"field_effect_manual_holds"})
 _COPIES = {
     "human_decisions": ("display_title", "target_field_document", "selected_form"),
     "field_effects": ("display_title",),
@@ -66,7 +63,7 @@ def _tables(connection: sqlite3.Connection) -> set[str]:
 def _ledger_rows(connection: sqlite3.Connection) -> dict[str, list[tuple[object, ...]]]:
     return {
         table: sorted(connection.execute(f"SELECT * FROM {table}"), key=repr)
-        for table in sorted(schema.LEDGER_TABLES - UNTIL_C2B)
+        for table in sorted(schema.LEDGER_TABLES)
     }
 
 
@@ -111,7 +108,7 @@ def regenerate(path: Path) -> None:
     setup = _derived_setup()
 
     def change(connection: sqlite3.Connection) -> None:
-        for table in (*setup, *sorted(UNTIL_C2B)):
+        for table in setup:
             connection.execute(f"DELETE FROM {table}")
         for table, rows in setup.items():
             for row in rows:

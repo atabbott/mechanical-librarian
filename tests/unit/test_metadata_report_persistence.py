@@ -666,7 +666,6 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("field_effect_consents",),
             ("field_effect_control",),
             ("field_effect_events",),
-            ("field_effect_manual_holds",),
             ("field_effect_no_changes",),
             ("field_effect_suspensions",),
             ("field_effects",),

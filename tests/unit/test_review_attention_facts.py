@@ -88,10 +88,6 @@ _PARENTS = {
 _VALIDATED_PARENTS = {
     "owner_authored_descriptions": ("current_description_decisions", "decision_id"),
 }
-# Attention reads no manual hold once the record holds the owner's answers
-# (#2038): the hold table keeps its refresh triggers, which refresh facts no
-# hold can move, until its removal.
-_RETIRED_INPUTS = frozenset({"field_effect_manual_holds"})
 _OPERATIONS = ("insert", "update", "delete")
 # The fact source as main held it before #1249 removed the audiobook clause
 # and let narrators ask under the authors' policy key, pinned by digest so the
@@ -919,9 +915,7 @@ def test_input_map_names_every_table_the_derivation_reads(tmp_path: Path) -> Non
             if re.search(rf"\b{row[0]}\b", _ATTENTION_FACT_SOURCE_SQL)
         }
         assert tables == (
-            set(schema._ATTENTION_INPUTS) - _RETIRED_INPUTS
-            | set(_PARENTS)
-            | set(_VALIDATED_PARENTS)
+            set(schema._ATTENTION_INPUTS) | set(_PARENTS) | set(_VALIDATED_PARENTS)
         )
         assert connection.execute("PRAGMA foreign_keys").fetchone() == (1,)
         triggers = dict(
@@ -1023,18 +1017,13 @@ def test_every_maintained_write_keeps_facts_equal_to_their_derivation(
     assert covered == {
         (table, operation)
         for table, (operations, _) in schema._ATTENTION_INPUTS.items()
-        if table not in _RETIRED_INPUTS
         for operation in operations
     }
 
 
 @pytest.mark.parametrize(
     "trigger",
-    sorted(
-        name
-        for name in schema._ATTENTION_INPUT_TRIGGERS
-        if name.split("_refresh_attention_")[0] not in _RETIRED_INPUTS
-    ),
+    sorted(schema._ATTENTION_INPUT_TRIGGERS),
 )
 def test_a_missing_maintenance_trigger_is_caught(
     _state: Path, tmp_path: Path, trigger: str
@@ -1212,12 +1201,11 @@ def test_update_guards_name_exactly_the_columns_the_facts_read(
     updated = {
         table: reads.get(table, set()) | set(re.findall(r"\{row\}\.(\w+)", scope))
         for table, (operations, scope) in schema._ATTENTION_INPUTS.items()
-        if "update" in operations and table not in _RETIRED_INPUTS
+        if "update" in operations
     }
     assert {
         table: set(columns)
         for table, columns in schema._ATTENTION_UPDATED_COLUMNS.items()
-        if table not in _RETIRED_INPUTS
     } == updated
     # Every guarded column is compared by its stored value alone.
     for table, columns in schema._ATTENTION_UPDATED_COLUMNS.items():

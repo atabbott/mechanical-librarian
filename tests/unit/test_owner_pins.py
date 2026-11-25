@@ -11,6 +11,7 @@ where neither outcome existed. Synthetic fixtures only.
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,10 +24,6 @@ from mechanical_librarian.adapters.field_effect_authority import (
 )
 from mechanical_librarian.adapters.field_effect_fakes import FakeCapabilityObserver
 from mechanical_librarian.adapters.persistence.decisions import pin_in_force_sql
-from mechanical_librarian.adapters.persistence.field_effect_validation import (
-    FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
-    _validate_field_effect_state,
-)
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
     case_record_sql,
 )
@@ -40,15 +37,10 @@ from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     authority_from_decision,
 )
-from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
 from mechanical_librarian.application.review_web import BrowseReviewLibrary
-from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.field_effect import (
-    canonical_json as canonical_effect_json,
-)
 from mechanical_librarian.domain.human_decision import (
     HumanDecisionError,
     chosen_value_fingerprint,
@@ -1005,102 +997,43 @@ def test_a_changed_pin_on_a_suspended_field_waits(tmp_path: Path) -> None:
     store.close()
 
 
-# AC4: the hold document's pin key is closed and exactly typed.
-def _stored_hold(store: OwnerStore, pin: dict[str, object]) -> dict[str, object]:
-    """Put a manual hold with ``pin`` on the case's title and return its
-    document. No answer writes a hold since #2038's record, but the table and
-    its validator stand until the holds are removed, so these tests write
-    one to keep proving the validator."""
-    decision = store.decide("pin")
-    store.repository._set_field_effect_manual_hold(
-        store.case.review_case_id,
-        "title",
-        decision.occurred_at,
-        decision.decision_id,
-        pin=pin,
-    )
-    (document,) = store.repository._connection.execute(
-        "SELECT document FROM field_effect_manual_holds "
-        "WHERE review_case_id=? AND destination='title'",
-        (store.case.review_case_id,),
-    ).fetchone()
-    return cast("dict[str, object]", json.loads(document))
-
-
+# AC4: the record's pin is exactly a digest (ADR-0108).
 @pytest.mark.parametrize(
     "pin",
-    [
-        "missing_key",
-        {"fingerprint": "a" * 64, "in_force": True, "extra": 1},
-        {"fingerprint": "a" * 63, "in_force": True},
-        {"fingerprint": "a" * 64, "in_force": 1},
-        {"fingerprint": "a" * 64, "in_force": "true"},
-    ],
-    ids=[
-        "missing_key",
-        "extra_key",
-        "short_fingerprint",
-        "integer_in_force",
-        "string_in_force",
-    ],
+    ["a" * 63, "a" * 65, "A" * 64, "g" * 64, 1],
+    ids=["short", "long", "upper_case", "not_hex", "integer"],
 )
-def test_the_hold_document_refuses_a_malformed_pin(
-    genres: OwnerStore, pin: object
-) -> None:
-    document = _stored_hold(genres, {"fingerprint": "a" * 64, "in_force": True})
+def test_the_record_refuses_a_malformed_pin(genres: OwnerStore, pin: object) -> None:
+    genres.decide("pin")
     connection = genres.repository._connection
-    _validate_field_effect_state(connection)
-    assert document["schema_version"] == FIELD_EFFECT_MANUAL_HOLD_SCHEMA
-    if pin == "missing_key":
-        del document["pin"]
-    else:
-        document["pin"] = pin
-    connection.execute("BEGIN")
-    try:
+    assert _pin(genres) is not None
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
         connection.execute(
-            "UPDATE field_effect_manual_holds SET document=? "
-            "WHERE review_case_id=? AND destination='title'",
-            (canonical_effect_json(document), genres.case.review_case_id),
+            "UPDATE owner_field_answers SET pin_fingerprint=? WHERE destination='title'",
+            (pin,),
         )
-        with pytest.raises(MetadataReportError) as refused:
-            _validate_field_effect_state(connection)
-    finally:
-        connection.execute("ROLLBACK")
-    cause = refused.value.__cause__
-    assert isinstance(cause, FieldEffectError)
-    assert cause.args[0] == "invalid_manual_hold"
 
 
-# AC9: a pin stands only on an active hold with no Resume asked of it.
-@pytest.mark.parametrize("state", ["released", "returning"])
-def test_the_hold_document_refuses_a_pin_on_a_released_or_returning_hold(
-    genres: OwnerStore, state: str
-) -> None:
-    document = _stored_hold(genres, {"fingerprint": "a" * 64, "in_force": True})
+# AC9: a pin stands only on an answer with no Resume asked of it.
+def test_the_record_refuses_a_pin_beside_an_open_resume(genres: OwnerStore) -> None:
+    genres.decide("pin")
     connection = genres.repository._connection
-    if state == "released":
-        document["active"] = False
-    else:
-        document["pending_return"] = {"requested_at": 1, "scan_id": "scan-1"}
+    request = "owner_field_event_" + "e" * 64
     connection.execute("BEGIN")
-    try:
+    connection.execute(
+        "INSERT INTO owner_field_events(event_id,connection_name,library_name,"
+        "item_id,destination,kind,request_id,over_ordinal,scan_id,answer_id,"
+        "occurred_at) SELECT ?,connection_name,library_name,item_id,destination,"
+        "'resume_requested',NULL,ordinal,'scan-1',answer_id,1 "
+        "FROM owner_field_answers WHERE destination='title'",
+        (request,),
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
         connection.execute(
-            "UPDATE field_effect_manual_holds SET active=?,document=? "
-            "WHERE review_case_id=? AND destination='title'",
-            (
-                int(document["active"] is True),
-                canonical_effect_json(document),
-                genres.case.review_case_id,
-            ),
+            "UPDATE owner_field_answers SET open_resume_id=? WHERE destination='title'",
+            (request,),
         )
-        with pytest.raises(MetadataReportError) as refused:
-            _validate_field_effect_state(connection)
-    finally:
-        connection.execute("ROLLBACK")
-    cause = refused.value.__cause__
-    assert isinstance(cause, FieldEffectError)
-    assert cause.args[0] == "invalid_manual_hold"
-    _validate_field_effect_state(connection)
+    connection.execute("ROLLBACK")
 
 
 # AC9: a Resume that read the hold before a pin was recorded on it is refused

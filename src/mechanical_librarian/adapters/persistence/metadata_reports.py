@@ -1061,23 +1061,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
         return self._field_effect_activity.pending_field_effect_decision_counts()
 
-    def _set_field_effect_manual_hold(
-        self,
-        review_case_id: str,
-        destination: str,
-        changed_at: int,
-        decision_id: str,
-        *,
-        pin: dict[str, object] | None = None,
-    ) -> None:
-        self._field_effects._set_field_effect_manual_hold(
-            review_case_id,
-            destination,
-            changed_at,
-            decision_id,
-            pin=pin,
-        )
-
     def owner_field_resume_context(
         self,
         review_case_id: str,

@@ -220,11 +220,6 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "field-effect-consent-state-v2",
     ),
     (
-        "mechanical_librarian.adapters.persistence.field_effect_validation",
-        "FIELD_EFFECT_MANUAL_HOLD_SCHEMA",
-        "field-effect-manual-hold-v3",
-    ),
-    (
         "mechanical_librarian.domain.owner_field_answer",
         "OWNER_FIELD_EVENT_SCHEMA",
         "owner-field-event-v1",

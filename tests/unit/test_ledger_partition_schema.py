@@ -34,7 +34,6 @@ from tests.support.genre_reports import (
 )
 from tests.support.ledger_copies import assert_ledger_copies
 from tests.support.ledger_partition import (
-    UNTIL_C2B,
     copied_store,
     opens,
     regenerate,
@@ -97,14 +96,6 @@ DERIVED_TABLES = frozenset(
     }
 )
 DERIVED_VIEWS = frozenset({"review_attention_refresh"})
-# Ledger foreign keys into derived state that a later stage removes. Each
-# entry is (table, column, referenced table).
-KNOWN_LEDGER_TO_DERIVED_KEYS = frozenset(
-    {
-        # #2038 C2b deletes the manual holds; the record replaces them.
-        ("field_effect_manual_holds", "review_case_id", "review_cases"),
-    }
-)
 _WRITE = re.compile(
     r"\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?"
     r"|DELETE\s+FROM)\s+(\w+)",
@@ -155,7 +146,7 @@ def test_every_table_and_view_is_ledger_or_pinned_derived(
     assert views == schema.LEDGER_VIEWS | DERIVED_VIEWS
 
 
-def test_ledger_foreign_keys_reference_only_ledger_tables(
+def test_no_ledger_table_references_derived_state(
     connection: sqlite3.Connection,
 ) -> None:
     crossing = {
@@ -164,7 +155,8 @@ def test_ledger_foreign_keys_reference_only_ledger_tables(
         for key in connection.execute(f"PRAGMA foreign_key_list('{table}')")
         if key[2] not in schema.LEDGER_TABLES
     }
-    assert crossing == KNOWN_LEDGER_TO_DERIVED_KEYS
+    # No ledger table references derived state (ADR-0108).
+    assert crossing == set()
     # Derived rows may reference ledger rows: the direction is one way only.
     assert any(
         key[2] in schema.LEDGER_TABLES
@@ -200,7 +192,6 @@ def test_triggers_writing_derived_state_are_derived_and_ledger_triggers_read_led
             assert _references(_body(sql), names) <= _LEDGER, name
     assert derived_on_ledger == {
         "automatic_safety_state",
-        "field_effect_manual_holds",
         "field_effect_suspensions",
         "human_decisions",
         "metadata_policy_resolutions",
@@ -673,12 +664,6 @@ def test_a_regenerated_store_opens_and_every_ledger_row_decodes(
     assert (
         decoded["human_decisions.target_field_document"] == decoded["human_decisions"]
     )
-
-
-def test_only_the_manual_holds_still_reference_derived_state() -> None:
-    """A regeneration deletes exactly the ledger rows that still point into
-    derived state, which C2b removes with the holds themselves."""
-    assert {table for table, _, _ in KNOWN_LEDGER_TO_DERIVED_KEYS} == UNTIL_C2B
 
 
 def test_an_owner_cover_choice_stands_without_its_comparison(

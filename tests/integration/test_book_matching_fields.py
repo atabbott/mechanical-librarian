@@ -91,7 +91,7 @@ _LEVEL_TABLES = (
     "field_effects",
     "field_effect_events",
     "field_effect_authorities",
-    "field_effect_manual_holds",
+    "owner_field_answers",
     "automatic_decisions",
 )
 
@@ -318,18 +318,17 @@ def _reask_store(
 def test_level_change_reasks_only_changed_offer(tmp_path: Path, case: str) -> None:
     """The field whose offer changed stops counting: one valueless
     ``matching_changed`` row binds its new offer, its pending effect closes as
-    ``matching_changed``, its hold stays, Activity notes the choice as asked
-    again, and no other field gains a row."""
+    ``matching_changed``, the record's answer stays, Activity notes the choice
+    as asked again, and no other field gains a row."""
     store, standing, changed_to = _reask_store(tmp_path, case)
     try:
         destination = standing.destination
         operation = store.plan(standing)
-        # A hold the field carries stays: the field stays the owner's.
-        store.repository._set_field_effect_manual_hold(
-            store.case.review_case_id, destination, store.clock(), standing.decision_id
-        )
-        store.repository._connection.commit()
-        holds = _rows(store)["field_effect_manual_holds"]
+        # The record's answer for the field stays: the field stays the owner's.
+        answers = _rows(store)["owner_field_answers"]
+        assert [row[5] for row in answers if row[3] == destination] == [
+            standing.decision_id
+        ]
         events = counts(store)[1]
         before = offer_digest(offer_of(store), destination)
 
@@ -352,7 +351,10 @@ def test_level_change_reasks_only_changed_offer(tmp_path: Path, case: str) -> No
         ]
         assert counts(store)[1] == events  # no event, so no new Activity row
         assert _effect(store, operation.plan.plan_id) == ("stale", "matching_changed")
-        assert _rows(store)["field_effect_manual_holds"] == holds
+        # Only whether the answer may be carried to another case moves.
+        assert [row[:14] + row[15:] for row in _rows(store)["owner_field_answers"]] == [
+            row[:14] + row[15:] for row in answers
+        ]
         assert _marker(store) == changed_to.value
         with owner_client(store, tmp_path) as (client, _csrf):
             detail = client.get(

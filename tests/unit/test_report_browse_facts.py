@@ -393,8 +393,7 @@ def _oracle_attention(
     # one; a pin's own attention is compared in test_review_attention_facts.
     assert (
         repository._connection.execute(
-            "SELECT 1 FROM field_effect_manual_holds "
-            "WHERE json_type(document,'$.pin')='object'"
+            "SELECT 1 FROM owner_field_answers WHERE pin_fingerprint IS NOT NULL"
         ).fetchone()
         is None
     )

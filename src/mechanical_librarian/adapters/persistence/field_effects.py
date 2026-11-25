@@ -52,7 +52,6 @@ from typing import cast
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     FIELD_EFFECT_CONSENT_STATE_SCHEMA,
-    FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
     _consent_state,
 )
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
@@ -772,42 +771,6 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                         ),
                     ),
                 )
-
-    def _set_field_effect_manual_hold(
-        self,
-        review_case_id: str,
-        destination: str,
-        changed_at: int,
-        decision_id: str,
-        *,
-        pin: dict[str, object] | None = None,
-    ) -> None:
-        document = canonical_effect_json(
-            {
-                "active": True,
-                "destination": destination,
-                "decision_id": decision_id,
-                "pending_return": None,
-                "pin": pin,
-                "review_case_id": review_case_id,
-                "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
-                "updated_at": changed_at,
-            }
-        )
-        # An owner's hold write re-inserts its row, so it takes a fresh rowid
-        # and outranks, on an equal update time, a copy carried to a sibling
-        # case earlier (_WORK_LATEST_MANUAL_HOLDS_SQL). The explicit DELETE
-        # fires the attention delete trigger, as INSERT OR REPLACE would not.
-        self._connection.execute(
-            "DELETE FROM field_effect_manual_holds "
-            "WHERE review_case_id=? AND destination=?",
-            (review_case_id, destination),
-        )
-        self._connection.execute(
-            "INSERT INTO field_effect_manual_holds(review_case_id,destination,active,updated_at,document) "
-            "VALUES(?,?,1,?,?)",
-            (review_case_id, destination, changed_at, document),
-        )
 
     @local_operation
     def owner_field_resume_context(

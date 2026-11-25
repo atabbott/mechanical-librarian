@@ -1052,9 +1052,7 @@ def test_a_pin_never_reopens_a_description_choice(tmp_path, monkeypatch, beneath
             connection.execute(
                 "SELECT decision_id FROM human_decisions ORDER BY ordinal"
             ).fetchall(),
-            connection.execute(
-                "SELECT document FROM field_effect_manual_holds"
-            ).fetchall(),
+            connection.execute("SELECT * FROM owner_field_answers").fetchall(),
             repository.pending_field_effect_decision_documents(32),
         )
 

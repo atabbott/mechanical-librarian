@@ -913,6 +913,54 @@ def _undo_cover_split(connection: sqlite3.Connection, selections_sql: str) -> No
     )
 
 
+# Nor did it keep a record of the owner's answers at all: a manual hold per
+# case and field held the field, its pin and its Resume, by foreign key to
+# its case, and Attention refreshed from it as from the record now (#2038).
+PRE_2038_MANUAL_HOLDS_SQL = (
+    "CREATE TABLE field_effect_manual_holds ("
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
+    "active INTEGER NOT NULL CHECK(active IN (0,1)), "
+    "updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND "
+    "length(CAST(document AS BLOB)) BETWEEN 2 AND 4096), "
+    "PRIMARY KEY(review_case_id,destination))"
+)
+_HOLD_REFRESH = (
+    "INSERT INTO review_attention_refresh(connection_name,library_name,item_id,"
+    "destination) "
+)
+_HOLD_PACKAGES = (
+    "SELECT c.connection_name,c.library_name,c.item_id,{0}.destination "
+    "FROM current_review_packages c WHERE c.review_case_id={0}.review_case_id"
+)
+PRE_2038_MANUAL_HOLD_TRIGGERS = (
+    "CREATE TRIGGER field_effect_manual_holds_refresh_attention_insert AFTER "
+    "INSERT ON field_effect_manual_holds BEGIN "
+    + _HOLD_REFRESH
+    + _HOLD_PACKAGES.format("NEW")
+    + "; END",
+    "CREATE TRIGGER field_effect_manual_holds_refresh_attention_update AFTER "
+    "UPDATE OF review_case_id,destination,active,document ON "
+    "field_effect_manual_holds WHEN "
+    + " OR ".join(
+        f"OLD.{name} IS NOT NEW.{name} COLLATE BINARY"
+        for name in ("review_case_id", "destination", "active", "document")
+    )
+    + " BEGIN "
+    + _HOLD_REFRESH
+    + _HOLD_PACKAGES.format("OLD")
+    + " UNION "
+    + _HOLD_PACKAGES.format("NEW")
+    + "; END",
+    "CREATE TRIGGER field_effect_manual_holds_refresh_attention_delete AFTER "
+    "DELETE ON field_effect_manual_holds BEGIN "
+    + _HOLD_REFRESH
+    + _HOLD_PACKAGES.format("OLD")
+    + "; END",
+)
+
+
 def undo_2038_tables(
     connection: sqlite3.Connection,
     cover_selections_sql: str = PRE_2038_COVER_SELECTION_AUTHORITIES_SQL,
@@ -921,12 +969,23 @@ def undo_2038_tables(
     the two preparation control rows merged back into one row, and the
     description decisions and cover selections each back in one table,
     keeping their values, and no record of the owner's answers, its counter
-    or its events. A producer's own cover selection table, when it kept an
-    older one, is `cover_selections_sql`."""
+    or its events, but the manual holds again, empty, with the refresh
+    triggers the record's took over where the store has those. A producer's
+    own cover selection table, when it kept an older one, is
+    `cover_selections_sql`."""
+    watched = connection.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type='trigger' "
+        "AND name='owner_field_answers_refresh_attention_insert'"
+    ).fetchone()
     connection.executescript(
         "DROP TABLE owner_field_answers;DROP TABLE owner_field_events;"
         "DROP TABLE owner_answer_ordinal;"
-        "CREATE TEMP TABLE pre_2038_control AS SELECT 1 AS singleton,"
+        + PRE_2038_MANUAL_HOLDS_SQL
+        + ";"
+        + "".join(
+            sql + ";" for sql in (PRE_2038_MANUAL_HOLD_TRIGGERS if watched else ())
+        )
+        + "CREATE TEMP TABLE pre_2038_control AS SELECT 1 AS singleton,"
         "owner.paused,scheduling.claim_sequence,owner.first_boot_acknowledged,"
         "scheduling.last_library,scheduling.circuit_failures,"
         "scheduling.circuit_open_until,scheduling.updated_at,"
@@ -1079,7 +1138,6 @@ PRIOR_ATTENTION_FACT_OBJECTS = tuple(
         (
             "review_case_episodes_",
             "metadata_policy_state_",
-            "field_effect_manual_holds_",
             *_RECORD_ATTENTION_OBJECTS,
         )
     )
