@@ -388,6 +388,41 @@ _PIN_CHANGED_SQL = _pin_record_sql(
 )
 
 
+def _withdrawn_automatic_sql(case: str, destination: str) -> str:
+    """Whether the owner withdrew the field on case `case` beside Automatic's
+    decision there: the episode's latest owner row for the field `destination`,
+    pins and unpins aside, is a withdrawal, and the case holds an
+    active-generation automatic decision for it. The owner asked to be asked
+    again, so that decision, or Automatic's authored description, settles
+    nothing on the case (an emptying withdrawal also revoked its authority),
+    and the field is asked where the case offers a decision on it. Automatic
+    decides the field from the book's next case or episode (ADR-0108,
+    Withdrawal and carry eligibility). The case page reads the same term
+    (`review_projections`)."""
+    return (
+        "(COALESCE((SELECT withdrawn.outcome FROM human_decisions withdrawn "
+        f"WHERE withdrawn.review_case_id={case} "
+        f"AND withdrawn.destination={destination} "
+        "AND withdrawn.outcome NOT IN ('pin','unpin') AND "
+        + _episode_decision_sql("withdrawn")
+        + " ORDER BY withdrawn.ordinal DESC LIMIT 1),'')='withdraw' AND EXISTS "
+        "(SELECT 1 FROM automatic_decisions withdrawn_over WHERE "
+        f"withdrawn_over.review_case_id={case} "
+        f"AND withdrawn_over.destination={destination} AND "
+        + _active_generation_automatic_sql("withdrawn_over")
+        + "))"
+    )
+
+
+# The owner withdrew the field beside Automatic's decision on the case, which
+# then settles nothing: the field is asked where the case offers a decision.
+_WITHDRAWN_ASKS_SQL = (
+    "(result.has_owner_decision_actions=1 AND "
+    + _withdrawn_automatic_sql("rc.review_case_id", "result.destination")
+    + ")"
+)
+
+
 def _own_answer_sql(answer: str, case: str, destination: str) -> str:
     """Whether the record row `answer`, for the field `destination`, is the
     answer case `case` holds as its own: given on it in its current episode,
@@ -443,20 +478,24 @@ def _record_asks_sql(item: str = "c") -> str:
 
 
 # Asked by a reason beside the proposal's own, as the Attention list flags
-# it: the policy's Ask me, or the record's answer from an earlier case or
-# episode that nothing carried (C2b-15, C2b-18, S16).
+# it: the policy's Ask me, the record's answer from an earlier case or
+# episode that nothing carried (C2b-15, C2b-18, S16), or a withdrawal beside
+# Automatic's decision.
 _ASKED_BESIDE_PROPOSAL_SQL = (
     "(" + _POLICY_ASK_ATTENTION_SQL + " OR EXISTS (SELECT 1 FROM "
     "current_review_case_lineages asked_case WHERE "
     "asked_case.review_case_id=rc.review_case_id AND "
     + _record_asks_sql(item="asked_case")
-    + "))"
+    + ") OR "
+    + _WITHDRAWN_ASKS_SQL
+    + ")"
 )
 
 
 # A changed pin asks with or without alternatives, so it stands outside the
 # owner-action gate (ADR-0085, Amendment 2). An answer the record holds from
-# elsewhere asks only where the case offers a decision (C2b-15, C2b-18, S16).
+# elsewhere asks only where the case offers a decision (C2b-15, C2b-18, S16),
+# as does a withdrawal beside Automatic's decision on the case.
 _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "(result.has_owner_decision_actions=1 AND ((result.unresolved_choice=1 "
     "AND NOT " + _COVER_SUGGESTED_SQL + ") "
@@ -482,6 +521,8 @@ _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     + _PIN_CHANGED_SQL
     + " OR "
     + _record_asks_sql()
+    + " OR "
+    + _WITHDRAWN_ASKS_SQL
     + ")"
 )
 
@@ -521,13 +562,14 @@ def _resumed_decision_sql(item: str) -> str:
 # one the case's latest row withdrew does not (C2b-15). An automatic decision,
 # or Automatic's authored description, settles its field only in the active
 # generation and only while the record holds no answer for the field against
-# Automatic: none, or one with a Resume open that has not failed. A pin in
-# force settles its field. A pin or unpin row is never the latest decision, so
-# an answer under a pin settles its field as it would without one, including
-# while its pin waits for the chosen value to be read back. A changed pin with
-# no answer standing asks again over an automatic, authored or cover decision
-# a returning case still carries (ADR-0085, Amendment 2). A suspension still
-# wins.
+# Automatic: none, or one with a Resume open that has not failed; and never
+# while the case's latest row withdrew the field beside it
+# (`_withdrawn_automatic_sql`). A pin in force settles its field. A pin or
+# unpin row is never the latest decision, so an answer under a pin settles its
+# field as it would without one, including while its pin waits for the chosen
+# value to be read back. A changed pin with no answer standing asks again over
+# an automatic, authored or cover decision a returning case still carries
+# (ADR-0085, Amendment 2). A suspension still wins.
 _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
@@ -547,6 +589,8 @@ _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     "owner_authored_descriptions owner_authored WHERE "
     "owner_authored.decision_id=authored.decision_id) OR NOT "
     + _record_holds_sql("c", "result.destination")
+    + " AND NOT "
+    + _withdrawn_automatic_sql("rc.review_case_id", "result.destination")
     + ")) "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
@@ -556,6 +600,8 @@ _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     + _PIN_CHANGED_SQL
     + " AND NOT "
     + _record_holds_sql("c", "result.destination")
+    + " AND NOT "
+    + _withdrawn_automatic_sql("rc.review_case_id", "result.destination")
     + ") "
     "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers current_selection "
     "JOIN current_cover_considerations current_cover "
@@ -831,6 +877,7 @@ __all__ = [
     "_SHADOW_OUTCOME_HISTORY_SQL",
     "_active_generation_automatic_sql",
     "_episode_decision_sql",
+    "_withdrawn_automatic_sql",
     "_own_answer_sql",
 ]
 

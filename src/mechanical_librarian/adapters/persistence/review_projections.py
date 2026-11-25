@@ -72,6 +72,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _episode_decision_sql,
     _own_answer_sql,
     _resumed_decision_sql,
+    _withdrawn_automatic_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
@@ -504,10 +505,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         that offers Resume (C0 `resume_offer`; a cover where the owner's
         cover took it over from Automatic, S9); each whose answer the case
         holds as its own (`_own_answer_sql`), which decides the field here
-        (C2b-15); and the case's owner
-        decisions a completed Resume took back, which no longer decide their
-        field (D3). Kept apart so `read_current_review_case` stays under the
-        code-size guide."""
+        (C2b-15); each the owner withdrew beside Automatic's decision on the
+        case, which then settles nothing (`_withdrawn_automatic_sql`); and the
+        case's owner decisions a completed Resume took back, which no longer
+        decide their field (D3). Kept apart so `read_current_review_case`
+        stays under the code-size guide."""
         states: dict[str, list[str]] = {
             "held_destinations": [],
             "return_requested_destinations": [],
@@ -544,6 +546,16 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 states["own_answer_destinations"].append(destination)
         return {
             **{name: tuple(values) for name, values in states.items()},
+            "withdrawn_destinations": tuple(
+                row[0]
+                for row in self._connection.execute(
+                    "SELECT DISTINCT decision.destination FROM human_decisions "
+                    "decision WHERE decision.review_case_id=:case AND "
+                    + _withdrawn_automatic_sql(":case", "decision.destination")
+                    + " ORDER BY decision.destination",
+                    {"case": review_case_id},
+                )
+            ),
             "covered_decision_ids": tuple(
                 row[0]
                 for row in self._connection.execute(

@@ -681,10 +681,23 @@ def _pin_hold_sql(in_force: bool) -> str:
 
 
 _RECORD_HOLDS_SQL = review_sql._record_holds_sql("c", "result.destination")
+# Nor did a withdrawal beside Automatic's decision keep it from settling,
+# or ask the field.
+_NOT_WITHDRAWN_SQL = " AND NOT " + review_sql._withdrawn_automatic_sql(
+    "rc.review_case_id", "result.destination"
+)
 # The record's answer settled nothing on its own case and asked nothing
-# elsewhere either: the reason's arm, then the clear's.
+# elsewhere either, nor did a withdrawal beside Automatic's decision ask:
+# the reason's arm, then the clear's.
 _RECORD_ANSWER_STEPS = (
-    (" OR " + review_sql._record_asks_sql() + ")", ")"),
+    (
+        " OR "
+        + review_sql._record_asks_sql()
+        + " OR "
+        + review_sql._WITHDRAWN_ASKS_SQL
+        + ")",
+        ")",
+    ),
     ("AND NOT " + review_sql._record_case_answer_sql(own=True) + " ", ""),
 )
 _RECORD_ATTENTION_STEPS = (
@@ -697,10 +710,11 @@ _RECORD_ATTENTION_STEPS = (
         " AND (EXISTS (SELECT 1 FROM owner_authored_descriptions owner_authored "
         "WHERE owner_authored.decision_id=authored.decision_id) OR NOT "
         + _RECORD_HOLDS_SQL
+        + _NOT_WITHDRAWN_SQL
         + "))",
         ")",
     ),
-    (" AND NOT " + _RECORD_HOLDS_SQL + ") ", ") "),
+    (" AND NOT " + _RECORD_HOLDS_SQL + _NOT_WITHDRAWN_SQL + ") ", ") "),
     (
         review_sql._pin_record_sql(
             "rc.review_case_id", "result.destination", True, item="c"

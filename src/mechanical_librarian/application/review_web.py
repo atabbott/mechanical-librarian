@@ -391,6 +391,12 @@ class CurrentReviewCaseSnapshot:
     # field where the case offers a decision on it, and settles it where none
     # is offered (C2b-15, C2b-18, S16).
     own_answer_destinations: tuple[str, ...] = ()
+    # Destinations the owner withdrew on this case's episode (the latest
+    # owner row, pins and unpins aside) beside Automatic's active-generation
+    # decision: neither it nor Automatic's authored description settles them,
+    # and they are asked where the case offers a decision (ADR-0108,
+    # Withdrawal and carry eligibility).
+    withdrawn_destinations: tuple[str, ...] = ()
     # This case's owner decisions a completed Resume took back: they no
     # longer decide their field, and keep only a recorded line (D3).
     covered_decision_ids: tuple[str, ...] = ()
@@ -1475,7 +1481,11 @@ def _classify_field(
     )
     return classify_review_field(
         attention_candidate=(
-            _record_answered_elsewhere(snapshot, destination) and bool(actions)
+            (
+                _record_answered_elsewhere(snapshot, destination)
+                or destination in snapshot.withdrawn_destinations
+            )
+            and bool(actions)
         )
         or not repeated
         and (
@@ -1604,11 +1614,12 @@ def _classify_field(
 def _automatic_settles(snapshot: CurrentReviewCaseSnapshot, destination: str) -> bool:
     """Whether Automatic's decision would settle the field, as Attention reads
     it: the record holds no answer for it, or holds one with a Resume open
-    that has not failed (ADR-0108)."""
+    that has not failed, and the owner did not withdraw the field beside it
+    on the case (ADR-0108)."""
     return (
         destination not in snapshot.held_destinations
         or destination in snapshot.return_requested_destinations
-    )
+    ) and destination not in snapshot.withdrawn_destinations
 
 
 def _record_answered_elsewhere(

@@ -1031,6 +1031,51 @@ def test_withdrawing_the_second_answer_on_one_case_empties_the_record(
         assert_record_recomputes(root._connection)
 
 
+def test_an_emptying_withdrawal_beside_automatic_asks_the_field(
+    tmp_path: Path,
+) -> None:
+    """Withdrawal and carry eligibility: under Automatic, the owner answers
+    a field Automatic decided on the case, then withdraws the answer. The
+    record is empty and the withdrawal revoked Automatic's authority, so its
+    decision does not settle the field again: the field is asked by its own
+    reason, on the case page and in Attention, and nothing is pending. On
+    the book's next case Automatic decides the field again."""
+    with prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root = library.root
+        decided = ("automatic_recorded", "automatic_decided")
+        field = _fields(library)["authors"]
+        assert (field["classification"], field["classification_cause"]) == decided
+        root.record_human_decision(
+            accept(library.case(), "authors", "owner-answers-a-on-x-11", 11)
+        )
+        assert _fields(library)["authors"]["owner_control"]["withdraw"] is not None
+
+        root.record_human_decision(_withdraw_command(library, 13))
+
+        assert _record_of(root) is None
+        field = _fields(library)["authors"]
+        assert (field["classification"], field["classification_cause"]) == _ASKED
+        assert field["manual_hold"] is False
+        page, attention = _asked(library)
+        assert "authors" in page and "authors" in attention
+        assert library.pending() == []
+        assert_record_recomputes(root._connection)
+
+        _read_back(library, ("Someone Else",), 30)
+        later = [
+            str(row[0])
+            for row in root._connection.execute(
+                "SELECT decision_id FROM automatic_decisions WHERE review_case_id=? "
+                "AND destination='authors'",
+                (library.case_id(),),
+            )
+        ]
+        assert len(later) == 1 and library.pending() == later
+        field = _fields(library)["authors"]
+        assert (field["classification"], field["classification_cause"]) == decided
+        assert_record_recomputes(root._connection)
+
+
 @pytest.mark.parametrize(
     "posture", ("automatic", "preview"), ids=("automatic", "preview")
 )
