@@ -602,13 +602,16 @@ def test_a_projection_requeue_during_a_failed_resume_counts_as_projection(
     assert_record_recomputes(root._connection)
 
 
+@pytest.mark.parametrize("superseded", [False, True], ids=["resume", "answered"])
 def test_a_scan_never_counts_fewer_works_checked_across_a_resume(
-    tmp_path: Path,
+    tmp_path: Path, superseded: bool
 ) -> None:
     """Asking Resume while the page's scan runs requeues the case's work for
     projection, and the scan's "X of Y works checked" never goes backwards:
-    not at the request, not while the work waits or is projected again, and
-    the scan ends with the same count (C2b-12, Amendment 4)."""
+    not at the request, not while the work waits or is projected again, not
+    when the owner answers the field again before projection (the answer
+    supersedes the request), and the scan ends with the same count (C2b-12,
+    Amendment 4)."""
     with prepared(tmp_path, automatic=True, library_model="publication") as library:
         root = library.root
         root.record_human_decision(
@@ -644,6 +647,18 @@ def test_a_scan_never_counts_fewer_works_checked_across_a_resume(
             root, library.case_id(), "authors", 14, scan_id=scan.scan_id
         )
         observe()
+        if superseded:
+            root.record_human_decision(
+                _owner_command(library, "keep_current", "owner-keeps-authors", 14)
+            )
+            assert [
+                kind
+                for (kind,) in root._connection.execute(
+                    "SELECT kind FROM owner_field_events ORDER BY rowid"
+                )
+            ][-2:] == ["resume_requested", "resume_superseded"]
+            observe()
+            assert seen[-1][4:] == ("projection", "queued")
         library.now[0] = 15
         while library.pipeline.run_next():
             observe()

@@ -42,18 +42,23 @@ _UNCLOSED = (
 
 
 # A work Resume's request requeued for projection (C2b-12), over the work row
-# `w`: queued or running there while a request on its book is still the
-# latest event of its chain, neither completed, superseded nor failed. Its
-# scan keeps counting it as it stood, checked and ready, so the scan's "X of Y
-# works checked" never goes backwards; projection ends it again. A failed
-# request stays open, but a requeue during it is ordinary projection.
+# `w`: queued or running there, in the scan the request was made for, while
+# the request has neither completed nor failed. Its scan keeps counting it as
+# it stood, checked and ready, so the scan's "X of Y works checked" never goes
+# backwards; projection ends it again. An answer that supersedes the request
+# does not end it: the requeued work still waits. A superseded request never
+# completes or fails, so the scan bounds it, and a later scan's projection of
+# the work is ordinary. A failed request stays open, but a requeue during it
+# is ordinary projection.
 RESUME_REPROJECTION_SQL = (
     "(w.stage='projection' AND w.state IN ('queued','delayed','running') "
     "AND EXISTS (SELECT 1 FROM owner_field_events request "
     "WHERE request.connection_name=w.connection_name "
     "AND request.library_name=w.library_name AND request.item_id=w.item_id "
-    "AND request.kind='resume_requested' AND NOT EXISTS (SELECT 1 FROM "
-    "owner_field_events later WHERE later.request_id=request.event_id)))"
+    "AND request.kind='resume_requested' AND request.scan_id=w.scan_id "
+    "AND NOT EXISTS (SELECT 1 FROM owner_field_events later "
+    "WHERE later.request_id=request.event_id "
+    "AND later.kind IN ('resume_completed','resume_failed'))))"
 )
 
 
