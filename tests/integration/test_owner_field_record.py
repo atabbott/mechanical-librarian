@@ -1180,7 +1180,23 @@ def _assert_asked(library: Library) -> None:
     assert (field["classification"], field["classification_cause"]) == _ASKED
     page, attention = _asked(library)
     assert "authors" in page and "authors" in attention
+    assert _authors_fact(library) is True
     assert library.pending() == []
+
+
+def _authors_fact(library: Library) -> bool:
+    """Whether the stored Attention facts, which the Library lens and the
+    Attention counts read without the page's classifier, hold the work's
+    authors."""
+    (count,) = library.root._connection.execute(
+        "SELECT count(*) FROM review_attention_facts facts "
+        "JOIN current_review_packages c ON c.connection_name=facts.connection_name "
+        "AND c.library_name=facts.library_name AND c.item_id=facts.item_id "
+        "AND c.report_id=facts.report_id "
+        "WHERE c.review_case_id=? AND facts.destination='authors'",
+        (library.case_id(),),
+    ).fetchone()
+    return bool(count)
 
 
 def _assert_automatic_settles(library: Library) -> None:
@@ -1195,6 +1211,7 @@ def _assert_automatic_settles(library: Library) -> None:
     page, attention = _asked(library)
     assert "authors" not in page and "authors" not in attention
     assert (library.case_id(), "authors") not in library.attention()
+    assert _authors_fact(library) is False
 
 
 def test_an_open_resume_over_a_withdrawal_lets_automatic_settle(
