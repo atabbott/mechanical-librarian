@@ -918,10 +918,18 @@ def test_browse_probes_decision_and_policy_history_by_index() -> None:
                 statement for statement in membership if "human_decisions" in statement
             )
             assert len(asking) == 1 and "AS policy_attention" in asking[0]
-            assert all(
-                "human_decisions_case_destination" in step
+            probes = tuple(
+                step
                 for step in _plan(connection, asking[0], ())
                 if re.match(r"(SEARCH|SCAN) (latest|withdrawn)\b", step)
+            )
+            assert probes and all(
+                re.match(
+                    r"SEARCH (latest|withdrawn) USING (COVERING )?INDEX "
+                    r"human_decisions_case_destination\b",
+                    step,
+                )
+                for step in probes
             )
             probing = tuple(
                 statement

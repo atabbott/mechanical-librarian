@@ -428,13 +428,19 @@ no owner decision" ([security](../security.md#owner-decisions),
 
 - An active-generation automatic decision, or a current automatic description
   decision, settles a field only when the record holds no answer for the work
-  and destination, or holds one with a Resume open, and never while the case
-  episode's latest human row for the field, pins and unpins aside, is a
-  withdrawal beside that automatic decision. That field is asked where the
-  case offers a decision on it, so an emptying withdrawal never leaves it
-  reading as decided by Automatic; Automatic decides it again from the book's
-  next case or episode ([Withdrawal and carry
-  eligibility](#withdrawal-and-carry-eligibility)).
+  and destination, or holds one with a Resume open. An active-generation
+  automatic decision also does not settle while the case episode's latest
+  human row for the field, pins and unpins aside, is a withdrawal. That field
+  is asked where the case offers a decision on it, so an emptying withdrawal
+  never leaves it reading as decided by Automatic; Automatic decides it again
+  from the book's next case or episode ([Withdrawal and carry
+  eligibility](#withdrawal-and-carry-eligibility)). A Resume over the
+  withdrawal that has completed, or is open and has not failed, takes the
+  withdrawal back, and Automatic's decision settles the field again. The
+  description decision has no such case: an owner's description decision,
+  keep current among them, removes the case's current description decision,
+  Automatic authors none while such a row counts, and the owner cannot
+  withdraw a description.
 - Everything else that settles a field today still does: the case episode's
   latest human row that is not a withdrawal (carried rows, `settled` ones
   included), an authored description, and the owner cover pointer. An owner
