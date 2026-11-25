@@ -1080,11 +1080,20 @@ def test_an_emptying_withdrawal_beside_automatic_asks_the_field(
         root.record_human_decision(_withdraw_command(library, 13))
 
         assert _record_of(root) is None
+        # The case page's classification asks the field, and nothing on the
+        # case reads as decided by Automatic for it.
         field = _fields(library)["authors"]
         assert (field["classification"], field["classification_cause"]) == _ASKED
+        assert field["needs_attention"] is True
+        assert "automatic_decided" not in (
+            field["classification"],
+            field["classification_cause"],
+        )
         assert field["manual_hold"] is False
+        # Attention lists it, as the case page asks it.
         page, attention = _asked(library)
         assert "authors" in page and "authors" in attention
+        assert (library.case_id(), "authors") in library.attention()
         assert library.pending() == []
         assert_record_recomputes(root._connection)
 
