@@ -385,12 +385,13 @@ class CurrentReviewCaseSnapshot:
     resume_offer_destinations: tuple[str, ...] = ()
     # Held destinations whose unpinned answer was given on this case in its
     # current episode and not since withdrawn there (Book matching's
-    # `matching_changed` row is a withdrawal): it decides the field here. A pin's
-    # answer after its unpin, with no decision of the case, decides it only
-    # where Automatic decided it, and otherwise the field reads as it would
-    # without the answer (`_classify_field`, C2b-27). Any other unpinned
-    # answer asks the field where the case offers a decision on it, and
-    # settles it where none is offered (C2b-15, C2b-18, S16).
+    # `matching_changed` row is a withdrawal): it decides the field here. An
+    # answer that is only a pin taken back, on this case or an earlier one,
+    # is read here too: with no decision of the case, it decides the field
+    # only where Automatic decided it, and otherwise the field reads as it
+    # would without the answer (`_classify_field`, C2b-27, C2b-28). Any other
+    # unpinned answer asks the field where the case offers a decision on it,
+    # and settles it where none is offered (C2b-15, C2b-18, S16).
     own_answer_destinations: tuple[str, ...] = ()
     # Destinations the owner withdrew on this case's episode (the latest
     # owner row, pins and unpins aside) beside Automatic's active-generation
@@ -1625,15 +1626,15 @@ def _classify_field(
         repeated_description=repeated,
     )
     decided = classify(has_human_decision=other_human or own_answer)
-    # The case's own answer with no decision of the case to show (a pin taken
-    # back) reads as main did (C2b-25, C2b-27): it holds the field only where
-    # Automatic decided it, as an ordinary hold (ADR-0085, Amendment 6).
-    # Anywhere else the field reads as it would without the answer: asked,
-    # abstained, optional or with nothing to decide, and in Preview held
-    # beside another offered value, so turning on Automatic leaves it as it
-    # is. A requested Resume is already on its way and reads decided. An
-    # answer from an earlier case or episode reads by its own rules
-    # (C2b-15).
+    # The case's own answer with no decision of the case to show, or an
+    # answer that is only a pin taken back on any case, reads as main did
+    # (C2b-25, C2b-27, C2b-28): it holds the field only where Automatic
+    # decided it, as an ordinary hold (ADR-0085, Amendment 6). Anywhere else
+    # the field reads as it would without the answer: asked, abstained,
+    # optional or with nothing to decide, and in Preview held beside another
+    # offered value, so turning on Automatic leaves it as it is. A requested
+    # Resume is already on its way and reads decided. Any other answer from
+    # an earlier case or episode reads by its own rules (C2b-15).
     if (
         not own_answer
         or other_human
@@ -1663,8 +1664,9 @@ def _record_answered_elsewhere(
     episode, which nothing carried here. As Attention reads it, the field is
     asked where the case offers the owner a decision on it, and the answer
     settles it where none is offered (C2b-15, C2b-18, S16). A pin settles or
-    asks its field ahead of this; a cover's answer is the book's own pointer
-    instead."""
+    asks its field ahead of this, and an answer that is only a pin taken back
+    is read as the case's own (`own_answer_destinations`, C2b-28); a cover's
+    answer is the book's own pointer instead."""
     return (
         destination != "cover"
         and destination in snapshot.held_destinations

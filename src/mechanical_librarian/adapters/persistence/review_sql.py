@@ -494,11 +494,28 @@ def _own_answer_sql(answer: str, case: str, destination: str) -> str:
     )
 
 
+def _read_as_own_sql(answer: str, case: str, destination: str) -> str:
+    """Whether case `case` reads the record row `answer` for the field
+    `destination` as its own answer (`_own_answer_sql`), or the row's answer
+    is only a pin taken back on any case: a pin row, its pin cleared, no value
+    chosen. Like the case's own answer, such a pin settles nothing by itself
+    and holds the field only where Automatic decided it, as main's carried
+    hold did; elsewhere the field reads as it would without it, never as
+    answered elsewhere (C2b-27, C2b-28). Kept apart so the case page's own
+    answers read the same term (`review_projections`)."""
+    return (
+        f"({answer}.pin_fingerprint IS NULL AND ("
+        + _own_answer_sql(answer, case, destination)
+        + " OR EXISTS (SELECT 1 FROM human_decisions pin_only WHERE "
+        f"pin_only.decision_id={answer}.answer_id AND pin_only.outcome='pin')))"
+    )
+
+
 def _record_case_answer_sql(own: bool, item: str = "c") -> str:
     """Whether the record holds an answer for the field of case `rc` (book
-    row `c`) that the case holds as its own (`own`, `_own_answer_sql`), or one
-    that it does not: pinned, given on an earlier case or episode and carried
-    by nothing here, or withdrawn on this one (C2b-15, S16). A pinned answer
+    row `c`) that the case reads as its own (`own`, `_read_as_own_sql`), or
+    one that it does not: pinned, given on an earlier case or episode and
+    carried by nothing here, or withdrawn on this one (C2b-15, S16). A pinned answer
     is never the case's own: its pin settles or asks the field ahead of this
     (ADR-0085, Amendment 2), and once unpinned an answer of the case is its
     own. The case page's `_record_answered_elsewhere` leaves pins out; the
@@ -510,10 +527,9 @@ def _record_case_answer_sql(own: bool, item: str = "c") -> str:
         "EXISTS (SELECT 1 FROM owner_field_answers answered WHERE "
         "result.destination<>'cover' AND "
         + _record_key_sql("answered", item, "result.destination")
-        + (" AND (" if own else " AND NOT (")
-        + "answered.pin_fingerprint IS NULL AND "
-        + _own_answer_sql("answered", "rc.review_case_id", "result.destination")
-        + "))"
+        + (" AND " if own else " AND NOT ")
+        + _read_as_own_sql("answered", "rc.review_case_id", "result.destination")
+        + ")"
     )
 
 
@@ -952,6 +968,7 @@ __all__ = [
     "_episode_decision_sql",
     "_withdrawn_automatic_sql",
     "_own_answer_sql",
+    "_read_as_own_sql",
 ]
 
 

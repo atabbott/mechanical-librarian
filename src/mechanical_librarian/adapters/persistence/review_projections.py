@@ -70,7 +70,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _LATEST_PREPARATION_WORK_SQL,
     _POLICY_ASK_ATTENTION_SQL,
     _episode_decision_sql,
-    _own_answer_sql,
+    _read_as_own_sql,
     _resumed_decision_sql,
     _withdrawn_automatic_sql,
 )
@@ -508,8 +508,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         failed (the owner asks again, which requeues the scan, #1755); each
         that offers Resume (C0 `resume_offer`; a cover where the owner's
         cover took it over from Automatic, S9); each whose answer the case
-        holds as its own (`_own_answer_sql`), which decides the field here
-        (C2b-15); each the owner withdrew beside Automatic's decision on the
+        reads as its own (`_read_as_own_sql`), which decides the field here
+        (C2b-15), a pin taken back only where Automatic decided it (C2b-27,
+        C2b-28); each the owner withdrew beside Automatic's decision on the
         case, which then settles nothing (`_withdrawn_automatic_sql`); and the
         case's owner decisions a completed Resume took back, which no longer
         decide their field (D3). Kept apart so `read_current_review_case`
@@ -530,8 +531,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "WHERE took.selection_id=held.cover_selection_id "
             "AND took.cover_took_over=1) ELSE "
             + _resume_offer_sql(":case", "held.destination")
-            + " END,held.pin_fingerprint IS NULL AND "
-            + _own_answer_sql("held", ":case", "held.destination")
+            + " END,"
+            + _read_as_own_sql("held", ":case", "held.destination")
             + " FROM "
             + _CASE_RECORD_ROWS_SQL.format(alias="held")
             + " ORDER BY held.destination",

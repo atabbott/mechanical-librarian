@@ -2005,8 +2005,9 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
     ),
     # The record's answer for a field keeps Automatic's decision from
     # settling it, settles it on its own case and episode and asks it
-    # elsewhere, and its pin settles or asks it; Resume's events open, fail
-    # and complete what the answer holds (ADR-0108, C2b-15).
+    # elsewhere, unless it is only a pin taken back, and its pin settles or
+    # asks it; Resume's events open, fail and complete what the answer holds
+    # (ADR-0108, C2b-15, C2b-28).
     "owner_field_answers": (
         ("insert", "update", "delete"),
         "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,"
@@ -2075,6 +2076,7 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
         "destination",
         "review_case_id",
         "episode",
+        "answer_id",
         "open_resume_id",
         "pin_fingerprint",
     ),

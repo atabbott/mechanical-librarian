@@ -929,6 +929,91 @@ def test_a_pin_taken_back_where_automatic_abstained_asks_again(
     store.close()
 
 
+_NOTHING_TO_DECIDE = (
+    "contextual",
+    "unsupported",
+    "nothing_to_decide",
+    False,
+    False,
+    False,
+)
+
+
+# C2b-28: on a later case, an earlier answer that is only a pin taken back is
+# not an answer from elsewhere. It reads as the case's own pin taken back
+# does, as on main 946921c: a publisher no source offers another value for
+# has nothing to decide and sits in the closed "No change" panel, and a
+# title reads as above, asked under Ask me, decided with Resume where
+# Automatic decided it, held in Preview.
+@pytest.mark.parametrize(
+    ("title", "posture", "read"),
+    [
+        ("ask", "automatic", _ASKED_AGAIN),
+        ("ask", "preview", _ASKED_AGAIN),
+        (
+            "automatic",
+            "automatic",
+            ("primary", "human_recorded", "human_decided", False, True, False),
+        ),
+        (
+            "automatic",
+            "preview",
+            ("primary", "unsupported", "held_in_preview", False, False, False),
+        ),
+    ],
+    ids=["ask_me-automatic", "ask_me-preview", "automatic", "automatic-preview"],
+)
+def test_a_later_case_reads_a_pin_taken_back_as_its_own(
+    tmp_path: Path, title: str, posture: str, read: tuple[object, ...]
+) -> None:
+    store, report, _ = _store(tmp_path, title=title, posture=posture)
+    store.publish(report)
+    for destination in ("title", "publisher"):
+        store.decide("pin", destination=destination)
+        store.decide("unpin", destination=destination)
+    store.publish(rewritten(report, publisher="Changed Elsewhere"))
+    assert _read(store) == read
+    assert _read(store, "publisher") == _NOTHING_TO_DECIDE
+    assert_record_recomputes(store.repository._connection)
+    store.close()
+
+
+# C2b-28: that reading changes only how the field is shown. The pin taken back
+# still keeps Automatic off the field on the later case until Resume, as
+# main's carried hold did: Automatic's decision there is the held choice, and
+# nothing is planned or pending for it. Without the pin, the same later case
+# queues Automatic's write.
+@pytest.mark.parametrize("pinned", [True, False], ids=["pin_taken_back", "no_pin"])
+def test_a_pin_taken_back_keeps_automatic_off_a_later_case(
+    tmp_path: Path, pinned: bool
+) -> None:
+    store, report, _ = _store(tmp_path)
+    store.publish(report)
+    if pinned:
+        store.decide("pin")
+        store.decide("unpin")
+    store.publish(rewritten(report, publisher="Changed Elsewhere"))
+    later = [
+        decision.decision_id
+        for decision in _automatic(store, "title")
+        if decision.review_case_id == store.case.review_case_id
+    ]
+    assert len(later) == 1
+    planned = store.repository._connection.execute(
+        "SELECT count(*) FROM field_effects WHERE decision_id=?", later
+    ).fetchone()[0]
+    if pinned:
+        assert _queued(store) is None
+        assert later[0] not in _pending(store)
+        assert planned == 0
+        assert _field(store, "title")["manual_hold"] is True
+    else:
+        queued = _queued(store)
+        assert queued is not None and queued.decision_id == later[0]
+    assert_record_recomputes(store.repository._connection)
+    store.close()
+
+
 # AC11: a field with nothing to choose still asks once its pinned value changes.
 def test_a_changed_pin_joins_attention_without_alternatives(tmp_path: Path) -> None:
     store, report, _ = _store(tmp_path, title="ask")

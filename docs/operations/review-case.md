@@ -29,7 +29,7 @@ under 30 days old, the result is `admitted` or `superseded` with the
 transition reason `recent_write`, and your answers and pins apply as on any
 case. Only preparation passes the time; the `case-admit` scenario retires as
 before. A kept case adds no Attention fact except a pinned field whose value
-changed: a field you answered on an earlier case reads as decided there, and
+changed: a field you made a choice on in an earlier case reads as decided there, and
 preparation asks no cover or description advice for it. An
 actionable result replaces it as usual. The first scan of the unchanged work
 once the write is 30 days old sends it back to admission, which retires the
