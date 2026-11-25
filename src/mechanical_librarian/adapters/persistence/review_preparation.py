@@ -2758,9 +2758,11 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             "AND NOT EXISTS (SELECT 1 FROM automatic_decisions d WHERE d.review_case_id=w.review_case_id AND d.destination='title' AND "
             + _active_generation_automatic_sql("d")
             + ")"
-            # An owner's hold is not a reason to leave the title unprojected: a
-            # successor carries it with nothing yet to hold, and it acts when a
-            # write would be planned, never when the decision is made (ADR-0085).
+            # Only an owner decision on this case keeps its title out. The
+            # owner-answer record is not read here, so a title answered on an
+            # earlier case is projected again; every automatic path reads the
+            # record, which keeps Automatic off the title until Resume
+            # (ADR-0108).
         ).fetchall()
         self._requeue_projection_work(
             rows, updated_at, PreparationTrigger.TITLE_RECOVERY
