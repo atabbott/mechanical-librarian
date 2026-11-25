@@ -684,7 +684,7 @@ _RECORD_HOLDS_SQL = review_sql._record_holds_sql("c", "result.destination")
 # Nor did a withdrawal beside Automatic's decision keep it from settling,
 # or ask the field.
 _NOT_WITHDRAWN_SQL = " AND NOT " + review_sql._withdrawn_automatic_sql(
-    "rc.review_case_id", "result.destination"
+    "rc.review_case_id", "result.destination", "c"
 )
 # The record's answer settled nothing on its own case and asked nothing
 # elsewhere either, nor did a withdrawal beside Automatic's decision ask:

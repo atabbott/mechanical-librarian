@@ -1615,7 +1615,8 @@ def _automatic_settles(snapshot: CurrentReviewCaseSnapshot, destination: str) ->
     """Whether Automatic's decision would settle the field, as Attention reads
     it: the record holds no answer for it, or holds one with a Resume open
     that has not failed, and the owner did not withdraw the field beside it
-    on the case (ADR-0108)."""
+    on the case, or a Resume took the withdrawal back (ADR-0108,
+    `withdrawn_destinations`)."""
     return (
         destination not in snapshot.held_destinations
         or destination in snapshot.return_requested_destinations

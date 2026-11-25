@@ -1147,6 +1147,135 @@ def test_withdrawing_a_later_cases_answer_restores_the_earlier_one(
         assert_record_recomputes(root._connection)
 
 
+_AUTOMATIC_DECIDED = ("automatic_recorded", "automatic_decided")
+
+
+def _withdrawn_on_y(library: Library) -> tuple[str, str]:
+    """Under Automatic: A on X, the work read again as Y, B (keep current)
+    on Y, then B withdrawn, so the record holds A again and Y asks the field
+    (ADR-0108, Withdrawal and carry eligibility). Returns Y and Y's
+    automatic decision for the field."""
+    root = library.root
+    first = library.case_id()
+    a = accept(library.case(), "authors", "owner-answers-a-on-x-11", 11)
+    root.record_human_decision(a)
+    _read_back(library, ("Someone Else",), 12)
+    assert library.case_id() != first
+    root.record_human_decision(
+        _owner_command(library, "keep_current", "owner-answers-b-on-y-14", 14)
+    )
+    root.record_human_decision(_withdraw_command(library, 15))
+    assert _record_of(root) == (a.decision_id, first, 0, None)
+    (decision,) = root._connection.execute(
+        "SELECT decision_id FROM automatic_decisions WHERE review_case_id=? "
+        "AND destination='authors'",
+        (library.case_id(),),
+    ).fetchone()
+    _assert_asked(library)
+    return library.case_id(), str(decision)
+
+
+def _assert_asked(library: Library) -> None:
+    field = _fields(library)["authors"]
+    assert (field["classification"], field["classification_cause"]) == _ASKED
+    page, attention = _asked(library)
+    assert "authors" in page and "authors" in attention
+    assert library.pending() == []
+
+
+def _assert_automatic_settles(library: Library) -> None:
+    """The field reads as Automatic's decision on the case page and is not
+    in Attention."""
+    field = _fields(library)["authors"]
+    assert (
+        field["classification"],
+        field["classification_cause"],
+    ) == _AUTOMATIC_DECIDED
+    assert field["needs_attention"] is False
+    page, attention = _asked(library)
+    assert "authors" not in page and "authors" not in attention
+    assert (library.case_id(), "authors") not in library.attention()
+
+
+def test_an_open_resume_over_a_withdrawal_lets_automatic_settle(
+    tmp_path: Path,
+) -> None:
+    """N1 (C2b-20, design ruling): after B is withdrawn on Y, a Resume asked
+    over the withdrawal and still open hands the field back to Automatic, as
+    ADR-0108's "Automatic settles with a Resume open" reads: Y's automatic
+    decision settles the field and Attention does not list it."""
+    with prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root = library.root
+        case, _decision = _withdrawn_on_y(library)
+        request = request_resume(root, case, "authors", 16)
+        assert request is not None
+
+        _assert_automatic_settles(library)
+        assert_record_recomputes(root._connection)
+
+
+def test_a_completed_resume_over_a_withdrawal_lets_automatic_settle(
+    tmp_path: Path,
+) -> None:
+    """N1 (C2b-20, D3): once the Resume over the withdrawal completes, the
+    record holds nothing and the withdrawal is taken back, as D3 reads the
+    case's owner rows: Y's automatic decision settles the field, Attention
+    does not list it, and it is the one decision pending."""
+    with prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root = library.root
+        case, decision = _withdrawn_on_y(library)
+        request = request_resume(root, case, "authors", 16)
+        assert request is not None
+        assert complete_resume(root, request, 17)
+        assert _record_of(root) is None
+
+        _assert_automatic_settles(library)
+        assert library.pending() == [decision]
+        assert_record_recomputes(root._connection)
+
+
+def _withdrawal_asks(library: Library) -> bool:
+    """The withdrawal term itself, for the case's authors: the record's own
+    failed hold also asks the field, so only the term shows that a failed
+    Resume no longer lifts the withdrawal."""
+    from mechanical_librarian.adapters.persistence.review_sql import (
+        _withdrawn_automatic_sql,
+    )
+
+    (value,) = library.root._connection.execute(
+        "SELECT " + _withdrawn_automatic_sql(":case", "'authors'"),
+        {"case": library.case_id()},
+    ).fetchone()
+    return bool(value)
+
+
+def test_a_failed_resume_over_a_withdrawal_asks_the_field_again(
+    tmp_path: Path,
+) -> None:
+    """N1 (C2b-20, design ruling): the withdrawal asks the field; a Resume
+    open over it lets Automatic settle it; once the Resume's scan ends with
+    failures the field is asked again, on the page and in Attention, and the
+    withdrawal asks it again too."""
+    with prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root = library.root
+        case, _decision = _withdrawn_on_y(library)
+        assert _withdrawal_asks(library) is True
+        request = request_resume(root, case, "authors", 16)
+        assert request is not None
+        _assert_automatic_settles(library)
+        assert _withdrawal_asks(library) is False
+
+        (scan,) = root._connection.execute(
+            "SELECT scan_id FROM owner_field_events WHERE event_id=?", (request,)
+        ).fetchone()
+        assert root._fail_open_resumes_for_scan(scan, 17) == 1
+
+        _assert_asked(library)
+        assert _fields(library)["authors"]["manual_return_failed"] is True
+        assert _withdrawal_asks(library) is True
+        assert_record_recomputes(root._connection)
+
+
 @pytest.mark.parametrize(
     "posture", ("automatic", "preview"), ids=("automatic", "preview")
 )

@@ -388,24 +388,69 @@ _PIN_CHANGED_SQL = _pin_record_sql(
 )
 
 
-def _withdrawn_automatic_sql(case: str, destination: str) -> str:
+# A Resume open over a withdrawal that has not failed: nothing has closed or
+# failed it yet (ADR-0108, "Automatic settles with a Resume open"). Kept as
+# one clause apart from the completed case, the design ruling on C2b-20.
+_RESUME_OPEN_UNFAILED_SQL = (
+    " OR NOT EXISTS (SELECT 1 FROM owner_field_events answered_resume "
+    "WHERE answered_resume.request_id=resumed.event_id)"
+)
+
+
+def _resumed_withdrawal_sql(case: str, destination: str, item: str | None) -> str:
+    """Whether a Resume of the field of the case's book covers the owner row
+    `withdrawn` (its `over_ordinal` is at or above the row's ordinal) and has
+    completed, as `_resumed_decision_sql` reads it (D3), or is open and has
+    not failed (`_RESUME_OPEN_UNFAILED_SQL`). The book is `item`'s item key,
+    or the case's current lineage's."""
+    source = (
+        "owner_field_events resumed WHERE "
+        + _record_key_sql("resumed", item, destination)
+        if item is not None
+        else "current_review_case_lineages resumed_case "
+        "JOIN owner_field_events resumed "
+        "ON resumed.connection_name=resumed_case.connection_name "
+        "AND resumed.library_name=resumed_case.library_name "
+        "AND resumed.item_id=resumed_case.item_id "
+        f"WHERE resumed_case.review_case_id={case} "
+        f"AND resumed.destination={destination}"
+    )
+    return (
+        f"EXISTS (SELECT 1 FROM {source} "
+        "AND resumed.kind='resume_requested' "
+        "AND resumed.over_ordinal>=withdrawn.ordinal AND (EXISTS (SELECT 1 "
+        "FROM owner_field_events completed WHERE completed.request_id="
+        "resumed.event_id AND completed.kind='resume_completed')"
+        + _RESUME_OPEN_UNFAILED_SQL
+        + "))"
+    )
+
+
+def _withdrawn_automatic_sql(
+    case: str, destination: str, item: str | None = None
+) -> str:
     """Whether the owner withdrew the field on case `case` beside Automatic's
     decision there: the episode's latest owner row for the field `destination`,
-    pins and unpins aside, is a withdrawal, and the case holds an
-    active-generation automatic decision for it. The owner asked to be asked
-    again, so that decision, or Automatic's authored description, settles
-    nothing on the case (an emptying withdrawal also revoked its authority),
-    and the field is asked where the case offers a decision on it. Automatic
-    decides the field from the book's next case or episode (ADR-0108,
-    Withdrawal and carry eligibility). The case page reads the same term
+    pins and unpins aside, is a withdrawal that no Resume took back
+    (`_resumed_withdrawal_sql`), and the case holds an active-generation
+    automatic decision for it. The owner asked to be asked again, so that
+    decision settles nothing on the case (an emptying withdrawal also revoked
+    its authority), and the field is asked where the case offers a decision
+    on it. A Resume over the withdrawal, completed or open and not failed,
+    hands the field back to Automatic, whose decision then settles it.
+    Automatic decides the field from the book's next case or episode
+    (ADR-0108, Withdrawal and carry eligibility). The book is `item`'s item
+    key, or the case's current lineage's. The case page reads the same term
     (`review_projections`)."""
     return (
-        "(COALESCE((SELECT withdrawn.outcome FROM human_decisions withdrawn "
+        "(COALESCE((SELECT withdrawn.outcome='withdraw' AND NOT "
+        + _resumed_withdrawal_sql(case, destination, item)
+        + " FROM human_decisions withdrawn "
         f"WHERE withdrawn.review_case_id={case} "
         f"AND withdrawn.destination={destination} "
         "AND withdrawn.outcome NOT IN ('pin','unpin') AND "
         + _episode_decision_sql("withdrawn")
-        + " ORDER BY withdrawn.ordinal DESC LIMIT 1),'')='withdraw' AND EXISTS "
+        + " ORDER BY withdrawn.ordinal DESC LIMIT 1),0)=1 AND EXISTS "
         "(SELECT 1 FROM automatic_decisions withdrawn_over WHERE "
         f"withdrawn_over.review_case_id={case} "
         f"AND withdrawn_over.destination={destination} AND "
@@ -416,11 +461,17 @@ def _withdrawn_automatic_sql(case: str, destination: str) -> str:
 
 # The owner withdrew the field beside Automatic's decision on the case, which
 # then settles nothing: the field is asked where the case offers a decision.
-_WITHDRAWN_ASKS_SQL = (
-    "(result.has_owner_decision_actions=1 AND "
-    + _withdrawn_automatic_sql("rc.review_case_id", "result.destination")
-    + ")"
-)
+# `item` names a row with the book's item key columns, or None to reach the
+# book through the case's current lineage.
+def _withdrawn_asks_sql(item: str | None) -> str:
+    return (
+        "(result.has_owner_decision_actions=1 AND "
+        + _withdrawn_automatic_sql("rc.review_case_id", "result.destination", item)
+        + ")"
+    )
+
+
+_WITHDRAWN_ASKS_SQL = _withdrawn_asks_sql("c")
 
 
 def _own_answer_sql(answer: str, case: str, destination: str) -> str:
@@ -487,7 +538,7 @@ _ASKED_BESIDE_PROPOSAL_SQL = (
     "asked_case.review_case_id=rc.review_case_id AND "
     + _record_asks_sql(item="asked_case")
     + ") OR "
-    + _WITHDRAWN_ASKS_SQL
+    + _withdrawn_asks_sql(None)
     + ")"
 )
 
@@ -563,7 +614,8 @@ def _resumed_decision_sql(item: str) -> str:
 # or Automatic's authored description, settles its field only in the active
 # generation and only while the record holds no answer for the field against
 # Automatic: none, or one with a Resume open that has not failed; and never
-# while the case's latest row withdrew the field beside it
+# while the case's latest row withdrew the field beside it, unless a Resume
+# over the withdrawal completed or is open and has not failed
 # (`_withdrawn_automatic_sql`). A pin in force settles its field. A pin or
 # unpin row is never the latest decision, so an answer under a pin settles its
 # field as it would without one, including while its pin waits for the chosen
@@ -590,7 +642,7 @@ _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     "owner_authored.decision_id=authored.decision_id) OR NOT "
     + _record_holds_sql("c", "result.destination")
     + " AND NOT "
-    + _withdrawn_automatic_sql("rc.review_case_id", "result.destination")
+    + _withdrawn_automatic_sql("rc.review_case_id", "result.destination", "c")
     + ")) "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
@@ -601,7 +653,7 @@ _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     + " AND NOT "
     + _record_holds_sql("c", "result.destination")
     + " AND NOT "
-    + _withdrawn_automatic_sql("rc.review_case_id", "result.destination")
+    + _withdrawn_automatic_sql("rc.review_case_id", "result.destination", "c")
     + ") "
     "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers current_selection "
     "JOIN current_cover_considerations current_cover "
