@@ -689,9 +689,11 @@ mutation. Admission does not rely on SQLite alone:
   plan's or no-change row's title its report, a cover choice's copies its
   comparison, and a policy transition's size and counts its items. Once a
   regeneration removes them, nothing checks a copy against its source, nor
-  any case, proposal, comparison, selection or report a ledger row names; an
-  answer's episode and a description's chosen form are never checked. Each is
-  an accepted gap, since changing one needs write access to the volume.
+  any case, proposal, comparison, selection or report a ledger row names; a
+  description's chosen form is never checked, and an answer's episode only
+  against the answer it replaced. Each is an accepted gap, since changing one
+  needs write access to the volume. The record of the owner's answers must
+  equal its recomputation from them.
 
 Database-root crash recovery is explicit, runs under an exclusive lock and
 rolls back a private journal on verified copies first; unknown or malformed

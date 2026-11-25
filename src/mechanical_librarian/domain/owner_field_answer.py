@@ -149,25 +149,17 @@ def answer_from(
 
 
 def _standing(
-    history: list[OwnerAnswerRow], row: OwnerAnswerRow
+    latest: dict[tuple[str, str], OwnerAnswerRow], row: OwnerAnswerRow
 ) -> OwnerAnswerRow | None:
     """The field's latest owner decision of ``row``'s case episode before it.
 
-    The episode is the case's decision floor when ``row`` was recorded, so
-    this is exactly the row the store read as standing then.
+    ``latest`` holds each case field's latest owner decision so far, pins and
+    unpins aside; it is of the episode when its ordinal is above the
+    episode's floor. The episode is the case's decision floor when ``row``
+    was recorded, so this is exactly the row the store read as standing then.
     """
-    return next(
-        (
-            earlier
-            for earlier in reversed(history)
-            if earlier.source == "human"
-            and earlier.review_case_id == row.review_case_id
-            and earlier.destination == row.destination
-            and earlier.ordinal > row.episode
-            and earlier.outcome not in _ANNOTATIONS
-        ),
-        None,
-    )
+    earlier = latest.get((row.review_case_id, row.destination))
+    return earlier if earlier is not None and earlier.ordinal > row.episode else None
 
 
 def _shown_fingerprint(row: OwnerAnswerRow) -> str | None:
@@ -191,12 +183,15 @@ def _fold(
     record: dict[ItemKey, OwnerFieldAnswer] = {}
     # Each answer as it last stood in the record, for a later restore.
     stood: dict[str, OwnerFieldAnswer] = {}
-    history: list[OwnerAnswerRow] = []
+    # Each case field's latest owner decision, pins and unpins aside, so a
+    # store's open folds its whole ledger in one pass.
+    latest: dict[tuple[str, str], OwnerAnswerRow] = {}
     for row in sorted(rows, key=lambda value: value.ordinal):
         key = row.key
         current = record.get(key)
-        standing = _standing(history, row) if row.source == "human" else None
-        history.append(row)
+        standing = _standing(latest, row) if row.source == "human" else None
+        if row.source == "human" and row.outcome not in _ANNOTATIONS:
+            latest[(row.review_case_id, row.destination)] = row
         if row.outcome == "unpin":
             if current is not None:
                 record[key] = replace(current, pin_fingerprint=None)

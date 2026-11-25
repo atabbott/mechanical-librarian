@@ -450,14 +450,12 @@ _UNWRITTEN = (
 # Each copy moved wherever the ledger holds it, so only the case or the
 # transition's items, while they are there, can tell (ADR-0108).
 _CASE_AND_ITEM_COPIES = {
+    # Every owner decision of the seeded field moves, with its events and
+    # its record, since open folds the record from them all (ADR-0108).
     "decision_item_key": (
-        *(
-            f"UPDATE {table} SET item_id='another-book' WHERE {column}={_UNWRITTEN}"
-            for table, column in (
-                ("human_decision_events", "decision_id"),
-                ("human_decisions", "decision_id"),
-            )
-        ),
+        "UPDATE human_decision_events SET item_id='another-book'",
+        "UPDATE human_decisions SET item_id='another-book'",
+        "UPDATE owner_field_answers SET item_id='another-book' WHERE source='human'",
     ),
     "display_title": (
         f"UPDATE human_decisions SET display_title='Another title' "
@@ -574,7 +572,7 @@ def test_a_plan_and_a_no_change_title_agree_with_their_report(
 # opens. A check added for one of them, or a gap added, changes this list
 # deliberately.
 ACCEPTED_GAPS = (
-    # Display copies; the selected form and episodes are never checked.
+    # Display copies; the selected form is never checked.
     "display_title",
     "target_field_document",
     "selected_form",
@@ -589,7 +587,8 @@ ACCEPTED_GAPS = (
     "rank_key",
     "consideration_digest",
     "taste_copies",
-    # The case episode an owner answer was given in.
+    # The case episode an owner answer was given in, which open's fold of
+    # the record compares only with the episode of the answer it replaces.
     "decision_episode",
     "authored_description_episode",
     # A settled transition's counts, its state kept.
@@ -948,10 +947,14 @@ def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) ->
             "cover",
             selection + "width=1,height=1,offered_arts=1,report_format='mp3'",
         ),
+        # Every answer of the case's episode moves with it, so the record's
+        # fold, which compares an answer's episode with the one it replaces,
+        # reads the same answers.
         "decision_episode": (
             "activity",
             "UPDATE human_decisions SET document=json_set(document,'$.episode',"
-            f"json_extract(document,'$.episode')+1) WHERE decision_id={_UNWRITTEN}",
+            "json_extract(document,'$.episode')+1)",
+            "UPDATE owner_field_answers SET episode=episode+1 WHERE source='human'",
         ),
         # Its only answer is the first, so an episode before it needs a
         # later ordinal.
@@ -966,13 +969,15 @@ def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) ->
             _CASE_AND_ITEM_COPIES["transition_counts"][0],
         ),
         # The case, proposal and fingerprint an owner decision was made on.
+        # The case moves for every answer of the field and its record, which
+        # the fold reads together.
         "decision_provenance": (
             "activity",
             f"UPDATE human_decisions SET review_case_id='{case}',"
-            f"document=json_set(document,'$.review_case_id','{case}') "
-            f"WHERE decision_id={_UNWRITTEN}",
-            f"UPDATE human_decision_events SET review_case_id='{case}' "
-            f"WHERE decision_id={_UNWRITTEN}",
+            f"document=json_set(document,'$.review_case_id','{case}')",
+            f"UPDATE human_decision_events SET review_case_id='{case}'",
+            f"UPDATE owner_field_answers SET review_case_id='{case}' "
+            "WHERE source='human'",
             "UPDATE human_decisions SET proposal_id='review_proposal_"
             f"{_OTHER_DIGEST}',document=json_set(document,'$.proposal_id',"
             f"'review_proposal_{_OTHER_DIGEST}') WHERE decision_id={_UNWRITTEN}",
@@ -1005,7 +1010,7 @@ def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) ->
         # Nor this owner decision; its events move with it.
         "decision_item_key_without_ledger_reference": (
             "activity",
-            *_CASE_AND_ITEM_COPIES["decision_item_key"][:2],
+            *_CASE_AND_ITEM_COPIES["decision_item_key"],
         ),
     }
     assert tuple(gaps) == ACCEPTED_GAPS

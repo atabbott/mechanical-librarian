@@ -2,9 +2,10 @@
 
 Every answer site writes `owner_field_answers` incrementally beside the
 hold. `assert_record_recomputes` recomputes the whole record from the ledger
-alone and compares it with what was stored; `assert_records_recompute` does
-that for every store a test left under its directory, which the hold modules
-run at teardown so each of their scenarios is checked.
+alone and compares it with what was stored, by the comparison open makes;
+`assert_records_recompute` does that for every store a test left under its
+directory, which the hold modules run at teardown so each of their scenarios
+is checked, including stores no test opens again.
 """
 
 from __future__ import annotations
@@ -16,24 +17,17 @@ from pathlib import Path
 import pytest
 
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
-    ledger_answers,
-    stored_answers,
+    record_differences,
 )
-from mechanical_librarian.domain.owner_field_answer import fold_owner_field_answers
 
 _SQLITE_HEADER = b"SQLite format 3\x00"
 _SIDE_FILES = ("-wal", "-shm", "-journal")
 
 
 def assert_record_recomputes(connection: sqlite3.Connection) -> None:
-    """The stored record equals the fold of the ledger's owner answers."""
-    stored = {answer.key: answer for answer in stored_answers(connection)}
-    folded = fold_owner_field_answers(ledger_answers(connection))
-    differing = {
-        key: (folded.get(key), stored.get(key))
-        for key in folded.keys() | stored.keys()
-        if folded.get(key) != stored.get(key)
-    }
+    """The stored record equals the fold of the ledger's owner answers, by
+    the comparison open makes."""
+    differing = record_differences(connection)
     assert not differing, f"record differs from the ledger's fold: {differing}"
 
 

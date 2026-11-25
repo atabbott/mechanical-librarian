@@ -5,7 +5,8 @@ transaction, and every answer site writes `owner_field_answers` through this
 module in that same transaction. Until Resume and the readers move to it (C2b)
 nothing decides anything from the record: manual holds stay authoritative and
 the record is written beside them. `domain.owner_field_answer` folds the same
-rows from the ledger; a withdrawal restores through that fold.
+rows from the ledger; a withdrawal restores through that fold, and open
+refuses a store whose record is not that fold.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from mechanical_librarian.domain.owner_field_answer import (
     OwnerAnswerRow,
     OwnerFieldAnswer,
     answer_from,
+    fold_owner_field_answers,
     owner_field_event_id,
     restored_answer,
 )
@@ -181,6 +183,27 @@ def stored_answers(connection: sqlite3.Connection) -> Iterator[OwnerFieldAnswer]
         values = list(row)
         values[14] = bool(values[14])
         yield OwnerFieldAnswer(*values)
+
+
+def record_differences(
+    connection: sqlite3.Connection,
+) -> dict[ItemKey, tuple[OwnerFieldAnswer | None, OwnerFieldAnswer | None]]:
+    """Every field whose stored record is not the ledger's fold, as
+    (folded, stored); None where one of them has no row.
+
+    The fold sees no Resume event in C2a, so `open_resume_id`,
+    `offer_digest` and `seen_target_digest` compare as it gives them, null.
+    C2b: once Resume writes events, they must enter the fold (or this
+    comparison must take those columns from them), or every store holding
+    an open request is refused.
+    """
+    stored = {answer.key: answer for answer in stored_answers(connection)}
+    folded = fold_owner_field_answers(ledger_answers(connection))
+    return {
+        key: (folded.get(key), stored.get(key))
+        for key in folded.keys() | stored.keys()
+        if folded.get(key) != stored.get(key)
+    }
 
 
 def _current(connection: sqlite3.Connection, key: ItemKey) -> OwnerFieldAnswer | None:
@@ -380,7 +403,8 @@ _RECORD_RULES = (
 
 
 def validate_owner_field_answers(connection: sqlite3.Connection) -> None:
-    """Refuse a store whose record, counter or events break a ledger rule.
+    """Refuse a store whose record, counter or events break a ledger rule,
+    or whose record is not the fold of its ledger.
 
     Reads ledger rows only, so it runs the same with or without derived rows.
     """
@@ -413,6 +437,8 @@ def validate_owner_field_answers(connection: sqlite3.Connection) -> None:
         ):
             raise MetadataReportError(_REFUSED)
         previous[key] = row[0]
+    if record_differences(connection):
+        raise MetadataReportError(_REFUSED)
 
 
 __all__ = [
@@ -429,6 +455,7 @@ __all__ = [
     "matching_changed",
     "next_ordinal",
     "record_answer",
+    "record_differences",
     "stored_answers",
     "validate_owner_field_answers",
     "withdraw_answer",

@@ -166,13 +166,13 @@ def _event(
 @pytest.fixture
 def ledger() -> Iterator[sqlite3.Connection]:
     """One genres answer in the record, as the store keeps it, given after a
-    title decision the record leaves out."""
+    title unpin the record leaves out."""
     connection = _bare()
     _decision(
         connection,
         "filler",
         destination="title",
-        outcome="keep_current",
+        outcome="unpin",
         selected="null",
     )
     decision = _decision(connection, "answer")
@@ -185,12 +185,15 @@ def ledger() -> Iterator[sqlite3.Connection]:
 
 
 def _firing(connection: sqlite3.Connection) -> list[int]:
-    """Which record rules a ledger breaks; the event chain counts as -1."""
+    """Which record rules a ledger breaks; a record unlike the ledger's fold
+    counts as -2, and the event chain as -1."""
     fired = [
         index
         for index, rule in enumerate(owner_field_answers._RECORD_RULES)
         if connection.execute(rule).fetchone() is not None
     ]
+    if owner_field_answers.record_differences(connection):
+        fired.append(-2)
     try:
         validate_owner_field_answers(connection)
     except MetadataReportError:
@@ -200,7 +203,9 @@ def _firing(connection: sqlite3.Connection) -> list[int]:
 
 
 def _refused(connection: sqlite3.Connection, rule: int) -> None:
-    assert _firing(connection) == [rule]
+    """Exactly ``rule`` fires, whether or not the record also differs from
+    the fold, as an edited record mostly does."""
+    assert [fired for fired in _firing(connection) if fired != -2] == [rule]
     with pytest.raises(MetadataReportError, match="unavailable or incompatible"):
         validate_owner_field_answers(connection)
 
@@ -569,7 +574,9 @@ def test_an_open_resume_names_an_unclosed_request_over_its_answer(
             ("owner_field_event_" + "9" * 64,),
         )
     if fault == "none":
-        assert _firing(ledger) == []
+        # The fold sees no Resume event until C2b, so only the comparison
+        # with it refuses an open Resume this rule admits.
+        assert _firing(ledger) == [-2]
     else:
         _refused(ledger, 6)
 
@@ -1108,3 +1115,33 @@ def test_a_case_admitted_again_after_only_an_authored_description_starts_an_epis
     )
     assert_record_recomputes(connection)
     prepared.repository.close()
+
+
+@pytest.mark.parametrize(
+    "edit",
+    (
+        "DELETE FROM owner_field_answers WHERE destination='genres'",
+        "UPDATE owner_field_answers SET carry_eligible=1-carry_eligible "
+        "WHERE destination='genres'",
+        "UPDATE owner_field_answers SET pin_fingerprint='" + "a" * 64 + "' "
+        "WHERE destination='genres'",
+    ),
+    ids=("missing", "carry_eligible", "pin_fingerprint"),
+)
+def test_a_record_unlike_the_ledgers_fold_is_refused(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, edit: str
+) -> None:
+    """Open recomputes the record from the ledger and compares every row, so
+    a row missing, added or changed refuses the store (ADR-0108). The edited
+    copy is kept apart from the teardown check, which it is meant to fail."""
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        store.decide("accept", json.loads(_GENRES), destination="genres")
+        path = copied_store(
+            store.repository, tmp_path_factory.mktemp("edited") / "copy"
+        )
+    finally:
+        store.close()
+    assert opens(path)
+    assert rewrite(path, edit) == 1
+    assert not opens(path)

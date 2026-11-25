@@ -585,8 +585,8 @@ proposed). Until regeneration lands, every schema change stays a clean rebuild.
 - One ledger row per field records the owner's latest answer
   (`owner_field_answers`, ordered by `owner_answer_ordinal`, with the
   append-only `owner_field_events` for Resume). For now it is written beside
-  `field_effect_manual_holds`, which still decides, and tests recompute it
-  from the owner's decisions.
+  `field_effect_manual_holds`, which still decides, and open recomputes it
+  from the owner's decisions and refuses a store whose record differs.
 - Planned: `ledger_meta` records the ledger format version, the derived
   version and schema digest, and the derived epoch, which proposal identity
   binds so no case id recurs across a regeneration. `derived_regenerations`
