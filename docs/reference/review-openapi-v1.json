@@ -3912,7 +3912,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v16",
+            "const": "review-case-detail-v15",
             "title": "Schema Version",
             "type": "string"
           },
@@ -13364,7 +13364,8 @@
               "owner_choosable",
               "nothing_to_decide",
               "pinned",
-              "pin_changed"
+              "pin_changed",
+              "held_in_preview"
             ],
             "title": "Classification Cause",
             "type": "string"

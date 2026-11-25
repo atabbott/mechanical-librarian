@@ -143,7 +143,7 @@ export const caseDetail = (overrides: Overrides = {}) => ({
   recording_admission_basis: null,
   recording_identity_basis: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-detail-v16',
+  schema_version: 'review-case-detail-v15',
   target: targetIdentity(),
   writes_consented: false,
   ...overrides,

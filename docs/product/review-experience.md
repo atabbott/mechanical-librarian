@@ -282,7 +282,8 @@ Each tab names the field's status:
   is a choice only beside another eligible value or description advice. Each
   such field shows its value, never a selectable `Not set`. In Preview, a
   field Automatic chose earlier reads No change, shows that choice and says
-  turning on Automatic decides it, unless your answer or pin holds it.
+  turning on Automatic decides it, unless your answer or pin holds it. A field
+  your answer or taken-back pin holds reads Decided beside another offered value.
 
 Empty fields with no proposal sit behind one `Show N more fields` tab, and
 fields with nothing to decide in one closed panel headed `No change:` and their
