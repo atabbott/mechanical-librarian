@@ -234,7 +234,7 @@ lookups gave no usable answer".
 
 A work whose latest preparation could not finish reads Could not finish and
 sits under that heading, counted beside Works as `2 could not
-finish`. This holds even with an earlier report, matched or not. A
+finish`. This holds even with an earlier report. A
 decision still open on its earlier case keeps it in Needs attention. An ebook
 that a source matched without offering a change worth proposing stays in No
 attention needed.
@@ -276,14 +276,15 @@ Each tab names the field's status:
 - Pinned means Audiobookshelf shows the value you pinned.
 - Automatic means Automatic decided the field, and it is not in Attention.
 - Optional means you can choose, but the field is not counted and the canvas
-  skips it when it moves on. Its one reason says why no review is needed, and
+  skips it. Its one reason says why no review is needed, and
   it shows no condition asking you to choose.
 - No change means the field is there for reference. Keeping the current value
   is a choice only beside another eligible value or description advice. Each
   such field shows its value, never a selectable `Not set`. In Preview, a
   field Automatic chose earlier reads No change, shows that choice and says
-  turning on Automatic decides it, unless your answer or pin holds it. A field
-  your answer or taken-back pin holds reads Decided beside another offered value.
+  turning on Automatic decides it, unless your answer or pin holds it. Beside
+  another offered value, a pin taken back reads Decided and an earlier case's
+  or episode's answer asks it.
 
 Empty fields with no proposal sit behind one `Show N more fields` tab, and
 fields with nothing to decide in one closed panel headed `No change:` and their

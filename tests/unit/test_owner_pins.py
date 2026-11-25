@@ -916,9 +916,7 @@ def test_a_pinned_field_with_nothing_to_decide_stays_where_it_was(
     store.close()
 
 
-# C2b-15: the unpin is the owner's answer on this case, so the field reads
-# as decided, never as having nothing to decide.
-def test_unpin_on_a_field_with_nothing_to_decide_reads_as_decided(
+def test_unpin_returns_a_field_with_nothing_to_decide_to_its_pin(
     tmp_path: Path,
 ) -> None:
     store, report, _ = _store(tmp_path, title="ask")
@@ -927,8 +925,8 @@ def test_unpin_on_a_field_with_nothing_to_decide_reads_as_decided(
     store.decide("unpin", destination="publisher")
     field = _field(store, "publisher")
     assert (field["inventory_role"], field["classification_cause"]) == (
-        "primary",
-        "human_decided",
+        "contextual",
+        "nothing_to_decide",
     )
     assert field["pin"] is None
     assert field["pin_control"] == {"pin": "available", "unpin": False}

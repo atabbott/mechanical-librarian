@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import patch
 
 import pytest
 
@@ -697,18 +696,25 @@ def _asked(library: Library) -> tuple[set[str], set[str]]:
     )
 
 
-def _owner_command(library: Library, outcome: str, key: str, at: int) -> HumanDecision:
-    """An owner command on the case's authors that carries no value: a pin,
-    an unpin, keep current or a withdrawal."""
+def _owner_command(
+    library: Library,
+    outcome: str,
+    key: str,
+    at: int,
+    destination: str = "authors",
+) -> HumanDecision:
+    """An owner command on one of the case's fields, its authors unless
+    named, that carries no value: a pin, an unpin, keep current or a
+    withdrawal."""
     case = library.case()
     proposal = next(
-        value for value in case.proposals if value["destination"] == "authors"
+        value for value in case.proposals if value["destination"] == destination
     )
     return HumanDecision.create(
         case,
         proposal_id=str(proposal["proposal_id"]),
         target_fingerprint=case.target_fingerprint,
-        destination="authors",
+        destination=destination,
         actor="owner",
         outcome=outcome,
         selected_value=None,
@@ -764,6 +770,7 @@ def _resume_control_reaches_the_offer(library: Library) -> None:
 
 _DECIDED = ("human_recorded", "human_decided")
 _ASKED = ("needs_attention", "review_needed")
+_NOTHING = ("unsupported", "nothing_to_decide")
 
 
 def test_a_case_kept_for_a_write_reads_its_answer_as_decided(
@@ -825,9 +832,7 @@ def test_a_pin_taken_back_in_preview_reads_held_with_no_resume(
     with no decision of the case to show. As on main, the field reads held,
     says turning on Automatic leaves it as it is, and offers no Resume, since
     Automatic is off (C0 `resume_offer`). Beside no other offered value it
-    reads decided, never as having nothing to decide (C2b-15)."""
-    from mechanical_librarian.application import review_web
-
+    has nothing to decide, as on main (C2b-25)."""
     library = preview_library
     for outcome, at in (("pin", 11), ("unpin", 12)):
         library.root.record_human_decision(
@@ -852,16 +857,20 @@ def test_a_pin_taken_back_in_preview_reads_held_with_no_resume(
     )
     _resume_control_reaches_the_offer(library)
 
-    classify = review_web.classify_review_field
-
-    def preserving(**facts: Any) -> Any:
-        # Every source repeats the current value.
-        return classify(**{**facts, "proposed_values": (facts["current_value"],)})
-
-    with patch.object(review_web, "classify_review_field", preserving):
-        authors = _fields(library)["authors"]
-    assert (authors["classification"], authors["classification_cause"]) == _DECIDED
-    assert authors["manual_hold"] is False
+    # The publisher, which no source offers another value for.
+    for outcome, at in (("pin", 13), ("unpin", 14)):
+        library.root.record_human_decision(
+            _owner_command(
+                library, outcome, f"owner-command-{outcome}-{at}", at, "publisher"
+            )
+        )
+    publisher = _fields(library)["publisher"]
+    assert (
+        publisher["inventory_role"],
+        publisher["classification"],
+        publisher["classification_cause"],
+        publisher["manual_hold"],
+    ) == ("contextual", *_NOTHING, False)
     assert_record_recomputes(library.root._connection)
 
 
@@ -871,15 +880,19 @@ def test_a_pin_taken_back_in_preview_reads_held_with_no_resume(
 def test_no_field_the_record_holds_reads_nothing_to_decide(
     tmp_path: Path, posture: str
 ) -> None:
-    """C2b-15: while the record holds an answer for a field, the field never
-    reads "Nothing to decide for this field.". An answer of the case and its
-    episode reads decided, a pin's answer after its unpin among them; one
-    from an earlier case or episode, which nothing carried, asks the field
-    with Resume offered once Automatic is on where the case offers a decision
-    on it (S16), and reads decided where none is offered (C2b-18, in
-    `test_a_case_kept_for_a_write_reads_its_answer_as_decided`). Driven over the same
-    case, a pin taken back, an open and a failed Resume, a later case and a
-    return to the first case as a new episode, in Preview and in Automatic."""
+    """C2b-15, as C2b-25 narrows it: while the record holds an answer from an
+    earlier case or episode, the field never reads "Nothing to decide for
+    this field.". An answer of the case and its episode reads decided, an
+    accepted answer pinned and unpinned among them; one from an earlier case
+    or episode, which nothing carried, asks the field with Resume offered
+    once Automatic is on where the case offers a decision on it (S16), and
+    reads decided where none is offered (C2b-18, in
+    `test_a_case_kept_for_a_write_reads_its_answer_as_decided`). Driven over
+    the same case, a pin taken back, an open and a failed Resume, a later
+    case and a return to the first case as a new episode, in Preview and in
+    Automatic. A case's own answer left by a pin taken back on it, with no
+    decision of the case to show and no source offering another value, has
+    nothing to decide and is not in Attention, as on main (C2b-25)."""
     automatic = posture == "automatic"
     seen: list[dict[str, tuple[str, str, bool]]] = []
     with prepared(
@@ -944,6 +957,24 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
             for value in seen
             for _, cause, _ in value.values()
         )
+        assert_record_recomputes(root._connection)
+        # The case's own pin taken back on its publisher, which no source
+        # offers another value for, has nothing to decide (C2b-25).
+        for outcome, at in (("pin", 41), ("unpin", 42)):
+            root.record_human_decision(
+                _owner_command(
+                    library, outcome, f"owner-command-{outcome}-{at}", at, "publisher"
+                )
+            )
+        assert _held_reads(library)["publisher"][:2] == _NOTHING
+        _resume_control_reaches_the_offer(library)
+        publisher = _fields(library)["publisher"]
+        assert (publisher["inventory_role"], publisher["human_decision"]) == (
+            "contextual",
+            None,
+        )
+        page, attention = _asked(library)
+        assert "publisher" not in page and "publisher" not in attention
         assert_record_recomputes(root._connection)
 
 

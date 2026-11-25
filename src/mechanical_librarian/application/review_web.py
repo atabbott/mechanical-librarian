@@ -385,10 +385,11 @@ class CurrentReviewCaseSnapshot:
     resume_offer_destinations: tuple[str, ...] = ()
     # Held destinations whose unpinned answer was given on this case in its
     # current episode and not since withdrawn there, Book matching's
-    # `matching_changed` row included: it decides the field here, a pin's
-    # answer after its unpin among them. Any other unpinned answer asks the
-    # field where the case offers a decision on it, and settles it where none
-    # is offered (C2b-15, C2b-18, S16).
+    # `matching_changed` row included: it decides the field here, and a
+    # pin's answer after its unpin is asked nowhere, reading held or with
+    # nothing to decide (`_classify_field`, C2b-25). Any other unpinned
+    # answer asks the field where the case offers a decision on it, and
+    # settles it where none is offered (C2b-15, C2b-18, S16).
     own_answer_destinations: tuple[str, ...] = ()
     # Destinations the owner withdrew on this case's episode (the latest
     # owner row, pins and unpins aside) beside Automatic's active-generation
@@ -1618,22 +1619,28 @@ def _classify_field(
         repeated_description=repeated,
     )
     decided = classify(has_human_decision=other_human or own_answer)
-    # In Preview, the case's own answer with no decision of the case to show
-    # (a pin taken back) still holds the field, so turning on Automatic leaves
-    # it as it is, where nothing else would decide it and a source offers
-    # another value (ADR-0085, Amendment 6). Automatic is off, so it offers
-    # no Resume (C0 `resume_offer`); a requested Resume is already on its way
-    # and reads decided. Anywhere else the answer reads decided, never as
-    # having nothing to decide (C2b-15).
+    # The case's own answer with no decision of the case to show (a pin taken
+    # back) reads as main did (C2b-25): in Preview it still holds the field,
+    # so turning on Automatic leaves it as it is, where nothing else would
+    # decide it and a source offers another value (ADR-0085, Amendment 6),
+    # with no Resume while Automatic is off (C0 `resume_offer`); where no
+    # source offers another value, in either posture, it has nothing to
+    # decide. A requested Resume is already on its way and reads decided, as
+    # does the answer anywhere else. Only an answer from an earlier case or
+    # episode never reads as having nothing to decide (C2b-15).
     if (
-        not snapshot.preview
-        or not own_answer
+        not own_answer
         or other_human
         or destination in snapshot.return_requested_destinations
     ):
         return decided
-    held = classify(has_human_decision=False, held_in_preview=True)
-    return held if held.cause == "held_in_preview" else decided
+    held = classify(has_human_decision=False, held_in_preview=snapshot.preview)
+    if held.cause == "held_in_preview" or (
+        held.cause == "nothing_to_decide"
+        and (not alternatives or held.preservation_only)
+    ):
+        return held
+    return decided
 
 
 def _automatic_settles(snapshot: CurrentReviewCaseSnapshot, destination: str) -> bool:
