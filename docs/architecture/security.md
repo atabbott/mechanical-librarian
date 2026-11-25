@@ -513,19 +513,19 @@ are append-only. Automation never overrides an owner decision.
 Withdrawal appends a valueless row, revokes unclaimed authority in the same
 transaction and never re-arms automation. A previous value offered as a
 suggestion grants no authority: choosing it is an ordinary owner-entered write,
-stale if the field changed. Any decision but a withdrawal holds its field
-(covers aside) on the work's later cases until Return to automatic releases
-it, after its scan succeeds and if no later decision replaced it
-([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
+stale if the field changed. Every other decision is kept in one ledger record
+of the owner's latest answer per field, covers included, which keeps Automatic
+off that field of the work until Resume automatic handling completes after its
+scan succeeds, or a withdrawal leaves no earlier answer
+([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
+[ADR-0108](decisions/0108-ledger-and-derived-state.md), proposed).
 
-Planned, not built ([ADR-0108](decisions/0108-ledger-and-derived-state.md),
-proposed): one ledger record of the owner's latest answer per field, covers
-included, replaces the hold, and the server may carry an answer to a later
-case or episode of the same book that asks exactly the same question, within
-a release or after a regeneration. The carried row names its original and
-grants exactly what it granted, under current consent and every write guard.
-It will be the one owner decision not made by an owner request, and the one
-exception to preparation creating no owner decision.
+Planned, not built: the server may carry an answer to a later case or episode
+of the same book that asks exactly the same question, within a release or
+after a regeneration. The carried row names its original and grants exactly
+what it granted, under current consent and every write guard. It will be the
+one owner decision not made by an owner request, and the one exception to
+preparation creating no owner decision.
 
 Owner-entered text is refused, never rewritten, unless it is 1 to 512 code
 points of NFC text with no control, path, credential or URI. No automatic path

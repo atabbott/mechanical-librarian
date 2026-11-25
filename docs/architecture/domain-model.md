@@ -195,7 +195,8 @@ standing instruction to keep the library's value, which writes nothing), or
 `reject`, which only a cover's "no action" records. Choosing an earlier value
 again is a new decision. Pin and unpin rows are never a field's latest
 decision; the latest other decision counts unless it is a withdrawal. A pin
-acts through the field's manual hold, which follows the work, and can stand on
+acts through the record of the owner's answer for the field, which is kept per
+work, and can stand on
 a chosen value before it is written. Covers and descriptions have their own
 decision lineages and cannot be withdrawn this way, and a cover cannot be
 pinned

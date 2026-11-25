@@ -280,9 +280,13 @@ keeps its field (Amendment 1); a written value held as the owner's answer; a
 withdrawal after leaving Automatic; the answer and Resume kept across leaving
 and turning on Automatic (Amendment 4); the held line in Preview
 (Amendment 5); a pin taken back (Amendment 6); and going back after a write
-(ADR-0105). Because Resume is offered from the record (below), the cases
-Amendments 4 to 6 added so that a hold and Resume could show on a case need
-no case-scoped rule of their own.
+(ADR-0105). The automatic mint keeps the exemptions Amendments 4 to 6 added,
+read over the record instead of a hold on the case: where the record holds the
+field's answer, the case's latest answer for the field is not a withdrawal,
+and either Automatic decided the field on the case in an earlier generation
+or the owner only pinned it and took the pin back, Automatic still records
+its decision, so the case shows the held choice, Activity's "Held by you"
+note and Resume.
 
 ### Resume automatic handling
 
@@ -497,9 +501,11 @@ Every automatic path reads the record by item key and destination instead of
 a hold on the case: both copies of the planning query (the automatic arm, the
 description arm and the cover arm), the title and subtitle bundle, the
 apply-time refusal of an automatic plan, the automatic field, cover and
-description mints, automatic description advice's authority, title-recovery
-requeue, the Attention clear test and reasons, the case page's held state, the
-pending Resume work list and Activity's Resume history. The hold table, its
+description mints, automatic description advice's authority, the Attention
+clear test and reasons, the case page's held state, the pending Resume work
+list and Activity's Resume history. Title recovery keeps today's case-scoped
+clause: it does not requeue a case holding an owner decision on its title.
+The hold table, its
 document and validator, its writers and readers, the hold carry at admission,
 and the released-row tests are deleted.
 

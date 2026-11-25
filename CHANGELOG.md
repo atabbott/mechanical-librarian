@@ -12,11 +12,12 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
-- **Clean rebuild required.** The application database now keeps the owner's
+- **Clean rebuild required.** The application database keeps the owner's
   decisions, choices, controls and write plans apart from what preparation
-  rebuilds, and records each field's latest answer in one place. Only today's
-  holds still link to review cases, until that record replaces them. Nothing
-  you see changes yet (#2038).
+  rebuilds. One record of each field's latest answer keeps Automatic off it on
+  every later read until Resume automatic handling, which a field set to
+  Automatic offers while Automatic is on; a new read asks the field again.
+  Withdraw works beside Automatic's decision (#2038).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).
