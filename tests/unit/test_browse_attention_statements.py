@@ -709,8 +709,8 @@ def test_a_kept_case_reads_alike_in_every_statement(
     """A case kept for a recent write is a current case with nothing new to
     decide: every Library page, lens and count agrees with the pre-#1202
     statements (#1523, S18). The answer it was kept for came from the case
-    before it and nothing carried it, so each asks that field once (C2b-15,
-    S16)."""
+    before it and nothing carried it; with no decision offered it settles
+    that field, so none asks it (C2b-15, C2b-18)."""
     from tests.support.owner_values import OwnerStore
     from tests.support.review_cases import _report
 
@@ -722,6 +722,6 @@ def test_a_kept_case_reads_alike_in_every_statement(
     ).fetchone()
     store.publish(_report(written, competing=False), now=verified_at + 1)
     assert store.repository.review_case_kept(store.case.review_case_id)
-    assert _assert_equal_to_oracle(store.repository, monkeypatch) == (1, 1)
-    assert store.repository.count_current_review_cases(None, _LABELS) == (1, 1)
+    assert _assert_equal_to_oracle(store.repository, monkeypatch) == (0, 0)
+    assert store.repository.count_current_review_cases(None, _LABELS) == (1, 0)
     store.close()

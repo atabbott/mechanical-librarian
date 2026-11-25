@@ -1665,9 +1665,12 @@ def test_choosing_the_previous_value_again_reads_the_earlier_case_as_new(
     assert title["human_decision"] is None
     assert title["owner_control"]["withdraw"] is None
     assert _decision_ids(store) == set()
-    # The record's answer is the later case's, not this episode's: the
-    # title is asked again (S16, C2b-15).
-    assert _asking(store) == before | {"title"}
+    # The record's answer is the later case's, not this episode's. The title
+    # offers no decision here, so that answer settles it rather than asking
+    # it (C2b-15, C2b-18).
+    assert title["decision_actions"] == []
+    assert title["classification_cause"] == "human_decided"
+    assert _asking(store) == before
     _refused(store, "nothing_to_withdraw", "withdraw")
     # The earlier episode stays as history, and the store reopens.
     assert store.repository._connection.execute(

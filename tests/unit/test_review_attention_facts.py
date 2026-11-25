@@ -1502,15 +1502,14 @@ def _kept_store_attention(tmp_path: Path, *, pin: bool):
     return store, asked, verified_at
 
 
-def test_a_kept_case_asks_only_the_answer_its_earlier_case_gave(
+def test_a_kept_case_asks_nothing_its_earlier_case_answered(
     tmp_path: Path,
 ) -> None:
-    """A case kept for a recent write has nothing else to decide, so the work
-    asks only for the field the record holds an answer for from the earlier
-    case, which nothing carried here: one attention fact and count (#1523,
-    S18; C2b-15, S16)."""
+    """A case kept for a recent write has nothing to decide, so the earlier
+    case's answer, which nothing carried here, settles its field rather than
+    asking it: no attention fact and no count (#1523, S18; C2b-15, C2b-18)."""
     store, asked, _ = _kept_store_attention(tmp_path, pin=False)
-    assert asked() == ("title",)
+    assert asked() == ()
     store.close()
 
 

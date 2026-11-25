@@ -16,8 +16,8 @@ brackets are GitHub issues.
   decisions, choices, controls and write plans apart from what preparation
   rebuilds. One record of each field's latest answer keeps Automatic off it on
   every later read until Resume automatic handling, which a field set to
-  Automatic offers while Automatic is on; a new read asks the field again.
-  Withdraw works beside Automatic's decision (#2038).
+  Automatic offers while Automatic is on; a new read asks a field with a
+  choice again. Withdraw works beside Automatic's decision (#2038).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).

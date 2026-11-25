@@ -408,22 +408,32 @@ def _record_case_answer_sql(own: bool, item: str = "c") -> str:
     )
 
 
+# The record's answer from an earlier case or episode that nothing carried
+# asks its field only where the case offers the owner a decision on it; with
+# none, the answer settles the field (C2b-15, C2b-18, S16).
+def _record_asks_sql(item: str = "c") -> str:
+    return (
+        "(result.has_owner_decision_actions=1 AND "
+        + _record_case_answer_sql(own=False, item=item)
+        + ")"
+    )
+
+
 # Asked by a reason beside the proposal's own, as the Attention list flags
 # it: the policy's Ask me, or the record's answer from an earlier case or
-# episode that nothing carried (C2b-15, S16).
+# episode that nothing carried (C2b-15, C2b-18, S16).
 _ASKED_BESIDE_PROPOSAL_SQL = (
     "(" + _POLICY_ASK_ATTENTION_SQL + " OR EXISTS (SELECT 1 FROM "
     "current_review_case_lineages asked_case WHERE "
     "asked_case.review_case_id=rc.review_case_id AND "
-    + _record_case_answer_sql(own=False, item="asked_case")
+    + _record_asks_sql(item="asked_case")
     + "))"
 )
 
 
 # A changed pin asks with or without alternatives, so it stands outside the
-# owner-action gate (ADR-0085, Amendment 2), and so does an answer the record
-# holds from elsewhere: the field is asked, and Resume is the owner's action
-# (C2b-15, S16).
+# owner-action gate (ADR-0085, Amendment 2). An answer the record holds from
+# elsewhere asks only where the case offers a decision (C2b-15, C2b-18, S16).
 _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "(result.has_owner_decision_actions=1 AND ((result.unresolved_choice=1 "
     "AND NOT " + _COVER_SUGGESTED_SQL + ") "
@@ -448,7 +458,7 @@ _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     + ") OR "
     + _PIN_CHANGED_SQL
     + " OR "
-    + _record_case_answer_sql(own=False)
+    + _record_asks_sql()
     + ")"
 )
 

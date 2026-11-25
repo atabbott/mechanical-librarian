@@ -722,6 +722,58 @@ _DECIDED = ("human_recorded", "human_decided")
 _ASKED = ("needs_attention", "review_needed")
 
 
+def test_a_case_kept_for_a_write_reads_its_answer_as_decided(
+    tmp_path: Path,
+) -> None:
+    """C2b-18: the case kept for the owner's write offers no decision on the
+    title, so the earlier case's answer settles it rather than asking it.
+    The work's row, Attention, the case's Needs you and the title agree:
+    nothing is asked and the title reads "You decided this field"."""
+    from mechanical_librarian.application.review_web import (
+        BrowseReviewLibrary,
+        InspectCurrentReviewCase,
+    )
+    from tests.support.owner_values import OwnerStore
+    from tests.support.review_cases import _report
+
+    written = "Exact evaluator candidate"
+    store = OwnerStore(tmp_path, _report())
+    try:
+        store.write(store.decide("owner_entered", {"kind": "text", "value": written}))
+        (verified_at,) = store.repository._connection.execute(
+            "SELECT MAX(occurred_at) FROM field_effect_events WHERE kind='verified'"
+        ).fetchone()
+        store.publish(_report(written, competing=False), now=verified_at + 1)
+        case_id = store.case.review_case_id
+        assert store.repository.review_case_kept(case_id)
+
+        browse = BrowseReviewLibrary(store.repository)
+        (row,) = cast(
+            list[dict[str, Any]],
+            browse.library(lens="all", search=None, limit=50, cursor=None)["items"],
+        )
+        assert (row["attention_count"], row["attention_state"]) == (
+            0,
+            "no_attention_needed",
+        )
+        assert browse.attention(search=None, limit=50, cursor=None)["items"] == []
+        assert store.repository.count_current_attention_fields(None, ()) == 0
+        fields = cast(
+            list[dict[str, Any]],
+            InspectCurrentReviewCase(store.repository).run(case_id)["fields"],
+        )
+        assert [
+            field["destination"] for field in fields if field["needs_attention"]
+        ] == []
+        title = next(field for field in fields if field["destination"] == "title")
+        assert title["decision_actions"] == []
+        assert (title["classification"], title["classification_cause"]) == _DECIDED
+        assert str(title["classification_reason"]).startswith("You decided this field")
+        assert_record_recomputes(store.repository._connection)
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize(
     "posture", ("automatic", "preview"), ids=("automatic", "preview")
 )
@@ -732,7 +784,9 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
     reads "Nothing to decide for this field.". An answer of the case and its
     episode reads decided, a pin's answer after its unpin among them; one
     from an earlier case or episode, which nothing carried, asks the field
-    with Resume offered once Automatic is on (S16). Driven over the same
+    with Resume offered once Automatic is on where the case offers a decision
+    on it (S16), and reads decided where none is offered (C2b-18, in
+    `test_a_case_kept_for_a_write_reads_its_answer_as_decided`). Driven over the same
     case, a pin taken back, an open and a failed Resume, a later case and a
     return to the first case as a new episode, in Preview and in Automatic."""
     automatic = posture == "automatic"

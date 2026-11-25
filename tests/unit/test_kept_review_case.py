@@ -321,11 +321,12 @@ def test_a_changed_pin_keeps_an_expiring_kept_case_open(tmp_path: Path) -> None:
     assert _current(store, str(kept[3]))
     assert store.repository.review_case_kept(str(kept[3]))
     assert asked() == 1
-    # Unpinned, the title is asked again by the earlier case's answer, which
-    # nothing carried here (S16, C2b-15), and the next scan retires the case.
+    # Unpinned, the earlier case's answer, which nothing carried here,
+    # settles the title, which offers no decision (C2b-15, C2b-18), and the
+    # next scan retires the case.
     store.load(str(kept[3]))
     store.decide("unpin")
-    assert asked() == 1
+    assert asked() == 0
     _drain(_pipeline(store.repository, changed, written_at + KEPT_CASE_SECONDS + 1))
     assert _work(store) == ("complete", "complete", "no_case", None)
     assert not _current(store, str(kept[3]))

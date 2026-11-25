@@ -386,7 +386,9 @@ class CurrentReviewCaseSnapshot:
     resume_offer_destinations: tuple[str, ...] = ()
     # Held destinations whose unpinned answer was given on this case in its
     # current episode: it decides the field here, a pin's answer after its
-    # unpin among them. One from elsewhere asks the field (C2b-15, S16).
+    # unpin among them. One from elsewhere asks the field where the case
+    # offers a decision on it, and settles it where none is offered (C2b-15,
+    # C2b-18, S16).
     own_answer_destinations: tuple[str, ...] = ()
     # This case's owner decisions a completed Resume took back: they no
     # longer decide their field, and keep only a recorded line (D3).
@@ -1471,7 +1473,9 @@ def _classify_field(
         and destination in snapshot.policy_kept_destinations
     )
     return classify_review_field(
-        attention_candidate=_record_asks(snapshot, destination)
+        attention_candidate=(
+            _record_answered_elsewhere(snapshot, destination) and bool(actions)
+        )
         or not repeated
         and (
             (
@@ -1519,6 +1523,13 @@ def _classify_field(
         ),
         has_human_decision=decision is not None
         or (destination != "cover" and destination in snapshot.own_answer_destinations)
+        # With nothing to choose, an answer from elsewhere settles its field
+        # unless Automatic's decision does, under an open Resume (C2b-18).
+        or (
+            _record_answered_elsewhere(snapshot, destination)
+            and not actions
+            and automatic_decision is None
+        )
         or (
             destination == "cover"
             and cover_is_current
@@ -1599,10 +1610,13 @@ def _automatic_settles(snapshot: CurrentReviewCaseSnapshot, destination: str) ->
     )
 
 
-def _record_asks(snapshot: CurrentReviewCaseSnapshot, destination: str) -> bool:
+def _record_answered_elsewhere(
+    snapshot: CurrentReviewCaseSnapshot, destination: str
+) -> bool:
     """Whether the record holds the field's answer from an earlier case or
-    episode, which nothing carried here: the field is asked, with Resume as
-    the owner's action, as Attention reads it (C2b-15, S16). A pin settles or
+    episode, which nothing carried here. As Attention reads it, the field is
+    asked where the case offers the owner a decision on it, and the answer
+    settles it where none is offered (C2b-15, C2b-18, S16). A pin settles or
     asks its field ahead of this; a cover's answer is the book's own pointer
     instead."""
     return (
@@ -2065,10 +2079,7 @@ class InspectCurrentReviewCase:
         # availability is a separate exact-proposal contract; an empty
         # action list is context-only, never an implied choice envelope.
         has_owner_action = (
-            bool(actions)
-            or cover_preparation_available
-            or pin_state == "changed"
-            or _record_asks(snapshot, destination)
+            bool(actions) or cover_preparation_available or pin_state == "changed"
         )
         needs_attention = classification.needs_attention and has_owner_action
         # A pinned field sits where it would sit without the pin (#1346).

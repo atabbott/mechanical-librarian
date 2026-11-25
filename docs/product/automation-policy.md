@@ -57,7 +57,8 @@ and the field is set to Automatic; the description offers it while
 **Automatically apply ready description advice** is on
 ([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
 Amendment 1). A later read that gives the work a new case asks you the field
-again, even where Automatic decided it there. Withdrawing a decision gives the
+again where that case offers a choice for it, even where Automatic decided it
+there; with no choice to make, the field reads as decided. Withdrawing a decision gives the
 field back to your answer from an earlier read of the work, if there is one,
 and Automatic stays off it; otherwise Automatic decides the field from the
 work's next read. After you choose Resume automatic handling, Automatic's

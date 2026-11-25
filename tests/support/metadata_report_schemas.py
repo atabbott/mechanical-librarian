@@ -684,7 +684,7 @@ _RECORD_HOLDS_SQL = review_sql._record_holds_sql("c", "result.destination")
 # The record's answer settled nothing on its own case and asked nothing
 # elsewhere either: the reason's arm, then the clear's.
 _RECORD_ANSWER_STEPS = (
-    (" OR " + review_sql._record_case_answer_sql(own=False) + ")", ")"),
+    (" OR " + review_sql._record_asks_sql() + ")", ")"),
     ("AND NOT " + review_sql._record_case_answer_sql(own=True) + " ", ""),
 )
 _RECORD_ATTENTION_STEPS = (
