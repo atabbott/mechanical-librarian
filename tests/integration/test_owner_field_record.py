@@ -542,10 +542,9 @@ def test_asking_resume_requeues_the_case_with_no_trigger(
 ) -> None:
     """Resume's request requeues the projection of the work's current case
     with no trigger (C2b-4). Preparation, as the owner reads it, is the same
-    before and after: no trigger, run, enrolment or work row. Only the
-    progress counts of the scan the page asked for move: the case's work
-    counts as queued for projection there, no longer as checked and ready,
-    until it is projected again."""
+    before and after: no trigger, run, enrolment or work row, and the scan
+    the page asked for counts the same works checked, ready and at each
+    stage, though the case's work is queued for projection again (C2b-12)."""
     root = library.root
     owner = accept(library.case(), "authors", "owner-answers-authors", 11)
     root.record_human_decision(owner)
@@ -559,33 +558,72 @@ def test_asking_resume_requeues_the_case_with_no_trigger(
             ).fetchall(),
         )
 
-    def progress() -> dict[str, object]:
-        value = root.review_pipeline_progress("primary", "ebooks")
-        assert value is not None
-        return {
-            name: getattr(value, name)
-            for name in value.__dataclass_fields__
-            if name not in {"checked", "ready", "stages"}
-        } | {"counts": (value.checked, value.ready, dict(value.stages))}
-
-    before, counts = presentation(), progress()
+    before, counts = presentation(), root.review_pipeline_progress("primary", "ebooks")
+    assert counts is not None and counts.checked == 1
     assert request_resume(root, library.case_id(), "authors", 12, scan_id=scan.scan_id)
 
     assert presentation() == before
-    after = progress()
-    checked, ready, stages = cast("tuple[int, int, dict[str, int]]", counts["counts"])
-    assert after == counts | {
-        "counts": (
-            checked - 1,
-            ready - 1,
-            stages
-            | {"ready": stages["ready"] - 1, "projection": stages["projection"] + 1},
-        )
-    }
+    assert root.review_pipeline_progress("primary", "ebooks") == counts
     assert root._connection.execute(
         "SELECT scan_id,stage,state FROM review_preparation_work"
     ).fetchall() == [(scan.scan_id, "projection", "queued")]
     assert_record_recomputes(root._connection)
+
+
+def test_a_scan_never_counts_fewer_works_checked_across_a_resume(
+    tmp_path: Path,
+) -> None:
+    """Asking Resume while the page's scan runs requeues the case's work for
+    projection, and the scan's "X of Y works checked" never goes backwards:
+    not at the request, not while the work waits or is projected again, and
+    the scan ends with the same count (C2b-12, Amendment 4)."""
+    with prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root = library.root
+        root.record_human_decision(
+            accept(library.case(), "authors", "owner-answers-authors", 11)
+        )
+        scan = root.request_review_scan("primary", "ebooks", "lib-1", PRODUCER, 12)
+        library.now[0] = 13
+        assert library.pipeline.run_next()
+        seen: list[tuple[str, int, int, int, str, str]] = []
+
+        def observe() -> None:
+            progress = root.review_pipeline_progress("primary", "ebooks")
+            (status,), _paused = root.review_pipeline_status((("primary", "ebooks"),))
+            assert progress is not None and status is not None
+            assert (status.checked, status.ready) == (progress.checked, progress.ready)
+            assert sum(count for _name, count in progress.stages) == progress.total
+            ((stage, state),) = root._connection.execute(
+                "SELECT stage,state FROM review_preparation_work"
+            ).fetchall()
+            seen.append(
+                (
+                    progress.state,
+                    progress.checked,
+                    progress.total,
+                    progress.ready,
+                    str(stage),
+                    str(state),
+                )
+            )
+
+        observe()
+        assert request_resume(
+            root, library.case_id(), "authors", 14, scan_id=scan.scan_id
+        )
+        observe()
+        library.now[0] = 15
+        while library.pipeline.run_next():
+            observe()
+        observe()
+
+        assert seen[0][:2] == ("processing", 1)
+        # The request requeued the work, and projection ended it again.
+        assert seen[1][4:] == ("projection", "queued")
+        assert seen[-1] == ("completed", 1, 1, 1, "complete", "complete")
+        checked = [row[1] for row in seen]
+        assert checked == sorted(checked) and min(checked) == 1
+        assert_record_recomputes(root._connection)
 
 
 def _fields(library: Library) -> dict[str, dict[str, Any]]:

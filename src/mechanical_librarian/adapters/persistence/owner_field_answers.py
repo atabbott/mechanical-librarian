@@ -41,6 +41,19 @@ _UNCLOSED = (
 )
 
 
+# A work Resume's request requeued for projection (C2b-12), over the work row
+# `w`: queued or running there while a request on its book is open. Its scan
+# keeps counting it as it stood, checked and ready, so the scan's "X of Y
+# works checked" never goes backwards; projection ends it again.
+RESUME_REPROJECTION_SQL = (
+    "(w.stage='projection' AND w.state IN ('queued','delayed','running') "
+    "AND EXISTS (SELECT 1 FROM owner_field_events request "
+    "WHERE request.connection_name=w.connection_name "
+    "AND request.library_name=w.library_name AND request.item_id=w.item_id "
+    "AND request.kind='resume_requested' AND " + _UNCLOSED.format("request") + "))"
+)
+
+
 def case_record_sql(case: str, destination: str) -> str:
     """A SELECT of the record's row for the field of the case's book, keyed
     by item through the case's current lineage; `case` and `destination` are
