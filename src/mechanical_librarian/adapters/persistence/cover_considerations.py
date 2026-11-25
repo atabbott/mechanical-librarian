@@ -25,6 +25,9 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     cover_pre_value,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    COVER_TAKEN_OVER_SQL,
+)
 from mechanical_librarian.adapters.persistence.retained_covers import (
     live_retained_cover,
     release_kept_retained_covers,
@@ -305,9 +308,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 return
             if (
                 self._connection.execute(
-                    "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
-                    "AND destination='cover' AND active=1",
-                    (case.review_case_id,),
+                    COVER_TAKEN_OVER_SQL, (case.review_case_id,)
                 ).fetchone()
                 is not None
             ):
@@ -350,32 +351,29 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         )
 
     def _resume_automatic_cover(
-        self, review_case_id: str, decision_id: str, changed_at: int
+        self, connection_name: str, library_name: str, item_id: str, changed_at: int
     ) -> None:
-        """Hand a held cover back to Automatic as its hold clears (K9).
+        """Hand the book's cover back to Automatic as its Resume completes (K9).
 
-        Inside the hold-clearing transaction: the owner's selection pointer
-        the cleared hold names is released, and admission runs again for the
-        work's current comparison. When the stage has nothing to switch, the
+        Inside the completing transaction, after the record's answer went:
+        the marks of the book's cases and its owner pointer are released,
+        whichever selection the pointer names (a regeneration may have
+        repointed it), and admission runs again for the work's current
+        comparison (ADR-0108). When the stage has nothing to switch, the
         cover stays as it is with no owner pointer, and a later comparison
-        may switch it. A pointer from any other answer stays: every cover
-        answer over a standing hold takes the hold over.
+        may switch it.
         """
+        item = (connection_name, library_name, item_id)
         self._connection.execute(
-            "DELETE FROM cover_automatic_held WHERE review_case_id=?",
-            (review_case_id,),
+            "DELETE FROM cover_automatic_held WHERE review_case_id IN ("
+            "SELECT review_case_id FROM current_review_case_lineages "
+            "WHERE connection_name=? AND library_name=? AND item_id=?)",
+            item,
         )
-        owner = self._connection.execute(
-            "SELECT selection_id,connection_name,library_name,item_id "
-            "FROM owner_cover_selections WHERE decision_id=?",
-            (decision_id,),
-        ).fetchone()
-        if owner is None:
-            return
         self._connection.execute(
             "DELETE FROM owner_cover_pointers WHERE connection_name=? "
-            "AND library_name=? AND item_id=? AND selection_id=?",
-            (*owner[1:], owner[0]),
+            "AND library_name=? AND item_id=?",
+            item,
         )
         row = self._connection.execute(
             "SELECT consideration.document,report.document,report.document_digest,"
@@ -388,7 +386,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             "JOIN metadata_reports report ON report.report_id=consideration.report_id "
             "WHERE lineage.connection_name=? AND lineage.library_name=? "
             "AND lineage.item_id=?",
-            owner[1:],
+            item,
         ).fetchone()
         if row is not None:
             self._admit_automatic_cover(expand_cover_consideration(*row), changed_at)
@@ -469,9 +467,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         if (
             keeps_original and not retained_cover_store_has_room(self._connection)
         ) or self._connection.execute(
-            "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
-            "AND destination='cover' AND active=1",
-            (case.review_case_id,),
+            COVER_TAKEN_OVER_SQL, (case.review_case_id,)
         ).fetchone() is not None:
             return False
         return self._mint_cover_authority(

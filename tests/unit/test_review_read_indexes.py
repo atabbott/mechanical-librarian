@@ -834,9 +834,9 @@ def test_the_new_lens_reads_each_work_by_key_within_the_scale_budget() -> None:
 def test_first_match_and_hold_reads_keep_their_lineage_walk() -> None:
     """The case indexes leave rowid-order lineage walks where order is visible.
 
-    A dependency probe stops at its first match and a pending-return read
-    evaluates json_type on each joined hold, so a covering scan or a hold-first
-    join over #1211's indexes would change which rows those terms reach.
+    A dependency probe stops at its first match, so a covering scan over
+    #1211's indexes would change which rows it reaches. The pending Resume
+    read is keyed by the work in the record and walks no lineage (ADR-0108).
     """
     with tempfile.TemporaryDirectory() as directory:
         connection = _representative_database(
@@ -848,7 +848,7 @@ def test_first_match_and_hold_reads_keep_their_lineage_walk() -> None:
             statements = _traced_selects(
                 connection,
                 lambda: (
-                    activity.pending_field_effect_manual_returns(100),
+                    activity.pending_owner_field_resumes(100),
                     activity.field_effect_dependencies_current(("0" * 64,)),
                 ),
             )
@@ -857,7 +857,7 @@ def test_first_match_and_hold_reads_keep_their_lineage_walk() -> None:
                 for statement in statements
                 if "current_review_case_lineages lineage" in statement
             ]
-            assert len(walks) == 3
+            assert len(walks) == 2
             for plan in walks:
                 assert plan[0] == "SCAN lineage", plan
                 assert not any(

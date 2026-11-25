@@ -29,6 +29,7 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.domain.human_decision import HumanDecisionError
 from tests.support.genre_reports import genre_report
+from tests.support.owner_field_record import hold_token
 from tests.support.owner_values import OwnerStore, rewritten
 
 EMPTY = {"kind": "empty", "value": None}
@@ -74,9 +75,7 @@ def _field(store: OwnerStore, destination: str) -> dict[str, object]:
 
 
 def _hold(store: OwnerStore, destination: str) -> str | None:
-    return store.repository.field_effect_manual_hold_token(
-        store.case.review_case_id, destination
-    )
+    return hold_token(store.repository, store.case.review_case_id, destination)
 
 
 @pytest.mark.parametrize(

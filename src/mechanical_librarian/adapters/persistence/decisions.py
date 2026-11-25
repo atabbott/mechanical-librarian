@@ -45,8 +45,10 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
 )
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
     case_episode,
+    case_record_sql,
     mark_pin,
     next_ordinal,
+    owner_row_counts_sql,
     record_answer,
     withdraw_answer,
 )
@@ -131,42 +133,47 @@ _REPLACEMENT_BLOCKING_EFFECT_SQL = (
 )
 # What the owner did that keeps Automatic from deciding a field on a case in
 # a generation: an owner decision of any episode, a withdrawal or an unpin
-# included, or a pin, in force or changed (ADR-0085, Amendment 2). An owner
-# decision does not where the field has a hold row, in force or released by
-# Resume, and either Automatic decided the field on the case in an earlier
-# generation (ADR-0085, Amendment 4) or the owner only pinned it and took the
-# pin back (Amendment 6): Automatic decides it, a hold in force refuses the
-# write until Resume and a released one lets it plan, so the field shows the
-# hold and Resume on this case as on a later one. A pin in force or changed
-# still refuses, and so does an answer on a field Automatic had not decided
-# on the case, which shows as the owner's answer (Amendment 1). A withdrawal
-# still refuses: it deletes the row its answer set, and where it gives the
-# field back to the work's earlier hold, the field's latest answer is the
-# withdrawal, which the exemption leaves out. Bound by `_owner_mint_conflict`.
+# included, or a pin on the record, in force or changed (ADR-0085, Amendment
+# 2). The record is read by item key through the case's lineage (ADR-0108).
+# An owner decision Resume has taken back does not count: one at or below the
+# open or latest completed request's `over_ordinal`, or a valueless cause row
+# of a field Resume was asked of, so the requeued projection records
+# Automatic's decision. Nor does one where the record holds the field's answer
+# and either Automatic decided the field on the case in an earlier generation
+# (ADR-0085, Amendment 4) or the owner only pinned it and took the pin back
+# (Amendment 6): Automatic decides it, and the record refuses the write until
+# Resume, so the field shows the held choice and Resume on this case as on a
+# later one. A pin still refuses, and so does an answer on a field Automatic
+# had not decided on the case, which shows as the owner's answer (Amendment
+# 1). A withdrawal still refuses: where it gives the field back to an earlier
+# case's answer, the field's latest answer is the withdrawal, which the
+# exemption leaves out. Bound by `_owner_mint_conflict`.
 _OWNER_MINT_CONFLICT_SQL = (
-    "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
-    "AND NOT (EXISTS (SELECT 1 FROM field_effect_manual_holds held "
-    "WHERE held.review_case_id=? AND held.destination=?) "
-    "AND (EXISTS (SELECT 1 FROM automatic_decisions earlier "
-    "WHERE earlier.review_case_id=? AND earlier.destination=? "
-    "AND earlier.policy_generation<?) "
+    "SELECT 1 FROM human_decisions human WHERE human.review_case_id=:case "
+    "AND human.destination=:destination AND "
+    + owner_row_counts_sql("human")
+    + " AND NOT (EXISTS ("
+    + case_record_sql(":case", ":destination")
+    + ") AND (EXISTS (SELECT 1 FROM automatic_decisions earlier "
+    "WHERE earlier.review_case_id=:case AND earlier.destination=:destination "
+    "AND earlier.policy_generation<:generation) "
     "OR NOT EXISTS (SELECT 1 FROM human_decisions answer "
-    "WHERE answer.review_case_id=? AND answer.destination=? "
+    "WHERE answer.review_case_id=:case AND answer.destination=:destination "
     "AND answer.outcome NOT IN ('pin','unpin'))) "
     "AND COALESCE((SELECT latest.outcome FROM human_decisions latest "
-    "WHERE latest.review_case_id=? AND latest.destination=? "
+    "WHERE latest.review_case_id=:case AND latest.destination=:destination "
     "AND latest.outcome NOT IN ('pin','unpin') "
-    "ORDER BY latest.ordinal DESC LIMIT 1),'')<>'withdraw') "
-    "UNION ALL SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
-    "AND destination=? AND active=1 AND json_type(document,'$.pin')='object'"
+    "ORDER BY latest.ordinal DESC LIMIT 1),'')<>'withdraw') UNION ALL "
+    + case_record_sql(":case", ":destination")
+    + " AND record.pin_fingerprint IS NOT NULL"
 )
 # What keeps Automatic from deciding a field on a case: the owner's conflict
 # above, or its own decision in this generation. Bound by
 # `_automatic_mint_conflict`.
 _AUTOMATIC_MINT_CONFLICT_SQL = (
     _OWNER_MINT_CONFLICT_SQL
-    + " UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? "
-    "AND destination=? AND policy_generation=?"
+    + " UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=:case "
+    "AND destination=:destination AND policy_generation=:generation"
 )
 
 
@@ -322,37 +329,17 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
 
 def _owner_mint_conflict(
     review_case_id: str, destination: str, generation: int
-) -> tuple[str, str, str, str, str, str, int, str, str, str, str, str, str]:
-    case = review_case_id
-    return (
-        case,
-        destination,
-        case,
-        destination,
-        case,
-        destination,
-        generation,
-        case,
-        destination,
-        case,
-        destination,
-        case,
-        destination,
-    )
+) -> dict[str, str | int]:
+    return {
+        "case": review_case_id,
+        "destination": destination,
+        "generation": generation,
+    }
 
 
-def _automatic_mint_conflict(
-    decision: AutomaticDecision,
-) -> tuple[
-    str, str, str, str, str, str, int, str, str, str, str, str, str, str, str, int
-]:
-    return (
-        *_owner_mint_conflict(
-            decision.review_case_id, decision.destination, decision.policy_generation
-        ),
-        decision.review_case_id,
-        decision.destination,
-        decision.policy_generation,
+def _automatic_mint_conflict(decision: AutomaticDecision) -> dict[str, str | int]:
+    return _owner_mint_conflict(
+        decision.review_case_id, decision.destination, decision.policy_generation
     )
 
 
@@ -364,9 +351,10 @@ def owner_keeps_automatic_off(
 ) -> bool:
     """Whether the owner keeps Automatic off any of these fields of the case
     once it decides in `generation`: by the same rows that refuse its
-    decision, or by a hold in force, which refuses the write of a decision it
-    records under the hold until Resume (ADR-0085, Amendment 4). A bundle is
-    decided all or none, so a caller passes every field of one.
+    decision, or by the record's answer for the field, which refuses the
+    write of a decision it records under it until Resume (ADR-0085,
+    Amendment 4; ADR-0108). A bundle is decided all or none, so a caller
+    passes every field of one.
     """
     return any(
         connection.execute(
@@ -375,9 +363,7 @@ def owner_keeps_automatic_off(
         ).fetchone()
         is not None
         or connection.execute(
-            "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
-            "AND destination=? AND active=1",
-            (review_case_id, destination),
+            case_record_sql("?", "?"), (review_case_id, destination)
         ).fetchone()
         is not None
         for destination in destinations

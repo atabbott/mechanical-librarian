@@ -15,15 +15,16 @@ it: it is a claim over this module's work rows and nothing else observes it.
 Seven seams cross the boundary and each is injected as a lambda through the
 composing repository rather than as a bound method, which is load-bearing
 rather than stylistic. `test_failed_action_requeues_a_pending_manual_return`
-and two siblings substitute `_has_pending_field_effect_manual_return` on the
+and two siblings substitute `has_open_resume_for_scan` on the
 repository and then drive `claim_review_pipeline_action` and
 `fail_review_pipeline_action`. Resolving the attribute at call time keeps the
 substitution reachable; capturing the bound method at construction would leave
 those tests passing while testing nothing. The same holds when the field-effect
 aggregate moves, as long as its delegating stub stays on the repository.
 
-- `_has_pending_field_effect_manual_return` reads the field-effect holds that
-  requeue a failed action instead of retiring it.
+- `has_open_resume_for_scan` reads the open Resume requests that requeue a
+  failed action instead of retiring it. The record of the owner's answers
+  owns those events (ADR-0108).
 - `_fail_open_resumes_for_scan` writes, in the transaction that settles a scan
   with failures, `resume_failed` for each open Resume request on it. The
   record of the owner's answers owns those events (ADR-0108).
@@ -268,9 +269,14 @@ def requeue_projection_work(
     connection: sqlite3.Connection,
     rows: list[tuple[str, str]],
     updated_at: int,
-    trigger: PreparationTrigger,
+    trigger: PreparationTrigger | None,
 ) -> None:
-    """Project the named current case works again, in the caller's transaction."""
+    """Project the named current case works again, in the caller's transaction.
+
+    With no ``trigger`` nothing new is recorded for Preparation to show: the
+    work joins its library's latest scan as any requeued work does, with no
+    trigger and no run reopened for it (ADR-0108, Resume's request).
+    """
     for work_id, _scan_id in rows:
         connection.execute(
             "UPDATE review_preparation_work SET stage='projection',state='queued',"
@@ -281,11 +287,26 @@ def requeue_projection_work(
     _join_latest_scan(connection, tuple(row[0] for row in rows))
     for work_id, _scan_id in rows:
         _reopen_latest_scan(connection, work_id, updated_at)
-    if rows:
+    if rows and trigger is not None:
         reopen_preparation_projection(
             connection, tuple(row[0] for row in rows), updated_at, trigger
         )
         refresh_preparation_presentation(connection, updated_at)
+
+
+def requeue_case_projection(
+    connection: sqlite3.Connection, review_case_id: str, updated_at: int
+) -> None:
+    """Project the current case's complete work again, with no trigger, in the
+    caller's transaction (ADR-0108: Resume's request requeues the projection
+    of the work's current case, so it records Automatic's decision)."""
+    rows = connection.execute(
+        _COMPLETE_CURRENT_CASE_WORK_SQL
+        + _COMPLETE_CASE_WORK_WHERE_SQL
+        + "AND c.review_case_id=?",
+        (review_case_id,),
+    ).fetchall()
+    requeue_projection_work(connection, rows, updated_at, None)
 
 
 # A current case is unchecked while its cover comparison was made, or its
@@ -607,7 +628,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         connection: sqlite3.Connection,
         binding: _LinuxDatabaseBinding | None = None,
         *,
-        has_pending_field_effect_manual_return: Callable[[str], bool],
+        has_open_resume_for_scan: Callable[[str], bool],
         fail_open_resumes_for_scan: Callable[[str, int], int],
         require_staged_shadow_projection_current: Callable[[str, PipelineAction], None],
         refresh_metadata_policy_transition: Callable[[str, int], None],
@@ -623,9 +644,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         ],
     ) -> None:
         super().__init__(connection, binding)
-        self._has_pending_field_effect_manual_return = (
-            has_pending_field_effect_manual_return
-        )
+        self._has_open_resume_for_scan = has_open_resume_for_scan
         self._fail_open_resumes_for_scan = fail_open_resumes_for_scan
         self._require_staged_shadow_projection_current = (
             require_staged_shadow_projection_current
@@ -880,9 +899,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             "AND w.state IN ('queued','delayed','running'))"
         ).fetchall()
         for scan_id, rescan_requested in scans:
-            pending_manual_return = self._has_pending_field_effect_manual_return(
-                scan_id
-            )
+            pending_manual_return = self._has_open_resume_for_scan(scan_id)
             # A book with no file in Audiobookshelf stays listed as could not
             # finish, but it does not stop the library: the scan completes
             # and keeps polling, so a file added there is picked up (#2013).
@@ -2487,9 +2504,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         if action.stage == "discovery":
             try:
                 transaction.begin()
-                pending_manual_return = self._has_pending_field_effect_manual_return(
-                    action.scan_id
-                )
+                pending_manual_return = self._has_open_resume_for_scan(action.scan_id)
                 # The reason is kept while the scan stands failed (#2013); a
                 # scan sent back to the queue has none.
                 updated = self._connection.execute(

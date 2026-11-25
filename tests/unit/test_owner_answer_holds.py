@@ -30,7 +30,11 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.evidence_led_titles import isbn_title_report
 from tests.support.genre_reports import genre_report
-from tests.support.owner_field_record import record_recomputes  # noqa: F401
+from tests.support.owner_field_record import (
+    hold_token,
+    record_recomputes,  # noqa: F401
+    resume,
+)
 from tests.support.owner_values import OwnerStore, rewritten
 
 ORIGINAL = "Example Series 03 - Example Title"  # what the library holds
@@ -111,9 +115,7 @@ def _queued(store: OwnerStore, destination: str = "title") -> AutomaticDecision 
 
 
 def _hold(store: OwnerStore, destination: str = "title") -> str | None:
-    return store.repository.field_effect_manual_hold_token(
-        store.case.review_case_id, destination
-    )
+    return hold_token(store.repository, store.case.review_case_id, destination)
 
 
 def _field(store: OwnerStore, destination: str) -> dict[str, object]:
@@ -346,9 +348,7 @@ def test_resume_releases_an_answer_held_without_an_automatic_decision(
     store.repository.activate_qualified_automatic(store.clock())
     store.publish(rewritten(report, publisher="Changed Elsewhere"))
     _held_from_automatic(store, decision.decision_id)
-    assert store.repository.clear_field_effect_manual_hold(
-        store.case.review_case_id, "title", store.clock(), decision.decision_id
-    )
+    assert resume(store.repository, store.case.review_case_id, "title", store.clock())
     assert _hold(store) is None
     assert _queued(store) is not None
     store.close()
@@ -368,7 +368,7 @@ def test_a_withdrawal_keeps_a_hold_with_a_return_pending(tmp_path: Path) -> None
         store.clock(),
     )
     at = store.clock()
-    assert store.repository.request_field_effect_manual_return(
+    assert store.repository.request_owner_field_resume(
         store.case.review_case_id, "title", decision.decision_id, scan.scan_id, at, at
     )
     store.decide("withdraw", destination="title")

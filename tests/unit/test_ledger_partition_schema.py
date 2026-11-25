@@ -42,6 +42,7 @@ from tests.support.ledger_partition import (
     rewrite,
     rewrite_no_change,
 )
+from tests.support.owner_field_record import resume
 from tests.support.owner_values import OwnerStore
 
 DERIVED_TABLES = frozenset(
@@ -262,8 +263,8 @@ def test_owner_writes_and_no_change_copy_what_their_readers_show(
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)
-        assert store.repository.clear_field_effect_manual_hold(
-            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        assert resume(
+            store.repository, store.case.review_case_id, "genres", store.clock()
         )
         store.decide("accept", genres, destination="genres")
         settled = assert_ledger_copies(store.repository)
@@ -543,8 +544,8 @@ def _owner_genres(root: Path) -> Path:
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)
-        assert store.repository.clear_field_effect_manual_hold(
-            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        assert resume(
+            store.repository, store.case.review_case_id, "genres", store.clock()
         )
         store.decide("accept", genres, destination="genres")
         return copied_store(store.repository, root / "copy")
@@ -761,8 +762,8 @@ def test_an_owner_no_change_agrees_with_its_case_while_it_is_there(
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)
-        assert store.repository.clear_field_effect_manual_hold(
-            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        assert resume(
+            store.repository, store.case.review_case_id, "genres", store.clock()
         )
         store.decide("accept", genres, destination="genres")
         decoded = reopen_without_derived_rows(store.repository, tmp_path / "regen")
@@ -791,8 +792,8 @@ def test_every_ledger_row_naming_an_owner_decision_names_its_work(
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)
-        assert store.repository.clear_field_effect_manual_hold(
-            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        assert resume(
+            store.repository, store.case.review_case_id, "genres", store.clock()
         )
         settled = store.decide("accept", genres, destination="genres")
         path = copied_store(store.repository, tmp_path / "changed")

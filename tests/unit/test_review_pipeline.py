@@ -908,9 +908,7 @@ def test_successor_discovery_retains_terminal_presentation_work(
     ).fetchone()
     assert before_sequence is not None
     if outcome == "failed":
-        with patch.object(
-            repository, "_has_pending_field_effect_manual_return", return_value=True
-        ):
+        with patch.object(repository, "has_open_resume_for_scan", return_value=True):
             assert repository.claim_review_pipeline_action(105) is None
     else:
         assert repository.claim_review_pipeline_action(105) is None
@@ -7679,7 +7677,7 @@ def test_failed_discovery_preserves_the_requested_successor(
 
     with patch.object(
         repository,
-        "_has_pending_field_effect_manual_return",
+        "has_open_resume_for_scan",
         return_value=True,
     ):
         repository.fail_review_pipeline_action(discovery, "failed", False, 13)
@@ -7711,7 +7709,7 @@ def test_failed_processing_preserves_the_requested_successor(
 
     with patch.object(
         repository,
-        "_has_pending_field_effect_manual_return",
+        "has_open_resume_for_scan",
         return_value=True,
     ):
         assert repository.claim_review_pipeline_action(16) is None
@@ -7764,7 +7762,7 @@ def test_a_failed_discovery_fails_the_open_resumes_on_its_scan(
         repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 12)
     with patch.object(
         repository,
-        "_has_pending_field_effect_manual_return",
+        "has_open_resume_for_scan",
         return_value=True,
     ):
         repository.fail_review_pipeline_action(discovery, "failed", False, 13)
@@ -7802,7 +7800,7 @@ def test_a_scan_settled_with_failures_fails_the_open_resumes_on_it(
         repository.fail_review_pipeline_action(work, "failed", False, 15)
     with patch.object(
         repository,
-        "_has_pending_field_effect_manual_return",
+        "has_open_resume_for_scan",
         return_value=True,
     ):
         assert repository.claim_review_pipeline_action(16) is None
@@ -8892,7 +8890,7 @@ def test_manual_return_successor_discards_failed_scan_absence_candidates(
 
     with patch.object(
         repository,
-        "_has_pending_field_effect_manual_return",
+        "has_open_resume_for_scan",
         return_value=True,
     ):
         assert repository.claim_review_pipeline_action(16) is None

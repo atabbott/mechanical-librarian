@@ -65,6 +65,7 @@ from tests.support.cover_producers import (
     incumbent_identity,
 )
 from tests.support.cover_taste import judge_profile
+from tests.support.owner_field_record import insert_record_row, mark_cover_taken_over
 
 NOW = 10_000
 SAME_ART = CoverMeasures("0" * 16, "0" * 16, (1,) * COLOUR_BINS, (0,) * LAYOUT_VALUES)
@@ -271,10 +272,29 @@ def _decide(library: _Library, item: str) -> None:
 
 
 def _hold_for_owner(library: _Library, item: str, active: bool) -> None:
-    """A field-effect manual hold, as the owner-answer path writes one."""
-    library.repository._connection.execute(
-        "INSERT INTO field_effect_manual_holds VALUES(?,?,?,?,?)",
-        (library.cases[item], "cover", int(active), 60, "{}"),
+    """The record holds an owner's cover for the item that took it over from
+    Automatic, with no answer on the item's own case, as one carried from an
+    earlier case does (ADR-0108, S9). A completed Resume deletes the row, so
+    a released field has none."""
+    if active:
+        _took_over_for_owner(library, item)
+
+
+def _took_over_for_owner(library: _Library, item: str) -> None:
+    """Point the item's record cover row at the owner's one cover choice,
+    marked as taking the cover over from Automatic."""
+    connection = library.repository._connection
+    (selection,) = connection.execute(
+        "SELECT selection_id FROM owner_cover_selections"
+    ).fetchone()
+    # The owner's real choice took nothing over.
+    mark_cover_taken_over(connection, selection)
+    insert_record_row(
+        connection,
+        library.cases[item],
+        "cover",
+        answer_id="human_decision_" + "7" * 64,
+        cover_selection_id=selection,
     )
 
 

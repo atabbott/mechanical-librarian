@@ -63,6 +63,7 @@ from tests.support.audiobook_reports import synthetic_audiobook_bibliographic_re
 from tests.support.evidence_led_titles import isbn_title_report
 from tests.support.genre_reports import genre_report
 from tests.support.owner_field_record import record_recomputes  # noqa: F401
+from tests.support.owner_field_record import resume as resume_field
 from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
 from tests.unit.test_owner_answer_holds import (
     ORIGINAL,
@@ -372,13 +373,11 @@ def test_a_pin_after_resume_is_refused_and_revives_nothing(
             "a" * 64,
             at,
         )
-        assert store.repository.request_field_effect_manual_return(
+        assert store.repository.request_owner_field_resume(
             store.case.review_case_id, "title", answer.decision_id, scan.scan_id, at, at
         )
     else:
-        assert store.repository.clear_field_effect_manual_hold(
-            store.case.review_case_id, "title", at, answer.decision_id
-        )
+        assert resume_field(store.repository, store.case.review_case_id, "title", at)
     before = _pending(store), _pending_counts(store)
     _refused(store, "pin_change_waiting", "pin")
     assert (_pending(store), _pending_counts(store)) == before
@@ -1090,7 +1089,7 @@ def test_a_return_request_never_releases_a_pinned_hold(tmp_path: Path) -> None:
     )
     at = store.clock()
     assert (
-        store.repository.request_field_effect_manual_return(
+        store.repository.request_owner_field_resume(
             store.case.review_case_id, "title", pin.decision_id, scan.scan_id, at, at
         )
         is False
@@ -1164,13 +1163,11 @@ def test_a_resume_in_the_same_second_outranks_a_carried_hold(
             "a" * 64,
             ticks,
         )
-        assert store.repository.request_field_effect_manual_return(
+        assert store.repository.request_owner_field_resume(
             first, "title", held.decision_id, scan.scan_id, ticks, ticks
         )
     else:
-        assert store.repository.clear_field_effect_manual_hold(
-            first, "title", ticks, held.decision_id
-        )
+        assert resume_field(store.repository, first, "title", ticks)
     store.publish(rewritten(report, publisher="Changed Once More"))
     assert store.case.review_case_id != first
     assert _hold(store) is None

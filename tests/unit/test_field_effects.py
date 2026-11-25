@@ -142,6 +142,11 @@ from tests.support.field_effects import (
     effects as effects,
 )
 from tests.support.ledger_partition import reopen_without_derived_rows
+from tests.support.owner_field_record import (
+    complete_resume,
+    hold_context,
+    hold_token,
+)
 from tests.support.proposal_evidence import (
     _target_work_candidate,
     _target_work_report,
@@ -2485,9 +2490,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
         "CREATE TRIGGER cover_consideration_events_no_delete BEFORE DELETE ON cover_consideration_events BEGIN SELECT RAISE(ABORT, 'cover consideration events are append-only'); END"
     )
     effects.repository._connection.commit()
-    stale_hold_token = effects.repository.field_effect_manual_hold_token(
-        case_id, proposal["destination"]
-    )
+    stale_hold_token = hold_token(effects.repository, case_id, proposal["destination"])
     assert stale_hold_token is not None
     assert stale_hold_token is not None
     return_scan = effects.repository.request_review_scan(
@@ -2499,7 +2502,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
         (return_scan.scan_id,),
     )
     effects.repository._connection.commit()
-    assert effects.repository.request_field_effect_manual_return(
+    assert effects.repository.request_owner_field_resume(
         case_id,
         proposal["destination"],
         stale_hold_token,
@@ -2507,21 +2510,22 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
         11,
         11,
     )
+    item_id, request_id = effects.repository._connection.execute(
+        "SELECT item_id,open_resume_id FROM owner_field_answers WHERE destination=?",
+        (proposal["destination"],),
+    ).fetchone()
     expected_pending = (
         (
-            case_id,
-            proposal["destination"],
             "primary",
             "ebooks",
-            stale_hold_token,
+            item_id,
+            proposal["destination"],
+            request_id,
             return_scan.scan_id,
-            11,
             11,
         ),
     )
-    assert (
-        effects.repository.pending_field_effect_manual_returns(100) == expected_pending
-    )
+    assert effects.repository.pending_owner_field_resumes(100) == expected_pending
     requeued = effects.repository.review_pipeline_progress("primary", "ebooks")
     assert requeued is not None
     assert requeued.state == "queued"
@@ -2534,24 +2538,16 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
     effects.repository = open_repository(
         effects.database_path, create=False, cross_thread=True
     )
-    assert (
-        effects.repository.pending_field_effect_manual_returns(100) == expected_pending
-    )
+    assert effects.repository.pending_owner_field_resumes(100) == expected_pending
 
     assert effects.repository.get_field_effect(plan.plan_id).state == "superseded"
-    assert effects.repository.field_effect_manual_hold_context(
-        case_id, proposal["destination"]
-    ) == ("primary", "ebooks")
-    assert len(effects.repository.pending_field_effect_decision_documents(10)) == 1
-    assert effects.repository.clear_field_effect_manual_hold(
-        case_id, proposal["destination"], 12
-    ) == ("primary", "ebooks")
-    assert (
-        effects.repository.field_effect_manual_hold_context(
-            case_id, proposal["destination"]
-        )
-        is None
+    assert hold_context(effects.repository, case_id, proposal["destination"]) == (
+        "primary",
+        "ebooks",
     )
+    assert len(effects.repository.pending_field_effect_decision_documents(10)) == 1
+    assert complete_resume(effects.repository, request_id, 12)
+    assert hold_context(effects.repository, case_id, proposal["destination"]) is None
     pending = effects.repository.pending_field_effect_decision_documents(10)
     assert len(pending) == 1
     assert automatic.decision_id in pending[0]
@@ -2571,11 +2567,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
     def complete_old_scan() -> None:
         old_scan_waiting.set()
         assert release_old_scan.wait(2)
-        stale_release_result.append(
-            effects.repository.clear_field_effect_manual_hold(
-                case_id, proposal["destination"], 13, stale_hold_token
-            )
-        )
+        stale_release_result.append(complete_resume(effects.repository, request_id, 13))
 
     old_scan = threading.Thread(target=complete_old_scan)
     old_scan.start()
@@ -2594,31 +2586,31 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
     )
     effects.repository.record_human_decision(later_human)
     assert effects.repository.get_field_effect(plan.plan_id).state == "superseded"
-    assert effects.repository.field_effect_manual_hold_context(
-        case_id, proposal["destination"]
-    ) == ("primary", "ebooks")
-    current_hold_token = effects.repository.field_effect_manual_hold_token(
-        case_id, proposal["destination"]
+    assert hold_context(effects.repository, case_id, proposal["destination"]) == (
+        "primary",
+        "ebooks",
+    )
+    current_hold_token = hold_token(
+        effects.repository, case_id, proposal["destination"]
     )
     assert current_hold_token is not None
     assert stale_hold_token != current_hold_token
     release_old_scan.set()
     old_scan.join(2)
     assert not old_scan.is_alive()
-    assert stale_release_result == [None]
+    assert stale_release_result == [False]
     effects.repository.close()
     effects.repository = open_repository(
         effects.database_path, create=False, cross_thread=True
     )
     assert (
-        effects.repository.field_effect_manual_hold_token(
-            case_id, proposal["destination"]
-        )
+        hold_token(effects.repository, case_id, proposal["destination"])
         == current_hold_token
     )
-    assert effects.repository.field_effect_manual_hold_context(
-        case_id, proposal["destination"]
-    ) == ("primary", "ebooks")
+    assert hold_context(effects.repository, case_id, proposal["destination"]) == (
+        "primary",
+        "ebooks",
+    )
 
     replacement = metadata_report(
         "Replacement title", "3", "4", item_id="item-1", library="ebooks"

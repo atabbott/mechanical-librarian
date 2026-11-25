@@ -65,7 +65,7 @@ from tests.support.audiobook_reports import (
     publish_audiobook_preview,
     synthetic_audiobook_bibliographic_report,
 )
-from tests.support.owner_field_record import record_recomputes  # noqa: F401
+from tests.support.owner_field_record import record_recomputes, resume  # noqa: F401
 from tests.support.prepared_library import LINEAGE as _LINEAGE
 from tests.support.prepared_library import PRODUCER as _PRODUCER
 from tests.support.prepared_library import Library as _Library
@@ -308,9 +308,7 @@ def test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_conf
     before = _read_fields(library)["authors"]
     assert before["manual_hold"] is True
     if episode == "released":
-        assert library.root.clear_field_effect_manual_hold(
-            case_id, "authors", 12, owner.decision_id
-        )
+        assert resume(library.root, case_id, "authors", 12)
         assert library.automatic().decision_id in library.pending()
 
     library.leave_automatic()
@@ -333,9 +331,7 @@ def test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_conf
     assert field["classification_cause"] == "human_decided"
     assert (field["human_decision"] is None) is (episode == "earlier")
 
-    assert library.root.clear_field_effect_manual_hold(
-        case_id, "authors", 42, owner.decision_id
-    )
+    assert resume(library.root, case_id, "authors", 42)
     assert again.decision_id in library.pending()
     assert _read_fields(library)["authors"]["manual_hold"] is False
 
@@ -391,9 +387,7 @@ def test_a_pin_taken_back_before_automatic_decided_shows_the_hold_once_it_is_on(
     )
     scheduler, _, _ = _applier(library, tmp_path)
     assert _note(library, scheduler, decided.decision_id) == "held"
-    assert root.clear_field_effect_manual_hold(
-        library.case_id(), "authors", 42, pin.decision_id
-    )
+    assert resume(root, library.case_id(), "authors", 42)
     assert decided.decision_id in library.pending()
     assert _read_fields(library)["authors"]["manual_hold"] is False
     assert _note(library, scheduler, decided.decision_id) is None
@@ -457,9 +451,7 @@ def test_a_title_pin_taken_back_in_preview_holds_the_whole_bundle(
         detail = InspectCurrentReviewCase(root).run(case_id)
         fields = {str(field["destination"]): field for field in detail["fields"]}
         assert fields["title"]["manual_hold"] is True
-        assert root.clear_field_effect_manual_hold(
-            case_id, "title", 50, pin.decision_id
-        )
+        assert resume(root, case_id, "title", 50)
         detail = InspectCurrentReviewCase(root).run(case_id)
         fields = {str(field["destination"]): field for field in detail["fields"]}
         assert fields["title"]["manual_hold"] is False
@@ -790,7 +782,7 @@ def test_activity_notes_an_automatic_choice_a_hold_keeps_unwritten(
     # A requested Resume is on its way, so the note goes; checks that end
     # with failures keep the hold and ask for Resume again, so it is back.
     scan = root.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 41)
-    assert root.request_field_effect_manual_return(
+    assert root.request_owner_field_resume(
         case_id, "authors", owner.decision_id, scan.scan_id, 41, 41
     )
     assert _note(library, scheduler, again.decision_id) is None
@@ -803,9 +795,7 @@ def test_activity_notes_an_automatic_choice_a_hold_keeps_unwritten(
     assert _read_fields(library)["authors"]["manual_return_failed"] is True
     assert _note(library, scheduler, again.decision_id) == "held"
 
-    assert root.clear_field_effect_manual_hold(
-        case_id, "authors", 42, owner.decision_id
-    )
+    assert resume(root, case_id, "authors", 42)
     assert _note(library, scheduler, again.decision_id) is None
 
 
@@ -1124,9 +1114,7 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
             root.record_human_decision(answer)
             assert _read_fields(library)["authors"]["manual_hold"] is True
             if owner == "earlier_episode_resumed":
-                assert root.clear_field_effect_manual_hold(
-                    first, "authors", 11, answer.decision_id
-                )
+                assert resume(root, first, "authors", 11)
         # The authors change in Audiobookshelf and change back, each read by
         # a scan.
         for value, at in ((("Someone Else",), 12), (authors, 14)):
@@ -1368,10 +1356,7 @@ def test_an_owner_decision_after_confirming_holds_the_current_generation(
     assert held == owner.decision_id
 
     # Releasing the hold makes this generation's decision current again.
-    assert (
-        root.clear_field_effect_manual_hold(fresh.review_case_id, "authors", 45)
-        is not None
-    )
+    assert resume(root, fresh.review_case_id, "authors", 45)
     assert root._connection.execute(
         "SELECT decision_id FROM field_effect_authorities WHERE current=1 "
         "AND decision_id IN (?,?)",
@@ -1568,9 +1553,7 @@ def test_choosing_automatics_written_value_needs_no_write(
     if posture == "automatic":
         # Returning the field to Automatic leaves its written decision
         # settled: nothing waits and nothing is planned.
-        assert root.clear_field_effect_manual_hold(
-            library.case_id(), "authors", 43, owner.decision_id
-        )
+        assert resume(root, library.case_id(), "authors", 43)
         library.now[0] = 44
         scheduler.schedule()
         assert automatic.decision_id not in library.pending()
@@ -1587,9 +1570,7 @@ def test_choosing_the_written_value_after_resume_holds_the_field_again(
     _, scheduler = _automatic_written(library, tmp_path)
     first = _accept(library.case(), "authors", "owner-presses-before-resume", 40)
     root.record_human_decision(first)
-    assert root.clear_field_effect_manual_hold(
-        library.case_id(), "authors", 41, first.decision_id
-    )
+    assert resume(root, library.case_id(), "authors", 41)
     resumed = _read(library, scheduler)["fields"]["authors"]
     assert resumed["pin_control"] == {"pin": "change_waiting", "unpin": False}
 

@@ -29,6 +29,7 @@ from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import KEPT_CASE_SECONDS
+from tests.support.owner_field_record import hold_token
 from tests.support.owner_values import OwnerStore
 from tests.support.preparation_pipeline import (
     PRODUCER,
@@ -80,9 +81,7 @@ def test_a_written_work_keeps_its_case_until_the_write_is_30_days_old(
 ) -> None:
     writing = store.case
     written_at = _write(store)
-    hold = store.repository.field_effect_manual_hold_token(
-        writing.review_case_id, "title"
-    )
+    hold = hold_token(store.repository, writing.review_case_id, "title")
     assert hold is not None
     read_back = _read_back()
     assert store.admit(read_back, now=written_at + KEPT_CASE_SECONDS - 1) == (
@@ -94,10 +93,7 @@ def test_a_written_work_keeps_its_case_until_the_write_is_30_days_old(
     assert _current(store, kept.review_case_id)
     assert store.repository.review_case_kept(kept.review_case_id)
     # The owner's hold follows the work onto the kept case.
-    assert (
-        store.repository.field_effect_manual_hold_token(kept.review_case_id, "title")
-        == hold
-    )
+    assert hold_token(store.repository, kept.review_case_id, "title") == hold
     # The field still reads the written value, so going back is offered.
     detail = InspectCurrentReviewCase(store.repository).run(kept.review_case_id)
     title = next(value for value in detail["fields"] if value["destination"] == "title")

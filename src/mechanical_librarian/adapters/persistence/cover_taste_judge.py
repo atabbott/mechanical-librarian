@@ -119,9 +119,13 @@ _ELIGIBLE_FROM_SQL = (
     + ")) "
     "AND NOT EXISTS (SELECT 1 FROM human_decisions decided "
     "WHERE decided.review_case_id=ml.review_case_id AND decided.destination='cover') "
-    "AND NOT EXISTS (SELECT 1 FROM field_effect_manual_holds held "
-    "WHERE held.review_case_id=ml.review_case_id AND held.destination='cover' "
-    "AND held.active=1) "
+    # The record holds an owner's cover that took it over from Automatic
+    # (ADR-0108, S9).
+    "AND NOT EXISTS (SELECT 1 FROM owner_field_answers held "
+    "JOIN owner_cover_selections took ON took.selection_id=held.cover_selection_id "
+    "WHERE held.connection_name=ml.connection_name "
+    "AND held.library_name=ml.library_name AND held.item_id=ml.item_id "
+    "AND held.destination='cover' AND took.cover_took_over=1) "
     f"AND COALESCE({_LATEST_VERDICT_SQL},'choose')='choose' "
 )
 _DUE_FROM_SQL = (

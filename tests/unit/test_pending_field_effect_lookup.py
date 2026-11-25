@@ -26,7 +26,12 @@ from mechanical_librarian.adapters.persistence import field_effects, metadata_po
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     _ACTIVE_GENERATION_DESCRIPTION_SQL,
     _AUTOMATIC_POSTURE_SQL,
+    _AUTOMATIC_UNANSWERED_SQL,
+    _COVER_UNANSWERED_SQL,
+    _DESCRIPTION_UNANSWERED_SQL,
     _FIELD_EFFECT_HOLDS_DECISION_SQL,
+    _RECORD_NAMES_AUTHORED_SQL,
+    _RECORD_NAMES_HUMAN_SQL,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
@@ -124,6 +129,7 @@ def store(tmp_path: Path) -> Iterator[tuple[sqlite3.Connection, list[str]]]:
                 automatic["policy_generation"],
             ),
         )
+        ordinal = next_ordinal(connection)
         connection.execute(
             "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,proposal_id,"
             "target_fingerprint,destination,actor,outcome,selected_value_document,"
@@ -132,7 +138,7 @@ def store(tmp_path: Path) -> Iterator[tuple[sqlite3.Connection, list[str]]]:
             "VALUES(?,?,?,?,?,'authors','owner','accept','null',?,?,?,?,"
             "'primary','books','work','null')",
             (
-                next_ordinal(connection),
+                ordinal,
                 human_id,
                 case,
                 "review_proposal_" + _digest(f"proposal-{index}"),
@@ -142,6 +148,14 @@ def store(tmp_path: Path) -> Iterator[tuple[sqlite3.Connection, list[str]]]:
                 occurred_at,
                 json.dumps({"decision_id": human_id}),
             ),
+        )
+        # Each is the record's answer for its field, so it plans (ADR-0108).
+        connection.execute(
+            "INSERT INTO owner_field_answers(connection_name,library_name,item_id,"
+            "destination,source,answer_id,ordinal,outcome,value_document,"
+            "recorded_at,review_case_id,episode,carry_eligible) "
+            "VALUES('primary','books',?,'authors','human',?,?,'accept','null',?,?,0,1)",
+            (f"work-{index}", human_id, ordinal, occurred_at, case),
         )
     connection.commit()
     pending = [
@@ -187,6 +201,27 @@ def _statements(connection: sqlite3.Connection) -> dict[str, str]:
 def _original(statement: str) -> str:
     assert statement.count(_CURRENT_PREDICATE) == 1
     return statement.replace(_CURRENT_PREDICATE, _ORIGINAL_RELEASED)
+
+
+def _record(connection: sqlite3.Connection, decision_id: str) -> None:
+    """Make an owner decision this module inserts the record's answer for a
+    field of its own, so it plans as any owner answer the record names
+    (ADR-0108). A cover answer names a selection, which this store lacks, so
+    its row goes in with foreign keys off; no read here follows the name."""
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys=OFF")
+    connection.execute(
+        "INSERT INTO owner_field_answers(connection_name,library_name,item_id,"
+        "destination,source,answer_id,ordinal,outcome,value_document,recorded_at,"
+        "review_case_id,episode,carry_eligible,cover_selection_id) "
+        "SELECT connection_name,library_name,decision_id,destination,'human',"
+        "decision_id,ordinal,outcome,'null',occurred_at,review_case_id,0,1,"
+        "CASE destination WHEN 'cover' THEN 'cover_selection_' || decision_id END "
+        "FROM human_decisions WHERE decision_id=?",
+        (decision_id,),
+    )
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys=ON")
 
 
 def _effect(
@@ -1573,6 +1608,48 @@ def _before_2038(statement: str) -> str:
     return statement
 
 
+# #2038 C2b read the record of the owner's answers in place of the case's
+# hold: an owner's row plans while the record names it, and an automatic one
+# while the record holds no answer for its book's field and no owner decision
+# on its case still keeps Automatic off it.
+_RECORD_2038B = (
+    (
+        _RECORD_NAMES_HUMAN_SQL,
+        "NOT EXISTS (SELECT 1 FROM field_effect_manual_holds returned WHERE "
+        "returned.review_case_id=human.review_case_id AND "
+        "returned.destination=human.destination AND returned.active=0)",
+    ),
+    (
+        _AUTOMATIC_UNANSWERED_SQL,
+        "NOT EXISTS (SELECT 1 FROM human_decisions human WHERE "
+        "human.review_case_id=automatic.review_case_id AND "
+        "human.destination=automatic.destination AND NOT EXISTS ("
+        "SELECT 1 FROM field_effect_manual_holds returned WHERE "
+        "returned.review_case_id=automatic.review_case_id AND "
+        "returned.destination=automatic.destination AND returned.active=0)) "
+        "AND NOT EXISTS (SELECT 1 FROM field_effect_manual_holds hold WHERE "
+        "hold.review_case_id=automatic.review_case_id AND "
+        "hold.destination=automatic.destination AND hold.active=1)",
+    ),
+    ("WHERE " + _COVER_UNANSWERED_SQL + " AND ", "WHERE "),
+    (" WHERE " + _RECORD_NAMES_AUTHORED_SQL + " UNION ALL", " UNION ALL"),
+    (
+        _DESCRIPTION_UNANSWERED_SQL,
+        "NOT EXISTS (SELECT 1 FROM field_effect_manual_holds hold WHERE "
+        "hold.review_case_id=d.review_case_id AND "
+        "hold.destination='description' AND hold.active=1)",
+    ),
+)
+
+
+def _before_2038b(statement: str) -> str:
+    """The case's hold again, in place of the record."""
+    for now, then in _RECORD_2038B:
+        assert statement.count(now) == 1, now
+        statement = statement.replace(now, then)
+    return statement
+
+
 def _before_1568(statement: str) -> str:
     """Remove the Automatic-posture test #1568 added to each automatic arm."""
     held = "hold.active=1) AND " + _AUTOMATIC_POSTURE_SQL + "))"
@@ -1655,7 +1732,9 @@ def test_lineage_membership_restores_the_1204_text(
             _before_1523(
                 _before_frozen_follows(
                     _before_1568(
-                        _before_1573(_before_1205(name, _before_2038(statement)))
+                        _before_1573(
+                            _before_1205(name, _before_2038(_before_2038b(statement)))
+                        )
                     )
                 )
             )
@@ -1754,6 +1833,7 @@ def test_lineage_membership_equals_the_correlated_test_across_lineage_shapes(
             cover_id,
         ),
     )
+    _record(connection, cover_id)
     _forget_lineage(connection, cover_case)
     connection.commit()
     after = _assert_lineage_oracle(connection, statements)

@@ -3,9 +3,10 @@
 Every owner answer takes its ordinal from `owner_answer_ordinal` in its own
 transaction, and every answer site writes `owner_field_answers` through this
 module in that same transaction. Resume's requests, completions, failures and
-supersessions are written here too, as `owner_field_events`, at today's hold
-Resume sites. Until the readers move to it nothing decides anything from the
-record: manual holds stay authoritative and the record is written beside them.
+supersessions are written here too, as `owner_field_events`, keyed by the
+work's field. What Automatic records, plans and writes, and Resume itself,
+read the record (#2038 C2b); what the owner sees and may do still reads the
+manual holds, which are written beside the record until those readers move.
 `domain.owner_field_answer` folds the same rows from the ledger; a withdrawal
 restores through that fold, and open refuses a store whose record is not that
 fold.
@@ -38,6 +39,67 @@ _UNCLOSED = (
     "closing.request_id={0}.event_id "
     "AND closing.kind IN ('resume_completed','resume_superseded'))"
 )
+
+
+def case_record_sql(case: str, destination: str) -> str:
+    """A SELECT of the record's row for the field of the case's book, keyed
+    by item through the case's current lineage; `case` and `destination` are
+    SQL expressions. Its columns are `record.*`."""
+    return (
+        "SELECT 1 FROM current_review_case_lineages record_case "
+        "JOIN owner_field_answers record "
+        "ON record.connection_name=record_case.connection_name "
+        "AND record.library_name=record_case.library_name "
+        "AND record.item_id=record_case.item_id "
+        f"WHERE record_case.review_case_id={case} AND record.destination={destination}"
+    )
+
+
+# The record's answer for either half of a title and subtitle bundle holds
+# the whole bundle, at record time and at write time; bound by the case twice.
+BUNDLE_ANSWERED_SQL = (
+    case_record_sql("?", "'title'") + " UNION ALL " + case_record_sql("?", "'subtitle'")
+)
+
+
+# The record holds an owner's cover for the case's book that took the cover
+# over from Automatic (S9): where a cover hold stood before C2b, Automatic's
+# cover mint and its taste switch stop, and Resume may show (ADR-0085,
+# Amendment 3; ADR-0108); bound by the case.
+COVER_TAKEN_OVER_SQL = (
+    case_record_sql("?", "'cover'")
+    + " AND EXISTS (SELECT 1 FROM owner_cover_selections took "
+    "WHERE took.selection_id=record.cover_selection_id AND took.cover_took_over=1)"
+)
+
+
+def resumed_ordinal_sql(owner: str, destination: str) -> str:
+    """The ordinal up to which Resume has the field's owner answers back: the
+    `over_ordinal` of its open or latest completed request, NULL with none.
+    `owner` names a row with the field's item key columns."""
+    return (
+        "(SELECT MAX(resumed.over_ordinal) FROM owner_field_events resumed "
+        f"WHERE resumed.connection_name={owner}.connection_name "
+        f"AND resumed.library_name={owner}.library_name "
+        f"AND resumed.item_id={owner}.item_id AND resumed.destination={destination} "
+        "AND resumed.kind='resume_requested' AND NOT EXISTS (SELECT 1 FROM "
+        "owner_field_events superseded WHERE superseded.request_id=resumed.event_id "
+        "AND superseded.kind='resume_superseded'))"
+    )
+
+
+def owner_row_counts_sql(human: str) -> str:
+    """Whether owner decision `human` still keeps Automatic off its field:
+    Resume has not taken it back (it is above the open or latest completed
+    request's `over_ordinal`), and it is no valueless cause row of a field
+    Resume was asked of (ADR-0108, "During and after a Resume")."""
+    resumed = resumed_ordinal_sql(human, f"{human}.destination")
+    return (
+        f"NOT ({human}.ordinal<=COALESCE({resumed},0) OR "
+        f"(json_extract({human}.document,'$.cause') IS NOT NULL "
+        f"AND {resumed} IS NOT NULL))"
+    )
+
 
 OWNER_ANSWER_ORDINAL_SQL = (
     "CREATE TABLE owner_answer_ordinal ("

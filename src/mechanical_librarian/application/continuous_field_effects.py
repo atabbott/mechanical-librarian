@@ -93,9 +93,10 @@ class _ScanProgress(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class _PendingManualReturn:
-    context: tuple[str, str]
-    hold_token: str
+class _PendingResume:
+    item: tuple[str, str, str]
+    destination: str
+    request_id: str
     scan_id: str
     requested_at: int
 
@@ -125,17 +126,14 @@ class ContinuousFieldEffectRepository(Protocol):
     def revoke_library_field_effect_consents(
         self, connection: str, library: str, changed_at: int
     ) -> int: ...
-    def field_effect_manual_hold_context(
+    def owner_field_resume_context(
         self, review_case_id: str, destination: str
-    ) -> tuple[str, str] | None: ...
-    def field_effect_manual_hold_token(
-        self, review_case_id: str, destination: str
-    ) -> str | None: ...
-    def request_field_effect_manual_return(
+    ) -> tuple[str, str, str] | None: ...
+    def request_owner_field_resume(
         self,
         review_case_id: str,
         destination: str,
-        hold_token: str,
+        answer_token: str,
         scan_id: str,
         requested_at: int,
         changed_at: int,
@@ -218,18 +216,20 @@ class ContinuousFieldEffectRepository(Protocol):
     def field_effect_activity_transitions(
         self, event_id: str, after_sequence: int | None = None, limit: int = 20
     ) -> tuple[dict[str, object], ...]: ...
-    def pending_field_effect_manual_returns(
+    def pending_owner_field_resumes(
         self,
         limit: int,
-        after: tuple[int, str, str] | None = None,
-    ) -> tuple[tuple[str, str, str, str, str, str, int, int], ...]: ...
-    def clear_field_effect_manual_hold(
+        after: tuple[int, str] | None = None,
+    ) -> tuple[tuple[str, str, str, str, str, str, int], ...]: ...
+    def complete_owner_field_resume(
         self,
-        review_case_id: str,
+        connection_name: str,
+        library_name: str,
+        item_id: str,
         destination: str,
+        request_id: str,
         changed_at: int,
-        expected_hold_token: str | None = None,
-    ) -> tuple[str, str] | None: ...
+    ) -> bool: ...
 
 
 def _waiting_reasons(
@@ -375,7 +375,7 @@ class ContinuousGuardedApplication:
         # Superseded covers whose revive waits for their own cleanup; the
         # schedule starts over once one completes (#1415).
         self._revives_awaiting_cleanup: set[str] = set()
-        self._manual_return_cursor: tuple[int, str, str] | None = None
+        self._resume_cursor: tuple[int, str] | None = None
         self._capability_cache: dict[str, tuple[int, dict[str, object]]] = {}
         self._capability_lock = threading.Lock()
         self._serialize: Callable[[Callable[[], object]], object] = lambda call: call()
@@ -789,18 +789,14 @@ class ContinuousGuardedApplication:
         review_case_id: str,
         destination: str,
     ) -> None:
-        context = self._repository.field_effect_manual_hold_context(
+        context = self._repository.owner_field_resume_context(
             review_case_id, destination
         )
         if context is None:
             raise GuardedApplicationError("manual_hold")
-        hold_token = self._repository.field_effect_manual_hold_token(
-            review_case_id, destination
-        )
-        if hold_token is None:
-            raise GuardedApplicationError("manual_hold")
+        connection, library, answer_token = context
         try:
-            progress = self._request_scan(*context)
+            progress = self._request_scan(connection, library)
         except Exception as error:
             # ``_request_scan`` is an injected callable reaching the target
             # through the preparation pipeline, so its raisable set belongs to
@@ -812,10 +808,10 @@ class ContinuousGuardedApplication:
         requested_at = getattr(progress, "updated_at", None)
         if type(scan_id) is not str or type(requested_at) is not int:
             raise GuardedApplicationError("scan")
-        persisted = self._repository.request_field_effect_manual_return(
+        persisted = self._repository.request_owner_field_resume(
             review_case_id,
             destination,
-            hold_token,
+            answer_token,
             scan_id,
             requested_at,
             self._clock(),
@@ -955,7 +951,7 @@ class ContinuousGuardedApplication:
         )
 
     def _schedule(self, limit: int, affected_review_case_ids: set[str]) -> int:
-        self._release_completed_manual_returns()
+        self._complete_owner_field_resumes()
         with self._schedule_lock:
             generation = self._schedule_generation
             cursor = self._schedule_cursor
@@ -2172,61 +2168,48 @@ class ContinuousGuardedApplication:
             if failures:
                 raise GuardedApplicationError("recovery") from failures[0]
 
-    def _release_completed_manual_returns(self) -> None:
+    def _complete_owner_field_resumes(self) -> None:
         if self._scan_progress is None:
             return
-        pending = self._repository.pending_field_effect_manual_returns(
-            100, self._manual_return_cursor
-        )
+        pending = self._repository.pending_owner_field_resumes(100, self._resume_cursor)
         for row in pending:
             if (
                 type(row) is not tuple
-                or len(row) != 8
+                or len(row) != 7
                 or any(type(value) is not str for value in row[:6])
                 or type(row[6]) is not int
-                or type(row[7]) is not int
             ):
                 raise GuardedApplicationError("persistence")
-            (
-                review_case_id,
-                destination,
-                connection,
-                library,
-                hold_token,
-                scan_id,
-                requested_at,
-                _updated_at,
-            ) = row
-            if (connection, library) not in self._applications:
-                continue
-            release = _PendingManualReturn(
-                (connection, library), hold_token, scan_id, requested_at
+            resume = _PendingResume(
+                (row[0], row[1], row[2]), row[3], row[4], row[5], row[6]
             )
+            if resume.item[:2] not in self._applications:
+                continue
             try:
-                progress = self._scan_progress(*release.context)
+                progress = self._scan_progress(*resume.item[:2])
             except Exception as error:
-                # Same injected, untyped seam as the manual-return request. A
-                # progress reading that did not arrive proves nothing about the
-                # scan, so it must raise rather than let the pending return be
-                # released against an unobserved state.
+                # Same injected, untyped seam as the Resume request. A progress
+                # reading that did not arrive proves nothing about the scan,
+                # so it must raise rather than let the open Resume complete
+                # against an unobserved state.
                 raise GuardedApplicationError("scan") from error
             if (
-                getattr(progress, "scan_id", None) != release.scan_id
+                getattr(progress, "scan_id", None) != resume.scan_id
                 or getattr(progress, "state", None) != "completed"
                 or getattr(progress, "rescan_requested", None) is not False
                 or type(getattr(progress, "updated_at", None)) is not int
-                or cast(_ScanProgress, progress).updated_at < release.requested_at
+                or cast(_ScanProgress, progress).updated_at < resume.requested_at
             ):
                 continue
-            cleared = self._repository.clear_field_effect_manual_hold(
-                review_case_id, destination, self._clock(), release.hold_token
-            )
-            if cleared is not None:
+            if self._repository.complete_owner_field_resume(
+                *resume.item,
+                resume.destination,
+                resume.request_id,
+                self._clock(),
+            ):
                 self._restart_schedule()
-        self._manual_return_cursor = (
-            (pending[-1][7], pending[-1][0], pending[-1][1])
-            if len(pending) == 100
-            else None
+        self._resume_cursor = (
+            (pending[-1][6], pending[-1][4]) if len(pending) == 100 else None
         )
 
     def _application(self, operation: FieldEffectOperation) -> GuardedFieldApplication:

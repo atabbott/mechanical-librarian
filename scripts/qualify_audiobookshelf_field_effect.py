@@ -1840,8 +1840,8 @@ def _read_installed_return_lineage(
     review_case_id: str,
     destination: str,
 ) -> tuple[object, object | None]:
-    """Read the monotonic hold before progress so a clear cannot look stale."""
-    hold = repository.field_effect_manual_hold_context(review_case_id, destination)
+    """Read the record before progress so a completion cannot look stale."""
+    hold = repository.owner_field_resume_context(review_case_id, destination)
     progress = repository.review_pipeline_progress(connection, library)
     return progress, hold
 
@@ -2518,7 +2518,7 @@ def _installed_continuous_qualification(
                     override.status_code != 200
                     or continuous._serialize(
                         partial(
-                            repository.field_effect_manual_hold_context,
+                            repository.owner_field_resume_context,
                             case_id,
                             automatic_destination,
                         )

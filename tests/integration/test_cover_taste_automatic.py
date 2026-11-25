@@ -86,7 +86,13 @@ from tests.support.audiobook_covers import (
     SYNTHETIC_MEASURED_RECORD,
     SYNTHETIC_TASTE_RECORD,
 )
-from tests.support.owner_field_record import record_recomputes  # noqa: F401
+from tests.support.owner_field_record import (
+    complete_resume,
+    hold_token,
+    record_recomputes,  # noqa: F401
+    request_resume,
+    resume,
+)
 from tests.unit.test_cover_taste_judge import WORKS, _Library, _report, _version
 from tests.unit.test_cover_taste_suggestions import _detail_suggestion
 
@@ -419,14 +425,21 @@ def test_a_full_retained_store_or_a_hold_switches_nothing(
         "TASTE_REPLACEMENT_QUALIFICATION_SHA256",
         SYNTHETIC_TASTE_RECORD,
     )
-    with _switching(tmp_path / "held", ("keep",)) as library:
+    with _switching(tmp_path / "held", ("keep",), judged=()) as library:
         _automatic(library)
-        library.repository._set_field_effect_manual_hold(
-            library.cases["keep"], "cover", NOW, "human_decision_" + "0" * 64
-        )
-        library.repository._connection.commit()
-        assert _wakes(library) == 0
-        assert _selections(library.repository) == []
+        # The owner kept the cover Automatic switched, so the record holds a
+        # cover that took it over (ADR-0108, S9). With the owner's pointer
+        # gone, that answer alone guards the switch.
+        _stored_choose(library, "keep")
+        assert _wake(library)
+        _owner_choice(library, "keep", keep=True)
+        connection = library.repository._connection
+        connection.execute("DELETE FROM owner_cover_pointers")
+        connection.commit()
+        switched = _taste_selections(library)
+        _stored_choose(library, "keep", NOW + 20)
+        assert _wakes(library, NOW + 21) == 0
+        assert _taste_selections(library) == switched
 
 
 def _stored_choose(library: _Library, item: str, now: int = NOW + 5) -> str:
@@ -1037,9 +1050,7 @@ def test_cover_resume_hands_the_cover_back_to_automatic(
         _keep_cover(prepared, switch["selection_id"])
         service.update_policy(CoverPolicy(prefer_edition=True))
         later = json.loads(_reprepare(service, prepared))
-        token = repository.field_effect_manual_hold_token(
-            prepared.review_case_id, "cover"
-        )
+        token = hold_token(repository, prepared.review_case_id, "cover")
         assert token is not None
         connection = repository._connection
         considerations = repository._cover_considerations
@@ -1051,12 +1062,7 @@ def test_cover_resume_hands_the_cover_back_to_automatic(
             admit(document, occurred_at)
 
         monkeypatch.setattr(considerations, "_admit_automatic_cover", observed)
-        assert (
-            repository.clear_field_effect_manual_hold(
-                prepared.review_case_id, "cover", 20, token
-            )
-            is not None
-        )
+        assert resume(repository, prepared.review_case_id, "cover", 20)
         assert inside == [True]
         assert not connection.in_transaction
         (selection,) = _selections(repository)
@@ -1089,9 +1095,7 @@ def test_a_resume_that_cannot_admit_leaves_everything_as_it_was(
         marks = _marks(prepared)
         assert len(marks) == 1
         (kept,) = _selections(repository)
-        token = repository.field_effect_manual_hold_token(
-            prepared.review_case_id, "cover"
-        )
+        token = hold_token(repository, prepared.review_case_id, "cover")
         assert token is not None
 
         def refused(_document: str, _occurred_at: int) -> None:
@@ -1101,14 +1105,9 @@ def test_a_resume_that_cannot_admit_leaves_everything_as_it_was(
             repository._cover_considerations, "_admit_automatic_cover", refused
         )
         with pytest.raises(FieldEffectError):
-            repository.clear_field_effect_manual_hold(
-                prepared.review_case_id, "cover", 20, token
-            )
+            resume(repository, prepared.review_case_id, "cover", 20)
         assert not repository._connection.in_transaction
-        assert (
-            repository.field_effect_manual_hold_token(prepared.review_case_id, "cover")
-            == token
-        )
+        assert hold_token(repository, prepared.review_case_id, "cover") == token
         assert _selections(repository) == [kept]
         assert _marks(prepared) == marks
 
@@ -1135,17 +1134,18 @@ def test_an_answer_after_resume_was_asked_is_not_released(
         service.update_policy(CoverPolicy(prefer_edition=True))
         later = json.loads(_reprepare(service, prepared))
         assert len(_marks(prepared)) == 1
-        token = repository.field_effect_manual_hold_token(
-            prepared.review_case_id, "cover"
-        )
+        token = hold_token(repository, prepared.review_case_id, "cover")
         assert token is not None
         target = prepared.report.target
         scan = repository.request_review_scan(
             target.connection, target.library, "library-ebooks", "a" * 64, 12
         )
-        assert repository.request_field_effect_manual_return(
+        assert repository.request_owner_field_resume(
             prepared.review_case_id, "cover", token, scan.scan_id, 12, 12
         )
+        (request,) = repository._connection.execute(
+            "SELECT open_resume_id FROM owner_field_answers WHERE destination='cover'"
+        ).fetchone()
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(prepared.review_case_id))["case"]
         )
@@ -1194,13 +1194,9 @@ def test_an_answer_after_resume_was_asked_is_not_released(
         )
         assert hold["decision_id"] != token
         assert hold["pending_return"] is None
-        # The checks Resume asked for complete and clear the hold they named.
-        assert (
-            repository.clear_field_effect_manual_hold(
-                prepared.review_case_id, "cover", 20, token
-            )
-            is None
-        )
+        # The answer closed the request, so the checks Resume asked for
+        # complete nothing.
+        assert not complete_resume(repository, request, 20)
         assert _selections(repository) == [answered]
 
 
@@ -1244,9 +1240,9 @@ def test_a_resume_on_an_earlier_case_keeps_an_answer_on_its_successor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Review S2: Resume is asked on case A, the work is reviewed again as
-    case B, and the owner answers the cover on B. When A's hold then clears
-    under its token, B's newer answer stays current: the clear refuses the
-    earlier case, and the release frees only the selection A's hold names."""
+    case B, and the owner answers the cover on B. The request is the work's,
+    so B's answer closes it, and A's completed checks then release nothing:
+    B's newer answer stays current (ADR-0108)."""
     monkeypatch.setattr(
         cover_qualification_policy,
         "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
@@ -1260,8 +1256,8 @@ def test_a_resume_on_an_earlier_case_keeps_an_answer_on_its_successor(
         service.update_policy(CoverPolicy(prefer_edition=True))
         _reprepare(service, prepared)
         earlier = prepared.review_case_id
-        token = repository.field_effect_manual_hold_token(earlier, "cover")
-        assert token is not None
+        request = request_resume(repository, earlier, "cover", 12)
+        assert request is not None
         (kept,) = _selections(repository)
         report = MetadataReport.from_json(
             repository._connection.execute(
@@ -1298,18 +1294,8 @@ def test_a_resume_on_an_earlier_case_keeps_an_answer_on_its_successor(
         (answered,) = _selections(repository)
         assert answered["kind"] == "owner"
         assert answered["selection_id"] != kept["selection_id"]
-        # A's checks complete. The clear itself refuses a case that is no
-        # longer the work's current one, so it releases nothing ...
-        assert (
-            repository.clear_field_effect_manual_hold(earlier, "cover", 20, token)
-            is None
-        )
-        assert _selections(repository) == [answered]
-        # ... and the release it would run, asked directly for A's hold,
-        # frees only the selection that hold names, never B's answer.
-        repository._connection.execute("BEGIN")
-        repository._cover_considerations._resume_automatic_cover(earlier, token, 20)
-        repository._connection.commit()
+        # A's checks complete, and complete nothing.
+        assert not complete_resume(repository, request, 20)
         assert _selections(repository) == [answered]
 
 
@@ -1338,15 +1324,7 @@ def test_a_later_comparison_with_no_switch_clears_the_mark(
         # Review B2: Resume completes with nothing to switch. The owner's
         # pointer is still released, so the cover stays as it is with no
         # owner choice standing over it ...
-        token = prepared.repository.field_effect_manual_hold_token(
-            prepared.review_case_id, "cover"
-        )
-        assert (
-            prepared.repository.clear_field_effect_manual_hold(
-                prepared.review_case_id, "cover", 20, token
-            )
-            is not None
-        )
+        assert resume(prepared.repository, prepared.review_case_id, "cover", 20)
         assert _selections(prepared.repository) == []
         # ... and a later check that finds a fault switches it.
         service = _service(prepared)
@@ -1378,9 +1356,7 @@ def test_a_resume_while_safety_is_paused_switches_on_a_later_check(
         service.update_policy(CoverPolicy(prefer_edition=True))
         _reprepare(service, prepared)
         assert len(_marks(prepared)) == 1
-        token = repository.field_effect_manual_hold_token(
-            prepared.review_case_id, "cover"
-        )
+        token = hold_token(repository, prepared.review_case_id, "cover")
         assert token is not None
         connection.execute(
             "UPDATE automatic_safety_state SET paused=1 WHERE singleton=1"
@@ -1392,12 +1368,7 @@ def test_a_resume_while_safety_is_paused_switches_on_a_later_check(
         repository._cover_considerations._admit_automatic_cover(document, 15)
         connection.commit()
         assert _marks(prepared) == []
-        assert (
-            repository.clear_field_effect_manual_hold(
-                prepared.review_case_id, "cover", 20, token
-            )
-            is not None
-        )
+        assert resume(repository, prepared.review_case_id, "cover", 20)
         # Paused, Automatic switches nothing yet, but the owner's choice no
         # longer stands over the cover.
         assert _selections(repository) == []

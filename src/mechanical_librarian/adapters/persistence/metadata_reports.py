@@ -440,9 +440,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
             resume_automatic_cover=(
-                lambda review_case_id, decision_id, changed_at: (
+                lambda connection_name, library_name, item_id, changed_at: (
                     self._cover_considerations._resume_automatic_cover(
-                        review_case_id, decision_id, changed_at
+                        connection_name, library_name, item_id, changed_at
                     )
                 )
             ),
@@ -452,8 +452,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._review_preparation = SQLiteReviewPreparationRepository(
             connection,
             binding,
-            has_pending_field_effect_manual_return=(
-                lambda scan_id: self._has_pending_field_effect_manual_return(scan_id)
+            has_open_resume_for_scan=(
+                lambda scan_id: self.has_open_resume_for_scan(scan_id)
             ),
             fail_open_resumes_for_scan=(
                 lambda scan_id, at: self._fail_open_resumes_for_scan(scan_id, at)
@@ -1090,71 +1090,63 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             pin=pin,
         )
 
-    def field_effect_manual_hold_context(
+    def owner_field_resume_context(
         self,
         review_case_id: str,
         destination: str,
-    ) -> tuple[str, str] | None:
-        return self._field_effects.field_effect_manual_hold_context(
+    ) -> tuple[str, str, str] | None:
+        return self._field_effects.owner_field_resume_context(
             review_case_id,
             destination,
         )
 
-    def field_effect_manual_hold_token(
+    def request_owner_field_resume(
         self,
         review_case_id: str,
         destination: str,
-    ) -> str | None:
-        return self._field_effects.field_effect_manual_hold_token(
-            review_case_id,
-            destination,
-        )
-
-    def request_field_effect_manual_return(
-        self,
-        review_case_id: str,
-        destination: str,
-        hold_token: str,
+        answer_token: str,
         scan_id: str,
         requested_at: int,
         changed_at: int,
     ) -> bool:
-        return self._field_effects.request_field_effect_manual_return(
+        return self._field_effects.request_owner_field_resume(
             review_case_id,
             destination,
-            hold_token,
+            answer_token,
             scan_id,
             requested_at,
             changed_at,
         )
 
-    def pending_field_effect_manual_returns(
+    def pending_owner_field_resumes(
         self,
         limit: int,
-        after: tuple[int, str, str] | None = None,
-    ) -> tuple[tuple[str, str, str, str, str, str, int, int], ...]:
-        return self._field_effect_activity.pending_field_effect_manual_returns(
-            limit, after
-        )
+        after: tuple[int, str] | None = None,
+    ) -> tuple[tuple[str, str, str, str, str, str, int], ...]:
+        return self._field_effect_activity.pending_owner_field_resumes(limit, after)
 
-    def _has_pending_field_effect_manual_return(self, scan_id: str) -> bool:
-        return self._field_effects._has_pending_field_effect_manual_return(scan_id)
+    def has_open_resume_for_scan(self, scan_id: str) -> bool:
+        return self._field_effects.has_open_resume_for_scan(scan_id)
 
     def _fail_open_resumes_for_scan(self, scan_id: str, at: int) -> int:
         return fail_open_resumes_for_scan(self._connection, scan_id, at)
 
-    def clear_field_effect_manual_hold(
+    def complete_owner_field_resume(
         self,
-        review_case_id: str,
+        connection_name: str,
+        library_name: str,
+        item_id: str,
         destination: str,
+        request_id: str,
         changed_at: int,
-        expected_hold_token: str | None = None,
-    ) -> tuple[str, str] | None:
-        return self._field_effects.clear_field_effect_manual_hold(
-            review_case_id,
+    ) -> bool:
+        return self._field_effects.complete_owner_field_resume(
+            connection_name,
+            library_name,
+            item_id,
             destination,
+            request_id,
             changed_at,
-            expected_hold_token,
         )
 
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:

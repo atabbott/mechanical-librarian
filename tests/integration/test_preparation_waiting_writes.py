@@ -61,6 +61,7 @@ from tests.integration.test_policy_activation_waiting_writes import (
     _owner_decision_id,
     _reopen_fields,
 )
+from tests.support.owner_field_record import hold_token
 from tests.support.owner_values import rewritten
 from tests.support.prepared_library import PRODUCER as _PRODUCER
 from tests.support.prepared_library import Library as _Library
@@ -729,7 +730,7 @@ def _changed_search_rows(
     )
     _assert_field_closed(library, lane, decision_id, waiting_id)
     return (
-        library.root.field_effect_manual_hold_token(case_after, destination),
+        hold_token(library.root, case_after, destination),
         decision_id,
         tuple(
             library.root._connection.execute(
