@@ -2502,6 +2502,12 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
         (return_scan.scan_id,),
     )
     effects.repository._connection.commit()
+    # Resume is offered on the description only while Automatic description
+    # advice is on (C2b-13).
+    advice = effects.repository._description_advice
+    advice.bind_settings(
+        advice.current_settings().model_copy(update={"automatic_application": True})
+    )
     assert effects.repository.request_owner_field_resume(
         case_id,
         proposal["destination"],

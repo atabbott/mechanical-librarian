@@ -73,6 +73,7 @@ def _ledger_rows(connection: sqlite3.Connection) -> dict[str, list[tuple[object,
 def _derived_setup() -> dict[str, list[tuple[object, ...]]]:
     """Each derived table and the rows a new schema writes into it."""
     fresh = sqlite3.connect(":memory:")
+    schema._register_casefold(fresh)
     try:
         schema._create_schema(fresh)
         return {
@@ -88,6 +89,7 @@ def _without_triggers[T](path: Path, change: Callable[[sqlite3.Connection], T]) 
     as a hostile edit or a table drop would, then restore each trigger by its
     exact text, so the schema still compares equal; return what it returns."""
     connection = sqlite3.connect(path)
+    schema._register_casefold(connection)
     try:
         triggers = connection.execute(
             "SELECT name,sql FROM sqlite_schema WHERE type='trigger' ORDER BY name"

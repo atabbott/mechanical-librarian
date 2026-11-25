@@ -393,11 +393,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             lambda decision_id, at: self._revoke_field_effect_authority_in_transaction(
                 decision_id, at, required=False
             ),
-            lambda case_id, destination, at, decision_id: (
-                self._set_field_effect_manual_hold(
-                    case_id, destination, at, decision_id
-                )
-            ),
         )
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._cover_taste = SQLiteCoverTasteRepository(
@@ -593,13 +588,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda decision_id, changed_at, *, required: (
                     self._revoke_field_effect_authority_in_transaction(
                         decision_id, changed_at, required=required
-                    )
-                )
-            ),
-            set_field_effect_manual_hold=(
-                lambda review_case_id, destination, changed_at, decision_id, pin: (
-                    self._set_field_effect_manual_hold(
-                        review_case_id, destination, changed_at, decision_id, pin=pin
                     )
                 )
             ),

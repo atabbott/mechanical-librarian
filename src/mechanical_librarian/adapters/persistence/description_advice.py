@@ -86,12 +86,17 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         self,
         connection: sqlite3.Connection,
         revoke: Callable[[str, int], object] | None = None,
-        manual_hold: Callable[[str, str, int, str], None] | None = None,
     ) -> None:
         super().__init__(connection)
         self._revoke = revoke
-        self._manual_hold = manual_hold
         self._settings = DescriptionAdviceSettings()
+        # The bound setting stands until owner settings are saved; Resume's
+        # offer reads it through this, as `current_settings` does (C2b-13).
+        connection.create_function(
+            "ml_description_automatic_application",
+            0,
+            lambda: int(self._settings.automatic_application),
+        )
         self._identity: Callable[[str, str | None], tuple[str, str] | None] = (
             lambda _engine, _model: None
         )
@@ -456,11 +461,8 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 (case_id, decision.decision_id),
             )
             if origin == "human":
-                if self._manual_hold is None:
-                    raise ValueError("description manual hold unavailable")
-                self._manual_hold(case_id, "description", now, decision.decision_id)
-                # The owner's choice is the field's answer in the record,
-                # written beside the hold (ADR-0108, C2a).
+                # The owner's choice is the field's answer in the record
+                # (ADR-0108).
                 record_answer(
                     self._connection, "authored_description", decision.decision_id
                 )

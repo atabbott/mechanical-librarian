@@ -25,6 +25,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 from mechanical_librarian.adapters.persistence.schema import (
     _NO_UPDATE_SQL,
     _create_schema,
+    _pin_fingerprint,
     _review_value_flags,
 )
 from mechanical_librarian.application.cover_consideration import (
@@ -94,6 +95,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
         lambda value: value.casefold() if type(value) is str else value,
     )
     connection.create_function("ml_value_flags", 2, _review_value_flags)
+    connection.create_function("ml_pin_fingerprint", 2, _pin_fingerprint)
     connection.create_function(
         "ml_cover_consideration_current", 2, lambda _document, _replay: 0
     )

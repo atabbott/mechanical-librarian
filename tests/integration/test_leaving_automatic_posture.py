@@ -327,8 +327,14 @@ def test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_conf
     assert again.decision_id not in library.pending()
     field = _read_fields(library)["authors"]
     assert field["manual_hold"] is True
-    assert field["classification"] == "human_recorded"
-    assert field["classification_cause"] == "human_decided"
+    # An answer of the case's earlier episode decides nothing on it, and
+    # nothing carried settles the field: the record's answer asks it, never
+    # reading as nothing to decide (V3, C2b-15).
+    assert (field["classification"], field["classification_cause"]) == (
+        ("needs_attention", "review_needed")
+        if episode == "earlier"
+        else ("human_recorded", "human_decided")
+    )
     assert (field["human_decision"] is None) is (episode == "earlier")
 
     assert resume(library.root, case_id, "authors", 42)
@@ -342,7 +348,7 @@ def test_an_answer_with_no_earlier_automatic_decision_still_keeps_automatic_off(
     """Only a field Automatic had decided on the case is decided again under
     its hold. An answer given in Preview, before Automatic decided anything on
     the case, still keeps Automatic from recording a decision there (ADR-0085,
-    Amendment 1: it shows as an ordinary answer until a later case)."""
+    Amendment 1), and the case offers Resume for it at once (V1, ADR-0108)."""
     library = preview_library
     owner = _accept(library.case(), "authors", "answered-in-preview", 11)
     library.root.record_human_decision(owner)
@@ -350,7 +356,7 @@ def test_an_answer_with_no_earlier_automatic_decision_still_keeps_automatic_off(
     library.now[0] = 41
     library.drain()
     assert ("authors", library.generation()) not in library.decisions()
-    assert _read_fields(library)["authors"]["manual_hold"] is False
+    assert _read_fields(library)["authors"]["manual_hold"] is True
 
 
 @pytest.mark.parametrize("unpinned", [True, False], ids=["unpinned", "pinned"])
@@ -381,6 +387,8 @@ def test_a_pin_taken_back_before_automatic_decided_shows_the_hold_once_it_is_on(
     assert decided.review_case_id == library.case_id()
     assert decided.decision_id not in library.pending()
     assert field["manual_hold"] is True
+    # The unpinned answer is the record's, given on this case: the owner
+    # decided the field (C2b-15).
     assert (field["classification"], field["classification_cause"]) == (
         "human_recorded",
         "human_decided",
@@ -792,6 +800,7 @@ def test_activity_notes_an_automatic_choice_a_hold_keeps_unwritten(
             "WHERE scan_id=?",
             (scan.scan_id,),
         )
+        assert root._fail_open_resumes_for_scan(scan.scan_id, 41) == 1
     assert _read_fields(library)["authors"]["manual_return_failed"] is True
     assert _note(library, scheduler, again.decision_id) == "held"
 
@@ -887,9 +896,7 @@ def test_a_hold_on_one_field_of_a_bundle_notes_both_choices(
         )
         root.record_human_decision(_accept(case, held, f"held-for-the-{held}-pair", 7))
         assert root._connection.execute(
-            "SELECT destination FROM field_effect_manual_holds "
-            "WHERE review_case_id=? AND active=1",
-            (case_id,),
+            "SELECT destination FROM owner_field_answers"
         ).fetchall() == [(held,)]
         assert root._field_effect_activity._activity_page_notes_once(
             [], [], [], pair
@@ -898,12 +905,12 @@ def test_a_hold_on_one_field_of_a_bundle_notes_both_choices(
         root.close()
 
 
-def test_an_automatic_description_a_carried_hold_keeps_reads_held(
+def test_an_automatic_description_the_record_keeps_reads_held(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Automatic description advice admitted beside a hold carried from the
-    work's earlier case waits for Resume like any automatic choice, so
-    Activity notes it (ADR-0085)."""
+    """Automatic description advice chosen while the record holds the
+    owner's description answer waits for Resume like any automatic choice,
+    so Activity notes it (ADR-0085, ADR-0108)."""
     from tests.support.description_advice import (
         _prepared,
         qualify_description_advice,
@@ -921,22 +928,34 @@ def test_an_automatic_description_a_carried_hold_keeps_reads_held(
         assert decision_id.startswith("automatic_decision_")
         notes = repository._field_effect_activity._activity_page_notes_once
         assert notes([], [], [], [decision_id]) == {}
-        # The row a later case of the work carries: no answer on this case.
+        # The owner keeps the description: the record holds the answer, and
+        # the answer takes the case's chosen advice away.
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(binding.review_case_id))["case"]
+        )
+        proposal = next(
+            value for value in case.proposals if value["destination"] == "description"
+        )
+        repository.record_human_decision(
+            HumanDecision.create(
+                case,
+                proposal_id=str(proposal["proposal_id"]),
+                target_fingerprint=case.target_fingerprint,
+                destination="description",
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="held-description",
+                occurred_at=12,
+            )
+        )
+        assert notes([], [], [], [decision_id]) == {}
+        # Automatic's advice chosen again beside that answer, as a store whose
+        # advice stood while the answer was recorded holds it: it is held.
         with repository._connection:
             repository._connection.execute(
-                "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
-                "active,updated_at,document) VALUES(?,'description',1,12,?)",
-                (
-                    binding.review_case_id,
-                    json.dumps(
-                        {
-                            "decision_id": "human_decision_" + "1" * 64,
-                            "pending_return": None,
-                            "pin": None,
-                            "updated_at": 12,
-                        }
-                    ),
-                ),
+                "INSERT INTO current_description_decisions VALUES(?,?)",
+                (binding.review_case_id, decision_id),
             )
         assert notes([], [], [], [decision_id]) == {decision_id: "held"}
     finally:
@@ -1083,11 +1102,9 @@ def _owner(library: _Library, outcome: str, at: int) -> HumanDecision:
     )
 
 
-_HELD = (
-    "Your earlier decision still holds this field, so turning on Automatic "
-    "leaves it as it is."
-)
 _NOTHING_TO_DECIDE = "Nothing to decide for this field."
+_REVIEW_NEEDED = "This field needs your review."
+_DECIDED = "You decided this field. You can change it here."
 
 
 @pytest.mark.parametrize(
@@ -1104,7 +1121,10 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
     and plans its write. An answer from the first episode keeps its hold, so
     Automatic decides under it and writes nothing until Resume (ADR-0085,
     Amendment 4), as does a pin taken back in Preview, whose hold stays.
-    Once Resume released the answer's hold, Automatic decides and writes."""
+    Once Resume released the answer's hold, Automatic decides and writes.
+    The first episode's answer asks the field in Preview, and the pin's
+    answer, the case's own, reads decided: neither says nothing to decide
+    (C2b-15)."""
     with _prepared(tmp_path, automatic=True, library_model="publication") as library:
         root, held = library.root, library.held
         assert held is not None
@@ -1130,23 +1150,28 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
                 root.record_human_decision(_owner(library, outcome, at))
 
         preview = _read_fields(library)["authors"]
-        assert (preview["classification"], preview["human_decision"]) == (
-            "unsupported",
-            None,
-        )
+        assert preview["human_decision"] is None
         shown = preview["earlier_automatic_value"]
         held_on = owner in {"earlier_episode", "unpinned"}
-        # The hold that keeps Automatic off says so, without Resume: nothing
-        # of Automatic's is held yet in Preview.
+        # Without Resume: nothing of Automatic's is held yet in Preview.
         assert (
+            preview["classification"],
             preview["classification_cause"],
             preview["classification_reason"],
             preview["manual_hold"],
             preview["needs_attention"],
-        ) == (
-            ("held_in_preview", _HELD, False, False)
-            if held_on
-            else ("nothing_to_decide", _NOTHING_TO_DECIDE, False, False)
+        ) == {
+            "earlier_episode": (
+                "needs_attention",
+                "review_needed",
+                _REVIEW_NEEDED,
+                False,
+                True,
+            ),
+            "unpinned": ("human_recorded", "human_decided", _DECIDED, False, False),
+        }.get(
+            owner,
+            ("unsupported", "nothing_to_decide", _NOTHING_TO_DECIDE, False, False),
         )
         assert shown == (
             None if held_on else {"kind": "list", "value": ["Ada Example"]}
@@ -1162,10 +1187,10 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
 def test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided(
     preview_library: _Library,
 ) -> None:
-    """A pin taken back in Preview leaves its hold, so the field reads held.
-    Turning on Automatic then leaves its value as it is: Automatic decides the
-    field under the hold and writes nothing until Resume (ADR-0085,
-    Amendments 5 and 6)."""
+    """A pin taken back in Preview leaves its answer in the record, the case's
+    own, so the field reads decided. Turning on Automatic then leaves its
+    value as it is: Automatic decides the field under the answer and writes
+    nothing until Resume (ADR-0085, Amendments 5 and 6; C2b-15)."""
     library = preview_library
     before = _read_fields(library)["authors"]["current"]
     for outcome, at in (("pin", 11), ("unpin", 12)):
@@ -1176,7 +1201,7 @@ def test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided(
         preview["classification_reason"],
         preview["manual_hold"],
         preview["needs_attention"],
-    ) == ("held_in_preview", _HELD, False, False)
+    ) == ("human_decided", _DECIDED, False, False)
 
     _confirm_automatic(library, 40)
 
@@ -1349,9 +1374,7 @@ def test_an_owner_decision_after_confirming_holds_the_current_generation(
     # decision, not the earlier generation's.
     assert not root.field_effect_authority_is_current(plan.authority)
     (held,) = root._connection.execute(
-        "SELECT json_extract(document,'$.decision_id') FROM field_effect_manual_holds "
-        "WHERE review_case_id=? AND destination='authors' AND active=1",
-        (fresh.review_case_id,),
+        "SELECT answer_id FROM owner_field_answers WHERE destination='authors'"
     ).fetchone()
     assert held == owner.decision_id
 
@@ -1471,8 +1494,7 @@ def _settled_without_a_write(
         (owner.decision_id,),
     ).fetchall() == [("human", field_value_version("authors", ["Ada Example"]))]
     (hold,) = root._connection.execute(
-        "SELECT json_extract(document,'$.decision_id') FROM "
-        "field_effect_manual_holds WHERE destination='authors' AND active=1"
+        "SELECT answer_id FROM owner_field_answers WHERE destination='authors'"
     ).fetchone()
     assert hold == owner.decision_id
     assert _read(library, scheduler)["fields"]["authors"]["no_change_required"] is True
@@ -1627,13 +1649,10 @@ def test_the_card_pin_on_automatics_written_value_settles(
     assert accept.decision_id not in library.pending()
     assert accept.decision_id not in _planned(library)
     assert root.pending_field_effect_decision_counts() == ()
-    (hold,) = root._connection.execute(
-        "SELECT document FROM field_effect_manual_holds "
-        "WHERE destination='authors' AND active=1"
-    ).fetchone()
-    held = json.loads(hold)
-    assert held["decision_id"] == accept.decision_id
-    assert held["pin"] is not None
+    assert root._connection.execute(
+        "SELECT answer_id,pin_fingerprint IS NOT NULL FROM owner_field_answers "
+        "WHERE destination='authors'"
+    ).fetchall() == [(accept.decision_id, 1)]
 
 
 def test_an_earlier_generation_write_once_settled_lets_the_owner_answer(
@@ -1764,20 +1783,18 @@ def test_an_answer_beside_an_earlier_generation_decision_can_be_withdrawn(
 ) -> None:
     """The page offers Withdraw where only an earlier generation's automatic
     decision is on the field, so the store accepts it: that decision holds
-    nothing and no Resume shows to release it (ADR-0036, ADR-0085)."""
+    nothing and no Resume shows to release it (ADR-0036, ADR-0085). Beside
+    this generation's decision it is offered too while the record holds the
+    answer (V2, ADR-0108)."""
     root = library.root
     earlier = library.automatic()
     if answered != "in_preview":
         root.record_human_decision(
             _accept(library.case(), "authors", "answer-before-leaving", 11)
         )
-        # Beside this generation's decision the refusal stands, and says so.
         assert _read_fields(library)["authors"]["owner_control"]["withdraw"] == (
-            "automatic_hold"
+            "available"
         )
-        with pytest.raises(HumanDecisionError) as refused:
-            root.record_human_decision(_withdraw(library, "withdraw-in-automatic", 12))
-        assert refused.value.code == "automatic_hold"
     library.leave_automatic()
     if answered == "in_preview":
         root.record_human_decision(
@@ -1785,18 +1802,22 @@ def test_an_answer_beside_an_earlier_generation_decision_can_be_withdrawn(
         )
     if answered.endswith("confirmed"):
         # Confirming decides the held field again under its hold, so the
-        # field reads as before leaving: the hold, Resume, and the refusal
-        # (ADR-0085, Amendment 4).
+        # field reads as before leaving: the hold, Resume, and Withdraw
+        # (ADR-0085, Amendment 4; V2).
         _confirm_automatic(library, 40)
         assert library.decisions() == [("authors", 2), ("authors", 3)]
         field = _read_fields(library)["authors"]
         assert (field["manual_hold"], field["owner_control"]["withdraw"]) == (
             True,
-            "automatic_hold",
+            "available",
         )
-        with pytest.raises(HumanDecisionError) as refused:
-            root.record_human_decision(_withdraw(library, "withdraw-confirmed", 41))
-        assert refused.value.code == "automatic_hold"
+        root.record_human_decision(_withdraw(library, "withdraw-confirmed", 41))
+        # The withdrawal empties the record, so this generation's decision
+        # plans nothing either (ADR-0108).
+        assert library.automatic(3).decision_id not in library.pending()
+        assert root._connection.execute(
+            "SELECT count(*) FROM owner_field_answers"
+        ).fetchone() == (0,)
         return
     assert library.decisions() == [("authors", 2)]
     field = _read_fields(library)["authors"]
@@ -1811,7 +1832,7 @@ def test_an_answer_beside_an_earlier_generation_decision_can_be_withdrawn(
     assert earlier.decision_id not in library.pending()
     assert library.pending() == []
     assert root._connection.execute(
-        "SELECT count(*) FROM field_effect_manual_holds WHERE active=1"
+        "SELECT count(*) FROM owner_field_answers"
     ).fetchone() == (0,)
     field = _read_fields(library)["authors"]
     assert field["human_decision"] is None

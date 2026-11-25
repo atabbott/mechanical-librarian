@@ -586,22 +586,21 @@ _PENDING_PREPARED_SQL = (
     + ") "
 )
 
-# A hold Activity notes against an automatic choice: one the owner can end
-# with Resume. A pinned hold offers Unpin instead, and a requested return is
-# already on its way, unless its checks ended with failures, which keeps the
-# hold and asks for Resume again (#1755). Bound to the hold as `hold`.
-_RESUMABLE_HOLD_SQL = (
-    "hold.active=1 AND COALESCE(json_type(hold.document,'$.pin'),'null')<>'object' "
-    "AND (COALESCE(json_type(hold.document,'$.pending_return'),'null')<>'object' "
-    "OR EXISTS (SELECT 1 FROM review_preparation_scans scan "
-    "WHERE scan.scan_id=json_extract(hold.document,'$.pending_return.scan_id') "
-    "AND scan.state='completed_with_failures'))"
+# The record's answer Activity notes against an automatic choice: one the
+# owner can end with Resume. A pin offers Unpin instead, and a requested
+# Resume is already on its way, unless its checks ended with failures, which
+# keeps the answer and asks for Resume again (#1755, ADR-0108). Bound to the
+# record row as `record`.
+_RESUMABLE_RECORD_SQL = (
+    "record.pin_fingerprint IS NULL AND (record.open_resume_id IS NULL "
+    "OR EXISTS (SELECT 1 FROM owner_field_events failed "
+    "WHERE failed.request_id=record.open_resume_id AND failed.kind='resume_failed'))"
 )
 
 
 def _unwritten_choice_sql(decision: str) -> str:
     """Whether choice `decision` still waits to be written: the pending query
-    would plan it but for a hold. No change it records, no change stopped for
+    would plan it but for the record. No change it records, no change stopped for
     the owner, and no write of it or of the title it travels with has
     started; a planned or retryable write waits like the choice does, and a
     superseded or abandoned one plans the choice again."""
@@ -617,9 +616,9 @@ def _unwritten_choice_sql(decision: str) -> str:
     )
 
 
-# Automatic's choices on the page that an owner hold keeps unwritten until
-# Resume (ADR-0085). A title and subtitle pair is written together, so a hold
-# on either member keeps both. An automatic description is chosen in its own
+# Automatic's choices on the page that the record of the owner's answers
+# keeps unwritten until Resume (ADR-0085, ADR-0108). A title and subtitle pair
+# is written together, so the record's answer for either member keeps both. An automatic description is chosen in its own
 # table. Leaving Automatic always starts a new generation, so an
 # active-generation choice means Automatic is on. Bound by the page's
 # automatic event ids as JSON, twice.
@@ -634,26 +633,26 @@ _HELD_AUTOMATIC_NOTE_SQL = (
     "current_description_decisions authored "
     "WHERE authored.review_case_id=automatic.review_case_id)) "
     "AND EXISTS (SELECT 1 FROM automatic_decisions member "
-    "JOIN field_effect_manual_holds hold ON hold.review_case_id=member.review_case_id "
-    "AND hold.destination=member.destination "
     "WHERE member.review_case_id=automatic.review_case_id "
     "AND (member.decision_id=automatic.decision_id "
     "OR (member.policy_generation=automatic.policy_generation "
     "AND json_extract(member.document,'$.bundle_id')="
-    "json_extract(automatic.document,'$.bundle_id'))) AND "
-    + _RESUMABLE_HOLD_SQL
-    + ") AND "
+    "json_extract(automatic.document,'$.bundle_id'))) AND EXISTS ("
+    + case_record_sql("member.review_case_id", "member.destination")
+    + " AND "
+    + _RESUMABLE_RECORD_SQL
+    + ")) AND "
     + _unwritten_choice_sql("automatic.decision_id")
     + " UNION ALL SELECT d.decision_id FROM current_description_decisions p "
     "JOIN automatic_description_decisions d ON d.decision_id=p.decision_id "
-    "JOIN field_effect_manual_holds hold ON hold.review_case_id=d.review_case_id "
-    "AND hold.destination='description' "
     "WHERE d.decision_id IN (SELECT value FROM json_each(?)) AND "
     + _AUTOMATIC_POSTURE_SQL
     + _ACTIVE_GENERATION_DESCRIPTION_SQL
+    + " AND EXISTS ("
+    + case_record_sql("d.review_case_id", "'description'")
     + " AND "
-    + _RESUMABLE_HOLD_SQL
-    + " AND "
+    + _RESUMABLE_RECORD_SQL
+    + ") AND "
     + _unwritten_choice_sql("d.decision_id")
 )
 
@@ -2183,23 +2182,21 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         stands: the field's latest owner decision in the case's episode, pins
         and unpins aside (ADR-0085, Amendment 2), is the write's own decision
         or an accept of that value recorded with nothing to write, and its
-        own hold still holds the field.
+        the record still names it with no Resume open (ADR-0108).
 
         A later owner decision still unwritten (a keep, an entry, a clear) is
         the field's answer instead, and an accept recorded now replaces it;
-        an automatic write is no owner answer (#1980). An answer whose hold
-        Resume automatic handling released, or asked to release, no longer
+        an automatic write is no owner answer (#1980). An answer Resume
+        automatic handling took back, or was asked to take back, no longer
         holds the field, so choosing its value again holds it anew, as
-        `field_change_waiting_sql` reads the same hold for a pin."""
+        `field_change_waiting_sql` reads the same record for a pin."""
         standing = self._connection.execute(
             "SELECT decision_id,EXISTS(SELECT 1 FROM field_effect_no_changes "
             "no_change WHERE no_change.decision_id=human_decisions.decision_id "
             "AND no_change.origin='human' AND no_change.target_version=?),"
-            "EXISTS(SELECT 1 FROM field_effect_manual_holds hold "
-            "WHERE hold.review_case_id=human_decisions.review_case_id "
-            "AND hold.destination=human_decisions.destination AND hold.active=1 "
-            "AND json_extract(hold.document,'$.pending_return') IS NULL "
-            "AND json_extract(hold.document,'$.decision_id')=human_decisions.decision_id) "
+            "EXISTS(SELECT 1 FROM owner_field_answers record "
+            "WHERE record.answer_id=human_decisions.decision_id "
+            "AND record.open_resume_id IS NULL) "
             "FROM human_decisions WHERE review_case_id=? "
             "AND destination=? AND outcome NOT IN ('pin','unpin') AND "
             + _episode_decision_sql("human_decisions")
@@ -2208,9 +2205,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         ).fetchone()
         return (
             standing is not None
-            # A cover answer often holds nothing (it holds only over an
-            # automatic cover decision), so a cover reads as on #1981.
-            and (standing[2] == 1 or decision.destination == "cover")
+            and standing[2] == 1
             and (
                 standing[1] == 1
                 or standing[0]

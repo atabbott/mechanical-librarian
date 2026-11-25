@@ -628,9 +628,10 @@ PRE_2038_DESCRIPTION_DECISIONS_CASE_INDEX_SQL = _renamed(
 
 def _undo_description_split(connection: sqlite3.Connection) -> None:
     """One description decisions table again, keeping every row and every
-    trigger a predecessor kept on the case's chosen one."""
+    trigger a predecessor kept on the case's chosen one, its Attention refresh
+    watching the case alone."""
     kept = [
-        sql
+        sql.replace(*_DESCRIPTION_GUARD_STEP)
         for (sql,) in connection.execute(
             "SELECT sql FROM sqlite_schema WHERE type='trigger' "
             "AND tbl_name='current_description_decisions' "
@@ -660,6 +661,91 @@ def _undo_description_split(connection: sqlite3.Connection) -> None:
         + "DROP TABLE temp.pre_2038_description;"
         "DROP TABLE temp.pre_2038_current_description;"
     )
+
+
+# Nor did it keep a record of the owner's answers for Attention to read: a
+# manual hold on the case carried its pin, in force or changed, and an
+# automatic or authored decision settled its field whatever the owner had
+# answered (#2038). These undo exactly the edits the record made to the
+# attention source, so every oracle below keeps describing the predecessor it
+# names.
+def _pin_hold_sql(in_force: bool) -> str:
+    return (
+        "EXISTS (SELECT 1 FROM field_effect_manual_holds pin_hold "
+        "WHERE pin_hold.review_case_id=rc.review_case_id "
+        "AND pin_hold.destination=result.destination "
+        "AND pin_hold.active=1 AND json_extract(pin_hold.document,'$.pin.in_force')="
+        + ("1" if in_force else "0")
+        + ")"
+    )
+
+
+_RECORD_HOLDS_SQL = review_sql._record_holds_sql("c", "result.destination")
+# The record's answer settled nothing on its own case and asked nothing
+# elsewhere either: the reason's arm, then the clear's.
+_RECORD_ANSWER_STEPS = (
+    (" OR " + review_sql._record_case_answer_sql(own=False) + ")", ")"),
+    ("AND NOT " + review_sql._record_case_answer_sql(own=True) + " ", ""),
+)
+_RECORD_ATTENTION_STEPS = (
+    *_RECORD_ANSWER_STEPS,
+    (
+        " AND NOT " + review_sql._resumed_decision_sql("c") + " ORDER BY",
+        " ORDER BY",
+    ),
+    (
+        " AND (EXISTS (SELECT 1 FROM owner_authored_descriptions owner_authored "
+        "WHERE owner_authored.decision_id=authored.decision_id) OR NOT "
+        + _RECORD_HOLDS_SQL
+        + "))",
+        ")",
+    ),
+    (" AND NOT " + _RECORD_HOLDS_SQL + ") ", ") "),
+    (
+        review_sql._pin_record_sql(
+            "rc.review_case_id", "result.destination", True, item="c"
+        ),
+        _pin_hold_sql(True),
+    ),
+    (review_sql._PIN_CHANGED_SQL, _pin_hold_sql(False)),
+)
+# Nor did the case's chosen description refresh Attention when it changed
+# hands: which decision it named did not matter.
+_DESCRIPTION_GUARD_STEP = (
+    "OF review_case_id,decision_id ON current_description_decisions "
+    "WHEN OLD.review_case_id IS NOT NEW.review_case_id COLLATE BINARY "
+    "OR OLD.decision_id IS NOT NEW.decision_id COLLATE BINARY",
+    "OF review_case_id ON current_description_decisions "
+    "WHEN OLD.review_case_id IS NOT NEW.review_case_id COLLATE BINARY",
+)
+
+
+def pre_2038_record_attention_sql(sql: str) -> str:
+    """Attention SQL as producers before #2038 wrote it over manual holds."""
+    for now, then in (*_RECORD_ATTENTION_STEPS, _DESCRIPTION_GUARD_STEP):
+        sql = sql.replace(now, then)
+    assert "owner_field_" not in sql
+    return sql
+
+
+# Each step applies to the reason or the clear: none is left unanchored.
+assert all(
+    (
+        review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL
+        + review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL
+    ).count(now)
+    >= 1
+    for now, _ in _RECORD_ATTENTION_STEPS
+)
+assert any(
+    _DESCRIPTION_GUARD_STEP[0] in sql
+    for _, _, sql in persistence_schema._ATTENTION_FACT_OBJECTS
+)
+_PRE_2038_ATTENTION_CLEAR_SQL = pre_2038_record_attention_sql(
+    review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL
+)
+# Nor did any attention object watch the record.
+_RECORD_ATTENTION_OBJECTS = ("owner_field_answers_", "owner_field_events_")
 
 
 # Nor did it keep the owner's cover choices apart from Automatic's: one table
@@ -714,10 +800,10 @@ PRE_2038_COVER_SELECTION_TRIGGERS = tuple(
 )
 # Attention read the one pointer: an owner's choice, or Automatic's on the
 # work's current comparison, settled its cover.
-_COVER_ATTENTION_CLEAR_SQL = review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL[
-    review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL.index(
+_COVER_ATTENTION_CLEAR_SQL = _PRE_2038_ATTENTION_CLEAR_SQL[
+    _PRE_2038_ATTENTION_CLEAR_SQL.index(
         "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers"
-    ) : review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL.index(
+    ) : _PRE_2038_ATTENTION_CLEAR_SQL.index(
         "AND NOT EXISTS (SELECT 1 FROM field_effect_suspensions"
     )
 ]
@@ -732,14 +818,13 @@ PRE_2038_COVER_ATTENTION_CLEAR_SQL = (
     "AND current_cover.consideration_id=selection.consideration_id)) "
     "AND current_selection.connection_name=c.connection_name "
     "AND current_selection.library_name=c.library_name "
-    "AND current_selection.item_id=c.item_id AND NOT "
-    + review_sql._PIN_CHANGED_SQL
-    + ") "
+    "AND current_selection.item_id=c.item_id AND NOT " + _pin_hold_sql(False) + ") "
 )
 
 
 def pre_2038_attention_sql(sql: str) -> str:
     """Attention SQL, with or without pins, as producers before #2038 wrote it."""
+    sql = pre_2038_record_attention_sql(sql)
     for now, then in (
         (_COVER_ATTENTION_CLEAR_SQL, PRE_2038_COVER_ATTENTION_CLEAR_SQL),
         (
@@ -772,7 +857,7 @@ def pre_2038_attention_objects(
             ),
         )
         for kind, name, sql in objects
-        if not name.startswith("owner_cover_pointers_")
+        if not name.startswith(("owner_cover_pointers_", *_RECORD_ATTENTION_OBJECTS))
     )
 
 
@@ -899,23 +984,25 @@ assert PRIOR_REVIEW_TRANSITIONS_SQL.count("recent_write") == 0
 # changed pin asked nothing, and a pin or unpin row was no outcome. These undo
 # exactly the edits #1346 made to the attention source, so the oracles
 # below keep describing the predecessors they name.
-_PIN_CHANGED_SQL = review_sql._PIN_CHANGED_SQL
-_PIN_IN_FORCE_SQL = review_sql._pin_hold_sql(
-    "rc.review_case_id", "result.destination", True
-)
+_PIN_CHANGED_SQL = _pin_hold_sql(False)
+_PIN_IN_FORCE_SQL = _pin_hold_sql(True)
 _PINNED_REASON_HEAD = "(result.has_owner_decision_actions=1 AND ((result."
 _PINNED_REASON_TAIL = " OR " + _PIN_CHANGED_SQL + ")"
-assert review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL.startswith(_PINNED_REASON_HEAD)
-assert review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL.endswith(_PINNED_REASON_TAIL)
-PRE_1346_REVIEW_FIELD_ATTENTION_REASON_SQL = (
-    review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL[1 : -len(_PINNED_REASON_TAIL)]
+_PRE_2038_REASON_SQL = pre_2038_record_attention_sql(
+    review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL
 )
+assert _PRE_2038_REASON_SQL.startswith(_PINNED_REASON_HEAD)
+assert _PRE_2038_REASON_SQL.endswith(_PINNED_REASON_TAIL)
+PRE_1346_REVIEW_FIELD_ATTENTION_REASON_SQL = _PRE_2038_REASON_SQL[
+    1 : -len(_PINNED_REASON_TAIL)
+]
 
 
 def without_pins(sql: str) -> str:
     """The attention SQL as every producer before #1346 wrote it."""
     unpinned = (
-        sql.replace(_PINNED_REASON_HEAD, _PINNED_REASON_HEAD[1:])
+        pre_2038_record_attention_sql(sql)
+        .replace(_PINNED_REASON_HEAD, _PINNED_REASON_HEAD[1:])
         .replace(_PINNED_REASON_TAIL, "")
         .replace("AND decision.outcome NOT IN ('pin','unpin') ", "")
         .replace(
@@ -993,6 +1080,7 @@ PRIOR_ATTENTION_FACT_OBJECTS = tuple(
             "review_case_episodes_",
             "metadata_policy_state_",
             "field_effect_manual_holds_",
+            *_RECORD_ATTENTION_OBJECTS,
         )
     )
 )

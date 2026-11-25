@@ -45,7 +45,7 @@ from mechanical_librarian.adapters.persistence.owner_field_answers import (
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CASE_TITLE_SQL,
     _episode_decision_sql,
-    _pin_hold_sql,
+    _pin_record_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     refresh_offered_field_facts,
@@ -293,8 +293,11 @@ def _ask_changed_fields(
             # A pin in force keeps its field out of the question whatever
             # the offer now is (ADR-0085, Amendment 2).
             + " AND NOT "
-            + _pin_hold_sql(
-                "human_decisions.review_case_id", "human_decisions.destination", True
+            + _pin_record_sql(
+                "human_decisions.review_case_id",
+                "human_decisions.destination",
+                True,
+                item="human_decisions",
             )
             + " ORDER BY ordinal DESC LIMIT 1",
             (case.review_case_id, destination),

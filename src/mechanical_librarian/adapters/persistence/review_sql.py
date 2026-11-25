@@ -291,52 +291,6 @@ _COVER_SUGGESTED_SQL = (
 )
 
 
-def _pin_hold_sql(case: str, destination: str, in_force: bool) -> str:
-    """Whether the field's hold on the case carries a pin in force, or changed.
-
-    A pin in force settles its field; a changed one asks it again, with or
-    without alternatives (ADR-0085, Amendment 2).
-    """
-    return (
-        "EXISTS (SELECT 1 FROM field_effect_manual_holds pin_hold "
-        f"WHERE pin_hold.review_case_id={case} AND pin_hold.destination={destination} "
-        "AND pin_hold.active=1 AND json_extract(pin_hold.document,'$.pin.in_force')="
-        + ("1" if in_force else "0")
-        + ")"
-    )
-
-
-# Whether the field's pin on its case is carried as changed.
-_PIN_CHANGED_SQL = _pin_hold_sql("rc.review_case_id", "result.destination", False)
-# A changed pin asks with or without alternatives, so it stands outside the
-# owner-action gate (ADR-0085, Amendment 2).
-_REVIEW_FIELD_ATTENTION_REASON_SQL = (
-    "(result.has_owner_decision_actions=1 AND ((result.unresolved_choice=1 "
-    "AND NOT " + _COVER_SUGGESTED_SQL + ") "
-    "OR (result.destination='cover' AND EXISTS (SELECT 1 "
-    "FROM current_cover_considerations current_cover "
-    "JOIN cover_considerations consideration "
-    "ON consideration.consideration_id=current_cover.consideration_id "
-    "WHERE current_cover.review_case_id=rc.review_case_id "
-    "AND (" + _COVER_STAGE_OUTCOME_SQL + "='hold' OR ("
-    "json_extract(consideration.currentness_document,'$.manual_ready')=1 "
-    "AND COALESCE(" + _COVER_STAGE_OUTCOME_SQL + ",'') NOT IN ('suggest','replace') "
-    "AND NOT " + _COVER_STAGE_KEPT_SQL + " "
-    "AND NOT " + _VERIFIED_CURRENT_COVER_SQL + ")))) "
-    "OR "
-    + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
-    + " OR "
-    + _POLICY_ASK_ATTENTION_SQL
-    + " OR "
-    + _AUTOMATIC_SAFETY_ATTENTION_SQL
-    + " OR "
-    + _SHADOW_ABSTENTION_SQL
-    + ") OR "
-    + _PIN_CHANGED_SQL
-    + ")"
-)
-
-
 def _episode_decision_sql(decision: str) -> str:
     """Whether the owner decision row `decision` is of its case's episode.
 
@@ -367,36 +321,179 @@ def _active_generation_automatic_sql(decision: str) -> str:
     )
 
 
-# The latest manual hold per destination across one work's cases, given its
-# connection, library and item: the owner's hold follows the work, not the
-# case (ADR-0085). Admission carries it to each case; a withdrawal restores it
-# where the withdrawn answer's own hold stood. Equal update times (clocks are
-# whole seconds) fall to rowid, which is sound because every owner write
-# re-inserts its row and so takes a fresh rowid. Admission's carry copies the
-# latest state, so a copy that outranks its source changes nothing, and on a
-# re-admitted case it updates the old row in place, never outranking a later
-# owner write.
-_WORK_LATEST_MANUAL_HOLDS_SQL = (
-    "SELECT destination,active,document FROM (SELECT hold.destination,"
-    "hold.active,hold.document,row_number() OVER (PARTITION BY "
-    "hold.destination ORDER BY hold.updated_at DESC,hold.rowid DESC) "
-    "position FROM field_effect_manual_holds hold WHERE "
-    "hold.review_case_id IN (SELECT to_review_case_id FROM "
-    "review_case_transitions WHERE connection_name=? AND "
-    "library_name=? AND item_id=? AND to_review_case_id IS NOT NULL)) "
-    "WHERE position=1"
+def _record_key_sql(record: str, item: str, destination: str) -> str:
+    """Record row `record` is the field `destination` of the book whose item
+    key columns row `item` names."""
+    return (
+        f"{record}.connection_name={item}.connection_name "
+        f"AND {record}.library_name={item}.library_name "
+        f"AND {record}.item_id={item}.item_id AND {record}.destination={destination}"
+    )
+
+
+def _pin_record_sql(
+    case: str,
+    destination: str,
+    in_force: bool,
+    *,
+    item: str | None = None,
+    own_case_waiting: str | None = None,
+) -> str:
+    """Whether the record's pin on the field of the case's book is in force
+    there, or changed (ADR-0085, Amendment 2; ADR-0108).
+
+    It is computed when read (S15): in force while `ml_pin_fingerprint` of the
+    case's target field is the pin's fingerprint and, on the pin's own case,
+    `own_case_waiting` (whether a write for the field waits there) is false.
+    An unreadable field has no fingerprint and reads as changed. A pin in
+    force settles its field; a changed one asks it again, with or without
+    alternatives. The book is `item`'s item key, or the case's current
+    lineage's. Attention passes no waiting term: on the pin's own case the
+    owner's standing answer settles the field, and a pin with none standing
+    is refused while a write waits, so the term cannot change what it reads,
+    and leaving it out keeps the field's writes out of Attention's inputs.
+    """
+    source = (
+        "owner_field_answers pin_record WHERE "
+        + _record_key_sql("pin_record", item, destination)
+        if item is not None
+        else "current_review_case_lineages pin_case JOIN owner_field_answers "
+        "pin_record ON pin_record.connection_name=pin_case.connection_name "
+        "AND pin_record.library_name=pin_case.library_name "
+        "AND pin_record.item_id=pin_case.item_id "
+        f"WHERE pin_case.review_case_id={case} AND pin_record.destination={destination}"
+    )
+    waiting = (
+        ""
+        if own_case_waiting is None
+        else f" AND (pin_record.review_case_id<>{case} OR NOT {own_case_waiting})"
+    )
+    return (
+        f"EXISTS (SELECT 1 FROM {source} "
+        "AND pin_record.pin_fingerprint IS NOT NULL AND "
+        + ("" if in_force else "NOT ")
+        + "(pin_record.pin_fingerprint IS ml_pin_fingerprint("
+        f"{destination},(SELECT pinned_field.value FROM review_cases pinned_case,"
+        "json_each(pinned_case.document,'$.target.fields') pinned_field "
+        f"WHERE pinned_case.review_case_id={case} "
+        f"AND json_extract(pinned_field.value,'$.destination')={destination}))"
+        + waiting
+        + "))"
+    )
+
+
+# Whether the field's pin on its case reads as changed.
+_PIN_CHANGED_SQL = _pin_record_sql(
+    "rc.review_case_id", "result.destination", False, item="c"
 )
+
+
+def _record_case_answer_sql(own: bool, item: str = "c") -> str:
+    """Whether the record holds an answer for the field of case `rc` (book
+    row `c`) given on this case in its current episode (`own`), or one given
+    elsewhere, on an earlier case or episode, that nothing carried here
+    (C2b-15, S16). A pinned answer is neither: its pin settles or asks the
+    field (ADR-0085, Amendment 2), and once unpinned an answer of the case is
+    its own. A cover's answer is the book's own pointer, so neither reads it
+    (ADR-0108). `item` names a row with the book's item key columns."""
+    return (
+        "EXISTS (SELECT 1 FROM owner_field_answers answered WHERE "
+        "result.destination<>'cover' AND "
+        + _record_key_sql("answered", item, "result.destination")
+        + (" AND (" if own else " AND NOT (")
+        + "answered.pin_fingerprint IS NULL "
+        "AND answered.review_case_id=rc.review_case_id AND answered.episode="
+        "COALESCE((SELECT answer_episode.decision_floor FROM review_case_episodes "
+        "answer_episode WHERE answer_episode.review_case_id=rc.review_case_id),0)))"
+    )
+
+
+# Asked by a reason beside the proposal's own, as the Attention list flags
+# it: the policy's Ask me, or the record's answer from an earlier case or
+# episode that nothing carried (C2b-15, S16).
+_ASKED_BESIDE_PROPOSAL_SQL = (
+    "(" + _POLICY_ASK_ATTENTION_SQL + " OR EXISTS (SELECT 1 FROM "
+    "current_review_case_lineages asked_case WHERE "
+    "asked_case.review_case_id=rc.review_case_id AND "
+    + _record_case_answer_sql(own=False, item="asked_case")
+    + "))"
+)
+
+
+# A changed pin asks with or without alternatives, so it stands outside the
+# owner-action gate (ADR-0085, Amendment 2), and so does an answer the record
+# holds from elsewhere: the field is asked, and Resume is the owner's action
+# (C2b-15, S16).
+_REVIEW_FIELD_ATTENTION_REASON_SQL = (
+    "(result.has_owner_decision_actions=1 AND ((result.unresolved_choice=1 "
+    "AND NOT " + _COVER_SUGGESTED_SQL + ") "
+    "OR (result.destination='cover' AND EXISTS (SELECT 1 "
+    "FROM current_cover_considerations current_cover "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=current_cover.consideration_id "
+    "WHERE current_cover.review_case_id=rc.review_case_id "
+    "AND (" + _COVER_STAGE_OUTCOME_SQL + "='hold' OR ("
+    "json_extract(consideration.currentness_document,'$.manual_ready')=1 "
+    "AND COALESCE(" + _COVER_STAGE_OUTCOME_SQL + ",'') NOT IN ('suggest','replace') "
+    "AND NOT " + _COVER_STAGE_KEPT_SQL + " "
+    "AND NOT " + _VERIFIED_CURRENT_COVER_SQL + ")))) "
+    "OR "
+    + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
+    + " OR "
+    + _POLICY_ASK_ATTENTION_SQL
+    + " OR "
+    + _AUTOMATIC_SAFETY_ATTENTION_SQL
+    + " OR "
+    + _SHADOW_ABSTENTION_SQL
+    + ") OR "
+    + _PIN_CHANGED_SQL
+    + " OR "
+    + _record_case_answer_sql(own=False)
+    + ")"
+)
+
+
+# The record holds the field's answer against Automatic: it holds one, and
+# no Resume over it is open, or the one open failed (ADR-0108, Attention).
+# `item` names a row with the book's item key columns.
+def _record_holds_sql(item: str, destination: str) -> str:
+    return (
+        "EXISTS (SELECT 1 FROM owner_field_answers held WHERE "
+        + _record_key_sql("held", item, destination)
+        + " AND (held.open_resume_id IS NULL OR EXISTS (SELECT 1 FROM "
+        "owner_field_events failed WHERE failed.request_id=held.open_resume_id "
+        "AND failed.kind='resume_failed')))"
+    )
+
+
+# Owner decision row `decision` is one a completed Resume took back: at or
+# below the `over_ordinal` of a completed request for its field (ADR-0108).
+# `item` names a row with the item key columns of the decision's book.
+def _resumed_decision_sql(item: str) -> str:
+    return (
+        "EXISTS (SELECT 1 FROM owner_field_events resumed JOIN owner_field_events "
+        "completed ON completed.request_id=resumed.event_id "
+        "AND completed.kind='resume_completed' WHERE "
+        + _record_key_sql("resumed", item, "decision.destination")
+        + " AND resumed.kind='resume_requested' "
+        "AND decision.ordinal<=resumed.over_ordinal)"
+    )
 
 
 # A field is decided by its latest owner decision of the case's episode unless
 # that withdrew it (ADR-0085); an earlier decision never settles a field the
-# owner took back, nor one the work has since left and returned to. An
-# automatic decision settles its field only in the active generation. A pin in
-# force settles its field. A pin or unpin row is never the latest decision, so
-# an answer under a pin settles its field as it would without one, including
-# while its pin waits for the chosen value to be read back. A changed pin with
-# no answer standing asks again over an automatic, authored or cover decision
-# a returning case still carries (ADR-0085, Amendment 2). A suspension still
+# owner took back, nor one the work has since left and returned to, nor one a
+# completed Resume took back (ADR-0108). The record's answer given on the
+# case in its episode settles its field too, a pin's answer after its unpin
+# among them (C2b-15). An automatic decision, or Automatic's
+# authored description, settles its field only in the active generation and
+# only while the record holds no answer for the field against Automatic: none,
+# or one with a Resume open that has not failed. A pin in force settles its
+# field. A pin or unpin row is never the latest decision, so an answer under a
+# pin settles its field as it would without one, including while its pin
+# waits for the chosen value to be read back. A changed pin with no answer
+# standing asks again over an automatic, authored or cover decision a
+# returning case still carries (ADR-0085, Amendment 2). A suspension still
 # wins.
 _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
@@ -404,16 +501,28 @@ _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     "AND decision.destination=result.destination "
     "AND decision.outcome NOT IN ('pin','unpin') AND "
     + _episode_decision_sql("decision")
+    + " AND NOT "
+    + _resumed_decision_sql("c")
     + " ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
-    "AND NOT " + _pin_hold_sql("rc.review_case_id", "result.destination", True) + " "
+    "AND NOT "
+    + _record_case_answer_sql(own=True)
+    + " AND NOT "
+    + _pin_record_sql("rc.review_case_id", "result.destination", True, item="c")
+    + " "
     "AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description'"
-    " AND NOT " + _PIN_CHANGED_SQL + ") "
+    " AND NOT " + _PIN_CHANGED_SQL + " AND (EXISTS (SELECT 1 FROM "
+    "owner_authored_descriptions owner_authored WHERE "
+    "owner_authored.decision_id=authored.decision_id) OR NOT "
+    + _record_holds_sql("c", "result.destination")
+    + ")) "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=result.destination AND "
     + _active_generation_automatic_sql("decision")
     + " AND NOT "
     + _PIN_CHANGED_SQL
+    + " AND NOT "
+    + _record_holds_sql("c", "result.destination")
     + ") "
     "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers current_selection "
     "JOIN current_cover_considerations current_cover "
@@ -679,6 +788,7 @@ __all__ = [
     "_LATEST_PREPARATION_FAILED_SQL",
     "_LATEST_PREPARATION_WORK_SQL",
     "_POLICY_ASK_ATTENTION_SQL",
+    "_ASKED_BESIDE_PROPOSAL_SQL",
     "_REPORT_BROWSE_FACTS_JOIN_SQL",
     "_REVIEW_ATTENTION_SQL",
     "_REVIEW_FIELD_ATTENTION_SQL",

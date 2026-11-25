@@ -4,9 +4,9 @@ Every owner answer takes its ordinal from `owner_answer_ordinal` in its own
 transaction, and every answer site writes `owner_field_answers` through this
 module in that same transaction. Resume's requests, completions, failures and
 supersessions are written here too, as `owner_field_events`, keyed by the
-work's field. What Automatic records, plans and writes, and Resume itself,
-read the record (#2038 C2b); what the owner sees and may do still reads the
-manual holds, which are written beside the record until those readers move.
+work's field. What Automatic records, plans and writes, Resume itself, and
+what the owner sees and may do read the record (#2038 C2b); no manual hold is
+written or read any more, and the hold table goes in a later change.
 `domain.owner_field_answer` folds the same rows from the ledger; a withdrawal
 restores through that fold, and open refuses a store whose record is not that
 fold.
@@ -526,8 +526,8 @@ def request_resume(
     again closes the open request `resume_superseded`, naming no answer,
     before the new one is written. Returns the request, or None where the
     record holds no answer for the field or a pin is on it, which Resume
-    never hands back (ADR-0085, Amendment 2): today's hold decides whether
-    Resume is asked, so the record mirrors it only where it can.
+    never hands back (ADR-0085, Amendment 2). Whether the field still offers
+    Resume (C0 `resume_offer`) the caller checks first.
     """
     key = (*item, destination)
     current = _current(connection, key)

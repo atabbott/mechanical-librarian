@@ -719,6 +719,9 @@ def test_a_successor_carrying_the_owners_hold_admits_its_description_held(
     report, fresh = _publish_successor(repository, binding)
     successor = fresh.review_case_id
     assert hold_token(repository, successor, "description") == owner.decision_id
+    # Preparation projects the successor, which is where Resume is offered
+    # from: the field is Automatic on it (ADR-0108).
+    repository.persist_shadow_outcome(successor, 12)
     candidate = DescriptionAdviceService(
         store, access[0], store.current_settings, lambda: 12
     ).prepare(report, fresh, lambda: store.binding_is_current(fresh))
@@ -929,11 +932,11 @@ def test_an_owner_answer_without_an_authored_description_holds_later_advice(
 
 
 def test_a_pinned_description_admits_no_automatic_advice(tmp_path):
-    """ADR-0085 Amendment 2 (#1346, AC8 and AC15): a pin carried to a later
-    case keeps automatic advice out of the description, while the owner's own
-    advice choice is still admitted and ends the pin. A carried hold without
-    a pin refuses no automatic admission (the test above), so only the pin
-    can refuse it."""
+    """ADR-0085 Amendment 2 (#1346, AC8 and AC15): a pin the record keeps for
+    the work keeps automatic advice out of the description on a later case,
+    while the owner's own advice choice is still admitted and ends the pin.
+    An answer without a pin refuses no automatic admission (the test above),
+    so only the pin can refuse it."""
     from mechanical_librarian.application.description_advice import (
         DescriptionAdviceService,
     )
@@ -968,13 +971,12 @@ def test_a_pinned_description_admits_no_automatic_advice(tmp_path):
     report, fresh = _publish_successor(repository, binding)
 
     def hold() -> dict[str, object]:
-        return json.loads(
-            repository._connection.execute(
-                "SELECT document FROM field_effect_manual_holds WHERE "
-                "review_case_id=? AND destination='description'",
-                (fresh.review_case_id,),
-            ).fetchone()[0]
-        )
+        """The record's description answer for the work, and its pin."""
+        answer, pinned = repository._connection.execute(
+            "SELECT answer_id,pin_fingerprint FROM owner_field_answers "
+            "WHERE destination='description'"
+        ).fetchone()
+        return {"decision_id": answer, "pin": pinned}
 
     assert hold()["decision_id"] == pin.decision_id
     assert hold()["pin"] is not None

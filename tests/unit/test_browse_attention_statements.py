@@ -36,12 +36,12 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _ASKED_BESIDE_PROPOSAL_SQL,
     _AUTOMATIC_SAFETY_ATTENTION_SQL,
     _CURRENT_COVER_ATTENTION_AUTHORITY_SQL,
     _CURRENT_LIBRARY_FROM_SQL,
     _CURRENT_REVIEW_FROM_SQL,
     _EPUB_INAPPLICABLE_ATTENTION_SQL,
-    _POLICY_ASK_ATTENTION_SQL,
     _REPORT_BROWSE_FACTS_JOIN_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
     _REVIEW_SEARCH_SQL,
@@ -126,7 +126,9 @@ _PRE_1202_ATTENTION_SQL = (
     "(CASE WHEN "
     + _AUTOMATIC_SAFETY_ATTENTION_SQL
     + " THEN 'automatic_safety_suspended' ELSE NULL END) AS cause,"
-    "CASE WHEN " + _POLICY_ASK_ATTENTION_SQL + " THEN 1 ELSE 0 END AS policy_attention,"
+    "CASE WHEN "
+    + _ASKED_BESIDE_PROPOSAL_SQL
+    + " THEN 1 ELSE 0 END AS policy_attention,"
     "COALESCE(page.present,0),totals.total FROM totals LEFT JOIN page ON 1 "
     "LEFT JOIN review_cases rc ON rc.review_case_id=page.review_case_id "
     "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
@@ -702,12 +704,14 @@ def test_package_and_case_reports_are_read_as_before_when_they_differ(
         fixture.close()
 
 
-def test_a_kept_case_reads_as_no_attention_in_every_statement(
+def test_a_kept_case_reads_alike_in_every_statement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A case kept for a recent write is a current case with nothing to decide:
-    every Library page, lens and count agrees with the pre-#1202 statements,
-    and none counts attention (#1523, S18)."""
+    """A case kept for a recent write is a current case with nothing new to
+    decide: every Library page, lens and count agrees with the pre-#1202
+    statements (#1523, S18). The answer it was kept for came from the case
+    before it and nothing carried it, so each asks that field once (C2b-15,
+    S16)."""
     from tests.support.owner_values import OwnerStore
     from tests.support.review_cases import _report
 
@@ -719,6 +723,6 @@ def test_a_kept_case_reads_as_no_attention_in_every_statement(
     ).fetchone()
     store.publish(_report(written, competing=False), now=verified_at + 1)
     assert store.repository.review_case_kept(store.case.review_case_id)
-    assert _assert_equal_to_oracle(store.repository, monkeypatch) == (0, 0)
-    assert store.repository.count_current_review_cases(None, _LABELS) == (1, 0)
+    assert _assert_equal_to_oracle(store.repository, monkeypatch) == (1, 1)
+    assert store.repository.count_current_review_cases(None, _LABELS) == (1, 1)
     store.close()

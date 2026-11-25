@@ -58,6 +58,7 @@ from mechanical_librarian.adapters.persistence.proposal_sets import (
     _validate_proposal_row,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _ASKED_BESIDE_PROPOSAL_SQL,
     _ATTENTION_FACT_CURRENT_SQL,
     _ATTENTION_FACTS_JOIN_SQL,
     _AUTOMATIC_SAFETY_ATTENTION_SQL,
@@ -68,12 +69,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _LATEST_VERIFIED_WRITE_SQL,
     _LIBRARY_ATTENTION_SQL,
     _NOT_MATCHED_REASON_SQL,
-    _PIN_CHANGED_SQL,
-    _POLICY_ASK_ATTENTION_SQL,
     _REPORT_BROWSE_FACTS_JOIN_SQL,
     _REVIEW_SEARCH_SQL,
     _TERMINAL_LIBRARY_SEARCH_SQL,
-    _WORK_LATEST_MANUAL_HOLDS_SQL,
+    _pin_record_sql,
     _terminal_library_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -92,9 +91,6 @@ from mechanical_librarian.application.review_web import (
     LibraryLabels,
     LibraryLensFilter,
     ReviewLibraryProgress,
-)
-from mechanical_librarian.domain.field_effect import (
-    canonical_json as canonical_effect_json,
 )
 from mechanical_librarian.domain.human_decision import pinned_field_fingerprint
 from mechanical_librarian.domain.library_visit import ListingPositions
@@ -329,9 +325,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     self._binding.require_current()
                 transaction.commit()
                 return _admission_json(outcome, None)
-            case, case_existed = self._store_admitted_case(
-                proposal_set, report, lineage, validated
-            )
+            case = self._store_admitted_case(proposal_set, report, lineage, validated)
             reconcile_case_level_in_transaction(
                 self._connection,
                 case,
@@ -341,7 +335,6 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 self._revoke_matching_changed,
             )
             outcome = "superseded" if prior_case_id is not None else "admitted"
-            self._carry_manual_holds_forward(case, lineage, case_existed)
             self._record_actionable_admission(
                 proposal_set,
                 report,
@@ -379,27 +372,19 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
     def _work_pin_changed(
         self, case: ReviewCase, lineage: tuple[str, str, str]
     ) -> bool:
-        """Whether a pin the work carries would read changed on ``case``.
-
-        It compares as `_carry_manual_holds_forward` does for each hold row it
-        rewrites: the latest active hold per field with no return pending,
-        whose pin keeps a value the case does not show (ADR-0085, Amendment
-        2). A row already on this case keeps its stored flag there; it differs
-        only for a pin taken while a write waited, which this reads in force.
-        """
-        for destination, active, document in self._connection.execute(
-            _WORK_LATEST_MANUAL_HOLDS_SQL, lineage
-        ).fetchall():
-            hold = json.loads(document)
-            if (
-                active
-                and hold["pending_return"] is None
-                and type(hold["pin"]) is dict
-                and pinned_field_fingerprint(case, destination)
-                != hold["pin"]["fingerprint"]
-            ):
-                return True
-        return False
+        """Whether a pin on the record of the work's answers reads changed on
+        ``case``: it keeps a value the case does not show (ADR-0085,
+        Amendment 2; ADR-0108). Computed when read, as Attention reads it, so
+        a pin taken while a write waited reads in force here (S15)."""
+        return any(
+            pinned_field_fingerprint(case, destination) != fingerprint
+            for destination, fingerprint in self._connection.execute(
+                "SELECT destination,pin_fingerprint FROM owner_field_answers "
+                "WHERE connection_name=? AND library_name=? AND item_id=? "
+                "AND pin_fingerprint IS NOT NULL",
+                lineage,
+            )
+        )
 
     def _written_since(self, lineage: tuple[str, str, str], since: int) -> bool:
         """Whether the work's latest verified write is later than ``since``."""
@@ -545,7 +530,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         report: MetadataReport,
         lineage: tuple[str, str, str],
         validated: _ReviewPointer | None,
-    ) -> tuple[ReviewCase, bool]:
+    ) -> ReviewCase:
         """Store the case or prove its identity, opening a new episode unless reactivated."""
         case = ReviewCase.create(proposal_set, report)
         existing = self._connection.execute(
@@ -601,64 +586,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "event_floor=excluded.event_floor",
                 (case.review_case_id,) * 3,
             )
-        return case, existing is not None
-
-    def _carry_manual_holds_forward(
-        self,
-        case: ReviewCase,
-        lineage: tuple[str, str, str],
-        case_existed: bool,
-    ) -> None:
-        # The owner's hold follows the work, not the case (ADR-0085): the
-        # latest hold per destination across the item's cases carries
-        # forward while it is active and no return is pending, keeping
-        # its decision as the token "Return to automatic" names. A case
-        # admitted again takes that latest state into its own row, so a
-        # hold released or returning since never resurrects with it. A pin
-        # on it is in force on this case only while the case shows the
-        # pinned value (ADR-0085, Amendment 2); comparing is no update by
-        # the owner, so the hold keeps its time.
-        review_case_id = case.review_case_id
-        for destination, active, document in self._connection.execute(
-            _WORK_LATEST_MANUAL_HOLDS_SQL, lineage
-        ).fetchall():
-            hold = json.loads(document)
-            if hold["review_case_id"] == review_case_id:
-                continue
-            hold["review_case_id"] = review_case_id
-            if type(hold["pin"]) is dict:
-                hold["pin"] = {
-                    **hold["pin"],
-                    "in_force": pinned_field_fingerprint(case, destination)
-                    == hold["pin"]["fingerprint"],
-                }
-            if not active or hold["pending_return"] is not None:
-                if case_existed:
-                    self._connection.execute(
-                        "UPDATE field_effect_manual_holds SET active=?,"
-                        "updated_at=?,document=? WHERE review_case_id=? "
-                        "AND destination=?",
-                        (
-                            active,
-                            hold["updated_at"],
-                            canonical_effect_json(hold),
-                            review_case_id,
-                            destination,
-                        ),
-                    )
-                continue
-            self._connection.execute(
-                "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
-                "active,updated_at,document) VALUES(?,?,1,?,?) "
-                "ON CONFLICT(review_case_id,destination) DO UPDATE SET active=1,"
-                "updated_at=excluded.updated_at,document=excluded.document",
-                (
-                    review_case_id,
-                    destination,
-                    hold["updated_at"],
-                    canonical_effect_json(hold),
-                ),
-            )
+        return case
 
     def _record_actionable_admission(
         self,
@@ -1294,9 +1222,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + _AUTOMATIC_SAFETY_ATTENTION_SQL
                 + " THEN 'automatic_safety_suspended' ELSE NULL END) AS cause,"
                 "CASE WHEN "
-                + _POLICY_ASK_ATTENTION_SQL
+                + _ASKED_BESIDE_PROPOSAL_SQL
                 + " THEN 1 ELSE 0 END AS policy_attention,"
-                "CASE WHEN " + _PIN_CHANGED_SQL + " THEN 1 ELSE 0 END AS pin_changed,"
+                "CASE WHEN "
+                + _pin_record_sql("rc.review_case_id", "result.destination", False)
+                + " THEN 1 ELSE 0 END AS pin_changed,"
                 "COALESCE(page.present,0),totals.total FROM totals LEFT JOIN page ON 1 "
                 "LEFT JOIN review_cases rc ON rc.review_case_id=page.review_case_id "
                 "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "

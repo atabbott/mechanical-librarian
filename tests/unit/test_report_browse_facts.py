@@ -28,12 +28,12 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _ASKED_BESIDE_PROPOSAL_SQL,
     _AUTOMATIC_SAFETY_ATTENTION_SQL,
     _CURRENT_LIBRARY_FROM_SQL,
     _CURRENT_REVIEW_FROM_SQL,
     _EPUB_INAPPLICABLE_ATTENTION_SQL,
     _LIBRARY_DISPLAY_SEARCH_SQL,
-    _POLICY_ASK_ATTENTION_SQL,
     _REVIEW_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
     _TERMINAL_LIBRARY_SEARCH_SQL,
@@ -284,7 +284,9 @@ _ORACLE_ATTENTION_SQL = (
     "(CASE WHEN "
     + _AUTOMATIC_SAFETY_ATTENTION_SQL
     + " THEN 'automatic_safety_suspended' ELSE NULL END) AS cause,"
-    "CASE WHEN " + _POLICY_ASK_ATTENTION_SQL + " THEN 1 ELSE 0 END AS policy_attention,"
+    "CASE WHEN "
+    + _ASKED_BESIDE_PROPOSAL_SQL
+    + " THEN 1 ELSE 0 END AS policy_attention,"
     "COALESCE(page.present,0),totals.total FROM totals LEFT JOIN page ON 1 "
     "LEFT JOIN review_cases rc ON rc.review_case_id=page.review_case_id "
     "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
@@ -1001,6 +1003,7 @@ def test_restart_refuses_browse_facts_that_disagree_with_reports(
     _publish(repository, _edge_report(1, "Ab", authors=("Cd",)))
     repository.close()
     connection = sqlite3.connect(database)
+    schema._register_casefold(connection)
     assert connection.execute(corruption).rowcount == 1
     connection.commit()
     connection.close()
@@ -1069,6 +1072,7 @@ def test_open_refuses_tampered_facts_staged_only_in_a_lineage(
     repository.admit_review_case(proposal)
     repository.close()
     connection = sqlite3.connect(database)
+    schema._register_casefold(connection)
     # The package rewinds to the older report-only row, leaving the staged
     # report and proposal reachable only through the lineage pointers a
     # preparation copy promotes without a check.
@@ -1081,6 +1085,7 @@ def test_open_refuses_tampered_facts_staged_only_in_a_lineage(
     connection.close()
     open_repository(database, create=False).close()
     connection = sqlite3.connect(database)
+    schema._register_casefold(connection)
     assert (
         connection.execute(
             tamper,
@@ -1124,6 +1129,7 @@ def test_unselected_historical_proposal_tamper_does_not_block_open(
 
 def _tamper_history(database: Path, statement: str, key: str) -> None:
     connection = sqlite3.connect(database)
+    schema._register_casefold(connection)
     assert connection.execute(statement, (key,)).rowcount == 1
     connection.commit()
     connection.close()

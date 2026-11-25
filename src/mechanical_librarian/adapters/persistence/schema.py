@@ -64,6 +64,7 @@ from mechanical_librarian.adapters.persistence.owner_field_answers import (
     OWNER_FIELD_EVENTS_REQUEST_INDEX_SQL,
     OWNER_FIELD_EVENTS_SQL,
     SETUP_OWNER_ANSWER_ORDINAL_ROW,
+    case_record_sql,
     validate_owner_field_answers,
 )
 from mechanical_librarian.adapters.persistence.owner_settings import (
@@ -104,6 +105,7 @@ from mechanical_librarian.domain.human_decision import (
     COVER_SELECTION_AUTHORITY_SCHEMA,
     HumanDecision,
     HumanDecisionError,
+    field_fingerprint,
     keeps_unread_cover,
     manual_cover_eligible,
     owner_cover_selection_kind,
@@ -376,17 +378,30 @@ def _review_value_flags(target: object, providers: object) -> str:
     )
 
 
+def _pin_fingerprint(destination: object, field: object) -> str | None:
+    """`field_fingerprint` of one case's target field as stored JSON, or of
+    none: what a pin on the field is compared with when it is read (S15)."""
+    if type(destination) is not str or (field is not None and type(field) is not str):
+        raise ValueError("pin fingerprint input is invalid")
+    value = None if field is None else json.loads(field)
+    return field_fingerprint(destination, value if type(value) is dict else None)
+
+
 def _register_casefold(connection: sqlite3.Connection) -> None:
     """Give a connection the deterministic functions its facts were derived by.
 
     Every connection that inserts a report fires the browse-fact trigger, and
     every connection that validates facts recomputes them, through the fold
-    and the value flags (#1334). One that lacks them fails with `no such
-    function` and writes or accepts nothing.
+    and the value flags (#1334). Every connection that writes an input of the
+    attention facts reads a pin's fingerprint (ADR-0108). One that lacks them
+    fails with `no such function` and writes or accepts nothing.
     """
     connection.create_function("ml_casefold", 1, _review_casefold, deterministic=True)
     connection.create_function(
         "ml_value_flags", 2, _review_value_flags, deterministic=True
+    )
+    connection.create_function(
+        "ml_pin_fingerprint", 2, _pin_fingerprint, deterministic=True
     )
 
 
@@ -1381,6 +1396,42 @@ _AUTOMATIC_POSTURE_SQL = (
 )
 
 
+def _resume_offer_sql(case: str, destination: str) -> str:
+    """Whether the field of the current case offers Resume automatic handling
+    (C0 `resume_offer`, S11 as D4 amends it): the record holds an unpinned
+    answer for the field of the case's book, Automatic is on, and the field
+    is Automatic: the case's policy sets it to Automatic, or, for the
+    description, the owner's Automatic description advice setting is on,
+    which is what admits Automatic's description (C2b-13). A pause, a
+    suspension or a stale qualification does not hide it: the request waits
+    for a scan that succeeds, and every write still checks them. A cover
+    offers Resume by its own `cover_automatic_held` mark instead (ADR-0108).
+    The posture term is read when this is called, so the site check can
+    bypass it."""
+    return (
+        "(EXISTS ("
+        + case_record_sql(case, destination)
+        + " AND record.pin_fingerprint IS NULL) AND "
+        + _AUTOMATIC_POSTURE_SQL
+        + f" AND CASE WHEN {destination}='description' THEN "
+        + _DESCRIPTION_AUTOMATIC_APPLICATION_SQL
+        + " ELSE EXISTS (SELECT 1 FROM shadow_outcome_field_facts offered "
+        f"WHERE offered.review_case_id={case} AND offered.destination={destination} "
+        "AND offered.automatic_destination=1) END)"
+    )
+
+
+# Whether the owner's Automatic description advice setting is on, as
+# `SQLiteDescriptionAdviceRepository.current_settings` reads it: the saved
+# owner settings, or before any are saved the settings the store was bound
+# with, which it registers as `ml_description_automatic_application`.
+_DESCRIPTION_AUTOMATIC_APPLICATION_SQL = (
+    "COALESCE((SELECT COALESCE(json_extract(settings.document,"
+    "'$.description_advice.automatic_application'),0) FROM owner_settings settings "
+    "WHERE settings.singleton=1),ml_description_automatic_application())=1"
+)
+
+
 def _same_policy_retirement_sql(connection: str, library: str, item: str) -> str:
     """Whether the active generation reactivated the unchanged policy over a work.
 
@@ -1967,6 +2018,20 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
         ("insert", "update", "delete"),
         _packages_of_case("{row}.destination"),
     ),
+    # The record's answer for a field keeps Automatic's decision from
+    # settling it, settles it on its own case and episode and asks it
+    # elsewhere, and its pin settles or asks it; Resume's events open, fail
+    # and complete what the answer holds (ADR-0108, C2b-15).
+    "owner_field_answers": (
+        ("insert", "update", "delete"),
+        "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,"
+        "{row}.destination",
+    ),
+    "owner_field_events": (
+        ("insert",),
+        "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,"
+        "{row}.destination",
+    ),
 }
 
 
@@ -2007,7 +2072,7 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
     ),
     "review_case_episodes": ("review_case_id", "decision_floor"),
     "metadata_policy_state": ("generation",),
-    "current_description_decisions": ("review_case_id",),
+    "current_description_decisions": ("review_case_id", "decision_id"),
     "current_cover_considerations": ("review_case_id", "consideration_id"),
     # Any owner's choice settles its work's cover, whichever it names.
     "owner_cover_pointers": ("connection_name", "library_name", "item_id"),
@@ -2023,6 +2088,16 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
         "destination",
         "active",
         "document",
+    ),
+    "owner_field_answers": (
+        "connection_name",
+        "library_name",
+        "item_id",
+        "destination",
+        "review_case_id",
+        "episode",
+        "open_resume_id",
+        "pin_fingerprint",
     ),
 }
 

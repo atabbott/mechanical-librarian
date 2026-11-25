@@ -2374,6 +2374,11 @@ path = quote(os.path.abspath(sys.argv[2]), safe="/")
 connection = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
 connection.execute("PRAGMA query_only=ON")
 connection.create_function("ml_cover_consideration_current", 2, lambda _d, _r: 0)
+from mechanical_librarian.adapters.persistence import schema as schema_module
+if hasattr(schema_module, "_pin_fingerprint"):
+    connection.create_function(
+        "ml_pin_fingerprint", 2, schema_module._pin_fingerprint, deterministic=True
+    )
 ordinals = {}
 rows = []
 for case, destination, reasons, shadow_code, medium in connection.execute(per_case):

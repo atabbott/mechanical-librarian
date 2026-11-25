@@ -117,6 +117,7 @@ _LEDGER = schema.LEDGER_TABLES | schema.LEDGER_VIEWS
 @pytest.fixture
 def connection() -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(":memory:")
+    schema._register_casefold(connection)
     try:
         schema._create_schema(connection)
         yield connection
@@ -205,6 +206,8 @@ def test_triggers_writing_derived_state_are_derived_and_ledger_triggers_read_led
         "metadata_policy_resolutions",
         "metadata_policy_state",
         "owner_cover_pointers",
+        "owner_field_answers",
+        "owner_field_events",
     }
 
 
@@ -259,7 +262,7 @@ def test_owner_writes_and_no_change_copy_what_their_readers_show(
     assert described["history_selected_form"] == 1
     assert described["activity_field_effect_human"] > 0
     genres = {"kind": "list", "value": ["Fantasy"]}
-    store = OwnerStore(tmp_path / "genres", genre_report())
+    store = _automatic_genres_store(tmp_path / "genres")
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)
@@ -535,12 +538,22 @@ def test_an_event_and_a_transition_state_agree_with_the_ledger_always(
     assert not opens(activity)
 
 
+def _automatic_genres_store(root: Path) -> OwnerStore:
+    """A store whose genres are Automatic, where Resume is offered
+    (ADR-0108), with the genre report's case current."""
+    report = genre_report()
+    store = OwnerStore(root, None)
+    store.automatic("genres", "replace", report.target.library)
+    store.publish(report)
+    return store
+
+
 def _owner_genres(root: Path) -> Path:
     """A copy of a store whose owner wrote genres and then accepted the
     written value again: a plan and a no-change row, both the owner's."""
     root.mkdir(mode=0o700)
     genres = {"kind": "list", "value": ["Fantasy"]}
-    store = OwnerStore(root, genre_report())
+    store = _automatic_genres_store(root)
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)
@@ -758,7 +771,7 @@ def test_an_owner_no_change_agrees_with_its_case_while_it_is_there(
     """An owner's accept of the value already written names its case's
     report while that case is there; regenerated, the row stands."""
     genres = {"kind": "list", "value": ["Fantasy"]}
-    store = OwnerStore(tmp_path, genre_report())
+    store = _automatic_genres_store(tmp_path)
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)
@@ -788,7 +801,7 @@ def test_every_ledger_row_naming_an_owner_decision_names_its_work(
     with the plan, no-change row and events that name it: open refuses with
     or without the derived rows."""
     genres = {"kind": "list", "value": ["Fantasy"]}
-    store = OwnerStore(tmp_path, genre_report())
+    store = _automatic_genres_store(tmp_path)
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)

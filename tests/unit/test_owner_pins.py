@@ -22,9 +22,13 @@ from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
 from mechanical_librarian.adapters.field_effect_fakes import FakeCapabilityObserver
+from mechanical_librarian.adapters.persistence.decisions import pin_in_force_sql
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
     _validate_field_effect_state,
+)
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    case_record_sql,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
@@ -80,20 +84,31 @@ ANOTHER = "Another Example Title"
 FANTASY = {"kind": "list", "value": ["Fantasy"]}
 
 
-def _hold_document(
+def _record(
     store: OwnerStore, destination: str = "title", case_id: str | None = None
 ) -> dict[str, object] | None:
+    """The record's row for the field of the case's book: its answer, its pin
+    and its open Resume, and whether the pin reads in force on the case."""
     row = store.repository._connection.execute(
-        "SELECT document FROM field_effect_manual_holds "
-        "WHERE review_case_id=? AND destination=?",
-        (case_id or store.case.review_case_id, destination),
+        "SELECT record.answer_id,record.pin_fingerprint,record.open_resume_id,"
+        + pin_in_force_sql(":case", ":destination")
+        + case_record_sql(":case", ":destination").removeprefix("SELECT 1"),
+        {"case": case_id or store.case.review_case_id, "destination": destination},
     ).fetchone()
-    return None if row is None else json.loads(row[0])
+    if row is None:
+        return None
+    return {
+        "answer_id": row[0],
+        "pin": None
+        if row[1] is None
+        else {"fingerprint": row[1], "in_force": bool(row[3])},
+        "open_resume_id": row[2],
+    }
 
 
 def _pin(store: OwnerStore, destination: str = "title") -> object:
-    document = _hold_document(store, destination)
-    return None if document is None else document["pin"]
+    record = _record(store, destination)
+    return None if record is None else record["pin"]
 
 
 def _asked(store: OwnerStore, destination: str = "title") -> bool:
@@ -120,18 +135,18 @@ def _rows(store: OwnerStore) -> tuple[int, int, int]:
     return store.repository._connection.execute(
         "SELECT (SELECT count(*) FROM human_decisions),"
         "(SELECT count(*) FROM human_decision_events),"
-        "(SELECT count(*) FROM field_effect_manual_holds)"
+        "(SELECT count(*) FROM owner_field_answers)"
     ).fetchone()
 
 
 def _refused(store: OwnerStore, code: str, outcome: str, **kwargs) -> None:
-    before = _rows(store), _hold_document(store, kwargs.get("destination", "title"))
+    before = _rows(store), _record(store, kwargs.get("destination", "title"))
     with pytest.raises(HumanDecisionError) as error:
         store.decide(outcome, **kwargs)
     assert error.value.code == code
     assert (
         _rows(store),
-        _hold_document(store, kwargs.get("destination", "title")),
+        _record(store, kwargs.get("destination", "title")),
     ) == before
 
 
@@ -226,9 +241,9 @@ def test_a_pin_on_a_chosen_value_is_accepted_at_every_stage(
         "fingerprint": chosen_value_fingerprint("title", ORCHARD),
         "in_force": False,
     }
-    hold = _hold_document(genres)
-    assert hold is not None
-    assert (hold["active"], hold["pending_return"]) == (True, None)
+    record = _record(genres)
+    assert record is not None
+    assert record["open_resume_id"] is None
     if stage == "unwritten":
         assert _pending(genres) == {choice.decision_id}
         assert _pending_counts(genres) == 1
@@ -356,11 +371,12 @@ def test_a_refused_pin_says_whether_the_change_is_written(tmp_path: Path) -> Non
 
 # KC5, RK1 and K-D10: a pin over an answer whose hold a Resume was asked of,
 # or released, is refused, so it never makes that answer's write pending again.
+# Resume is offered only where the field is Automatic (ADR-0108).
 @pytest.mark.parametrize("resume", ["requested", "released"])
 def test_a_pin_after_resume_is_refused_and_revives_nothing(
     tmp_path: Path, resume: str
 ) -> None:
-    store, report, _ = _store(tmp_path, title="ask")
+    store, report, _ = _store(tmp_path)
     store.publish(report)
     answer = store.decide("owner_entered", ORCHARD)
     assert _pending(store) == {answer.decision_id}
@@ -382,7 +398,8 @@ def test_a_pin_after_resume_is_refused_and_revives_nothing(
     _refused(store, "pin_change_waiting", "pin")
     assert (_pending(store), _pending_counts(store)) == before
     if resume == "released":
-        assert before == (set(), 0)
+        # Automatic's decision is armed again; the answer's write is not.
+        assert answer.decision_id not in before[0]
     assert _field(store, "title")["pin_control"] == {
         "pin": "change_waiting",
         "unpin": False,
@@ -488,7 +505,7 @@ def test_withdraw_is_refused_while_pinned(genres: OwnerStore) -> None:
     assert _pending(genres) == {answer.decision_id}
     genres.decide("unpin")
     genres.decide("withdraw")
-    assert _hold_document(genres) is None
+    assert _record(genres) is None
     assert _pending(genres) == set()
     assert _field(genres, "title")["human_decision"] is None
 
@@ -583,19 +600,16 @@ def test_withdrawing_an_answer_on_the_pinned_case_restores_no_pin(
     assert _field(genres, "title")["pin"] is None
 
 
-# AC14 and R3: unpin keeps the hold and its token, and moves updated_at so
-# the work's latest hold, which the next case carries, has no pin.
+# AC14 and R3: unpin keeps the record's answer and takes its pin off, so
+# the work's next case reads no pin (ADR-0108).
 def test_unpin_keeps_the_hold_and_its_token(genres: OwnerStore) -> None:
     pin = genres.decide("pin")
-    unpin = genres.decide("unpin")
-    document = _hold_document(genres)
-    assert document is not None
-    assert (_hold(genres), document["pin"], document["updated_at"]) == (
-        pin.decision_id,
-        None,
-        unpin.occurred_at,
-    )
-    assert document["active"] is True
+    genres.decide("unpin")
+    assert _record(genres) == {
+        "answer_id": pin.decision_id,
+        "pin": None,
+        "open_resume_id": None,
+    }
     genres.publish(rewritten(genre_report(), publisher="Changed Elsewhere"))
     assert (_hold(genres), _pin(genres)) == (pin.decision_id, None)
 
@@ -707,15 +721,12 @@ def test_a_pinned_description_keeps_its_pin_over_an_authored_decision(
         "SELECT count(*) FROM current_description_decisions WHERE review_case_id=?",
         (binding.review_case_id,),
     ).fetchone() == (0,)
-    document = json.loads(
-        connection.execute(
-            "SELECT document FROM field_effect_manual_holds WHERE review_case_id=? "
-            "AND destination='description'",
-            (binding.review_case_id,),
-        ).fetchone()[0]
-    )
-    assert document["decision_id"] == pin.decision_id
-    assert document["pin"] is not None and document["pin"]["in_force"] is True
+    assert connection.execute(
+        "SELECT record.answer_id,record.pin_fingerprint IS NOT NULL,"
+        + pin_in_force_sql(":case", "'description'")
+        + case_record_sql(":case", "'description'").removeprefix("SELECT 1"),
+        {"case": binding.review_case_id},
+    ).fetchall() == [(pin.decision_id, 1, 1)]
     repository.close()
 
 
@@ -913,7 +924,9 @@ def test_a_pinned_field_with_nothing_to_decide_stays_where_it_was(
     store.close()
 
 
-def test_unpin_returns_a_field_with_nothing_to_decide_to_its_pin(
+# C2b-15: the unpin is the owner's answer on this case, so the field reads
+# as decided, never as having nothing to decide.
+def test_unpin_on_a_field_with_nothing_to_decide_reads_as_decided(
     tmp_path: Path,
 ) -> None:
     store, report, _ = _store(tmp_path, title="ask")
@@ -922,8 +935,8 @@ def test_unpin_returns_a_field_with_nothing_to_decide_to_its_pin(
     store.decide("unpin", destination="publisher")
     field = _field(store, "publisher")
     assert (field["inventory_role"], field["classification_cause"]) == (
-        "contextual",
-        "nothing_to_decide",
+        "primary",
+        "human_decided",
     )
     assert field["pin"] is None
     assert field["pin_control"] == {"pin": "available", "unpin": False}
@@ -993,6 +1006,27 @@ def test_a_changed_pin_on_a_suspended_field_waits(tmp_path: Path) -> None:
 
 
 # AC4: the hold document's pin key is closed and exactly typed.
+def _stored_hold(store: OwnerStore, pin: dict[str, object]) -> dict[str, object]:
+    """Put a manual hold with ``pin`` on the case's title and return its
+    document. No answer writes a hold since #2038's record, but the table and
+    its validator stand until the holds are removed, so these tests write
+    one to keep proving the validator."""
+    decision = store.decide("pin")
+    store.repository._set_field_effect_manual_hold(
+        store.case.review_case_id,
+        "title",
+        decision.occurred_at,
+        decision.decision_id,
+        pin=pin,
+    )
+    (document,) = store.repository._connection.execute(
+        "SELECT document FROM field_effect_manual_holds "
+        "WHERE review_case_id=? AND destination='title'",
+        (store.case.review_case_id,),
+    ).fetchone()
+    return cast("dict[str, object]", json.loads(document))
+
+
 @pytest.mark.parametrize(
     "pin",
     [
@@ -1013,11 +1047,9 @@ def test_a_changed_pin_on_a_suspended_field_waits(tmp_path: Path) -> None:
 def test_the_hold_document_refuses_a_malformed_pin(
     genres: OwnerStore, pin: object
 ) -> None:
-    genres.decide("pin")
+    document = _stored_hold(genres, {"fingerprint": "a" * 64, "in_force": True})
     connection = genres.repository._connection
     _validate_field_effect_state(connection)
-    document = _hold_document(genres)
-    assert document is not None
     assert document["schema_version"] == FIELD_EFFECT_MANUAL_HOLD_SCHEMA
     if pin == "missing_key":
         del document["pin"]
@@ -1044,10 +1076,8 @@ def test_the_hold_document_refuses_a_malformed_pin(
 def test_the_hold_document_refuses_a_pin_on_a_released_or_returning_hold(
     genres: OwnerStore, state: str
 ) -> None:
-    genres.decide("pin")
+    document = _stored_hold(genres, {"fingerprint": "a" * 64, "in_force": True})
     connection = genres.repository._connection
-    document = _hold_document(genres)
-    assert document is not None
     if state == "released":
         document["active"] = False
     else:
@@ -1079,7 +1109,7 @@ def test_a_return_request_never_releases_a_pinned_hold(tmp_path: Path) -> None:
     store, report, _ = _store(tmp_path, title="ask")
     store.publish(report)
     pin = store.decide("pin")
-    before = _hold_document(store)
+    before = _record(store)
     scan = store.repository.request_review_scan(
         report.target.connection,
         report.target.library,
@@ -1094,7 +1124,7 @@ def test_a_return_request_never_releases_a_pinned_hold(tmp_path: Path) -> None:
         )
         is False
     )
-    assert _hold_document(store) == before
+    assert _record(store) == before
     store.close()
 
 
@@ -1142,7 +1172,7 @@ def test_an_owner_write_in_the_same_second_outranks_a_carried_pin(
 def test_a_resume_in_the_same_second_outranks_a_carried_hold(
     tmp_path: Path, resume: str
 ) -> None:
-    store, report, _ = _store(tmp_path, title="ask")
+    store, report, _ = _store(tmp_path)
     ticks = store.ticks
 
     def fixed_clock() -> int:
@@ -1170,7 +1200,13 @@ def test_a_resume_in_the_same_second_outranks_a_carried_hold(
         assert resume_field(store.repository, first, "title", ticks)
     store.publish(rewritten(report, publisher="Changed Once More"))
     assert store.case.review_case_id != first
-    assert _hold(store) is None
+    # The record follows the work: a Resume asked stays open over its answer
+    # on the next case, and one completed leaves no answer (ADR-0108).
+    record = _record(store)
+    if resume == "requested":
+        assert record is not None and record["open_resume_id"] is not None
+    else:
+        assert record is None
     store.close()
 
 

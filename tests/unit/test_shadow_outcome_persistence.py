@@ -29,6 +29,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
 )
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.persistence import metadata_reports as metadata
+from mechanical_librarian.adapters.persistence import schema
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
     compact_cover_consideration,
@@ -4462,6 +4463,8 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         (root / "both-pointers").mkdir(mode=0o700)
         both_pointers = root / "both-pointers" / "reports.sqlite"
         hostile = sqlite3.connect(both_pointers)
+        # A writer of an Attention input reads the record's pins (ADR-0108).
+        schema._register_casefold(hostile)
         repository._connection.backup(hostile)
         (guard,) = hostile.execute(
             "SELECT sql FROM sqlite_schema "

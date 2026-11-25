@@ -35,6 +35,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
     _COVER_UNRESOLVED_OUTCOME_SQL,
     _VERIFIED_CURRENT_COVER_SQL,
+    _pin_record_sql,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.cover_automatic_decision import (
@@ -54,6 +55,7 @@ from tests.support.metadata_report_schemas import (
     PRIOR_HUMAN_DECIDED_SQL,
     pre_2038_attention_sql,
 )
+from tests.support.owner_field_record import insert_record_row
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
 from tests.unit.test_browse_attention_statements import (
     _automatic_decision,
@@ -81,6 +83,15 @@ _PARENTS = {
     "cover_considerations": (("current_cover_considerations", "consideration_id"),),
     "automatic_cover_selections": (("automatic_cover_pointers", "selection_id"),),
 }
+# A parent whose child's validation, not a foreign key, names it: the case's
+# chosen description names a decision of one half (#2038).
+_VALIDATED_PARENTS = {
+    "owner_authored_descriptions": ("current_description_decisions", "decision_id"),
+}
+# Attention reads no manual hold once the record holds the owner's answers
+# (#2038): the hold table keeps its refresh triggers, which refresh facts no
+# hold can move, until its removal.
+_RETIRED_INPUTS = frozenset({"field_effect_manual_holds"})
 _OPERATIONS = ("insert", "update", "delete")
 # The fact source as main held it before #1249 removed the audiobook clause
 # and let narrators ask under the authors' policy key, pinned by digest so the
@@ -748,44 +759,133 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
         lambda: run("DELETE FROM field_effect_suspensions"),
     )
 
+    # The record holds an owner's answer from an earlier case against
+    # Automatic's decision and asks the field; the same answer given on this
+    # case settles it; a Resume open over it lets Automatic settle, and its
+    # failure holds the field again (ADR-0108, C2b-15).
+    held = _attentive(connection, "title")
+    earlier = "review_case_" + _hex("earlier")
+    held_key = (
+        "WHERE (connection_name,library_name,item_id,destination)=(?,?,?,'title')"
+    )
+    yield (
+        "automation decides the held field",
+        (("automatic_decisions", "insert"),),
+        lambda: _automatic_decision(repository, held[3], "title"),
+    )
+    yield (
+        "the owner's earlier answer holds the field",
+        (("owner_field_answers", "insert"),),
+        lambda: insert_record_row(
+            connection,
+            held[3],
+            "title",
+            answer_id=f"human_decision_{_hex('held')}",
+            answered_on=earlier,
+        ),
+    )
+    yield (
+        "the answer is this case's own",
+        (("owner_field_answers", "update"),),
+        lambda: run(
+            f"UPDATE owner_field_answers SET review_case_id=? {held_key}",
+            (held[3], *held[:3]),
+        ),
+    )
+    yield (
+        "the answer is an earlier case's again",
+        (("owner_field_answers", "update"),),
+        lambda: run(
+            f"UPDATE owner_field_answers SET review_case_id=? {held_key}",
+            (earlier, *held[:3]),
+        ),
+    )
+    requested = f"owner_field_event_{_hex('requested')}"
+    yield (
+        "a Resume opens over it",
+        (("owner_field_answers", "update"),),
+        lambda: (
+            run(
+                "INSERT INTO owner_field_events(event_id,connection_name,library_name,"
+                "item_id,destination,kind,request_id,over_ordinal,scan_id,answer_id,"
+                "occurred_at) VALUES(?,?,?,?,'title','resume_requested',NULL,1,"
+                "'scan',NULL,1)",
+                (requested, *held[:3]),
+            ),
+            run(
+                "UPDATE owner_field_answers SET open_resume_id=? "
+                "WHERE (connection_name,library_name,item_id,destination)=(?,?,?,?)",
+                (requested, *held[:3], "title"),
+            ),
+        ),
+    )
+    yield (
+        "the Resume fails",
+        (("owner_field_events", "insert"),),
+        lambda: run(
+            "INSERT INTO owner_field_events(event_id,connection_name,library_name,"
+            "item_id,destination,kind,request_id,over_ordinal,scan_id,answer_id,"
+            "occurred_at) VALUES(?,?,?,?,'title','resume_failed',?,1,NULL,NULL,2)",
+            (f"owner_field_event_{_hex('failed')}", *held[:3], requested),
+        ),
+    )
+    yield (
+        "the answer leaves the record",
+        (("owner_field_answers", "delete"),),
+        lambda: run(
+            "DELETE FROM owner_field_answers "
+            "WHERE (connection_name,library_name,item_id,destination)=(?,?,?,?)",
+            (*held[:3], "title"),
+        ),
+    )
+
     # A changed pin asks a quiet field, a pin in force settles it again, and
-    # its hold leaving takes the question with it (ADR-0085, Amendment 2).
+    # its answer leaving the record takes the question with it (ADR-0085,
+    # Amendment 2; ADR-0108).
     pinned = _quiet(connection, "isbn")
-
-    def pin(in_force: bool) -> str:
-        return json.dumps({"pin": {"fingerprint": "0" * 64, "in_force": in_force}})
-
+    changed = "0" * 64
+    in_force = (
+        "(SELECT ml_pin_fingerprint('isbn',field.value) FROM review_cases pinned,"
+        "json_each(pinned.document,'$.target.fields') field "
+        "WHERE pinned.review_case_id=? "
+        "AND json_extract(field.value,'$.destination')='isbn')"
+    )
+    key = (
+        "WHERE destination='isbn' AND (connection_name,library_name,item_id)="
+        "(SELECT connection_name,library_name,item_id "
+        "FROM current_review_case_lineages WHERE review_case_id=?)"
+    )
     yield (
         "a changed pin asks",
-        (("field_effect_manual_holds", "insert"),),
-        lambda: run(
-            "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
-            "active,updated_at,document) VALUES(?,'isbn',1,1,?)",
-            (pinned, pin(False)),
+        (("owner_field_answers", "insert"),),
+        lambda: insert_record_row(
+            connection,
+            pinned,
+            "isbn",
+            answer_id=f"human_decision_{_hex('pinned')}",
+            pin_fingerprint=changed,
         ),
     )
     yield (
         "the pin is in force again",
-        (("field_effect_manual_holds", "update"),),
+        (("owner_field_answers", "update"),),
         lambda: run(
-            "UPDATE field_effect_manual_holds SET document=? WHERE review_case_id=?",
-            (pin(True), pinned),
+            f"UPDATE owner_field_answers SET pin_fingerprint={in_force} {key}",
+            (pinned, pinned),
         ),
     )
     yield (
         "the pin changes again",
-        (("field_effect_manual_holds", "update"),),
+        (("owner_field_answers", "update"),),
         lambda: run(
-            "UPDATE field_effect_manual_holds SET document=? WHERE review_case_id=?",
-            (pin(False), pinned),
+            f"UPDATE owner_field_answers SET pin_fingerprint=? {key}",
+            (changed, pinned),
         ),
     )
     yield (
-        "the hold goes",
-        (("field_effect_manual_holds", "delete"),),
-        lambda: run(
-            "DELETE FROM field_effect_manual_holds WHERE review_case_id=?", (pinned,)
-        ),
+        "the pinned answer leaves the record",
+        (("owner_field_answers", "delete"),),
+        lambda: run(f"DELETE FROM owner_field_answers {key}", (pinned,)),
     )
 
 
@@ -818,7 +918,11 @@ def test_input_map_names_every_table_the_derivation_reads(tmp_path: Path) -> Non
             )
             if re.search(rf"\b{row[0]}\b", _ATTENTION_FACT_SOURCE_SQL)
         }
-        assert tables == set(schema._ATTENTION_INPUTS) | set(_PARENTS)
+        assert tables == (
+            set(schema._ATTENTION_INPUTS) - _RETIRED_INPUTS
+            | set(_PARENTS)
+            | set(_VALIDATED_PARENTS)
+        )
         assert connection.execute("PRAGMA foreign_keys").fetchone() == (1,)
         triggers = dict(
             connection.execute(
@@ -858,6 +962,13 @@ def test_input_map_names_every_table_the_derivation_reads(tmp_path: Path) -> Non
                 assert any(
                     (row[2], row[3]) == (table, column)
                     for row in connection.execute(f"PRAGMA foreign_key_list({child})")
+                ), (table, child)
+        for table, (child, column) in _VALIDATED_PARENTS.items():
+            assert refused(table) == {"update", "delete"}, table
+            for operation in ("insert", "update"):
+                assert (
+                    f"FROM {table} WHERE decision_id=NEW.{column}"
+                    in triggers[f"{child}_validate_{operation}"]
                 ), (table, child)
         assert len([name for name in triggers if "_refresh_attention_" in name]) == sum(
             len(ops) for ops, _ in schema._ATTENTION_INPUTS.values()
@@ -912,11 +1023,19 @@ def test_every_maintained_write_keeps_facts_equal_to_their_derivation(
     assert covered == {
         (table, operation)
         for table, (operations, _) in schema._ATTENTION_INPUTS.items()
+        if table not in _RETIRED_INPUTS
         for operation in operations
     }
 
 
-@pytest.mark.parametrize("trigger", sorted(schema._ATTENTION_INPUT_TRIGGERS))
+@pytest.mark.parametrize(
+    "trigger",
+    sorted(
+        name
+        for name in schema._ATTENTION_INPUT_TRIGGERS
+        if name.split("_refresh_attention_")[0] not in _RETIRED_INPUTS
+    ),
+)
 def test_a_missing_maintenance_trigger_is_caught(
     _state: Path, tmp_path: Path, trigger: str
 ) -> None:
@@ -1093,11 +1212,12 @@ def test_update_guards_name_exactly_the_columns_the_facts_read(
     updated = {
         table: reads.get(table, set()) | set(re.findall(r"\{row\}\.(\w+)", scope))
         for table, (operations, scope) in schema._ATTENTION_INPUTS.items()
-        if "update" in operations
+        if "update" in operations and table not in _RETIRED_INPUTS
     }
     assert {
         table: set(columns)
         for table, columns in schema._ATTENTION_UPDATED_COLUMNS.items()
+        if table not in _RETIRED_INPUTS
     } == updated
     # Every guarded column is compared by its stored value alone.
     for table, columns in schema._ATTENTION_UPDATED_COLUMNS.items():
@@ -1207,6 +1327,7 @@ def test_ebook_facts_equal_the_predecessor_derivation(_state: Path) -> None:
         path = Path(directory) / "state.sqlite3"
         shutil.copyfile(_state, path)
         with closing(sqlite3.connect(path)) as connection:
+            schema._register_casefold(connection)
             assert connection.execute(
                 "SELECT count(*) FROM metadata_report_browse_facts WHERE format<>'epub'"
             ).fetchone() == (0,)
@@ -1393,11 +1514,15 @@ def _kept_store_attention(tmp_path: Path, *, pin: bool):
     return store, asked, verified_at
 
 
-def test_a_kept_case_adds_no_attention(tmp_path: Path) -> None:
-    """A case kept for a recent write has nothing to decide, so the work
-    asks nothing and adds no attention fact or count (#1523, S18)."""
+def test_a_kept_case_asks_only_the_answer_its_earlier_case_gave(
+    tmp_path: Path,
+) -> None:
+    """A case kept for a recent write has nothing else to decide, so the work
+    asks only for the field the record holds an answer for from the earlier
+    case, which nothing carried here: one attention fact and count (#1523,
+    S18; C2b-15, S16)."""
     store, asked, _ = _kept_store_attention(tmp_path, pin=False)
-    assert asked() == ()
+    assert asked() == ("title",)
     store.close()
 
 
@@ -1440,12 +1565,14 @@ def test_a_changed_pin_keeps_a_case_with_nothing_else_to_decide(
     )
     assert _transition_reason(store.repository._connection) == "actionable"
     assert store.repository.review_case_kept(store.case.review_case_id)
-    (pin,) = store.repository._connection.execute(
-        "SELECT json_extract(document,'$.pin.in_force') FROM "
-        "field_effect_manual_holds WHERE review_case_id=? AND active=1",
-        (store.case.review_case_id,),
-    ).fetchall()
-    assert pin == (0,)
+    # The record keeps the pin, which reads as changed on the kept case.
+    assert store.repository._connection.execute(
+        "SELECT "
+        + _pin_record_sql(":case", "'title'", True)
+        + ","
+        + _pin_record_sql(":case", "'title'", False),
+        {"case": store.case.review_case_id},
+    ).fetchall() == [(0, 1)]
     assert [fact[4] for fact in _facts(store.repository._connection)] == ["title"]
     # Read back with the pinned value, the work has nothing to ask again.
     assert store.admit(_report(actionable=False), now=store.clock()) == "retired"

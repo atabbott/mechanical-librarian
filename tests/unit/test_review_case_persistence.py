@@ -927,7 +927,10 @@ def test_transition_failure_rolls_back_case_and_pointer() -> None:
         repository.close()
 
 
-def test_undecodable_carried_hold_rolls_back_and_releases_the_admission() -> None:
+def test_an_unmapped_admission_error_rolls_back_and_releases_the_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mechanical_librarian.adapters.persistence.review_cases as review_cases
     from mechanical_librarian.application.operation_admission import (
         OperationAdmission,
     )
@@ -941,18 +944,16 @@ def test_undecodable_carried_hold_rolls_back_and_releases_the_admission() -> Non
         first_case = json.loads(repository.admit_review_case(first_set))[
             "review_case_id"
         ]
-        # The successor carries the item's holds forward by decoding each
-        # one; a hold document that is not JSON escapes the mapped errors.
-        # The attention refresh a hold's trigger queues reads the document's
-        # pin (#1346) only for a destination the case offers, so the corrupt
-        # row is written under one it does not, with every trigger in place.
+        # An error none of the mapped ones names escapes once the successor
+        # case is written: a document that does not decode, say.
         connection = repository._connection
-        connection.execute(
-            "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
-            "active,updated_at,document) VALUES(?,?,1,1,?)",
-            (first_case, "zz_absent", "{not json"),
+
+        def undecodable(*_: object) -> None:
+            raise json.JSONDecodeError("not json", "{not json", 1)
+
+        monkeypatch.setattr(
+            review_cases, "reconcile_case_level_in_transaction", undecodable
         )
-        connection.commit()
         successor = _report("Changed", "c", "d")
         repository.publish(successor, lambda: True)
         successor_set = _actionable(successor)
@@ -975,8 +976,7 @@ def test_undecodable_carried_hold_rolls_back_and_releases_the_admission() -> Non
         assert (first_case,) == connection.execute(
             "SELECT review_case_id FROM current_review_case_lineages"
         ).fetchone()
-        connection.execute("DELETE FROM field_effect_manual_holds")
-        connection.commit()
+        monkeypatch.undo()
         assert (
             "superseded"
             == json.loads(repository.admit_review_case(successor_set))["status"]

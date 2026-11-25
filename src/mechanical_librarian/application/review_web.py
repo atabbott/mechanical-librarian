@@ -376,11 +376,22 @@ class CurrentReviewCaseSnapshot:
     # What this case's own latest verified write put in each owner-entry
     # field, which owner entry reads as its current value (#1523, S5).
     written_values: tuple[tuple[str, object], ...] = ()
-    # Destinations whose automatic handling an owner hold keeps off on this
-    # case, including a hold carried forward from an earlier case (ADR-0085).
+    # Destinations the record of the owner's answers holds an answer for, on
+    # any case of the book, which keeps Automatic off them (ADR-0108).
     held_destinations: tuple[str, ...] = ()
-    # Each pin on this case's holds: its destination, whether it is in force
-    # here, and the pinned case's target field as JSON (ADR-0085, Amendment 2).
+    # Held destinations that offer Resume automatic handling: unpinned, with
+    # Automatic on and the field set to Automatic on this case (C0
+    # `resume_offer`); a cover, where the owner's cover took it over.
+    resume_offer_destinations: tuple[str, ...] = ()
+    # Held destinations whose unpinned answer was given on this case in its
+    # current episode: it decides the field here, a pin's answer after its
+    # unpin among them. One from elsewhere asks the field (C2b-15, S16).
+    own_answer_destinations: tuple[str, ...] = ()
+    # This case's owner decisions a completed Resume took back: they no
+    # longer decide their field, and keep only a recorded line (D3).
+    covered_decision_ids: tuple[str, ...] = ()
+    # Each pin on the record: its destination, whether it is in force here,
+    # and the pinned case's target field as JSON (ADR-0085, Amendment 2).
     pins: tuple[tuple[str, bool, str], ...] = ()
     # Destinations whose change waits to be written, so a pin is refused.
     change_waiting_destinations: tuple[str, ...] = ()
@@ -390,11 +401,12 @@ class CurrentReviewCaseSnapshot:
     # Destinations whose change is still to be written; a refused pin on any
     # other waits only for the next scan to read the written value (#1984).
     write_waiting_destinations: tuple[str, ...] = ()
-    # Held destinations whose return to automatic handling the owner has
-    # requested; the hold stays until the requested checks finish (#1755).
+    # Held destinations with a Resume open; the answer holds until the
+    # requested checks finish (#1755).
     return_requested_destinations: tuple[str, ...] = ()
-    # Held destinations whose requested checks finished with failures. The
-    # hold stays and nothing retries those checks, so the owner can ask again.
+    # Held destinations whose open Resume's checks finished with failures.
+    # The answer holds and nothing retries those checks, so the owner can
+    # ask again.
     return_failed_destinations: tuple[str, ...] = ()
     # The case's level offer at the level it was last reconciled at, or None
     # when its fields offer their live proposals (#1355, S10).
@@ -1410,7 +1422,6 @@ def _classify_field(
     decision: HumanDecision | None,
     automatic_decision: dict[str, object] | None,
     authored_selection: object,
-    carried_hold: bool,
     cover_admits: bool,
     cover_preparation_available: bool,
     actions: tuple[HumanDecisionAction, ...],
@@ -1462,7 +1473,8 @@ def _classify_field(
         and destination in snapshot.policy_kept_destinations
     )
     return classify_review_field(
-        attention_candidate=not repeated
+        attention_candidate=_record_asks(snapshot, destination)
+        or not repeated
         and (
             (
                 cover_admits
@@ -1508,7 +1520,7 @@ def _classify_field(
             )
         ),
         has_human_decision=decision is not None
-        or carried_hold
+        or (destination != "cover" and destination in snapshot.own_answer_destinations)
         or (
             destination == "cover"
             and cover_is_current
@@ -1584,6 +1596,51 @@ def _classify_field(
         and destination in snapshot.held_destinations
         and destination not in snapshot.return_requested_destinations
         and not any(row[0] == destination for row in snapshot.pins),
+    )
+
+
+def _automatic_settles(snapshot: CurrentReviewCaseSnapshot, destination: str) -> bool:
+    """Whether Automatic's decision would settle the field, as Attention reads
+    it: the record holds no answer for it, or holds one with a Resume open
+    that has not failed (ADR-0108)."""
+    return (
+        destination not in snapshot.held_destinations
+        or destination in snapshot.return_requested_destinations
+    )
+
+
+def _record_asks(snapshot: CurrentReviewCaseSnapshot, destination: str) -> bool:
+    """Whether the record holds the field's answer from an earlier case or
+    episode, which nothing carried here: the field is asked, with Resume as
+    the owner's action, as Attention reads it (C2b-15, S16). A pin settles or
+    asks its field ahead of this; a cover's answer is the book's own pointer
+    instead."""
+    return (
+        destination != "cover"
+        and destination in snapshot.held_destinations
+        and destination not in snapshot.own_answer_destinations
+        and all(row[0] != destination for row in snapshot.pins)
+    )
+
+
+def _owner_authored(selection: object) -> bool:
+    """Whether the description's current authored selection is the owner's."""
+    return type(selection) is dict and selection.get("origin") == "human"
+
+
+def _resume_offered(snapshot: CurrentReviewCaseSnapshot, destination: str) -> bool:
+    """Whether the field shows Resume automatic handling: offered from the
+    record (C0 `resume_offer`) or already asked; a cover only where the stage
+    would switch it but for the owner, never for a cover chosen in To decide
+    (K9). A pinned field offers Unpin instead (ADR-0085, Amendment 2)."""
+    if destination == "cover":
+        return (
+            snapshot.cover_automatic_held
+            and destination in snapshot.resume_offer_destinations
+        )
+    return destination in snapshot.resume_offer_destinations or destination in (
+        *snapshot.return_requested_destinations,
+        *snapshot.return_failed_destinations,
     )
 
 
@@ -1913,8 +1970,16 @@ class InspectCurrentReviewCase:
         )
         reasons = result["reasons"]
         assert type(reasons) is list
-        decision = decisions.get(destination)
-        # A pin on this case's hold and the value it keeps, as the current
+        # A decision a completed Resume took back decides nothing now; only
+        # its owner control keeps the recorded line (D3, ADR-0108).
+        recorded = decisions.get(destination)
+        decision = (
+            None
+            if recorded is not None
+            and recorded.decision_id in snapshot.covered_decision_ids
+            else recorded
+        )
+        # A pin on the record and the value it keeps, as the current
         # value is shown: in force, waiting for the owner's standing answer
         # to be read back, or changed (ADR-0085, Amendment 2).
         pin = next((row[1:] for row in snapshot.pins if row[0] == destination), None)
@@ -1975,7 +2040,7 @@ class InspectCurrentReviewCase:
             proposal,
             target_fields,
             proposals,
-            decision,
+            recorded,
             automatic_decision is not None,
             snapshot,
             context.case.media_kind,
@@ -1983,19 +2048,10 @@ class InspectCurrentReviewCase:
             if pinned_field is None or pin_state != "changed"
             else pinned_field["value"],
         )
-        # The owner's hold follows the work: a successor case holds the
-        # field as the owner's decision on the earlier case left it, once
-        # it has an automatic decision to hold, a description's automatic
-        # authored selection among them.
-        carried_hold = (
-            decision is None
-            and (
-                automatic_decision is not None
-                or isinstance(authored_selection, dict)
-                and authored_selection.get("origin") == "automatic_policy"
-            )
-            and destination in snapshot.held_destinations
-        )
+        # Automatic's decision, or its authored description, decides nothing
+        # while the record holds the field's answer against it (ADR-0108,
+        # Attention); the page still shows it as the held choice.
+        settles = _automatic_settles(snapshot, destination)
         owner_entry = owner_control is not None and any(
             owner_control[part] is not None for part in ("entry", "subset", "names")
         )
@@ -2004,9 +2060,10 @@ class InspectCurrentReviewCase:
             context,
             proposal,
             decision=decision,
-            automatic_decision=automatic_decision,
-            authored_selection=authored_selection,
-            carried_hold=carried_hold,
+            automatic_decision=automatic_decision if settles else None,
+            authored_selection=authored_selection
+            if settles or _owner_authored(authored_selection)
+            else None,
             cover_admits=cover_admits,
             cover_preparation_available=cover_preparation_available,
             actions=actions,
@@ -2018,7 +2075,10 @@ class InspectCurrentReviewCase:
         # availability is a separate exact-proposal contract; an empty
         # action list is context-only, never an implied choice envelope.
         has_owner_action = (
-            bool(actions) or cover_preparation_available or pin_state == "changed"
+            bool(actions)
+            or cover_preparation_available
+            or pin_state == "changed"
+            or _record_asks(snapshot, destination)
         )
         needs_attention = classification.needs_attention and has_owner_action
         # A pinned field sits where it would sit without the pin (#1346).
@@ -2035,23 +2095,6 @@ class InspectCurrentReviewCase:
             return None
         if inventory_role == "contextual":
             owner_control = None
-        # Held only while the hold row is in force: Return to automatic
-        # releases it on the deciding case too (#1358). A pinned field offers
-        # Unpin instead, so its hold is not one Resume can release.
-        # A cover offers Resume only where the stage would switch it but for
-        # the owner, never for a cover chosen in To decide (K9).
-        manual_hold = (
-            pin_state is None
-            and destination in snapshot.held_destinations
-            and (
-                snapshot.cover_automatic_held
-                if destination == "cover"
-                else (
-                    carried_hold
-                    or (decision is not None and automatic_decision is not None)
-                )
-            )
-        )
         return self._field_document(
             context,
             proposal,
@@ -2068,7 +2111,7 @@ class InspectCurrentReviewCase:
             actions=actions,
             owner_control=owner_control,
             inventory_role=inventory_role,
-            manual_hold=manual_hold,
+            manual_hold=pin_state is None and _resume_offered(snapshot, destination),
             has_owner_action=has_owner_action,
             needs_attention=needs_attention,
             pin=None
@@ -3711,11 +3754,11 @@ def _owner_control(
             ],
         }
     # An answer cannot be withdrawn while its field is pinned (ADR-0085,
-    # Amendment 2). Beside an automatic decision the store refuses a withdraw
-    # whatever the hold's state, but the refusal names Resume automatic
-    # handling, so it shows only while the hold stands and no Resume was asked
-    # of it. Once Resume is requested, failed (whose own line names Resume) or
-    # done, the field offers no withdraw at all, and still shows the owner's
+    # Amendment 2), nor beside an automatic decision that settles the field,
+    # as the store refuses it: once Resume is asked or done, or with no answer
+    # held. Beside one the record's answer holds, it follows its write as
+    # anywhere else (ADR-0108). A decision a completed Resume took back offers
+    # no withdraw either (D3). Either way the field still shows the owner's
     # recorded value with its controls.
     withdraw = None
     resumed = False
@@ -3725,16 +3768,12 @@ def _owner_control(
         and destination not in UNREVERSIBLE_DESTINATIONS
         and all(row[0] != destination for row in snapshot.pins)
     ):
-        if not automatic:
+        if decision.decision_id not in snapshot.covered_decision_ids and not (
+            automatic and _automatic_settles(snapshot, destination)
+        ):
             withdraw = dict(snapshot.decision_effect_states).get(
                 destination, "available"
             )
-        elif (
-            destination in snapshot.held_destinations
-            and destination not in snapshot.return_requested_destinations
-            and destination not in snapshot.return_failed_destinations
-        ):
-            withdraw = "automatic_hold"
         else:
             # Only an entered value has a recorded line to keep showing.
             resumed = decision.outcome == "owner_entered"
@@ -5390,6 +5429,7 @@ def _attention_item(
             # disposition would page short of the count the same query
             # reports (#967).
             _needs_attention(proposal)
+            # The policy's Ask me, or the record's answer from elsewhere.
             or policy_attention
             or cause == "automatic_safety_suspended"
             or (destination == "cover" and work_attention_count > 0)

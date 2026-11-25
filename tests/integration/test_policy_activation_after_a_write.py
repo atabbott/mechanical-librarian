@@ -213,8 +213,8 @@ def test_a_changed_policy_reads_a_written_work_again(
     case = library.case()
     library.root.record_human_decision(_answer(case, "pin", "pin-after-the-read", 40))
     assert library.root._connection.execute(
-        "SELECT count(*) FROM field_effect_manual_holds WHERE active=1 "
-        "AND destination='authors' AND review_case_id=?",
+        "SELECT count(*) FROM owner_field_answers WHERE destination='authors' "
+        "AND pin_fingerprint IS NOT NULL AND review_case_id=?",
         (case.review_case_id,),
     ).fetchone() == (1,)
     library.root.record_human_decision(
