@@ -17331,10 +17331,10 @@ def test_current_covers_saves_never_with_its_own_button() -> None:
 )
 def test_a_pin_taken_back_in_preview_reads_decided_with_its_hold_line(field_name: str):
     """A pin taken back in Preview leaves its answer in the record, the
-    case's own, so the real wire carries the decided cause: the tab reads
-    Decided, with no Resume in Preview, no line claiming an earlier decision
-    holds the field, and no claim that no source offered a value (ADR-0085,
-    ADR-0108, C2b-15)."""
+    case's own, so the real wire carries the held cause: the tab reads
+    Decided and the line says turning on Automatic leaves the field as it is,
+    with no Resume and no claim that no source offered a value (ADR-0085,
+    ADR-0108)."""
     fixture: dict[str, Any] = (
         {
             "genre_fixture": ("Fantasy",),
@@ -17404,10 +17404,13 @@ def test_a_pin_taken_back_in_preview_reads_decided_with_its_hold_line(field_name
             expect(
                 rail.get_by_role("button", name=re.compile(rf"^{field_name}", re.I))
             ).to_have_accessible_name(re.compile(r"Decided$"))
-            expect(canvas.get_by_text("still holds this field")).to_have_count(0)
             expect(
-                canvas.get_by_text("Nothing to decide for this field.", exact=True)
-            ).to_have_count(0)
+                canvas.get_by_text(
+                    "Your earlier decision still holds this field, so turning on "
+                    "Automatic leaves it as it is.",
+                    exact=True,
+                )
+            ).to_be_visible()
             expect(
                 canvas.get_by_role("button", name="Resume automatic handling")
             ).to_have_count(0)

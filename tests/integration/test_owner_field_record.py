@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -741,11 +742,15 @@ def _held_reads(library: Library) -> dict[str, tuple[str, str, bool]]:
 def _resume_control_reaches_the_offer(library: Library) -> None:
     """A held field whose Resume control can be pressed (shown, and not
     already requested) is in C0 `resume_offer`, which the store checks before
-    it asks a scan: no control on the page leads to a refused request."""
+    it asks a scan: no control on the page leads to a refused request. A
+    field held in Preview offers no control: it carries no `manual_hold`,
+    which alone renders the Resume panel (`FieldDecisionCanvas.tsx`)."""
     from mechanical_librarian.adapters.persistence.schema import _resume_offer_sql
 
     case_id = library.case_id()
     for name, field in _fields(library).items():
+        if field["classification_cause"] == "held_in_preview":
+            assert field["manual_hold"] is False, name
         if name == "cover" or not field["manual_hold"]:
             continue
         if field["manual_return_requested"]:
@@ -811,6 +816,53 @@ def test_a_case_kept_for_a_write_reads_its_answer_as_decided(
         assert_record_recomputes(store.repository._connection)
     finally:
         store.close()
+
+
+def test_a_pin_taken_back_in_preview_reads_held_with_no_resume(
+    preview_library: Library,
+) -> None:
+    """In Preview, a pin taken back leaves the case's own answer in the record
+    with no decision of the case to show. As on main, the field reads held,
+    says turning on Automatic leaves it as it is, and offers no Resume, since
+    Automatic is off (C0 `resume_offer`). Beside no other offered value it
+    reads decided, never as having nothing to decide (C2b-15)."""
+    from mechanical_librarian.application import review_web
+
+    library = preview_library
+    for outcome, at in (("pin", 11), ("unpin", 12)):
+        library.root.record_human_decision(
+            _owner_command(library, outcome, f"owner-command-{outcome}-{at}", at)
+        )
+    authors = _fields(library)["authors"]
+    assert (
+        authors["classification"],
+        authors["classification_cause"],
+        authors["classification_reason"],
+        authors["human_decision"],
+        authors["manual_hold"],
+        authors["needs_attention"],
+    ) == (
+        "unsupported",
+        "held_in_preview",
+        "Your earlier decision still holds this field, so turning on Automatic "
+        "leaves it as it is.",
+        None,
+        False,
+        False,
+    )
+    _resume_control_reaches_the_offer(library)
+
+    classify = review_web.classify_review_field
+
+    def preserving(**facts: Any) -> Any:
+        # Every source repeats the current value.
+        return classify(**{**facts, "proposed_values": (facts["current_value"],)})
+
+    with patch.object(review_web, "classify_review_field", preserving):
+        authors = _fields(library)["authors"]
+    assert (authors["classification"], authors["classification_cause"]) == _DECIDED
+    assert authors["manual_hold"] is False
+    assert_record_recomputes(library.root._connection)
 
 
 @pytest.mark.parametrize(

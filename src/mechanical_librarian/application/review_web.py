@@ -1481,7 +1481,32 @@ def _classify_field(
         result["outcome"] == "propose_change"
         and destination in snapshot.policy_kept_destinations
     )
-    return classify_review_field(
+    # A human decision other than the case's own answer from the record.
+    other_human = (
+        decision is not None
+        # With nothing to choose, an answer from elsewhere settles its field
+        # unless Automatic's decision does, under an open Resume (C2b-18).
+        or (
+            _record_answered_elsewhere(snapshot, destination)
+            and not actions
+            and automatic_decision is None
+        )
+        or (
+            destination == "cover"
+            and cover_is_current
+            and snapshot.current_cover_selection is not None
+            and snapshot.current_cover_selection[1] == "owner"
+        )
+        or (
+            type(authored_selection) is dict
+            and authored_selection.get("origin") == "human"
+        )
+    )
+    own_answer = (
+        destination != "cover" and destination in snapshot.own_answer_destinations
+    )
+    classify = partial(
+        classify_review_field,
         attention_candidate=(
             (
                 _record_answered_elsewhere(snapshot, destination)
@@ -1533,25 +1558,6 @@ def _classify_field(
                     and current_cover_consideration["ready"] is True
                 )
             )
-        ),
-        has_human_decision=decision is not None
-        or (destination != "cover" and destination in snapshot.own_answer_destinations)
-        # With nothing to choose, an answer from elsewhere settles its field
-        # unless Automatic's decision does, under an open Resume (C2b-18).
-        or (
-            _record_answered_elsewhere(snapshot, destination)
-            and not actions
-            and automatic_decision is None
-        )
-        or (
-            destination == "cover"
-            and cover_is_current
-            and snapshot.current_cover_selection is not None
-            and snapshot.current_cover_selection[1] == "owner"
-        )
-        or (
-            type(authored_selection) is dict
-            and authored_selection.get("origin") == "human"
         ),
         suspended=destination in snapshot.suspended_destinations,
         cause=(
@@ -1610,15 +1616,24 @@ def _classify_field(
         single_source=single_source,
         pin=pin,
         repeated_description=repeated,
-        # In Preview, an answer or a taken-back pin still holds the field, so
-        # turning on Automatic leaves it as it is. A pin offers Unpin and a
-        # requested return is already on its way, so neither reads as held.
-        held_in_preview=snapshot.preview
-        and destination != "cover"
-        and destination in snapshot.held_destinations
-        and destination not in snapshot.return_requested_destinations
-        and not any(row[0] == destination for row in snapshot.pins),
     )
+    decided = classify(has_human_decision=other_human or own_answer)
+    # In Preview, the case's own answer with no decision of the case to show
+    # (a pin taken back) still holds the field, so turning on Automatic leaves
+    # it as it is, where nothing else would decide it and a source offers
+    # another value (ADR-0085, Amendment 6). Automatic is off, so it offers
+    # no Resume (C0 `resume_offer`); a requested Resume is already on its way
+    # and reads decided. Anywhere else the answer reads decided, never as
+    # having nothing to decide (C2b-15).
+    if (
+        not snapshot.preview
+        or not own_answer
+        or other_human
+        or destination in snapshot.return_requested_destinations
+    ):
+        return decided
+    held = classify(has_human_decision=False, held_in_preview=True)
+    return held if held.cause == "held_in_preview" else decided
 
 
 def _automatic_settles(snapshot: CurrentReviewCaseSnapshot, destination: str) -> bool:

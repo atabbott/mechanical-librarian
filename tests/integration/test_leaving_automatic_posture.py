@@ -1103,8 +1103,11 @@ def _owner(library: _Library, outcome: str, at: int) -> HumanDecision:
 
 
 _NOTHING_TO_DECIDE = "Nothing to decide for this field."
+_HELD = (
+    "Your earlier decision still holds this field, so turning on Automatic "
+    "leaves it as it is."
+)
 _REVIEW_NEEDED = "This field needs your review."
-_DECIDED = "You decided this field. You can change it here."
 
 
 @pytest.mark.parametrize(
@@ -1123,8 +1126,8 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
     Amendment 4), as does a pin taken back in Preview, whose hold stays.
     Once Resume released the answer's hold, Automatic decides and writes.
     The first episode's answer asks the field in Preview, and the pin's
-    answer, the case's own, reads decided: neither says nothing to decide
-    (C2b-15)."""
+    answer, the case's own, reads held, as on main: neither says nothing to
+    decide (C2b-15)."""
     with _prepared(tmp_path, automatic=True, library_model="publication") as library:
         root, held = library.root, library.held
         assert held is not None
@@ -1168,7 +1171,7 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
                 False,
                 True,
             ),
-            "unpinned": ("human_recorded", "human_decided", _DECIDED, False, False),
+            "unpinned": ("unsupported", "held_in_preview", _HELD, False, False),
         }.get(
             owner,
             ("unsupported", "nothing_to_decide", _NOTHING_TO_DECIDE, False, False),
@@ -1188,7 +1191,8 @@ def test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided(
     preview_library: _Library,
 ) -> None:
     """A pin taken back in Preview leaves its answer in the record, the case's
-    own, so the field reads decided. Turning on Automatic then leaves its
+    own, so the field reads held, with no Resume while Automatic is off.
+    Turning on Automatic then leaves its
     value as it is: Automatic decides the field under the answer and writes
     nothing until Resume (ADR-0085, Amendments 5 and 6; C2b-15)."""
     library = preview_library
@@ -1201,7 +1205,8 @@ def test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided(
         preview["classification_reason"],
         preview["manual_hold"],
         preview["needs_attention"],
-    ) == ("human_decided", _DECIDED, False, False)
+    ) == ("held_in_preview", _HELD, False, False)
+    assert preview["human_decision"] is None
 
     _confirm_automatic(library, 40)
 
