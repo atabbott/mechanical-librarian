@@ -45,12 +45,10 @@ from mechanical_librarian.domain.cover_evidence import CoverArtifact
 from mechanical_librarian.domain.human_decision import decision_actions
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
-from tests.integration.test_leaving_automatic_posture import (
-    _accept,
-    _Library,
-    _prepared,
-)
 from tests.support.cover_selections import ALL_COVER_SELECTIONS
+from tests.support.prepared_library import Library as _Library
+from tests.support.prepared_library import accept as _accept
+from tests.support.prepared_library import prepared as _prepared
 from tests.unit.test_cover_packets import _preview, _source
 
 _PAYLOAD = _preview(2)

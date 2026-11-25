@@ -57,17 +57,15 @@ from tests.integration.test_book_matching_recheck import (
     _save,
     _work,
 )
-from tests.integration.test_leaving_automatic_posture import (
-    _accept,
-    _applier,
-    _Library,
-    _planned,
-    _prepared,
-)
 from tests.support.ledger_copies import assert_ledger_copies
 from tests.support.ledger_partition import reopen_without_derived_rows
 from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.support.owner_values import OwnerStore
+from tests.support.prepared_library import Library as _Library
+from tests.support.prepared_library import accept as _accept
+from tests.support.prepared_library import applier as _applier
+from tests.support.prepared_library import planned as _planned
+from tests.support.prepared_library import prepared as _prepared
 from tests.unit import test_identity_refused_retention as retained
 from tests.unit.test_cover_packets import _source
 from tests.unit.test_level_offer_binding import (
