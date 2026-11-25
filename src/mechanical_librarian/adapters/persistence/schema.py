@@ -3087,8 +3087,10 @@ def _validate_schema_contents_without_review_field_facts(
     _validate_metadata_policy_documents(connection)
     _validate_cover_selection_authorities(connection)
     _validate_field_effect_state(connection)
-    if connection.execute(_OWNER_ITEM_KEY_DISAGREES_SQL).fetchone() or (
-        connection.execute(_LEDGER_COPY_DISAGREES_SQL).fetchone()
+    if (
+        connection.execute(_OWNER_ITEM_KEY_DISAGREES_SQL).fetchone()
+        or connection.execute(_LEDGER_COPY_DISAGREES_SQL).fetchone()
+        or connection.execute(_OWNER_CONTROL_NOT_ONE_ROW_SQL).fetchone()
     ):
         raise MetadataReportError("database is unavailable or incompatible")
     validate_owner_field_answers(connection)
@@ -3105,6 +3107,11 @@ def _validate_schema_contents_without_review_field_facts(
         _validate_provider_recovery_outbox_row(row)
 
 
+# The owner's preparation controls are exactly one ledger row, its singleton
+# key the only one its CHECK admits (ADR-0108).
+_OWNER_CONTROL_NOT_ONE_ROW_SQL = (
+    "SELECT 1 WHERE (SELECT COUNT(*) FROM review_preparation_owner_control)<>1"
+)
 # An owner's decision keeps its work's key, so it still names its work once
 # its case is gone; every ledger row that names the decision names the same
 # work (ADR-0108).

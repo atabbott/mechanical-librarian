@@ -324,6 +324,21 @@ def test_the_owner_preparation_controls_are_their_own_ledger_row(
         repository.close()
 
 
+def test_a_store_without_its_one_owner_control_row_is_refused(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """The owner's preparation controls are one ledger row, which open
+    requires as it requires the answer counter's (ADR-0108)."""
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        path = copied_store(repository, tmp_path_factory.mktemp("edited") / "copy")
+    finally:
+        repository.close()
+    assert opens(path)
+    assert rewrite(path, "DELETE FROM review_preparation_owner_control") == 1
+    assert not opens(path)
+
+
 def test_an_owner_authored_description_is_a_ledger_row_with_its_copies(
     tmp_path: Path,
 ) -> None:

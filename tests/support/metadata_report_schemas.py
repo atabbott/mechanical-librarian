@@ -542,8 +542,13 @@ def set_pre_2038_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     for name, sql in PRE_2038_SCHEMA.items():
         monkeypatch.setattr(persistence_schema, name, sql)
     # Its rows carried no item key or copies, so its open had none to
-    # compare, and it kept no record of the owner's answers to validate.
-    for name in ("_OWNER_ITEM_KEY_DISAGREES_SQL", "_LEDGER_COPY_DISAGREES_SQL"):
+    # compare; it kept no owner control row apart from scheduling and no
+    # record of the owner's answers to validate.
+    for name in (
+        "_OWNER_ITEM_KEY_DISAGREES_SQL",
+        "_LEDGER_COPY_DISAGREES_SQL",
+        "_OWNER_CONTROL_NOT_ONE_ROW_SQL",
+    ):
         monkeypatch.setattr(persistence_schema, name, "SELECT 1 WHERE 0")
     monkeypatch.setattr(
         persistence_schema, "validate_owner_field_answers", lambda connection: None
