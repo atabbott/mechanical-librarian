@@ -32,7 +32,11 @@ const upgradeNoticeCopy = {
   keptAll: (kept: number) => `After the upgrade, all ${count(kept)} of your answers were kept.`,
   preparing: () => 'Preparing your library after the upgrade.',
   soFar: (kept: number, asked: number) =>
-    `So far ${count(kept)} of your answers ${kept === 1 ? 'was' : 'were'} kept and ${count(asked)} ${asked === 1 ? 'was' : 'were'} asked again.`,
+    asked === 0
+      ? `So far ${count(kept)} of your answers ${kept === 1 ? 'was' : 'were'} kept.`
+      : kept === 0
+        ? `So far ${count(asked)} of your answers ${asked === 1 ? 'was' : 'were'} asked again.`
+        : `So far ${count(kept)} of your answers ${kept === 1 ? 'was' : 'were'} kept and ${count(asked)} ${asked === 1 ? 'was' : 'were'} asked again.`,
   dismiss: 'Dismiss',
   notChanged: 'Nothing was changed. Try again.',
   noAnswer: 'No answer came back. Check whether the change took effect before pressing again.',

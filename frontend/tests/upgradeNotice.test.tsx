@@ -74,7 +74,15 @@ describe('upgrade notice copy', () => {
     ],
     [
       notice(0, 2, true),
-      'Preparing your library after the upgrade. So far 0 of your answers were kept and 2 were asked again.',
+      'Preparing your library after the upgrade. So far 2 of your answers were asked again.',
+    ],
+    [
+      notice(1, 0, true),
+      'Preparing your library after the upgrade. So far 1 of your answers was kept.',
+    ],
+    [
+      notice(0, 1, true),
+      'Preparing your library after the upgrade. So far 1 of your answers was asked again.',
     ],
     [null, null],
   ])('says %o as %s', async (current, expected) => {
@@ -88,7 +96,7 @@ describe('upgrade notice copy', () => {
       '3 of your answers are asked again after the upgrade. Each one says why. The other 12 were kept.',
     )
     expect(await noticeText(notice(2, 0, true), false)).toBe(
-      'Preparing your library after the upgrade. So far 2 of your answers were kept and 0 were asked again.',
+      'Preparing your library after the upgrade. So far 2 of your answers were kept.',
     )
   })
 })
