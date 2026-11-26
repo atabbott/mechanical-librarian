@@ -474,23 +474,43 @@ def _withdrawn_asks_sql(item: str | None) -> str:
 _WITHDRAWN_ASKS_SQL = _withdrawn_asks_sql("c")
 
 
+def _case_episode_answer_sql(answer: str, case: str) -> str:
+    """Whether the record row `answer` was given on case `case` in its
+    current episode."""
+    return (
+        f"{answer}.review_case_id={case} AND {answer}.episode=COALESCE((SELECT "
+        "answer_episode.decision_floor FROM review_case_episodes answer_episode "
+        f"WHERE answer_episode.review_case_id={case}),0)"
+    )
+
+
+def _latest_owner_row_sql(case: str, destination: str, read: str) -> str:
+    """`read` of the episode's latest owner row on case `case` for the field
+    `destination`, pins and unpins aside (alias `latest`), or NULL."""
+    return (
+        f"(SELECT {read} FROM human_decisions latest WHERE "
+        f"latest.review_case_id={case} AND latest.destination={destination} "
+        "AND latest.outcome NOT IN ('pin','unpin') AND "
+        + _episode_decision_sql("latest")
+        + " ORDER BY latest.ordinal DESC LIMIT 1)"
+    )
+
+
 def _own_answer_sql(answer: str, case: str, destination: str) -> str:
     """Whether the record row `answer`, for the field `destination`, is the
     answer case `case` holds as its own: given on it in its current episode,
     while the episode's latest owner row for the field other than a pin or
-    unpin is not a withdrawal (C2b-15). A withdrawal there, Book matching's
-    `matching_changed` row among them, gave the field back to the owner, so
-    the answer is then read as one from elsewhere (ADR-0108, Attention). The
-    case page's own answers read this term too (`review_projections`)."""
+    unpin is not a withdrawal (C2b-15). The owner's withdrawal there gave the
+    field back to the owner, so the answer is then read as one from elsewhere
+    (ADR-0108, Attention); Book matching's `matching_changed` row is read
+    apart (`_read_as_own_sql`). The case page's own answers read this term
+    too (`review_projections`)."""
     return (
-        f"({answer}.review_case_id={case} AND {answer}.episode=COALESCE((SELECT "
-        "answer_episode.decision_floor FROM review_case_episodes answer_episode "
-        f"WHERE answer_episode.review_case_id={case}),0) AND COALESCE((SELECT "
-        "latest.outcome FROM human_decisions latest WHERE "
-        f"latest.review_case_id={case} AND latest.destination={destination} "
-        "AND latest.outcome NOT IN ('pin','unpin') AND "
-        + _episode_decision_sql("latest")
-        + " ORDER BY latest.ordinal DESC LIMIT 1),'')<>'withdraw')"
+        "("
+        + _case_episode_answer_sql(answer, case)
+        + " AND COALESCE("
+        + _latest_owner_row_sql(case, destination, "latest.outcome")
+        + ",'')<>'withdraw')"
     )
 
 
@@ -498,16 +518,30 @@ def _read_as_own_sql(answer: str, case: str, destination: str) -> str:
     """Whether case `case` reads the record row `answer` for the field
     `destination` as its own answer (`_own_answer_sql`), or the row's answer
     is only a pin taken back on any case: a pin row, its pin cleared, no value
-    chosen. Like the case's own answer, such a pin settles nothing by itself
-    and holds the field only where Automatic decided it, as main's carried
-    hold did; elsewhere the field reads as it would without it, never as
-    answered elsewhere (C2b-27, C2b-28). Kept apart so the case page's own
-    answers read the same term (`review_projections`)."""
+    chosen, or the answer was given on the case in its current episode and
+    Book matching's `matching_changed` row is the episode's latest owner row
+    for the field, pins and unpins aside. Like the case's own answer, such an
+    answer settles nothing by itself and holds the field only where Automatic
+    decided it, as main's carried hold did; elsewhere the field reads as it
+    would without it, never as answered elsewhere (C2b-27, C2b-28; ADR-0085,
+    Amendment 1: Book matching's row is not an owner answer and leaves the
+    hold untouched). Kept apart so the case page's own answers read the same
+    term (`review_projections`)."""
     return (
         f"({answer}.pin_fingerprint IS NULL AND ("
         + _own_answer_sql(answer, case, destination)
         + " OR EXISTS (SELECT 1 FROM human_decisions pin_only WHERE "
-        f"pin_only.decision_id={answer}.answer_id AND pin_only.outcome='pin')))"
+        f"pin_only.decision_id={answer}.answer_id AND pin_only.outcome='pin') "
+        "OR ("
+        + _case_episode_answer_sql(answer, case)
+        + " AND COALESCE("
+        + _latest_owner_row_sql(
+            case,
+            destination,
+            "latest.outcome='withdraw' AND "
+            "json_extract(latest.document,'$.cause')='matching_changed'",
+        )
+        + ",0)=1)))"
     )
 
 

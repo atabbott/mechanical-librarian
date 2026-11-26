@@ -20,6 +20,7 @@ from typing import Any, cast
 
 import pytest
 
+from mechanical_librarian.adapters.persistence import level_reconciliation
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
     case_level_unreconciled,
 )
@@ -59,7 +60,10 @@ from tests.integration.test_book_matching_recheck import (
 )
 from tests.support.ledger_copies import assert_ledger_copies
 from tests.support.ledger_partition import reopen_without_derived_rows
-from tests.support.owner_field_record import record_recomputes  # noqa: F401
+from tests.support.owner_field_record import (
+    assert_record_recomputes,
+    record_recomputes,  # noqa: F401
+)
 from tests.support.owner_values import OwnerStore
 from tests.support.prepared_library import Library as _Library
 from tests.support.prepared_library import accept as _accept
@@ -79,6 +83,9 @@ from tests.unit.test_level_offer_binding import (
     offer_of,
     owner_client,
 )
+from tests.unit.test_owner_answer_holds import OWN
+from tests.unit.test_owner_answer_holds import _store as _holds_store
+from tests.unit.test_owner_pins import _ASKED_AGAIN, _read
 
 _IDENTIFIER = WorkIdentityLevel.IDENTIFIER
 _EXACT = WorkIdentityLevel.TITLE_AND_CREATOR_EXACT
@@ -365,16 +372,25 @@ def test_level_change_reasks_only_changed_offer(tmp_path: Path, case: str) -> No
             notes = {event["event_id"]: event["note"] for event in _activity(client)}
         assert detail["checking"] is False
         assert field_of(detail, destination)["human_decision"] is None
-        # Asked again, the field is the owner's to decide on the case that
-        # holds the answer: the page and Attention both ask it (ADR-0108,
-        # Attention: "Book matching changed it", asked).
+        # Asked again, the field reads as it would without the answer, as on
+        # main 946921c: Book matching's row is not an owner answer (ADR-0085,
+        # Amendment 1). A title is asked by its own choice, on the page and in
+        # Attention. A description is asked on the page where two values are
+        # offered and Attention leaves it out, as it does before any answer;
+        # with one value offered it has nothing to decide.
         changed = field_of(detail, destination)
         assert (
             changed["classification"],
             changed["classification_cause"],
             changed["needs_attention"],
-        ) == ("needs_attention", "review_needed", True)
-        assert _attention_of(store) == asked_before | {destination}
+        ) == (
+            ("unsupported", "nothing_to_decide", False)
+            if case == "level_to_live"
+            else ("needs_attention", "review_needed", True)
+        )
+        assert _attention_of(store) == asked_before | (
+            {destination} if destination == "title" else set()
+        )
         assert notes[_event_id(standing)] == "asked_again_matching"
         # A replayed check asks nothing twice.
         assert _check(store, 62) == "reconciled"
@@ -630,6 +646,101 @@ def test_offer_change_closes_a_pinned_choice(tmp_path: Path) -> None:
             "pin_changed",
             True,
         )
+    finally:
+        store.close()
+
+
+# Book matching's row is not an owner answer and leaves the hold untouched
+# (ADR-0085, Amendment 1). The answer it asked again reads as main 946921c
+# read it, as a pin taken back does (C2b-27): the field reads as it would
+# without the answer, here a description with one value offered and nothing
+# to decide, and never as answered elsewhere. The page, the live and
+# persisted Attention facts and `library.attention()` agree (`_read`).
+_NOTHING_TO_DECIDE = (
+    "primary",
+    "unsupported",
+    "nothing_to_decide",
+    False,
+    False,
+    False,
+)
+
+
+@pytest.mark.parametrize("pin", [False, True], ids=["plain", "pin_then_unpin"])
+def test_an_answer_book_matching_asked_again_reads_as_without_it(
+    tmp_path: Path, pin: bool
+) -> None:
+    store = _store(tmp_path, _WIDE)
+    try:
+        _record(store, SYNOPSIS, "level-choice-0003")
+        if pin:
+            _valueless(store, "pin", 69)
+        _change(store, _IDENTIFIER, 70)
+        _check(store, 71)
+        if pin:
+            assert _read(store, "description") == (
+                "primary",
+                "needs_attention",
+                "pin_changed",
+                True,
+                False,
+                True,
+            )
+            _valueless(store, "unpin", 72)
+        assert _read(store, "description") == _NOTHING_TO_DECIDE
+        assert_record_recomputes(store.repository._connection)
+    finally:
+        store.close()
+
+
+# Where Automatic decided the field, the answer Book matching asked again
+# still holds it, decided with Resume, as main's carried hold did; in Preview
+# it is held beside the offered value, and under Ask me it is asked. The
+# title fixture's offer does not move with the level, so its standing choice
+# is read as superseded, which appends Book matching's row as a real level
+# change does.
+@pytest.mark.parametrize(
+    ("title", "posture", "read"),
+    [
+        ("ask", "automatic", _ASKED_AGAIN),
+        ("ask", "preview", _ASKED_AGAIN),
+        (
+            "automatic",
+            "automatic",
+            ("primary", "human_recorded", "human_decided", False, True, False),
+        ),
+        (
+            "automatic",
+            "preview",
+            ("primary", "unsupported", "held_in_preview", False, False, False),
+        ),
+    ],
+    ids=["ask_me-automatic", "ask_me-preview", "automatic", "automatic-preview"],
+)
+def test_an_answer_book_matching_asked_again_holds_only_where_automatic_decided(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    title: str,
+    posture: str,
+    read: tuple[object, ...],
+) -> None:
+    store, report, _ = _holds_store(tmp_path, title=title, posture=posture)
+    try:
+        store.publish(report)
+        standing = store.decide("owner_entered", OWN)
+        monkeypatch.setattr(
+            level_reconciliation, "offer_digest", lambda offer, destination: "0" * 64
+        )
+        _change(store, _WIDE, store.clock())
+        assert _check(store, store.clock()) == "reconciled"
+        *_, cause = _decisions(store)
+        assert (cause.outcome, cause.cause) == ("withdraw", "matching_changed")
+        assert store.repository._connection.execute(
+            "SELECT answer_id,carry_eligible FROM owner_field_answers "
+            "WHERE destination='title'"
+        ).fetchall() == [(standing.decision_id, 0)]
+        assert _read(store) == read
+        assert_record_recomputes(store.repository._connection)
     finally:
         store.close()
 

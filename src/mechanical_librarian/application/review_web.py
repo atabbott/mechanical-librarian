@@ -384,12 +384,12 @@ class CurrentReviewCaseSnapshot:
     # `resume_offer`); a cover, where the owner's cover took it over.
     resume_offer_destinations: tuple[str, ...] = ()
     # Held destinations whose unpinned answer was given on this case in its
-    # current episode and not since withdrawn there (Book matching's
-    # `matching_changed` row is a withdrawal): it decides the field here. An
-    # answer that is only a pin taken back, on this case or an earlier one,
-    # is read here too: with no decision of the case, it decides the field
-    # only where Automatic decided it, and otherwise the field reads as it
-    # would without the answer (`_classify_field`, C2b-27, C2b-28). Any other
+    # current episode and not since withdrawn there by the owner: it decides
+    # the field here. An answer that is only a pin taken back, on this case
+    # or an earlier one, or one Book matching's `matching_changed` row asked
+    # again, is read here too: with no decision of the case, it decides the
+    # field only where Automatic decided it, and otherwise the field reads as
+    # it would without the answer (`_classify_field`, C2b-27, C2b-28). Any other
     # unpinned answer asks the field where the case offers a decision on it,
     # and settles it where none is offered (C2b-15, C2b-18, S16).
     own_answer_destinations: tuple[str, ...] = ()
