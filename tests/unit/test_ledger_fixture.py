@@ -122,10 +122,18 @@ def test_the_fixture_is_this_format_at_epoch_one_with_an_empty_derived_partition
         # Beside the derived partition of the build that wrote it, empty; a
         # later build's differs and is regenerated (see `_opened`).
         if digest == schema.build_partition().derived_schema_digest:
-            assert {
+            stored = {
                 table: connection.execute(f'SELECT * FROM "{table}"').fetchall()
                 for table in _derived_setup()
-            } == _derived_setup()
+            }
+            # Except the one seed that names the Unicode version of the
+            # Python that wrote it: a build running under another regenerates
+            # on open (see `_opened`).
+            expected = _derived_setup()
+            ((singleton, _, rules),) = expected["browse_fact_identity"]
+            ((_, written_under, _),) = stored["browse_fact_identity"]
+            expected["browse_fact_identity"] = [(singleton, written_under, rules)]
+            assert stored == expected
     finally:
         connection.close()
 

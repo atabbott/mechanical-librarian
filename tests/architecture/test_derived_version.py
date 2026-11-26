@@ -32,7 +32,7 @@ from tests.support import ledger_documents
 
 # {derived version: (digest, issue whose CHANGELOG entry declares it)}
 PINNED: dict[int, tuple[str, int]] = {
-    1: ("dec44f37d67e64868315961f413ec51f2b90e8f9fb7e4a32994f352960a718e3", 2040),
+    1: ("af3e3fc67bc6126866413fb7b31f11fd76a58ee9346d312a1deff9a8b8dcc1d9", 2040),
 }
 
 _DOMAIN = "mechanical_librarian.domain."
@@ -130,9 +130,25 @@ def _value(module: str, constant: str) -> str:
 def derived_digest() -> str:
     """The digest of what this build's preparation rebuilds."""
     build = schema.build_partition()
+    # The browse-fact seed names the Unicode version of the Python running
+    # the build, not code: a store folded under another is regenerated at
+    # startup (`browse_fact_identity_is_current`), so the pin leaves it out
+    # and holds under every Python the build runs on.
+    seeds = tuple(
+        (
+            table,
+            tuple(
+                (row[0], "<runtime Unicode version>", *row[2:])
+                if table == "browse_fact_identity"
+                else row
+                for row in rows
+            ),
+        )
+        for table, rows in build.derived_seed_rows
+    )
     payload = {
         "ddl": build.derived_schema_digest,
-        "seeds": repr(build.derived_seed_rows),
+        "seeds": repr(seeds),
         "evaluation": sorted(
             [module, constant, _value(module, constant)] for module, constant in DERIVED
         ),
