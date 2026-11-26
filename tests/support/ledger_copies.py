@@ -79,6 +79,8 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
         ).fetchone()
         assert tuple(copies) == (row[1], row[3], row[8], row[11])
         assert _authors(repository, row[6], authors)
+        # The arm reads the copy, for a row whose report is gone.
+        assert row[21] == authors
         assert connection.execute(
             "SELECT connection_name,library_name,item_id FROM human_decision_events "
             "WHERE event_id=?",
@@ -92,7 +94,7 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
             "WHERE plan_id=?",
             (row[15],),
         ).fetchone()
-        assert title == row[11]
+        assert (title, authors) == (row[11], row[21])
         origin = _origin(repository, decision_id)
         # Only the owner's plans keep their authors.
         if origin in {"human", "owner_description"}:
@@ -108,7 +110,7 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
             "target_fingerprint FROM field_effect_no_changes WHERE event_id=?",
             (row[0],),
         ).fetchone()
-        assert title == row[11]
+        assert (title, authors) == (row[11], row[21])
         if row[5] == "human":
             assert _authors(repository, row[6], authors)
             assert kept is None
@@ -144,6 +146,7 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
                 (row[0],),
             ).fetchone()
             assert _authors(repository, row[6], authors)
+            assert row[21] == authors
             checked["activity_owner_description"] += 1
     # Review history: each authored description shows the candidate it chose.
     for decision_id, (*_, candidate_document) in owner_descriptions.items():
