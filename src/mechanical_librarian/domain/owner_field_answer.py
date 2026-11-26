@@ -42,7 +42,7 @@ OWNER_FIELD_EVENT_KINDS: Final = frozenset(
         "resume_completed",
         "resume_failed",
         "resume_superseded",
-        # Admitted, never written until the question check (C4').
+        # Written by regenerate-derived --retire-pending (ADR-0108).
         "retired",
     }
 )

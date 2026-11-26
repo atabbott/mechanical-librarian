@@ -33,8 +33,6 @@ class Refusal(StrEnum):
     BACKUP_UNSAFE = "backup_unsafe"
     BACKUP_MISMATCH = "backup_mismatch"
     ROLLED_BACK = "rolled_back"
-    # Retiring a waiting write, a Resume or a policy check is not built yet.
-    RETIRE_NOT_BUILT = "retire_not_built"
 
 
 class RegenerationRefusal(MetadataReportError):
@@ -93,11 +91,16 @@ class CoverPointer:
 
 @dataclass(frozen=True, slots=True)
 class LibraryReport:
-    """Report lists 1 to 5 for one library, by item key and destination."""
+    """Report lists 1 to 5 for one library, by item key and destination.
+
+    `retired` is the part of list 1 whose waiting write `--retire-pending`
+    retires: those answers are asked again and Automatic stays off.
+    """
 
     connection: str
     library: str
     unwritten: tuple[WorkField, ...] = ()
+    retired: tuple[WorkField, ...] = ()
     written: int = 0
     authored: tuple[WorkField, ...] = ()
     covers: tuple[CoverPointer, ...] = ()
@@ -238,8 +241,6 @@ def _run(
             reports=inspection.reports,
             backup_held=inspection.backup_held,
         )
-    if retire_pending and inspection.retirable:
-        raise RegenerationRefusal(Refusal.RETIRE_NOT_BUILT)
     session.back_up()
     session.regenerate(retire_pending=retire_pending, inspection=inspection)
     return Outcome(

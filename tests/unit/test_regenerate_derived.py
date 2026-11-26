@@ -54,6 +54,7 @@ from tests.support.ledger_partition import (
     rewrite,
 )
 from tests.support.ledger_partition import regenerate as strip_derived_rows
+from tests.support.owner_field_record import assert_record_recomputes
 from tests.support.owner_values import OwnerStore
 from tests.unit.test_field_effects import audiobook_pair  # noqa: F401  # reason: a fixture, used by name.
 
@@ -606,8 +607,55 @@ def test_drop_order_is_children_first_and_refuses_a_cycle() -> None:
 # --- The gate ----------------------------------------------------------------------
 
 
-def test_a_waiting_write_blocks_until_it_is_retired(owner: OwnerStore) -> None:
-    owner.plan(owner.decide("accept", GENRES, destination="genres"))
+def _stage(owner: OwnerStore, plan_id: str, state: str) -> None:
+    """Move a planned write to `state` through the real writer, as the
+    applier leaves it when the server stops."""
+    if state == "planned":
+        return
+    if state == "connection":
+        owner.repository.transition_field_effect(
+            plan_id, "planned", "stale", owner.clock(), "connection"
+        )
+        return
+    owner.repository.claim_field_effect(plan_id, "planned", "c" * 64, owner.clock())
+    if state in {"applying", "reconciling"}:
+        owner.repository.transition_field_effect(
+            plan_id, "claimed", state, owner.clock()
+        )
+    elif state == "retryable":
+        owner.repository.transition_field_effect(
+            plan_id, "claimed", "retryable", owner.clock(), "not_sent"
+        )
+
+
+def _counts(path: Path) -> dict[str, int]:
+    connection = sqlite3.connect(path)
+    try:
+        (document,) = connection.execute(
+            "SELECT counts_document FROM derived_regenerations"
+        ).fetchone()
+    finally:
+        connection.close()
+    counts: dict[str, int] = json.loads(document)
+    return counts
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["planned", "claimed", "retryable", "connection"],
+    ids=["planned", "claimed", "retryable-not-sent", "connection-stale"],
+)
+def test_a_waiting_write_blocks_until_it_is_retired(
+    owner: OwnerStore, state: str
+) -> None:
+    """Without the flag the waiting write refuses; with it the write closes
+    superseded through the revocation (a claimed one first goes back to
+    retryable, not sent), and the answer it would have written stays the
+    record's, retired and no longer carried."""
+    decision = owner.decide("accept", GENRES, destination="genres")
+    operation = owner.plan(decision)
+    _stage(owner, operation.plan.plan_id, state)
+    target = owner.case.target
     path = _closed(owner)
     _, lines, outcome = _refuses_unchanged(path)
     (item,) = outcome.items
@@ -617,17 +665,90 @@ def test_a_waiting_write_blocks_until_it_is_retired(owner: OwnerStore) -> None:
         f"  {item.connection}/{item.library}, work {item.item_id}, Genres: "
         f"{cli.REASONS[Reason.WAITING]} {cli.NO_CAUSE}",
     ]
-    # The flag retires such a write, which this build cannot do yet.
-    _, lines, _ = _refuses_unchanged(path, retire_pending=True)
-    assert lines == [cli.REFUSALS[regeneration.Refusal.RETIRE_NOT_BUILT]]
+    before = _ledger(path)
+    status, lines, _ = _run(path, retire_pending=True)
+    assert (status, lines) == (
+        0,
+        [
+            f"{target['connection']}/{target['library']}",
+            "  " + cli.UNWRITTEN.format(n=0),
+            "  " + cli.RETIRED.format(n=1),
+            f"    work {target['item']}, Genres",
+            "  " + cli.WRITTEN.format(n=0),
+            cli.UPPER_LIMITS,
+            cli.REGENERATED,
+        ],
+    )
+    assert opens(path)
+    connection = sqlite3.connect(path)
+    try:
+        assert connection.execute(
+            "SELECT state,json_extract(document,'$.failure') FROM field_effects"
+        ).fetchall() == [("superseded", "authority_superseded")]
+        kinds = [
+            kind
+            for (kind,) in connection.execute(
+                "SELECT kind FROM field_effect_events ORDER BY sequence"
+            )
+        ]
+        assert kinds[-1] == "superseded"
+        if state == "claimed":
+            assert kinds[-3:] == ["claimed", "retryable", "superseded"]
+        assert connection.execute(
+            "SELECT answer_id,carry_eligible FROM owner_field_answers"
+        ).fetchall() == [(decision.decision_id, 0)]
+        assert connection.execute(
+            "SELECT kind,answer_id,request_id FROM owner_field_events"
+        ).fetchall() == [("retired", decision.decision_id, None)]
+        assert_record_recomputes(connection)
+    finally:
+        connection.close()
+    # Every other ledger row is as it was: the decision and its plan's start.
+    after = _ledger(path)
+    assert after["human_decisions"] == before["human_decisions"]
+    counts = _counts(path)
+    assert {key: counts[key] for key in regeneration._RETIREMENT_KEYS} == {
+        "answers_retired": 1,
+        "plans_released": int(state == "claimed"),
+        "plans_retired": 1,
+        "policy_transitions_settled": 0,
+        "resume_requests_closed": 0,
+    }
 
 
+def test_without_the_flag_nothing_is_retired(owner: OwnerStore) -> None:
+    """A run with nothing waiting writes no retirement: the record keeps its
+    answer carry-eligible and the audit counts none."""
+    decision = owner.decide("accept", GENRES, destination="genres")
+    path = _closed(owner)
+    assert _run(path)[0] == 0
+    connection = sqlite3.connect(path)
+    try:
+        assert connection.execute(
+            "SELECT answer_id,carry_eligible FROM owner_field_answers"
+        ).fetchall() == [(decision.decision_id, 1)]
+        assert connection.execute(
+            "SELECT count(*) FROM owner_field_events"
+        ).fetchone() == (0,)
+    finally:
+        connection.close()
+    assert not any(_counts(path)[key] for key in regeneration._RETIREMENT_KEYS)
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["applying", "reconciling", "retryable-after-applying"],
+    ids=["applying", "reconciling", "retryable-after-applying"],
+)
 def test_a_write_that_reached_audiobookshelf_blocks_even_with_the_flag(
-    owner: OwnerStore,
+    owner: OwnerStore, state: str
 ) -> None:
     operation = owner.plan(owner.decide("accept", GENRES, destination="genres"))
-    owner.target.fail_next = True
-    assert owner.service.apply(operation.plan.plan_id).state == "retryable"
+    if state == "retryable-after-applying":
+        owner.target.fail_next = True
+        assert owner.service.apply(operation.plan.plan_id).state == "retryable"
+    else:
+        _stage(owner, operation.plan.plan_id, state)
     path = _closed(owner)
     for flag in (False, True):
         _, lines, outcome = _refuses_unchanged(path, retire_pending=flag)
@@ -845,6 +966,62 @@ def test_retry_refuses_and_the_store_reopens_after_a_regeneration(
     finally:
         reopened.close()
     assert opens(path)
+
+
+def test_a_policy_change_still_checking_settles_with_the_flag(tmp_path: Path) -> None:
+    """A policy activation's transition still processing, made by the real
+    activation, refuses without the flag; with it the transition settles from
+    its header, every unfinished work counted failed, and the store opens."""
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        resolve_policy,
+    )
+    from tests.unit.test_metadata_policy_activation import (
+        _current_case_with_completed_work,
+        _draft,
+    )
+
+    path = tmp_path / "policy.sqlite"
+    repository, report, _, _ = _current_case_with_completed_work(path)
+    try:
+        draft = _draft()
+        repository.create_metadata_policy_draft(draft.canonical_json)
+        resolved = resolve_policy(draft, report.target.library)
+        transition = repository.activate_metadata_policy(
+            draft.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            30,
+            expected_active_generation=1,
+        )
+        assert transition is not None
+        assert (transition.state, transition.completed, transition.total) == (
+            "processing",
+            0,
+            1,
+        )
+    finally:
+        repository.close()
+    _another_build(path)
+    _, lines, outcome = _refuses_unchanged(path)
+    assert [item.reason for item in outcome.items] == [Reason.POLICY]
+    assert lines == [cli.GATE_HEADING, f"  {cli.REASONS[Reason.POLICY]} {cli.NO_CAUSE}"]
+    status, lines, _ = _run(path, retire_pending=True)
+    assert (status, lines[-1]) == (0, cli.REGENERATED)
+    reopened = open_repository(path, create=False)
+    try:
+        settled = reopened.metadata_policy_transition()
+        assert settled is not None
+        assert (
+            settled.transition_id,
+            settled.state,
+            settled.completed,
+            settled.failed,
+            settled.total,
+        ) == (transition.transition_id, "completed_with_failures", 0, 1, 1)
+    finally:
+        reopened.close()
+    assert _counts(path)["policy_transitions_settled"] == 1
 
 
 def test_the_next_start_asks_every_configured_library_to_scan(tmp_path: Path) -> None:

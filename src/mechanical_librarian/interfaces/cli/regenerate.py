@@ -55,10 +55,6 @@ REFUSALS = {
         "Regeneration stopped and was rolled back, so nothing was changed. "
         "Run regenerate-derived again."
     ),
-    # Not owner copy: replaced when --retire-pending's retirements land (P6).
-    Refusal.RETIRE_NOT_BUILT: (
-        "This build cannot retire waiting writes yet, so nothing was changed."
-    ),
 }
 NO_SPACE = (
     "The /data volume has {free} free and regenerate-derived needs {needed}. "
@@ -89,6 +85,10 @@ NO_CAUSE = "Start the previous image and read Activity."
 UNWRITTEN = (
     "Answers not yet written: {n}. Each is kept if a new reading asks the same "
     "question, and asked again otherwise."
+)
+RETIRED = (
+    "Answers whose waiting write will be retired: {n}. Each is asked again, "
+    "and Automatic stays off the field."
 )
 WRITTEN = "Answers already written: {n}."
 AUTHORED = "Descriptions you wrote that are not yet in Audiobookshelf: {n}."
@@ -153,10 +153,17 @@ def _gate_line(item: BlockingItem) -> str:
     )
 
 
-def _report_lines(report: LibraryReport) -> list[str]:
+def _report_lines(report: LibraryReport, retire_pending: bool) -> list[str]:
+    """One library's lists. With `--retire-pending`, list 1's answers whose
+    waiting write is retired are listed apart (copy-draft L1-flag)."""
+    retired = report.retired if retire_pending else ()
+    kept = [entry for entry in report.unwritten if entry not in retired]
     lines = [f"{report.connection}/{report.library}"]
-    lines.append("  " + UNWRITTEN.format(n=len(report.unwritten)))
-    lines.extend(_work(e) for e in report.unwritten)
+    lines.append("  " + UNWRITTEN.format(n=len(kept)))
+    lines.extend(_work(e) for e in kept)
+    if retired:
+        lines.append("  " + RETIRED.format(n=len(retired)))
+        lines.extend(_work(e) for e in retired)
     lines.append("  " + WRITTEN.format(n=report.written))
     if report.authored:
         lines.append("  " + AUTHORED.format(n=len(report.authored)))
@@ -178,7 +185,11 @@ def _report_lines(report: LibraryReport) -> list[str]:
 
 def _reports(outcome: Outcome) -> list[str]:
     reports = [report for report in outcome.reports if not report.empty]
-    lines = [line for report in reports for line in _report_lines(report)]
+    lines = [
+        line
+        for report in reports
+        for line in _report_lines(report, outcome.retire_pending)
+    ]
     if reports:
         lines.append(UPPER_LIMITS)
     if outcome.backup_held:

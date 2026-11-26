@@ -52,6 +52,8 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
     _UNCLOSED,
     answer_written_sql,
+    close_resume_over_answer,
+    retire_record_answer,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     DERIVED_VERSION,
@@ -82,6 +84,7 @@ from mechanical_librarian.application.regenerate_derived import (
     RegenerationRefusal,
     WorkField,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 
 _INCOMPATIBLE = "database is unavailable or incompatible"
@@ -91,6 +94,14 @@ _BACKUP_COPY = re.compile(r"epoch-(0|[1-9][0-9]*)\.sqlite3")
 # The retained copy, then crash recovery's copies of the file and its
 # journal and the rollback journal itself (ADR-0108 step 1).
 _RESERVE_FILE_SIZES = 4
+# `--retire-pending`'s retirements (ADR-0108 step 4); zero without the flag.
+_RETIREMENT_KEYS = (
+    "answers_retired",
+    "plans_released",
+    "plans_retired",
+    "policy_transitions_settled",
+    "resume_requests_closed",
+)
 _COUNT_KEYS = (
     "answers_unwritten",
     "answers_written",
@@ -101,6 +112,7 @@ _COUNT_KEYS = (
     "derived_objects_dropped",
     "derived_objects_recreated",
     "stopped_for_owner",
+    *_RETIREMENT_KEYS,
 )
 
 
@@ -320,6 +332,18 @@ class SQLiteRegenerationStore:
 
 # --- The gate, the report and the cover pointer plan (ledger rows only) ----
 
+# A plan `--retire-pending` retires: waiting to be sent and never sent.
+_RETIRABLE_PLAN = (
+    "(plan.state IN ('planned','claimed') OR (plan.state='retryable' AND NOT EXISTS "
+    "(SELECT 1 FROM field_effect_events applying WHERE applying.plan_id=plan.plan_id "
+    "AND applying.kind='applying')) OR (plan.state='stale' "
+    "AND json_extract(plan.document,'$.failure')='connection'))"
+)
+_RETIRABLE_SQL = (
+    "SELECT plan.document FROM field_effects plan WHERE "
+    + _RETIRABLE_PLAN
+    + " ORDER BY plan.rowid"
+)
 _IN_FLIGHT_SQL = (
     "SELECT plan.connection_name,plan.library_name,plan.work_id,plan.destination,"
     "plan.state,EXISTS (SELECT 1 FROM field_effect_events applying "
@@ -346,12 +370,16 @@ _POLICY_PROCESSING_SQL = (
     "ON transition.generation=active.generation "
     "WHERE transition.state='processing')"
 )
-# The record's answers with something to write, by whether each is written.
+# The record's answers with something to write, by whether each is written
+# and whether `--retire-pending` would retire its waiting plan.
 _RECORD_SQL = (
     "SELECT answer.connection_name,answer.library_name,answer.item_id,"
     "answer.destination,answer.source,"
     + answer_written_sql("answer.answer_id")
-    + " FROM owner_field_answers answer WHERE answer.destination<>'cover' "
+    + ",EXISTS (SELECT 1 FROM field_effects plan "
+    "WHERE plan.decision_id=answer.answer_id AND "
+    + _RETIRABLE_PLAN
+    + ") FROM owner_field_answers answer WHERE answer.destination<>'cover' "
     "AND answer.outcome IN ('accept','owner_entered','authored') "
     "ORDER BY answer.connection_name,answer.library_name,answer.item_id,"
     "answer.destination"
@@ -562,19 +590,29 @@ class SQLiteRegenerationSession:
     def _reports(self) -> tuple[LibraryReport, ...]:
         connection = self._connection
         unwritten: dict[tuple[str, str], list[WorkField]] = {}
+        retired: dict[tuple[str, str], list[WorkField]] = {}
         written: dict[tuple[str, str], int] = {}
         authored: dict[tuple[str, str], list[WorkField]] = {}
         covers: dict[tuple[str, str], list[CoverPointer]] = {}
         stopped: dict[tuple[str, str], list[WorkField]] = {}
-        for name, library, item, destination, source, done in connection.execute(
-            _RECORD_SQL
-        ).fetchall():
+        for (
+            name,
+            library,
+            item,
+            destination,
+            source,
+            done,
+            waiting,
+        ) in connection.execute(_RECORD_SQL).fetchall():
+            entry = WorkField(item, destination)
             if done:
                 written[name, library] = written.get((name, library), 0) + 1
+            elif source == "authored_description":
+                authored.setdefault((name, library), []).append(entry)
             else:
-                (
-                    authored if source == "authored_description" else unwritten
-                ).setdefault((name, library), []).append(WorkField(item, destination))
+                unwritten.setdefault((name, library), []).append(entry)
+                if waiting:
+                    retired.setdefault((name, library), []).append(entry)
         for name, library, item, replacement in _pointer_plan(connection):
             covers.setdefault((name, library), []).append(
                 CoverPointer(item, replacement is not None)
@@ -589,6 +627,7 @@ class SQLiteRegenerationSession:
                 name,
                 library,
                 unwritten=tuple(unwritten.get((name, library), ())),
+                retired=tuple(retired.get((name, library), ())),
                 written=written.get((name, library), 0),
                 authored=tuple(authored.get((name, library), ())),
                 covers=tuple(covers.get((name, library), ())),
@@ -698,8 +737,8 @@ class SQLiteRegenerationSession:
         1. drop every object not in this build's ledger list;
         2. ledger writes from ledger rows only. A pending ledger migration
            runs first, here, once C6 builds one (admission refuses any other
-           ledger format until then); then `--retire-pending`'s retirements;
-           then every current authority is revoked through the existing
+           ledger format until then); then, with the flag, its retirements
+           (`_retire_pending`); then every current authority is revoked through the existing
            revocation; then the cover pointer plan; then `ledger_meta` takes
            the next epoch and this build's derived version and digest;
         3. recreate every derived object from this build and its seed rows;
@@ -718,9 +757,10 @@ class SQLiteRegenerationSession:
         counts = dict.fromkeys(_COUNT_KEYS, 0)
         counts["derived_objects_dropped"] = _drop_derived(connection, build)
         at = self._clock()
-        counts["authorities_revoked"] = _revoke_authorities(
-            connection, self._binding, at
-        )
+        effects = _field_effects(connection, self._binding)
+        if retire_pending:
+            counts.update(_retire_pending(connection, effects, at))
+        counts["authorities_revoked"] = _revoke_authorities(connection, effects, at)
         for name, library, item, replacement in _pointer_plan(connection):
             if replacement is None:
                 connection.execute(
@@ -878,12 +918,12 @@ def _unreachable(*_arguments: object) -> NoReturn:
     raise MetadataReportError(_INCOMPATIBLE)
 
 
-def _revoke_authorities(
-    connection: sqlite3.Connection, binding: _LinuxDatabaseBinding, at: int
-) -> int:
-    """Revoke every current authority through the existing revocation, which
-    writes the column and the document together. The gate leaves no plan
-    waiting on one, so no derived reader is reached; one that is fails."""
+def _field_effects(
+    connection: sqlite3.Connection, binding: _LinuxDatabaseBinding
+) -> SQLiteFieldEffectRepository:
+    """The existing field-effect writer over the bound connection. Every
+    callback that would read derived state fails, so a step that reached one
+    rolls the run back."""
     effects: SQLiteFieldEffectRepository = SQLiteFieldEffectRepository(
         connection,
         binding,
@@ -895,6 +935,77 @@ def _revoke_authorities(
         retire_stale_cover_consideration=_unreachable,
         current_cover_authority=_unreachable,
     )
+    return effects
+
+
+def _retire_pending(
+    connection: sqlite3.Connection, effects: SQLiteFieldEffectRepository, at: int
+) -> dict[str, int]:
+    """`--retire-pending`'s retirements, from ledger rows only (ADR-0108 step
+    4): a claimed plan goes back to `retryable` (`not_sent`), then every plan
+    waiting to be sent closes `superseded` (`authority_superseded`) through
+    the existing revocation; each record whose answer such a plan would have
+    written gets `retired` and is no longer carried; each open, unfailed
+    Resume closes `resume_superseded` over its answer, as the question check's
+    step 0 does (contract T5); and the active generation's processing policy
+    change settles from its header, every unfinished work counted failed."""
+    counts = dict.fromkeys(_RETIREMENT_KEYS, 0)
+    retired: set[tuple[str, str, str, str, str]] = set()
+    plans = [
+        FieldEffectOperation.from_json(document)
+        for (document,) in connection.execute(_RETIRABLE_SQL).fetchall()
+    ]
+    for operation in plans:
+        if operation.state == "claimed":
+            released = operation.transition("retryable", at=at, failure="not_sent")
+            effects._update_field_effect(released, "claimed")
+            effects._append_field_effect_event(
+                released, "retryable", released.updated_at
+            )
+            counts["plans_released"] += 1
+        effects._revoke_field_effect_authority_in_transaction(
+            operation.plan.authority.decision_id, at, required=False
+        )
+        counts["plans_retired"] += 1
+        # Only an automatic plan carries a subtitle companion (contract T1),
+        # so the plan's own decision is the only answer it would have written.
+        plan = operation.plan
+        key = (plan.connection, plan.library, plan.work_id, plan.destination)
+        answer = plan.authority.decision_id
+        if (*key, answer) not in retired and connection.execute(
+            "SELECT 1 FROM owner_field_answers WHERE connection_name=? "
+            "AND library_name=? AND item_id=? AND destination=? AND answer_id=?",
+            (*key, answer),
+        ).fetchone():
+            retire_record_answer(connection, key, answer, at)
+            retired.add((*key, answer))
+            counts["answers_retired"] += 1
+    for key in connection.execute(_OPEN_RESUME_SQL).fetchall():
+        if not close_resume_over_answer(connection, key, at):
+            raise MetadataReportError(_INCOMPATIBLE)
+        counts["resume_requests_closed"] += 1
+    counts["policy_transitions_settled"] = connection.execute(
+        "UPDATE metadata_policy_transitions SET state='completed_with_failures',"
+        "failed=total-completed,updated_at=max(updated_at,?) WHERE state='processing' "
+        "AND generation=(SELECT generation FROM metadata_policy_state WHERE singleton=1)",
+        (at,),
+    ).rowcount
+    if (
+        connection.execute(_RETIRABLE_SQL).fetchone() is not None
+        or connection.execute(_OPEN_RESUME_SQL).fetchone() is not None
+        or connection.execute(_POLICY_PROCESSING_SQL).fetchone() != (0,)
+    ):
+        raise MetadataReportError(_INCOMPATIBLE)
+    return counts
+
+
+def _revoke_authorities(
+    connection: sqlite3.Connection, effects: SQLiteFieldEffectRepository, at: int
+) -> int:
+    """Revoke every current authority through the existing revocation, which
+    writes the column and the document together. The gate and the flag's
+    retirements leave no plan waiting on one, so no derived reader is
+    reached; one that is fails."""
     current = connection.execute(
         "SELECT decision_id FROM field_effect_authorities WHERE current=1 ORDER BY rowid"
     ).fetchall()
