@@ -1,14 +1,17 @@
 // Why a Library field reads as it does: the reason under its question, the
 // comparison conditions beside it, and how differing source values are named.
 // Moved out of the Library route under the route-size rule (#1497).
-import { EMPTY_TARGET_TEXT } from './api/http'
+import { EMPTY_TARGET_TEXT, displayValue, isClear } from './api/http'
 import type {
+  AskedAgainView,
   AutomaticOutcome,
   ChoiceContextView,
   DecisionOutcome,
   FieldCause,
   ProposalOutcome,
 } from './api/http'
+import { formatDate } from './dates'
+import type { DateZone } from './dates'
 import { audioFileFormat, sameSelectedValue } from './fieldDecision'
 import type { ReviewField } from './fieldDecision'
 import { choiceRequestReasons, materialReasonLabel, opaqueSource } from './labels'
@@ -76,6 +79,7 @@ const contextKinds = {
   pin_changed: 'unavailable',
   // Never contextual: a held field needs a value a source offered.
   held_in_preview: 'unchanged',
+  asked_again: 'unavailable',
 } as const satisfies Record<FieldCause, 'unchanged' | 'waiting' | 'unavailable'>
 // A held field never reads unchanged.
 export const contextKind = (field: ReviewField) => {
@@ -151,7 +155,61 @@ export const questionNotice = (field: ReviewField) =>
   actionable(field) && field.automaticWithheldReason === null
     ? field.notices.find((notice) => materialReasonLabel(notice) !== undefined)
     : undefined
+// Why the record's earlier answer is asked again (#2039), in one sentence
+// that names the answer and its day; undefined where the field is not asked
+// again, or for a decline whose sentence would need its value. The verb is
+// the earlier outcome's; a clear, or a keep of an empty field, quotes nothing,
+// as the owner controls do; a decline has no value and names the proposed
+// change instead. A long value is cut as `bounded` cuts a reason.
+const askedAgainVerbs = {
+  accept: 'chose',
+  owner_entered: 'entered',
+  keep_current: 'kept',
+  reject: 'declined',
+} as const satisfies Record<AskedAgainView['earlier']['outcome'], string>
+const askedAgainValue = (value: AskedAgainView['earlier']['value']) => {
+  if (!value || isClear(value)) return 'nothing'
+  const shown = displayValue(value.value)
+  return `“${shown.length > 160 ? `${shown.slice(0, 157)}…` : shown}”`
+}
+export const askedAgainSentence = (
+  askedAgain: AskedAgainView | null | undefined,
+  now: Date = new Date(),
+  zone: DateZone = {},
+) => {
+  if (!askedAgain) return undefined
+  const { reason, earlier } = askedAgain
+  const day = formatDate(earlier.occurred_at, now, zone)
+  const declined = earlier.outcome === 'reject'
+  const answer = declined
+    ? `${askedAgainVerbs.reject} the proposed change`
+    : `${askedAgainVerbs[earlier.outcome]} ${askedAgainValue(earlier.value)}`
+  switch (reason) {
+    case 'question_changed':
+      return `The choices changed since you ${answer} on ${day}.`
+    case 'target_changed':
+      return `Audiobookshelf shows a different value from when you ${answer} on ${day}.`
+    case 'withdrawn':
+      return `You withdrew your later choice. Before it, you ${answer} on ${day}.`
+    case 'resume_failed':
+      return `Resume automatic handling did not finish. You ${answer} on ${day}.`
+    case 'retired':
+      return declined
+        ? undefined
+        : `Your choice of ${askedAgainValue(earlier.value)} on ${day} was not written before the upgrade.`
+    case 'matching_changed':
+      return `Book matching changed what this field offers since you ${answer} on ${day}.`
+    case 'other':
+      return `You ${answer} on ${day}. This field asks you again.`
+  }
+}
+// A carried answer's line in History: the day of the choice it kept (#2039).
+export const keptFromSentence = (seconds: number, now: Date = new Date(), zone: DateZone = {}) =>
+  `Kept from your choice on ${formatDate(seconds, now, zone)}, because the same choices were offered.`
 export const questionReason = (field: ReviewField, mediaKind: string) => {
+  // The record's earlier answer asked again says why, ahead of all else.
+  const askedAgain = askedAgainSentence(field.askedAgain)
+  if (askedAgain) return askedAgain
   // A changed pin is the question: the server's sentence says what changed.
   if (field.pin?.state === 'changed' && field.classificationReason)
     return field.classificationReason

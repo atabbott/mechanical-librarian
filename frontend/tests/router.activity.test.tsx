@@ -191,13 +191,45 @@ describe('Activity route', () => {
     ).toBeVisible()
     await user.click(within(asked).getByRole('button', { name: /asked again/u }))
     expect(
-      within(asked).getByText(
-        'This choice was made before the work came back for review, so the field asks you again.',
-      ),
+      within(asked).getByText('This choice no longer counts, so the field asks you again.'),
     ).toBeVisible()
     expect(
       within(plain).getByRole('button', { name: /^Details for ISBN, Plain Work, / }),
     ).toBeVisible()
+  })
+
+  it.each([
+    ['asked_again_choices', 'The choices changed after this choice, so the field asks you again.'],
+    [
+      'asked_again_value',
+      'The value in Audiobookshelf changed after this choice, so the field asks you again.',
+    ],
+    [
+      'asked_again_withdrawn',
+      'You withdrew a later choice, so this one came back and the field asks you again.',
+    ],
+    [
+      'asked_again_resume',
+      'Resume automatic handling did not finish, so the field asks you again.',
+    ],
+    [
+      'asked_again_retired',
+      'This choice was not written before the upgrade, so the field asks you again.',
+    ],
+    ['asked_again', 'This choice no longer counts, so the field asks you again.'],
+  ] as const)('says why the record asks again: %s (#2039)', async (note, sentence) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(
+      activity({ events: [{ event_id: 'owner-asked', note, work_label: 'Asked Work' }] }),
+    )
+    renderRoute('/activity', http)
+    const asked = (await screen.findByText('Asked Work')).closest('article')
+    if (!asked) throw new Error('Expected the Asked Work row')
+    // Every reason keeps the one short label; Details says why.
+    expect(within(asked).getByText('Asked again')).toBeVisible()
+    await user.click(within(asked).getByRole('button', { name: /asked again/u }))
+    expect(within(asked).getByText(sentence)).toBeVisible()
   })
 
   it('notes an automatic choice a hold keeps unwritten as held by you', async () => {

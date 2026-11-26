@@ -9,6 +9,7 @@ import { StaleBuildRead } from '../components/StaleBuildRead'
 import { UpgradeNotice } from '../components/UpgradeNotice'
 import { focusAfterRetry } from '../focusAfterRetry'
 import type { ReviewField } from '../fieldDecision'
+import { askedAgainSentence } from '../fieldReasons'
 import { destinationLabel, mediaKindLabels } from '../labels'
 import { useReviewContext } from '../router'
 
@@ -132,7 +133,7 @@ const AttentionWorkGroup = ({
       </div>
       <ul className="attention-field-rows">
         {group.map((item) => {
-          const line = `${destinationLabel(item.destination)} · ${item.classificationReason ?? 'Needs you'}`
+          const line = `${destinationLabel(item.destination)} · ${askedAgainSentence(item.askedAgain) ?? item.classificationReason ?? 'Needs you'}`
           return (
             <li key={item.destination}>
               <button

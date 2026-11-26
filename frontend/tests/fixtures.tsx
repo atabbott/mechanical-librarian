@@ -156,6 +156,7 @@ export const detail: CaseDetailView = {
       manualReturnRequested: false,
       manualReturnFailed: false,
       resumeFailed: false,
+      askedAgain: null,
       currentValue: 'Old title',
       currentRaw: 'Old title',
       proposedValues: [{ kind: 'text', value: 'New title' }],
@@ -199,7 +200,7 @@ export const activity = (
 ): ActivityView => {
   const { events = [], ...rest } = value
   return {
-    schema_version: 'continuous-field-activity-v5',
+    schema_version: 'continuous-field-activity-v6',
     backup_ready: null,
     owner_action_required: 0,
     paused: false,

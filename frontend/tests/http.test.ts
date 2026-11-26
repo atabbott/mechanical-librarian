@@ -2090,10 +2090,37 @@ describe('ReviewApiClient', () => {
     expect(JSON.stringify(view)).not.toContain('internal-item-1')
   })
 
+  it('maps why the record asks a field again, and the day a carried answer kept (#2039)', async () => {
+    const askedAgain = {
+      reason: 'withdrawn',
+      earlier: { outcome: 'keep_current', value: { kind: 'text', value: 'Old' }, occurred_at: 5 },
+    } as const
+    const view = await readAttention(
+      attention({ items: [attentionItem({ asked_again: askedAgain })], total: 1 }),
+    )
+    expect(view.items[0]?.askedAgain).toEqual(askedAgain)
+    // An item asked for any other reason carries none.
+    expect((await readAttention(attention())).items[0]).not.toHaveProperty('askedAgain')
+    await expect(
+      readAttention(
+        attention({
+          items: [attentionItem({ asked_again: { ...askedAgain, reason: 'lost' } })],
+          total: 1,
+        }),
+      ),
+    ).rejects.toMatchObject(refused('enum@/items/0/asked_again/reason'))
+    const history = await readHistory(
+      caseHistory({ items: [historyDecisionItem({ kept_from: 1 })] }),
+    )
+    expect(history.items[0]).toMatchObject({ category: 'owner', keptFrom: 1 })
+    const plain = await readHistory(caseHistory({ items: [historyDecisionItem()] }))
+    expect(plain.items[0]).not.toHaveProperty('keptFrom')
+  })
+
   // The checks `mapAttention` held before the decoder (S30-S34, and the type
   // and presence checks) now refuse the read with the decoder's pointer (#1687).
   it.each([
-    [attention({ schema_version: 'review-attention-v2' }), 'const@/schema_version'],
+    [attention({ schema_version: 'review-attention-v3' }), 'const@/schema_version'],
     [attention({ total: -1 }), 'min@/total'],
     [attention({ query: 7 }), 'type@/query'],
     [attention({ next_cursor: undefined }), 'required@/next_cursor'],
