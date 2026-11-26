@@ -295,11 +295,7 @@ transport detail.
 
 Metadata providers, provider cover admission and provider recovery are
 specified in [provider egress](provider-egress.md), which is part of this
-authority: a change there is reviewed exactly as a change here. In short,
-every provider call is a fixed request shape to a fixed origin, bounded,
-paced and value-free when it fails; a cover image is fetched, decoded and
-admitted only under the cover rules; and recovery rechecks everything before
-it sends anything.
+authority: a change there is reviewed exactly as a change here.
 
 ## Parsers and hostile input
 
@@ -520,12 +516,12 @@ scan succeeds, or a withdrawal leaves no earlier answer
 ([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
 [ADR-0108](decisions/0108-ledger-and-derived-state.md), proposed).
 
-Planned, not built: the server may carry an answer to a later case or episode
-of the same book that asks exactly the same question, within a release or
-after a regeneration. The carried row names its original and grants exactly
-what it granted, under current consent and every write guard. It will be the
-one owner decision not made by an owner request, and the one exception to
-preparation creating no owner decision.
+The server carries an answer to a later case or episode of the same book that
+asks the same question, within a release or after a regeneration. The carried
+row names its original and grants exactly what it granted, under current
+consent and every write guard. It is the one owner decision not made by an
+owner request, and the one exception to preparation creating no owner
+decision.
 
 Owner-entered text is refused, never rewritten, unless it is 1 to 512 code
 points of NFC text with no control, path, credential or URI. No automatic path
@@ -672,6 +668,10 @@ Every store follows
 anything but absence or the exact current schema fails closed before any
 mutation. Admission does not rely on SQLite alone:
 
+- The application database reads `ledger_meta` first: derived state from
+  another build refuses and names `regenerate-derived`; no record or another
+  ledger format needs a clean rebuild. First-boot detection passes both
+  refusals through.
 - A read-only open re-evaluates every CHECK constraint, because
   SQLite's read-only integrity check skips them. A CHECK it cannot extract
   refuses.
@@ -682,7 +682,8 @@ mutation. Admission does not rely on SQLite alone:
   ([ADR-0084](decisions/0084-persisted-attention-facts.md)). No product code
   writes with `REPLACE`, which would skip delete triggers.
 - Ledger rows are always checked against ledger tables, and a live write
-  plan still needs its derived rows
+  plan still needs its derived rows, except a subtitle companion under
+  `regenerate-derived`
   ([ADR-0108](decisions/0108-ledger-and-derived-state.md)). While the derived
   rows exist, an owner decision's work, fingerprint, title, authors and target
   field must match its case, an authored description's work, title and authors
@@ -738,13 +739,14 @@ None of these has target-write, media-write or startup authority.
 - The qualification-state bridge (`scripts/qualification_state_bridge.py`)
   is test-state tooling with no credential, network or provider authority,
   and never writes its source.
-- Planned ([ADR-0108](decisions/0108-ledger-and-derived-state.md)): the
-  owner-run offline `regenerate-derived` command will be the one tool that
-  writes the canonical database. It runs on a stopped volume under the
+- The owner-run offline `regenerate-derived` command
+  ([ADR-0108](decisions/0108-ledger-and-derived-state.md)) is the one tool
+  that writes the canonical database. It runs on a stopped volume under the
   binding's lock, never contacts Audiobookshelf or a provider, verifies and
-  keeps a backup before its one transaction, and drops only derived state.
-  Its report names items by item id and library, never a title, path, value
-  or credential.
+  keeps a backup before its one transaction, and replaces only derived state,
+  apart from revoking authority, repointing cover pointers and, with
+  `--retire-pending`, closing writes not yet sent. Its report names items by
+  item id and library, never a title, path, value or credential.
 - [Reviewer cost measurement](../development/reviewer-cost-measurement.md)
   is read-only by default; paid runs need explicit confirmation and a
   monitored budget, which an in-flight request may overshoot.

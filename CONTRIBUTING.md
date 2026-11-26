@@ -127,10 +127,11 @@ in their own commit, for Python and TypeScript alike.
   and edit it in place rather than appending history. Add a changelog entry for
   user-visible behaviour and an ADR for a durable architectural decision. See
   [documentation standards](docs/development/documentation-standards.md).
-- Before 1.0.0, a persisted-schema change declares `clean rebuild required` or
-  ships one exact-predecessor adoption, as
-  [ADR-0013](docs/architecture/decisions/0013-pre-release-clean-schema.md)
-  requires.
+- Before 1.0.0, a persisted-schema change declares **Derived regeneration
+  required** when it changes only derived state, with a new `DERIVED_VERSION`,
+  or **Clean rebuild required** when it changes the ledger, with a new
+  `LEDGER_FORMAT_VERSION`
+  ([ADR-0108](docs/architecture/decisions/0108-ledger-and-derived-state.md)).
 - Keep unrelated refactoring out, and never weaken a test, type, linter or
   safety gate to make a change pass.
 - Pass every check below.

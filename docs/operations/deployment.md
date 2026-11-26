@@ -431,7 +431,10 @@ Recovery of interrupted writes is in
 ## Commands in the image
 
 The container's entrypoint, `mechanical-librarian-container`, prepares `/data`
-and starts the review server. The image also installs the
+and starts the review server. Given `regenerate-derived`, with or without
+`--retire-pending`, it runs that offline command on the stopped volume
+instead ([upgrades](upgrades.md#upgrading-with-a-regeneration)); any other
+argument exits 2 with a usage line before anything is opened. The image also installs the
 `mechanical-librarian` command with these subcommands, which use the same
 configuration and data paths:
 

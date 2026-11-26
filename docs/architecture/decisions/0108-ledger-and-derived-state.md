@@ -361,7 +361,10 @@ subtitle where the answer's plan writes it as a companion, or, for an answer
 not yet planned, where the planner's bundle rule would write it at the
 check). Because the title,
 subtitle and series group is one question, a title answer is asked again when
-only the series offer changed.
+only the series offer changed. A provider-consensus title election that runs
+only while the target holds the book's own EPUB title is an expected non-carry
+too: after the owner's own write the offer gains the EPUB's decorated title,
+so that answer is asked again once, and the answer given then carries.
 
 **Steps**, for each text field and the description with a record row:
 
@@ -605,7 +608,9 @@ a provider, and is composed with no network client.
    `integrity_check` and a digest of every table against the source, and renames
    it to `/data/regeneration-backup/epoch-<n>.sqlite3` (directory `0700`, file
    `0600`, an unsafe existing entry refused), replacing any earlier copy. Crash
-   recovery and first-boot detection ignore that directory. The artifact sweep
+   recovery ignores that directory, and first-boot detection ignores it when it
+   is a private (`0700`) directory of the runtime user, failing closed on any
+   other entry under that name. The artifact sweep
    does nothing, and retained-cover removals wait, while it holds a copy, for
    every caller, so the copy and the artifacts stay a pair. The owner restores it with the previous release,
    setting the provider-recovery store aside (the provider-response store
@@ -624,8 +629,10 @@ a provider, and is composed with no network client.
       none, deleted (the record still keeps Automatic from switching that
       cover); `ledger_meta` gets the next epoch and the build's derived version
       and schema digest;
-   3. recreate every derived object from the build's DDL, seed the derived
-      singletons, and ask every configured library to scan;
+   3. recreate every derived object from the build's DDL and seed the derived
+      singletons; the scan table is left empty, so the server's next start
+      asks every configured library to scan (a kept preparation pause still
+      holds);
    4. `foreign_key_check` empty and `integrity_check` passing (it also checks
       index contents, which `quick_check` does not), or roll back;
    5. one append-only `derived_regenerations` row: epochs and versions before
