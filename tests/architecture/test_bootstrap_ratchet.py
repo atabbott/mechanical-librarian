@@ -60,7 +60,9 @@ ENTRY_POINTS = {
     "cover_child.py": 116,
     "epub_child.py": 653,
     "probe_shim.py": 70,
-    "container.py": 77,
+    # 107 since #2040 wired regenerate-derived, its upgrade notice and the
+    # question check into the container entry point (owner raised, 2026-11-26).
+    "container.py": 107,
     "container_health.py": 110,
 }
 CEILING = {

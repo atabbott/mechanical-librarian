@@ -171,7 +171,13 @@ Every change must include the smallest appropriate combination of:
   exact-predecessor adoption plan in the same issue and pull request. Ordinary
   startup accepts only absent or exact-current state; an adoption may be an
   explicit offline operation over reconstructible derived objects only, never
-  a generic migration, import, repair, downgrade, or canonical-data conversion;
+  a generic migration, import, repair, downgrade, or canonical-data conversion.
+  The one exception to both, for the application database (ADR-0108), is the
+  owner-run offline `regenerate-derived` command: for derived regeneration
+  and, from C6, code-defined exact-predecessor ledger migrations. A change
+  that moves the derived digest takes a new `DERIVED_VERSION` and declares
+  **Derived regeneration required**; a ledger change takes a new
+  `LEDGER_FORMAT_VERSION` and declares **Clean rebuild required**;
 - an ADR when a durable architectural decision changes;
 - changelog entry for user-visible behavior, stating the outcome in at most six
   lines with its issue reference and leaving the arithmetic, proof narrative,
