@@ -13,11 +13,12 @@ new one before you upgrade.
 ## Before every upgrade
 
 1. Read the changelog entries since your build.
-2. Stop the container gracefully (`docker compose down`, without `-v`).
-3. Take a complete backup of the stopped `/data` volume, as described in
+2. Let waiting writes finish in Activity before you stop the container.
+3. Stop the container gracefully (`docker compose down`, without `-v`).
+4. Take a complete backup of the stopped `/data` volume, as described in
    [Backups and recovery](backups-and-recovery.md). The application database
    and `/data/artifacts` are a pair; keep them together.
-4. Keep your deploy-side material: in file mode, `/data/config.json` and every
+5. Keep your deploy-side material: in file mode, `/data/config.json` and every
    secret and TLS file it references; in store mode, the
    `review-bootstrap.json` document and its TLS material.
 
@@ -43,10 +44,11 @@ prepared by another build. Stop the container, run docker compose run --rm
 mechanical-librarian regenerate-derived, then start it again. Upgrades has the
 steps."
 
-`regenerate-derived` keeps your answers, settings, consents, cover choices and
-write history, drops everything preparation made, and leaves preparation to
-make it again. It runs on the stopped volume, refuses while a server holds
-it, and contacts neither Audiobookshelf nor any provider.
+`regenerate-derived` keeps your settings, consents and write history, and each
+answer and cover choice as its report lists. It drops everything preparation
+made and leaves preparation to make it again. It runs on the stopped volume,
+refuses while a server holds it, and contacts neither Audiobookshelf nor any
+provider.
 
 1. Stop the container and back up `/data`, as in
    [Before every upgrade](#before-every-upgrade).
@@ -57,7 +59,9 @@ it, and contacts neither Audiobookshelf nor any provider.
    docker compose run --rm mechanical-librarian regenerate-derived
    ```
 
-4. When it prints `Regenerated.`, start the server with
+4. If it stops at its report, read it, then run it again with
+   `--retire-pending` ([The report](#the-report)).
+5. When it prints `Regenerated.`, start the server with
    `docker compose up -d`.
 
 The command exits 0 when it regenerated or found nothing to do, 1 when it
@@ -67,42 +71,56 @@ or 2, nothing was changed. A run that is interrupted rolls back; run it again.
 
 ### Writes still under way
 
-The command first lists work the previous build has to finish, by library,
-and by work item id and field where it is about one. A write that may have reached Audiobookshelf
-always stops it. A write waiting to be sent, a Resume automatic handling
-waiting for its scan, and a policy change still checking works stop it unless
-you pass `--retire-pending` ([below](#the-report)). Where it can tell offline, each line says why the
-work cannot finish now: writes paused, a suspension, preparation paused, or a
-library no longer in the configuration. To let the work finish, start the
-previous build with its connection reachable, wait until Activity shows it
-done, stop the container, and run the command again.
+The command first lists work the previous build has to finish, grouped by
+reason, then each work by library, work item id and field. A write that may
+have reached Audiobookshelf always stops it, with or without the flag. A
+write waiting to be sent, a Resume automatic handling waiting for its scan,
+and a policy change still checking works are listed above the report; the
+run goes ahead only with `--retire-pending`, which retires them. Where it can
+tell offline, the reason says why the work cannot finish now: writes paused,
+a suspension, preparation paused, or a library no longer in the
+configuration. Each reason ends with what to do; a library no longer
+configured has to be added back in Settings on the previous build first.
+
+To let the work finish on the previous build:
+
+1. Check out the version you ran before, and start it with
+   `docker compose up --build -d`.
+2. With the connection reachable, wait until Activity shows the work done.
+3. Stop the container, check out the new version again, and run the command
+   again.
 
 ### The report
 
 Before it changes anything, the command reports per library, naming works
-only by item id and field, never by title, author, path or value:
+only by item id and field, never by title, author, path or value. A list
+with nothing in it is left out:
 
-- answers not yet written, each kept if the next read asks the same question
-  and asked again otherwise;
+- answers not yet written, as a count, each kept if the next read asks the
+  same question and asked again otherwise;
+- answers whose waiting write `--retire-pending` retires;
 - answers already written, as a count;
-- descriptions you wrote that are not yet in Audiobookshelf;
+- descriptions you wrote that are not yet in Audiobookshelf, each asked
+  again, with Automatic staying off the description;
 - cover choices not yet written, and whether the work keeps your last written
   cover or has no cover choice left;
-- writes stopped for your decision, which leave Activity.
+- writes stopped for your decision, which Activity no longer counts as
+  needing you.
 
 Counts can include answers from earlier reads, so they are upper limits. When
-any of the last three lists is not empty, the command stops there. Read the
+anything is listed above the report, or any of the last three lists is not
+empty, the command stops after the report and changes nothing. Read the
 report, then run it again with `--retire-pending` to go ahead:
 
 ```text
 docker compose run --rm mechanical-librarian regenerate-derived --retire-pending
 ```
 
-With the flag the command also closes the waiting writes, open Resume
-requests and policy checks it would otherwise stop for. An answer whose
-waiting write it closes is asked again, and Automatic stays off that field. A
-policy change it closes reads as finished with failures and cannot be
-retried.
+With the flag the command closes the waiting writes, open Resume requests
+and policy checks it listed, and prints the report again as done. An answer
+whose waiting write it closes is asked again, and Automatic stays off that
+field. A policy change it closes reads as finished with failures and cannot
+be retried.
 
 ### The restore point
 
@@ -138,12 +156,20 @@ To go back to the build before the regeneration:
    sudo install -m 0600 -o 65532 -g 65532 regeneration-backup/epoch-<n>.sqlite3 application.sqlite3
    ```
 
-4. Build and start the previous build.
+4. Start the previous build, as in
+   [Writes still under way](#writes-still-under-way).
 
 Anything you did in Mechanical Librarian since the regeneration is lost.
 Values already written to Audiobookshelf stay written.
 
 Once you are satisfied with the new build, delete `/data/regeneration-backup`.
+The container user (UID 65532) owns it, so from the volume's directory on the
+host run:
+
+```text
+sudo rm -r regeneration-backup
+```
+
 Unused cover files are then removed as usual.
 
 ### After a regeneration
@@ -251,10 +277,10 @@ Some refusals affect one store only. Fix only that store.
   every existing consent. Activity and the Library write notice say why. Grant
   consent again in Activity; nothing is planned, claimed or scheduled until you
   do. Activating a new metadata policy does not lapse consent.
-- **A different Python can need a rebuild.** If the new build's Python has
-  different Unicode data, startup refuses the application database
-  ([Compatibility](../reference/compatibility.md#the-clean-state-rule)). Do a
-  clean rebuild.
+- **A different Python can need a regeneration.** If the new build's Python
+  has different Unicode data, startup names `regenerate-derived`
+  ([Compatibility](../reference/compatibility.md#the-clean-state-rule)).
+  Follow [Upgrading with a regeneration](#upgrading-with-a-regeneration).
 - **Open pages must be reloaded.** A page from an older bundle is refused on
   every unsafe request.
 

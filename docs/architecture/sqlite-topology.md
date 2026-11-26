@@ -225,10 +225,10 @@ canonical documents, not a cache and not an alternate authority.
   ([ADR-0084](decisions/0084-persisted-attention-facts.md)).
 
 `browse_fact_identity` records the Unicode version the facts were folded
-under and the Looks wrong rule list the flags were derived by. Open refuses
-any other version of either. A Python upgrade that changes Unicode data needs
-a clean rebuild; a build with a different rule list has a new derived
-version, so startup names `regenerate-derived`.
+under and the Looks wrong rule list the flags were derived by. Its one row is
+derived: open refuses any other version of either as another build's derived
+partition and names `regenerate-derived`, whether a Python upgrade changed
+Unicode data or a build changed the rule list.
 
 Open compares every derived relation with its canonical documents. A partial
 write, manual edit or interrupted projection refuses the database rather than

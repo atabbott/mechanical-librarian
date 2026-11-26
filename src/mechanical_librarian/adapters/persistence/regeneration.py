@@ -71,6 +71,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _validate_ledger_meta,
     _validate_schema,
     _validate_schema_contents,
+    browse_fact_identity_is_current,
     build_partition,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -416,8 +417,9 @@ class SQLiteRegenerationStore:
 
 
 def _derived_is_current(connection: sqlite3.Connection) -> bool:
-    """The ledger names this build's derived partition and the file holds
-    exactly this build's objects."""
+    """The ledger names this build's derived partition, the file holds
+    exactly this build's objects, and its browse facts were folded under this
+    build's Unicode version and rule list."""
     row = connection.execute(
         "SELECT derived_version,derived_schema_digest FROM ledger_meta"
     ).fetchone()
@@ -427,6 +429,7 @@ def _derived_is_current(connection: sqlite3.Connection) -> bool:
     return (
         row == (DERIVED_VERSION, build_partition().derived_schema_digest)
         and objects == _expected_schema_objects()
+        and browse_fact_identity_is_current(connection) is True
     )
 
 
