@@ -529,10 +529,12 @@ def _open_held_in_folder(parent: int, name: str) -> int | None:
         os.close(directory)
 
 
-def _ledger_digests(connection: sqlite3.Connection) -> list[str]:
+def _ledger_digests(
+    connection: sqlite3.Connection, objects: tuple[LedgerObject, ...]
+) -> list[str]:
     return [
         _table_digest(connection, name, sql)
-        for kind, name, _, sql in build_partition().ledger_objects
+        for kind, name, _, sql in objects
         if kind == "table"
     ]
 
@@ -554,7 +556,10 @@ def _replaced_copy(connection: sqlite3.Connection, parent: int) -> _HeldCopy | N
         try:
             _prepare(copy)
             copy.execute("BEGIN")
-            same = _ledger_digests(copy) == _ledger_digests(connection)
+            objects = _ledger_objects(connection)
+            same = _ledger_digests(copy, objects) == _ledger_digests(
+                connection, objects
+            )
         finally:
             copy.close()
         if not same or _identity(os.fstat(held)) != identity:
@@ -1028,13 +1033,16 @@ class SQLiteRegenerationSession:
     def _transaction(self, retire_pending: bool, inspection: Inspection) -> None:
         """Step 6 inside `BEGIN EXCLUSIVE`, in ADR-0108's order:
 
-        1. drop every object not in this build's ledger list;
-        2. ledger writes from ledger rows only. A pending ledger migration
-           runs first, here, once C6 builds one (admission refuses any other
-           ledger format until then); then, with the flag, its retirements
-           (`_retire_pending`); then every current authority is revoked through the existing
-           revocation; then the cover pointer plan; then `ledger_meta` takes
-           the next epoch and this build's derived version and digest;
+        1. drop every object not in the ledger list of the format the ledger
+           is in, so nothing a migration rewrites is dropped before it runs;
+        2. ledger writes from ledger rows only. Each pending migration runs
+           first (`migrate_ledger`, from the ledger's format to this
+           build's, as admission's dry run ran it); then, with the flag, its
+           retirements (`_retire_pending`); then every current authority is
+           revoked through the existing revocation, which makes authority a
+           migration invalidated history; then the cover pointer plan; then
+           `ledger_meta` takes the next epoch and this build's derived
+           version and digest;
         3. recreate every derived object from this build and its seed rows;
            the empty scan table makes the next start ask every configured
            library to scan;
@@ -1049,7 +1057,11 @@ class SQLiteRegenerationSession:
             "derived_schema_digest FROM ledger_meta WHERE singleton=1"
         ).fetchone()
         counts = dict.fromkeys(_COUNT_KEYS, 0)
-        counts["derived_objects_dropped"] = _drop_derived(connection, build)
+        counts["derived_objects_dropped"] = _drop_derived(
+            connection,
+            ledger_objects_at(before[0], LEDGER_FORMAT_VERSION, build.ledger_objects),
+        )
+        migrate_ledger(connection, before[0], LEDGER_FORMAT_VERSION)
         at = self._clock()
         effects = _field_effects(connection, self._binding)
         if retire_pending:
@@ -1147,10 +1159,12 @@ def _verify_copy(source: sqlite3.Connection, path: Path) -> None:
         copy.close()
 
 
-def _drop_derived(connection: sqlite3.Connection, build: BuildPartition) -> int:
-    """Drop every object outside this build's ledger list: triggers and views,
+def _drop_derived(
+    connection: sqlite3.Connection, ledger_objects: tuple[LedgerObject, ...]
+) -> int:
+    """Drop every object outside these ledger objects: triggers and views,
     then indexes on tables that stay, then tables, children first."""
-    ledger = {(kind, name, sql) for kind, name, _, sql in build.ledger_objects}
+    ledger = {(kind, name, sql) for kind, name, _, sql in ledger_objects}
     dropped = [
         (kind, name, table)
         for kind, name, table, sql in connection.execute(

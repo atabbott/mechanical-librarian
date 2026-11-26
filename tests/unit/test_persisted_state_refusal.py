@@ -28,8 +28,8 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     PersistedStateRefusal,
 )
+from tests.support.ledger_chain import chain, identity
 from tests.support.ledger_partition import _derived_setup, opens, rewrite
-from tests.unit.test_ledger_migrations import chain, identity
 
 _TODAY = "database is unavailable or incompatible"
 _REGENERATION = (

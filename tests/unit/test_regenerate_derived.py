@@ -53,6 +53,7 @@ from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY
 from mechanical_librarian.interfaces.cli import regenerate as cli
 from tests.support.field_effects import effects  # noqa: F401  # reason: the companion pair's fixture asks for it.
 from tests.support.genre_reports import genre_report
+from tests.support.ledger_chain import chain, identity
 from tests.support.ledger_partition import (
     _derived_setup,
     copied_store,
@@ -337,6 +338,23 @@ def test_another_ledger_needs_a_clean_rebuild(
     rewrite(path, statement)
     _, lines, _ = _refuses_unchanged(path)
     assert lines == [str(refusal())]
+
+
+@pytest.mark.parametrize(
+    ("sources", "current"),
+    [((2,), 3), ((1,), 3)],
+    ids=["first_step_missing", "last_step_missing"],
+)
+def test_an_earlier_ledger_the_chain_does_not_reach_needs_a_clean_rebuild(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sources: tuple[int, ...],
+    current: int,
+) -> None:
+    path = _fresh(tmp_path / "data")
+    chain(monkeypatch, *(identity(source) for source in sources), current=current)
+    _, lines, _ = _refuses_unchanged(path)
+    assert lines == [str(LedgerRebuildRequired())]
 
 
 def test_an_altered_ledger_object_refuses_with_its_own_line(tmp_path: Path) -> None:
@@ -1053,8 +1071,14 @@ def test_a_copy_that_does_not_match_refuses(
 
 @pytest.mark.parametrize(
     "phase",
-    ["_drop_derived", "_revoke_authorities", "_recreate_derived", "_validate_schema"],
-    ids=["drop", "ledger_writes", "recreate", "checks"],
+    [
+        "_drop_derived",
+        "migrate_ledger",
+        "_revoke_authorities",
+        "_recreate_derived",
+        "_validate_schema",
+    ],
+    ids=["drop", "migrate_ledger", "ledger_writes", "recreate", "checks"],
 )
 def test_a_failure_in_the_transaction_rolls_it_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
