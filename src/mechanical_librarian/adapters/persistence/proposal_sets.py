@@ -15,6 +15,7 @@ import sqlite3
 from collections.abc import Callable
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+from mechanical_librarian.adapters.persistence.ledger_meta import derived_epoch
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -108,8 +109,12 @@ class SQLiteProposalSetRepository(ConnectionScoped):
             policy_is_bound = current_policy is not None or (
                 policy_generation is not None and policy_generation[0] > 1
             )
+            # A set of another epoch than the ledger's is refused, so no
+            # earlier epoch's id is minted after a regeneration (ADR-0108).
+            epoch = derived_epoch(self._connection)
             if (
-                report.report_id != proposal_set.report_id
+                proposal_set.derived_epoch != epoch
+                or report.report_id != proposal_set.report_id
                 or report.target.fingerprint != proposal_set.target_fingerprint
                 or current != (proposal_set.report_id,)
                 or (
@@ -122,6 +127,7 @@ class SQLiteProposalSetRepository(ConnectionScoped):
                             report,
                             current_policy.resolved_id,
                             human_review_destinations(current_policy),
+                            derived_epoch=epoch,
                         ).to_json()
                     )
                 )
@@ -147,6 +153,14 @@ class SQLiteProposalSetRepository(ConnectionScoped):
             raise MetadataReportError(
                 "proposal publication precondition failed"
             ) from error
+
+    @local_operation
+    def derived_epoch(self) -> int:
+        """The epoch the ledger names, which a new proposal set is made at."""
+        try:
+            return derived_epoch(self._connection)
+        except sqlite3.Error as error:
+            raise MetadataReportError("persisted proposal is invalid") from error
 
     @local_operation
     def get_proposal(self, proposal_set_id: str) -> str:

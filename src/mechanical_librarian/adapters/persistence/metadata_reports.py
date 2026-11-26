@@ -1735,6 +1735,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def publish_proposal(self, proposal_set: ProposalSet) -> str:
         return self._proposal_sets.publish_proposal(proposal_set)
 
+    def derived_epoch(self) -> int:
+        return self._proposal_sets.derived_epoch()
+
     def get_proposal(self, proposal_set_id: str) -> str:
         return self._proposal_sets.get_proposal(proposal_set_id)
 

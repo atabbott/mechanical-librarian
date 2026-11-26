@@ -4139,6 +4139,8 @@ def _validate_review_browse_row(
         raise MetadataReportError("review browse row is invalid")
     case = ReviewCase.from_json(row[0])  # type: ignore[index]
     report = MetadataReport.from_json(row[1])  # type: ignore[index]
+    # Only the results are compared, so the stored set's own epoch serves.
+    proposal = ProposalSet.from_json(case.proposal_document)
     if (
         case.report_id != report.report_id
         or case.target != report.target.to_data()
@@ -4148,8 +4150,9 @@ def _validate_review_browse_row(
             value.to_data()
             for value in evaluate_report(
                 report,
-                ProposalSet.from_json(case.proposal_document).resolved_policy_id,
+                proposal.resolved_policy_id,
                 policy_destinations,
+                derived_epoch=proposal.derived_epoch,
             ).results
         )
         != case.results
