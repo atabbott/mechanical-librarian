@@ -99,7 +99,9 @@ _STOPPED = "regeneration could not continue"
 _SCRATCH_COPY = "database.sqlite"
 _BACKUP_COPY = re.compile(r"epoch-(0|[1-9][0-9]*)\.sqlite3")
 # The retained copy, then crash recovery's copies of the file and its
-# journal and the rollback journal itself (ADR-0108 step 1).
+# journal and the rollback journal itself (ADR-0108 step 1). Admission's
+# scratch copy of the ledger is deleted before the retained copy is made, so
+# its own file size fits inside the same reserve, which is checked before it.
 _RESERVE_FILE_SIZES = 4
 # `--retire-pending`'s retirements (ADR-0108 step 4); zero without the flag.
 _RETIREMENT_KEYS = (
@@ -396,6 +398,13 @@ class SQLiteRegenerationStore:
                 "PRAGMA busy_timeout=5000",
             ):
                 connection.execute(pragma)
+            # The scratch copy is the run's first write: the free-space
+            # refusal comes before it, never a full volume met while copying.
+            free, needed = _space(binding.parent_descriptor, binding.descriptor)
+            if free < needed:
+                raise InsufficientSpace(
+                    free, needed, backup_held(binding.parent_descriptor)
+                )
             _validate_ledger_content(connection, binding)
         except BaseException:
             connection.close()

@@ -4,9 +4,11 @@ The store side lives in `adapters/persistence/regeneration.py` and the words
 in `interfaces/cli/regenerate.py`. This module holds the order of the steps
 and the decision rule: admission, nothing to do, the free-space reserve, the
 gate, the report, the rule that only `--retire-pending` lets lists 3, 4 and 5
-go ahead, the retained backup and the one transaction. A write that meets a
-full volume is the free-space refusal. It returns what happened; the caller
-prints it and turns it into the exit status.
+go ahead, the retained backup and the one transaction. Admission's scratch
+copy of the ledger is the run's first write, so the store checks the same
+reserve before it, and a write that meets a full volume later is the same
+refusal. It returns what happened; the caller prints it and turns it into the
+exit status.
 """
 
 from __future__ import annotations

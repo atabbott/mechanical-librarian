@@ -17,6 +17,7 @@ import os
 import socket
 import sqlite3
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -345,6 +346,21 @@ def test_the_free_space_refusal_names_an_earlier_restore_point(
     assert lines[0].endswith(" " + cli.NO_SPACE_HELD)
 
 
+def _scratch_entries(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record each scratch copy the run starts; the copy is still made."""
+    real = regeneration._scratch
+    entered: list[str] = []
+
+    @contextmanager
+    def scratch(binding: Any) -> Iterator[tuple[int, Path]]:
+        entered.append("scratch")
+        with real(binding) as value:
+            yield value
+
+    monkeypatch.setattr(regeneration, "_scratch", scratch)
+    return entered
+
+
 def _scratch_meets_a_full_volume(monkeypatch: pytest.MonkeyPatch) -> None:
     """Admission's scratch copy cannot grow: SQLite's own SQLITE_FULL, met on
     the copy's first write, as on a volume with no room left."""
@@ -366,6 +382,30 @@ def _no_space_line(outcome: Outcome) -> str:
 
 def _no_scratch_left(path: Path) -> bool:
     return not [n for n in os.listdir(path.parent) if n.startswith(".metadata")]
+
+
+def test_a_volume_without_room_for_one_copy_refuses_before_admission_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The volume has less free than the database's own size, so admission's
+    scratch copy could not be written: the free-space refusal comes first,
+    and the copy is never started (review round 1, finding 1)."""
+    path = _fresh(tmp_path / "data")
+    _another_build(path)
+    size = path.stat().st_size
+    monkeypatch.setattr(
+        regeneration.os,
+        "fstatvfs",
+        lambda _descriptor: SimpleNamespace(f_bavail=size - 1, f_frsize=1),
+    )
+    _scratch_meets_a_full_volume(monkeypatch)
+    entered = _scratch_entries(monkeypatch)
+    status, lines, outcome = _refuses_unchanged(path)
+    assert (status, outcome.kind) == (1, "no_space")
+    assert (outcome.free, outcome.needed) == (size - 1, 4 * size)
+    assert lines == [_no_space_line(outcome)]
+    assert entered == []
+    assert _no_scratch_left(path)
 
 
 def _fails_with(error: BaseException) -> Callable[..., Any]:
