@@ -576,6 +576,10 @@ def set_pre_2038_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         persistence_schema, "validate_owner_field_answers", lambda connection: None
     )
+    # Nor any question check outcomes (#2040).
+    monkeypatch.setattr(
+        persistence_schema, "validate_carry_outcomes", lambda connection: None
+    )
 
 
 # Nor did it keep the owner's preparation controls apart from scheduling: one
@@ -1012,8 +1016,8 @@ def undo_2038_tables(
     """Undo #2038's table splits as every producer before it kept them:
     the two preparation control rows merged back into one row, and the
     description decisions and cover selections each back in one table,
-    keeping their values, and no record of the owner's answers, its counter
-    or its events, but the manual holds again, empty, with the refresh
+    keeping their values, and no record of the owner's answers, its counter,
+    its events or the question check's outcomes (#2040), but the manual holds again, empty, with the refresh
     triggers the record's took over where the store has those. A producer's
     own cover selection table, when it kept an older one, is
     `cover_selections_sql`."""
@@ -1023,7 +1027,7 @@ def undo_2038_tables(
     ).fetchone()
     connection.executescript(
         "DROP TABLE owner_field_answers;DROP TABLE owner_field_events;"
-        "DROP TABLE owner_answer_ordinal;"
+        "DROP TABLE owner_answer_ordinal;DROP TABLE carry_outcomes;"
         + PRE_2038_MANUAL_HOLDS_SQL
         + ";"
         + "".join(
