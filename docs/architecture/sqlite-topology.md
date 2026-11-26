@@ -433,9 +433,10 @@ lock:
    verifies the copies by digest, lets SQLite roll the copy back, and runs full
    read-only schema validation on the result.
 4. Only then does it let SQLite roll back the real file through the retained
-   alias, and removes the scratch directory and stale aliases. A journal whose
-   first header was never synced is one SQLite neither replays nor removes;
-   recovery removes it once its bytes are confirmed unchanged.
+   alias, and removes the scratch directory and stale aliases. An empty
+   journal, or one whose first header was never synced, is one SQLite neither
+   replays nor removes; recovery removes it once its bytes are confirmed
+   unchanged.
 
 Scratch copies left by an interrupted recovery are cleaned up first.
 Anything unknown or malformed refuses with

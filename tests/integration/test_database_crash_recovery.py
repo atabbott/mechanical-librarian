@@ -136,7 +136,7 @@ _KILL_STATES = {
     ids=[f"unsynced-{state}" for state in _KILL_STATES]
     + [f"multi-{state}" for state in ("header", "page_number", "page", "record")],
 )
-def test_root_recovers_every_state_a_killed_write_leaves(
+def test_root_recovers_each_write_boundary_a_killed_write_leaves(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, state: str
 ) -> None:
     from mechanical_librarian.adapters.persistence import crash_recovery
@@ -183,7 +183,14 @@ def test_root_recovers_every_state_a_killed_write_leaves(
 
 
 @pytest.mark.parametrize(
-    "fault", ["torn_length", "torn_page", "first_byte", "unsynced_count"]
+    "fault",
+    [
+        "torn_length",
+        "torn_page_zero",
+        "torn_page_range",
+        "first_byte",
+        "unsynced_count",
+    ],
 )
 def test_unsynced_journal_refusals_preserve_original_bytes_and_inodes(
     tmp_path: Path, fault: str
@@ -193,11 +200,15 @@ def test_unsynced_journal_refusals_preserve_original_bytes_and_inodes(
     data = bytearray(journal.read_bytes())
     _, _, _, sector, size = struct.unpack(">5I", data[8:28])
     assert data[:8] == bytes(8)
+    pages = struct.unpack(">I", data[16:20])[0]
     if fault == "torn_length":
-        del data[sector + 2 :]
-    elif fault == "torn_page":
+        # An in-range page number followed by part of its page: no single
+        # SQLite write ends there.
+        del data[sector + 8 :]
+    elif fault.startswith("torn_page"):
         del data[sector + 4 :]
-        data[sector : sector + 4] = bytes(4)
+        page = 0 if fault == "torn_page_zero" else pages + 1
+        data[sector : sector + 4] = struct.pack(">I", page)
     elif fault == "first_byte":
         # SQLite treats any non-zero first byte as a hot journal.
         data[0] = 1
@@ -209,6 +220,40 @@ def test_unsynced_journal_refusals_preserve_original_bytes_and_inodes(
         open_repository(path, recover_stale_bindings=True)
     assert _snapshot((path, alias, journal)) == before
     assert set(tmp_path.iterdir()) == {path, alias, journal}
+
+
+@pytest.mark.parametrize("change", ["appended", "rewritten", "mode"])
+def test_inert_journal_changed_after_admission_is_kept_and_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    from mechanical_librarian.adapters.persistence import crash_recovery
+
+    path = tmp_path / "application.sqlite3"
+    alias, journal = _crash(path, "unsynced")
+    assert journal.read_bytes()[:8] == bytes(8)
+    native = crash_recovery._native_rollback
+    replays: list[str] = []
+
+    def change_after_source_replay(candidate: Path, descriptor: int) -> None:
+        native(candidate, descriptor)
+        replays.append(candidate.name)
+        if candidate.name == "database.sqlite":
+            return
+        if change == "appended":
+            with journal.open("ab") as stream:
+                stream.write(bytes(1))
+        elif change == "rewritten":
+            # Same bytes, new modification time.
+            os.utime(journal, ns=(journal.stat().st_atime_ns, 1))
+        else:
+            journal.chmod(0o644)
+
+    monkeypatch.setattr(crash_recovery, "_native_rollback", change_after_source_replay)
+    with pytest.raises(MetadataReportError):
+        open_repository(path, recover_stale_bindings=True)
+    assert replays == ["database.sqlite", alias.name]
+    assert journal.exists()
+    assert alias.exists()
 
 
 @pytest.mark.parametrize("fault", ["truncate", "checksum", "tail", "padding", "count"])

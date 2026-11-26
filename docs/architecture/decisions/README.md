@@ -88,7 +88,7 @@ status line that says who accepted it and when.
 | [0075](0075-independent-evidence-led-titles.md) | accepted | Elect ISBN-linked ebook titles independently |
 | [0076](0076-dependency-build-provenance.md) | accepted; partly superseded by 0087 | Separate dependency build provenance from qualification |
 | [0077](0077-owned-responsive-review-reads.md) | accepted | Own responsive review reads with compact currentness checks |
-| [0078](0078-preparation-claim-and-crash-recovery.md) | accepted | Keep preparation ownership and recover from crashes |
+| [0078](0078-preparation-claim-and-crash-recovery.md) | accepted; Amendment 1 proposed | Keep preparation ownership and recover from crashes |
 | [0079](0079-supported-title-preservation-and-recovery.md) | accepted | Preserve supported titles and requeue explicit recovery |
 | [0080](0080-isbn-evidence-without-image.md) | accepted | Verify ebook ISBNs without image retrieval |
 | [0081](0081-image-owned-reviewer-provisioning.md) | accepted | Ship and validate the contained reviewer profile |

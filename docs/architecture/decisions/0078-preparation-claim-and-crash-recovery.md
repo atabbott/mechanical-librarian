@@ -99,10 +99,10 @@ measurement or change decision, consent, backup or target-write authority.
 SQLite writes a journal segment header with zeroed magic and count, appends
 each record as page number, page and checksum in three writes, and writes the
 magic only when it syncs the journal, before it writes any database page. A
-process killed before that sync leaves a state the reader above refused: an
-empty journal, a zeroed first header, or a torn final record. A store killed
-during a small write, or in the last segment of a large one, then would not
-start. In the large case the database is already partly written, so removing
+process killed between those writes leaves a state the reader above refused:
+an empty journal, a zeroed first header, or a final record torn at a write
+boundary. A store killed during a small write, or in the last segment of a
+large one, then would not start. In the large case the database is already partly written, so removing
 the journal by hand would corrupt it.
 
 The envelope reader now admits exactly those states and no others:
@@ -116,11 +116,14 @@ The envelope reader now admits exactly those states and no others:
 
 Everything else still refuses, including a non-zero first byte that is not the
 magic (SQLite would treat it as hot), a zeroed header with a non-zero count,
-any other tail length and a synced segment with an incomplete tail.
+any other tail length and a synced segment with an incomplete tail. A write cut
+short inside a single system call, or by power loss, can leave other lengths;
+those stay refused.
 
-Native SQLite treats a journal as hot only when its first byte is non-zero. An
-empty journal or one with a zeroed first header is never read and never
-removed by SQLite, and its database was never written. After the full
+Native SQLite treats a journal as hot only when its first byte is non-zero
+(and the database is not empty, which admission already requires). An empty
+journal or one with a zeroed first header is never replayed or removed by
+SQLite, and its database was never written. After the full
 copy-first admission and source validation above, recovery removes such a
 journal itself, checking that its inode, size, modification time and digest are
 unchanged; opening it as root may change only its owner metadata. Without this,
