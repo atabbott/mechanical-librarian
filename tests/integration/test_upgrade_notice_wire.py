@@ -35,7 +35,7 @@ from tests.unit.test_level_offer_binding import field_of
 from tests.unit.test_owner_answer_holds import _store
 
 _ORIGIN = "https://review.test"
-# `regenerate_as_the_command` finishes the run at 1_700_000_000; the owner
+# `regenerate` finishes the run at 1_700_000_000; the owner
 # answers after it.
 _AFTER_REGENERATION = 1_700_000_100
 
@@ -93,8 +93,9 @@ def test_the_notice_reads_the_ledger_after_a_real_regeneration(
     store = _regenerated(store)
     try:
         notices = store.repository.regeneration_notice_store()
+        configured = frozenset({(report.target.connection, report.target.library)})
         with _owner_client(store, tmp_path) as (client, csrf):
-            before = notices.read_regeneration_notice()
+            before = notices.read_regeneration_notice(configured)
             assert before is not None
             assert (before.kept, before.asked_again, before.not_yet_checked) == (
                 0,
@@ -114,7 +115,7 @@ def test_the_notice_reads_the_ledger_after_a_real_regeneration(
                 if read == "unchanged"
                 else rewritten(report, title="Another Title")
             )
-            after = notices.read_regeneration_notice()
+            after = notices.read_regeneration_notice(configured)
             assert after is not None
             assert (after.kept, after.asked_again, after.not_yet_checked) == (
                 kept,

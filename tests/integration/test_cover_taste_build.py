@@ -56,7 +56,7 @@ from tests.support.cover_taste import record_owner_cover_decisions
 from tests.support.ledger_copies import assert_ledger_copies
 from tests.support.ledger_partition import (
     copied_store,
-    regenerate_as_the_command,
+    regenerate,
     reopen_without_derived_rows,
 )
 from tests.unit.review_app_fixture import (
@@ -208,9 +208,11 @@ def test_a_profile_is_written_from_owner_choices_and_shown(tmp_path) -> None:
         checked = assert_ledger_copies(built.repository)
         assert checked["taste_decision"] > 0
         assert checked["taste_eligible"] > 0
-        assert reopen_without_derived_rows(built.repository, tmp_path / "regenerated")[
-            "owner_cover_selections.transport_sha256"
-        ]
+        # Cover choices not yet written need the owner's go-ahead (ADR-0108
+        # step 4); the choices themselves stand.
+        assert reopen_without_derived_rows(
+            built.repository, tmp_path / "regenerated", retire_pending=True
+        )["owner_cover_selections.transport_sha256"]
         built.service.wake(NOW)
         [client] = built.openrouter
         [request] = client.requests
@@ -651,7 +653,7 @@ def _decide_then_regenerate(
         regenerated = copied_store(repository, tmp_path / "regenerated")
     finally:
         repository.close()
-    regenerate_as_the_command(regenerated)
+    regenerate(regenerated)
     return path, regenerated
 
 

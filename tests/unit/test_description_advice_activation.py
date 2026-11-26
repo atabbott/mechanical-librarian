@@ -224,9 +224,11 @@ def test_real_service_candidate_admits_through_persisted_authority(
         > 0
     )
     # Its ledger stands without the derived rows it was made against.
-    assert reopen_without_derived_rows(repository, tmp_path / "regenerated")[
-        "field_effects.display_title"
-    ]
+    # A write stopped for the owner's decision needs the owner's go-ahead
+    # (ADR-0108 step 4), when version drift stopped it.
+    assert reopen_without_derived_rows(
+        repository, tmp_path / "regenerated", retire_pending=version_drift
+    )["field_effects.display_title"]
 
     repository.close()
     reopened = open_repository(tmp_path / "reports.sqlite", create=False)

@@ -239,6 +239,7 @@ class FakeReviewRepository:
         self.regeneration_notice: RegenerationNotice | None = None
         self.dismissed_regenerations: list[int] = []
         self.upgrade_notice_error: Exception | None = None
+        self.notice_configured: frozenset[tuple[str, str]] | None = None
         # Each recorded use of Library, and what the next one answers (#1351).
         self.library_visits: list[tuple[ListingPositions | None, int]] = []
         self.library_visit_moves: bool | Exception = False
@@ -324,7 +325,10 @@ class FakeReviewRepository:
     def regeneration_notice_store(self) -> RegenerationNoticeStore:
         return self
 
-    def read_regeneration_notice(self) -> RegenerationNotice | None:
+    def read_regeneration_notice(
+        self, configured: frozenset[tuple[str, str]]
+    ) -> RegenerationNotice | None:
+        self.notice_configured = configured
         if self.upgrade_notice_error is not None:
             raise self.upgrade_notice_error
         return self.regeneration_notice

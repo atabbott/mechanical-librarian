@@ -15,6 +15,7 @@ retained backup is a verified `VACUUM INTO` copy renamed into
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -24,7 +25,7 @@ import sqlite3
 import stat
 import sys
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import NoReturn
 from urllib.parse import quote
@@ -75,12 +76,14 @@ from mechanical_librarian.adapters.persistence.schema import (
 from mechanical_librarian.application.metadata_report import (
     DerivedRegenerationRequired,
     MetadataReportError,
+    PersistedStateRefusal,
 )
 from mechanical_librarian.application.regenerate_derived import (
     BlockingItem,
     Cause,
     CoverPointer,
     Inspection,
+    InsufficientSpace,
     Libraries,
     LibraryReport,
     Reason,
@@ -92,10 +95,13 @@ from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 
 _INCOMPATIBLE = "database is unavailable or incompatible"
+_STOPPED = "regeneration could not continue"
 _SCRATCH_COPY = "database.sqlite"
 _BACKUP_COPY = re.compile(r"epoch-(0|[1-9][0-9]*)\.sqlite3")
 # The retained copy, then crash recovery's copies of the file and its
-# journal and the rollback journal itself (ADR-0108 step 1).
+# journal and the rollback journal itself (ADR-0108 step 1). Admission's
+# scratch copy of the ledger is deleted before the retained copy is made, so
+# its own file size fits inside the same reserve, which is checked before it.
 _RESERVE_FILE_SIZES = 4
 # `--retire-pending`'s retirements (ADR-0108 step 4); zero without the flag.
 _RETIREMENT_KEYS = (
@@ -123,6 +129,46 @@ def _quoted(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def _full(error: BaseException | None) -> bool:
+    """A write met a full volume: the system's ENOSPC or EDQUOT, or SQLite's
+    SQLITE_FULL, raised or behind the error that carries it."""
+    while error is not None:
+        if isinstance(error, OSError) and error.errno in {errno.ENOSPC, errno.EDQUOT}:
+            return True
+        if isinstance(error, sqlite3.Error) and hasattr(error, "sqlite_errorcode"):
+            return error.sqlite_errorcode & 0xFF == sqlite3.SQLITE_FULL
+        error = error.__cause__ or error.__context__
+    return False
+
+
+def _space(parent: int, database: int) -> tuple[int, int]:
+    """Bytes free on the volume and the reserve the run needs."""
+    volume = os.fstatvfs(parent)
+    size = os.fstat(database).st_size
+    return volume.f_bavail * volume.f_frsize, _RESERVE_FILE_SIZES * size
+
+
+def _no_space(parent: int, database: int) -> InsufficientSpace:
+    return InsufficientSpace(*_space(parent, database), backup_held(parent))
+
+
+@contextmanager
+def _named_failures(parent: int, database: int) -> Iterator[None]:
+    """A system or SQLite error the run meets is the free-space refusal,
+    measured now, when the volume is full, and otherwise a failure with
+    nothing changed; neither reaches the owner as internal text."""
+    try:
+        yield
+    except (RegenerationRefusal, InsufficientSpace, PersistedStateRefusal):
+        raise
+    except (OSError, sqlite3.Error, MetadataReportError) as error:
+        if _full(error):
+            raise _no_space(parent, database) from error
+        if isinstance(error, MetadataReportError):
+            raise
+        raise MetadataReportError(_STOPPED) from error
+
+
 def _prepare(connection: sqlite3.Connection) -> None:
     _register_casefold(connection)
     connection.create_function(
@@ -144,6 +190,10 @@ def _validate_ledger_structure(connection: sqlite3.Connection) -> None:
         _validate_ledger_meta(connection)
     except DerivedRegenerationRequired:
         pass
+    except PersistedStateRefusal:
+        raise
+    except MetadataReportError as error:
+        raise RegenerationRefusal(Refusal.LEDGER_ALTERED) from error
     if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise RegenerationRefusal(Refusal.INTEGRITY)
     ledger = [
@@ -267,8 +317,6 @@ def _validate_ledger_content(
             scratch.execute("BEGIN")
             _validate_schema_contents(scratch, offline=True)
             scratch.execute("ROLLBACK")
-        except sqlite3.Error as error:
-            raise MetadataReportError(_INCOMPATIBLE) from error
         finally:
             scratch.close()
 
@@ -301,26 +349,25 @@ class SQLiteRegenerationStore:
         except DatabaseInUse as error:
             os.close(descriptor)
             raise RegenerationRefusal(Refusal.IN_USE) from error
-        except BaseException:
-            os.close(descriptor)
-            raise
+        except BaseException as error:
+            # Crash recovery restores and copies here, so it can meet a full
+            # volume; the binding's folder is not held yet.
+            try:
+                if _full(error):
+                    parent = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        raise _no_space(parent, descriptor) from error
+                    finally:
+                        os.close(parent)
+                if isinstance(error, sqlite3.Error):
+                    raise MetadataReportError(_STOPPED) from error
+                raise
+            finally:
+                os.close(descriptor)
         connection: sqlite3.Connection | None = None
         try:
-            _validate_ledger_read_only(binding.alias_path, binding.descriptor)
-            binding.require_current()
-            connection = _connect_bound(
-                binding.alias_path, binding.descriptor, binding.require_current
-            )
-            _prepare(connection)
-            binding.require_current()
-            for pragma in (
-                "PRAGMA foreign_keys=ON",
-                "PRAGMA journal_mode=DELETE",
-                "PRAGMA synchronous=FULL",
-                "PRAGMA busy_timeout=5000",
-            ):
-                connection.execute(pragma)
-            _validate_ledger_content(connection, binding)
+            with _named_failures(binding.parent_descriptor, binding.descriptor):
+                connection = self._admitted(binding)
             # Admission is never lent to a dependent: no schema attestation.
             session = SQLiteRegenerationSession(
                 connection, binding, self._clock, started_at
@@ -331,6 +378,56 @@ class SQLiteRegenerationStore:
             binding.close()
             raise
         return session
+
+    @staticmethod
+    def _admitted(binding: _LinuxDatabaseBinding) -> sqlite3.Connection:
+        """Validation points 2 and 3 over the bound database; the connection
+        they admit, ready for the run."""
+        _validate_ledger_read_only(binding.alias_path, binding.descriptor)
+        binding.require_current()
+        connection = _connect_bound(
+            binding.alias_path, binding.descriptor, binding.require_current
+        )
+        try:
+            _prepare(connection)
+            binding.require_current()
+            for pragma in (
+                "PRAGMA foreign_keys=ON",
+                "PRAGMA journal_mode=DELETE",
+                "PRAGMA synchronous=FULL",
+                "PRAGMA busy_timeout=5000",
+            ):
+                connection.execute(pragma)
+            # A database of this build has nothing to regenerate: the run
+            # writes nothing, so it needs neither the reserve nor the copy.
+            if not _derived_is_current(connection):
+                # The scratch copy is the run's first write: the free-space
+                # refusal comes before it, never a full volume met while copying.
+                free, needed = _space(binding.parent_descriptor, binding.descriptor)
+                if free < needed:
+                    raise InsufficientSpace(
+                        free, needed, backup_held(binding.parent_descriptor)
+                    )
+                _validate_ledger_content(connection, binding)
+        except BaseException:
+            connection.close()
+            raise
+        return connection
+
+
+def _derived_is_current(connection: sqlite3.Connection) -> bool:
+    """The ledger names this build's derived partition and the file holds
+    exactly this build's objects."""
+    row = connection.execute(
+        "SELECT derived_version,derived_schema_digest FROM ledger_meta"
+    ).fetchone()
+    objects = connection.execute(
+        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+    ).fetchall()
+    return (
+        row == (DERIVED_VERSION, build_partition().derived_schema_digest)
+        and objects == _expected_schema_objects()
+    )
 
 
 # --- The gate, the report and the cover pointer plan (ledger rows only) ----
@@ -449,33 +546,28 @@ class SQLiteRegenerationSession:
         finally:
             self._binding.close()
 
+    def _named_failures(self) -> AbstractContextManager[None]:
+        return _named_failures(
+            self._binding.parent_descriptor, self._binding.descriptor
+        )
+
     def derived_is_current(self) -> bool:
         """Nothing to do: the ledger names this build's derived partition and
         the file holds exactly this build's objects."""
-        build = build_partition()
-        version, digest = self._connection.execute(
-            "SELECT derived_version,derived_schema_digest FROM ledger_meta"
-        ).fetchone()
-        return (
-            version == DERIVED_VERSION
-            and digest == build.derived_schema_digest
-            and self._connection.execute(
-                "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
-            ).fetchall()
-            == _expected_schema_objects()
-        )
+        with self._named_failures():
+            return _derived_is_current(self._connection)
 
     def free_space(self) -> tuple[int, int]:
-        volume = os.fstatvfs(self._binding.parent_descriptor)
-        size = os.fstat(self._binding.descriptor).st_size
-        return volume.f_bavail * volume.f_frsize, _RESERVE_FILE_SIZES * size
+        with self._named_failures():
+            return _space(self._binding.parent_descriptor, self._binding.descriptor)
 
     def store_libraries(self) -> Libraries | None:
         """The stored settings' libraries, decoded without their secrets;
         None while setup has not finished or the document does not decode."""
-        row = self._connection.execute(
-            "SELECT document FROM owner_settings WHERE singleton=1"
-        ).fetchone()
+        with self._named_failures():
+            row = self._connection.execute(
+                "SELECT document FROM owner_settings WHERE singleton=1"
+            ).fetchone()
         if row is None:
             return None
         try:
@@ -523,6 +615,10 @@ class SQLiteRegenerationSession:
         return causes
 
     def inspect(self, configured: Libraries | None) -> Inspection:
+        with self._named_failures():
+            return self._inspect(configured)
+
+    def _inspect(self, configured: Libraries | None) -> Inspection:
         connection = self._connection
         causes = self._causes(configured)
         blocking: list[BlockingItem] = []
@@ -660,7 +756,12 @@ class SQLiteRegenerationSession:
     def back_up(self) -> None:
         """Fill a scratch copy with `VACUUM INTO`, sync and verify it, and
         rename it to `regeneration-backup/epoch-<n>.sqlite3`, replacing any
-        earlier copy (ADR-0108 step 5)."""
+        earlier copy (ADR-0108 step 5). A full volume is the free-space
+        refusal; any other error stops the run with nothing changed."""
+        with self._named_failures():
+            self._back_up()
+
+    def _back_up(self) -> None:
         (epoch,) = self._connection.execute(
             "SELECT derived_epoch FROM ledger_meta WHERE singleton=1"
         ).fetchone()
@@ -700,19 +801,25 @@ class SQLiteRegenerationSession:
         if self._backup_sha256 is None:
             raise MetadataReportError("regeneration has no verified backup")
         connection = self._connection
-        try:
-            connection.execute("PRAGMA secure_delete=FAST")
-            connection.execute("BEGIN EXCLUSIVE")
-            self._transaction(retire_pending, inspection)
-            connection.execute("COMMIT")
-        except Exception as error:
-            if connection.in_transaction:
-                connection.execute("ROLLBACK")
-            raise RegenerationRefusal(Refusal.ROLLED_BACK) from error
-        except BaseException:
-            if connection.in_transaction:
-                connection.execute("ROLLBACK")
-            raise
+        with self._named_failures():
+            try:
+                connection.execute("PRAGMA secure_delete=FAST")
+                connection.execute("BEGIN EXCLUSIVE")
+                self._transaction(retire_pending, inspection)
+                connection.execute("COMMIT")
+            except Exception as error:
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
+                if _full(error):
+                    # Rolled back; the retained copy is kept (step 5).
+                    raise _no_space(
+                        self._binding.parent_descriptor, self._binding.descriptor
+                    ) from error
+                raise RegenerationRefusal(Refusal.ROLLED_BACK) from error
+            except BaseException:
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
+                raise
 
     def _transaction(self, retire_pending: bool, inspection: Inspection) -> None:
         """Step 6 inside `BEGIN EXCLUSIVE`, in ADR-0108's order:
@@ -844,7 +951,7 @@ def _drop_derived(connection: sqlite3.Connection, build: BuildPartition) -> int:
         (kind, name, table)
         for kind, name, table, sql in connection.execute(
             "SELECT type,name,tbl_name,sql FROM sqlite_master "
-            "WHERE name NOT LIKE 'sqlite_%' ORDER BY rowid"
+            "WHERE name NOT GLOB 'sqlite_*' ORDER BY rowid"
         ).fetchall()
         if (kind, name, sql) not in ledger
     ]

@@ -2030,7 +2030,7 @@ def test_upgrade_notice_reads_nothing_before_the_first_regeneration(
     repository = open_repository(tmp_path / "application.sqlite3")
     try:
         store = repository.regeneration_notice_store()
-        assert store.read_regeneration_notice() is None
+        assert store.read_regeneration_notice(frozenset()) is None
         with pytest.raises(RegenerationNoticeDismissalInvalid):
             store.dismiss_regeneration_notice(1, 10)
     finally:
@@ -2133,6 +2133,10 @@ def test_upgrade_notice_is_preparing_only_while_preparation_runs(
         notice = web.client.get("/api/v1/upgrade-notice").json()["notice"]
         assert notice["preparing"] is preparing
         assert (notice["kept"], notice["asked_again"]) == (3, 2)
+        # The read is told the libraries preparation reads now.
+        assert web.repository.notice_configured == frozenset(
+            (connection, library) for connection, library, *_ in lane.libraries
+        )
         assert (
             web.client.get("/api/v1/review-preparation").json()["active"] is preparing
         )

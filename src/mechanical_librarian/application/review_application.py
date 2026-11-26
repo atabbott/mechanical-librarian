@@ -2271,7 +2271,17 @@ class ReviewApplication:
 
     def upgrade_notice(self) -> UpgradeNotice | None:
         store = self._state_owner.regeneration_notice_store()
-        notice = self.serialized(store.read_regeneration_notice)
+        # The libraries preparation reads now: file mode keeps them outside
+        # the database, and an answer whose library left can never be checked.
+        configured = frozenset(
+            ()
+            if self._preparation is None
+            else (
+                (connection, library)
+                for connection, library, *_ in self._preparation.libraries
+            )
+        )
+        notice = self.serialized(lambda: store.read_regeneration_notice(configured))
         if notice is None or notice.dismissed:
             return None
         # Counts can stay short of every answer for good (a book left the

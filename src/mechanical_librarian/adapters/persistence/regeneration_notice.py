@@ -5,12 +5,17 @@ The latest `derived_regenerations` row names the regeneration, its epoch and
 before it. Each such answer's first final `carry_outcomes` row of that epoch
 is its book's first new case: carried is kept, the other final outcomes are
 asked again where the field has decision actions there. A record answer from
-before with no final row of that epoch is not yet checked. The one dismissal
-per regeneration is `regeneration_notice_dismissals`.
+before with no final row of that epoch is not yet checked while a new case
+can still come for it: its library is configured, and has not completed a
+scan in which its work did not appear. The scan tables are derived, so every
+scan they hold ran after the latest regeneration; a completed scan whose
+discovery succeeded leaves exactly the works it listed. The one dismissal per
+regeneration is `regeneration_notice_dismissals`.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
@@ -54,20 +59,34 @@ _FIRST_CASES_SQL = (
     "FROM checked WHERE checked.place=1"
 )
 # The record's answers from before the regeneration that the check runs on
-# and no new case has settled yet.
+# and no new case has settled yet, while one can still come: the library is
+# configured, and no completed scan of it left the work out.
 _NOT_YET_CHECKED_SQL = (
     "SELECT COUNT(*) FROM owner_field_answers record WHERE record.ordinal<=:hwm "
     "AND record.destination<>'cover' AND record.pin_fingerprint IS NULL "
     "AND record.outcome<>'pin' AND NOT EXISTS (SELECT 1 FROM carry_outcomes "
     "outcome WHERE outcome.answer_id=record.answer_id "
-    f"AND outcome.derived_epoch=:epoch AND outcome.outcome NOT IN ({_PROVISIONAL}))"
+    f"AND outcome.derived_epoch=:epoch AND outcome.outcome NOT IN ({_PROVISIONAL})) "
+    "AND EXISTS (SELECT 1 FROM json_each(:configured) configured "
+    "WHERE json_extract(configured.value,'$[0]')=record.connection_name "
+    "AND json_extract(configured.value,'$[1]')=record.library_name) "
+    "AND NOT (EXISTS (SELECT 1 FROM review_preparation_scans scan "
+    "WHERE scan.connection_name=record.connection_name "
+    "AND scan.library_name=record.library_name "
+    "AND scan.state IN ('completed','completed_with_failures') "
+    "AND scan.discovery_failure IS NULL) "
+    "AND NOT EXISTS (SELECT 1 FROM review_preparation_work work "
+    "WHERE work.connection_name=record.connection_name "
+    "AND work.library_name=record.library_name AND work.item_id=record.item_id))"
 )
 
 
 class SQLiteRegenerationNoticeStore(ConnectionScoped):
     """`RegenerationNoticeStore` over the application database."""
 
-    def read_regeneration_notice(self) -> RegenerationNotice | None:
+    def read_regeneration_notice(
+        self, configured: frozenset[tuple[str, str]]
+    ) -> RegenerationNotice | None:
         transaction = self._transaction("read_regeneration_notice", deferred=True)
         try:
             transaction.begin()
@@ -80,7 +99,8 @@ class SQLiteRegenerationNoticeStore(ConnectionScoped):
                     _FIRST_CASES_SQL, bounds
                 ).fetchone()
                 (not_yet_checked,) = self._connection.execute(
-                    _NOT_YET_CHECKED_SQL, bounds
+                    _NOT_YET_CHECKED_SQL,
+                    {**bounds, "configured": json.dumps(sorted(configured))},
                 ).fetchone()
                 notice = RegenerationNotice(
                     regeneration_id=regeneration_id,

@@ -66,7 +66,7 @@ from tests.integration.test_screens_across_regeneration import (
     _proposed_title,
     _store,
 )
-from tests.support.ledger_partition import regenerate_as_the_command
+from tests.support.ledger_partition import regenerate
 from tests.support.owner_field_record import request_resume
 from tests.support.ports import ReservedPort
 from tests.unit.review_app_fixture import create_transport_test_app
@@ -212,7 +212,9 @@ def _regenerated_library(root: Path) -> dict[str, str]:
             report.target.item: store.publish(report).review_case_id
             for report in (_A, _B_AGAIN)
         }
-        notice = store.repository.regeneration_notice_store().read_regeneration_notice()
+        notice = store.repository.regeneration_notice_store().read_regeneration_notice(
+            frozenset({(_A.target.connection, _A.target.library)})
+        )
         assert notice is not None
         assert (notice.kept, notice.asked_again, notice.not_yet_checked) == (1, 1, 0)
     finally:
@@ -435,5 +437,5 @@ def test_policy_hides_retry_failed_works_once_no_failed_work_is_left() -> None:
                     expect(retry).to_have_count(0)
 
         read(expect_retry=True)
-        regenerate_as_the_command(root / "owner.sqlite")
+        regenerate(root / "owner.sqlite")
         read(expect_retry=False)

@@ -42,7 +42,7 @@ from tests.integration.test_cover_rules_activation import (
 )
 from tests.integration.test_cover_taste_automatic import _keep_cover
 from tests.support.audiobook_covers import SYNTHETIC_MEASURED_RECORD
-from tests.support.ledger_partition import regenerate_as_the_command
+from tests.support.ledger_partition import regenerate
 from tests.support.owner_field_record import (
     assert_record_recomputes,
     complete_resume,
@@ -1799,7 +1799,7 @@ def _regenerated(store: OwnerStore) -> OwnerStore:
     reopen it on the same policy (#2039, T-W)."""
     resolved, ticks = store.resolved, store.ticks
     store.close()
-    regenerate_as_the_command(store.root / "owner.sqlite")
+    regenerate(store.root / "owner.sqlite")
     reopened = OwnerStore(store.root, None)
     reopened.resolved, reopened.ticks = resolved, ticks
     return reopened

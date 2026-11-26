@@ -59,7 +59,7 @@ from tests.unit.test_owner_answer_holds import _activate, _profile
 _ORIGIN = "https://review.test"
 _PASSWORD = "correct horse"
 # The owner answers a few hours before the run, which
-# `regenerate_as_the_command` finishes at 1_700_000_000; the books are
+# `regenerate` finishes at 1_700_000_000; the books are
 # prepared again after it, and the screens are read later still, so every
 # row is inside Activity's 30-day range.
 _BEFORE = 1_699_990_000
@@ -85,6 +85,7 @@ def _book(item: str, name: str, **changes: Any) -> MetadataReport:
 
 
 _A = _book("item-a", "Alder")
+_CONFIGURED = frozenset({(_A.target.connection, _A.target.library)})
 _B = _book("item-b", "Birch")
 _C = _book("item-c", "Cedar")
 # A written title is read back, as the scan after a write reads it.
@@ -349,7 +350,7 @@ def test_the_screens_read_the_same_answers_across_a_regeneration(
     try:
         with _client(store, tmp_path) as client:
             regeneration = store.repository.regeneration_notice_store()
-            pending = regeneration.read_regeneration_notice()
+            pending = regeneration.read_regeneration_notice(_CONFIGURED)
             assert pending is not None
             # Six answers wait for their book's first new case; the pin is
             # never checked, so it is in no count.
@@ -371,7 +372,7 @@ def test_the_screens_read_the_same_answers_across_a_regeneration(
             }
             assert not set(new_cases.values()) & set(cases.values())
             after = _screens(client, new_cases)
-            settled = regeneration.read_regeneration_notice()
+            settled = regeneration.read_regeneration_notice(_CONFIGURED)
             assert settled is not None
             assert (settled.kept, settled.asked_again, settled.not_yet_checked) == (
                 3,

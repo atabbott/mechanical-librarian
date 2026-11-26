@@ -1,11 +1,17 @@
-"""Reopen a store whose derived partition was regenerated (ADR-0108).
+"""Reopen a store after a real `regenerate-derived` run (ADR-0108).
 
-`regenerate-derived` drops derived state and recreates it empty, and
-preparation rebuilds it. This module does that to a copy of a store: it
-deletes every derived row, puts back the setup rows a new schema writes into
-derived tables, reopens the copy through the product's own open validation and
-decodes every ledger document. A caller whose store reached a kind of ledger
-row so proves that row stands without the derived rows it was made against.
+`regenerate` runs the product's command over a store as an upgrade leaves it:
+the ledger names another derived version, so the command drops the derived
+partition, recreates it empty, revokes every current authority and bumps the
+derived epoch in its one transaction. `reopen_without_derived_rows` then
+reopens the store through the product's own open validation and decodes every
+ledger document. A caller whose store reached a kind of ledger row so proves
+that row stands without the derived rows it was made against.
+
+`strip_derived_rows` is not a regeneration: it deletes derived rows behind
+every guard and leaves the epoch, the audit and every authority as they were.
+Only the command's ledger-only admission meets that state, on its scratch
+copy, so only a test of that admission uses it.
 """
 
 from __future__ import annotations
@@ -26,7 +32,10 @@ from mechanical_librarian.adapters.persistence.regeneration import (
 )
 from mechanical_librarian.application.configuration import ApplicationConfiguration
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.regenerate_derived import regenerate_derived
+from mechanical_librarian.application.regenerate_derived import (
+    Outcome,
+    regenerate_derived,
+)
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceCandidate,
@@ -64,12 +73,31 @@ _COPIES = {
 }
 
 
+# Ledger rows a run without `--retire-pending` writes: its own record and the
+# revocation of every current authority. Every other ledger row stays.
+_WRITTEN_BY_THE_RUN = frozenset(
+    {"ledger_meta", "derived_regenerations", "field_effect_authorities"}
+)
+# And with the flag: the plans it retires or releases and their events and
+# cleanups, the answers they would have written, Resume closures, a settled
+# policy change and the cover pointer plan (ADR-0108 step 4).
+_WRITTEN_WITH_THE_FLAG = _WRITTEN_BY_THE_RUN | {
+    "field_effects",
+    "field_effect_events",
+    "field_effect_cleanups",
+    "owner_field_answers",
+    "owner_field_events",
+    "metadata_policy_transitions",
+    "owner_cover_pointers",
+}
+
+
 def _tables(connection: sqlite3.Connection) -> set[str]:
     return {
         name
         for (name,) in connection.execute(
             "SELECT name FROM sqlite_schema WHERE type='table' "
-            "AND name NOT LIKE 'sqlite_%'"
+            "AND name NOT GLOB 'sqlite_*'"
         )
     }
 
@@ -117,33 +145,9 @@ def _without_triggers[T](path: Path, change: Callable[[sqlite3.Connection], T]) 
     return result
 
 
-def _store_mode() -> ApplicationConfiguration:
-    """No configuration file: the command reads the stored settings."""
-    raise FileNotFoundError
-
-
-def regenerate_as_the_command(path: Path) -> None:
-    """Run the real `regenerate-derived` over the closed store at ``path`` as
-    an upgrade leaves it (the ledger names another derived version), without
-    `--retire-pending`, and require that it regenerated: the derived epoch
-    moves on, so the next read of a work admits a new case, and the run's
-    audit row and revocations are written as the command writes them."""
-    assert rewrite(path, "UPDATE ledger_meta SET derived_version=2") == 1
-    path.chmod(0o600)  # as the server's own file is; a copy is made 0644
-    outcome = regenerate_derived(
-        SQLiteRegenerationStore(path, lambda: 1_700_000_000),
-        retire_pending=False,
-        configuration=_store_mode,
-    )
-    assert outcome.kind == "regenerated", outcome
-
-
-def regenerate(path: Path) -> None:
-    """Delete every derived row and put back what a new schema sets up.
-
-    Only the derived rows: unlike `regenerate_as_the_command`, the derived
-    epoch, the audit row and the authorities stay as they were. For proofs
-    about what open admits without derived rows."""
+def strip_derived_rows(path: Path) -> None:
+    """Delete every derived row and put back what a new schema sets up,
+    behind every guard. Not a regeneration (see the module docstring)."""
     setup = _derived_setup()
 
     def change(connection: sqlite3.Connection) -> None:
@@ -156,6 +160,41 @@ def regenerate(path: Path) -> None:
                 )
 
     _without_triggers(path, change)
+
+
+def _store_mode() -> ApplicationConfiguration:
+    raise FileNotFoundError
+
+
+def run_regeneration(
+    path: Path, *, retire_pending: bool = False, at: int = 1_700_000_000
+) -> Outcome:
+    """Run the real `regenerate-derived` over the store at ``path`` as an
+    upgrade leaves it (the ledger names another derived version), with the
+    clock at ``at``, and return what it did.
+
+    The store's folder must be private, as `/data` is; the file is made
+    owner-only, as the server's own file is. The retained copy lands in the
+    folder's `regeneration-backup`, as on a volume."""
+    path.chmod(0o600)
+    assert rewrite(path, "UPDATE ledger_meta SET derived_version=2") == 1
+    return regenerate_derived(
+        SQLiteRegenerationStore(path, lambda: at),
+        retire_pending=retire_pending,
+        configuration=_store_mode,
+    )
+
+
+def regenerate(
+    path: Path, *, retire_pending: bool = False, at: int = 1_700_000_000
+) -> Outcome:
+    """`run_regeneration`, which must regenerate. A store holding a write
+    waiting to be sent, an unwritten authored description or cover choice, or
+    a write stopped for the owner regenerates only with ``retire_pending``,
+    as the command stops without the flag (ADR-0108 step 4)."""
+    outcome = run_regeneration(path, retire_pending=retire_pending, at=at)
+    assert outcome.kind == "regenerated", outcome
+    return outcome
 
 
 def rewrite(path: Path, sql: str, parameters: tuple[object, ...] = ()) -> int:
@@ -307,21 +346,33 @@ def decode_ledger(connection: sqlite3.Connection) -> Counter[str]:
 
 
 def reopen_without_derived_rows(
-    repository: SQLiteMetadataReportRepository, root: Path
+    repository: SQLiteMetadataReportRepository,
+    root: Path,
+    *,
+    retire_pending: bool = False,
 ) -> Counter[str]:
-    """Copy the store under ``root``, regenerate its derived partition, and
-    reopen it: the ledger must open unchanged and decode."""
+    """Copy the store under ``root``, run `regenerate-derived` over the copy
+    and reopen it: every ledger row but those the run writes must stand
+    unchanged and decode, beside the build's empty derived partition at the
+    next epoch."""
     path = copied_store(repository, root)
     connection = sqlite3.connect(path)
     try:
         before = _ledger_rows(connection)
     finally:
         connection.close()
-    regenerate(path)
+    regenerate(path, retire_pending=retire_pending)
+    written = _WRITTEN_WITH_THE_FLAG if retire_pending else _WRITTEN_BY_THE_RUN
     reopened = open_repository(path, create=False)
     try:
         connection = reopened._connection
-        assert _ledger_rows(connection) == before
+        after = _ledger_rows(connection)
+        assert {
+            table: rows for table, rows in after.items() if table not in written
+        } == {table: rows for table, rows in before.items() if table not in written}
+        ((_, _, epoch_before, _, _),) = before["ledger_meta"]
+        ((_, _, epoch, _, _),) = after["ledger_meta"]
+        assert type(epoch_before) is int and epoch == epoch_before + 1
         assert {
             table: connection.execute(f"SELECT * FROM {table}").fetchall()
             for table in _derived_setup()
