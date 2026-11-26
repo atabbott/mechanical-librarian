@@ -34,6 +34,8 @@ secrets/
 *.sqlite
 *.sqlite3
 *.db
+# The frozen synthetic ledger of each format version (ADR-0108).
+!/tests/fixtures/ledger/v*.sqlite3
 
 # Mutation-analysis working tree. `mutmut run` copies `src/`, `tests/` and the
 # repository files the suite reads into `mutants/` and rewrites the audited

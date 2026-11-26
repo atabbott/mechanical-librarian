@@ -253,6 +253,20 @@ def _resolved(
     return ResolvedMetadataPolicy.from_data(json.loads(document))
 
 
+def current_proposal(
+    repository: SQLiteMetadataReportRepository, report: MetadataReport
+) -> ProposalSet:
+    """The report's proposal set under its library's active policy, over the
+    ledger's derived epoch, as `CreateProposalSet` reads them."""
+    policy = _resolved(repository, report.target.library)
+    return evaluate_report(
+        report,
+        policy.resolved_id,
+        human_review_destinations(policy),
+        derived_epoch=repository.derived_epoch(),
+    )
+
+
 def _entry(report: MetadataReport, held: Held | None) -> CatalogueEntry:
     """The work as discovery lists it: as prepared, or as the library holds
     it now."""
@@ -395,14 +409,7 @@ def prepared(
         if held is not None:
             held.proposed.append(report_id)
             held.require_current(value)
-        policy = _resolved(concrete, value.target.library)
-        # Over the ledger's derived epoch, as `CreateProposalSet` reads it.
-        proposal = evaluate_report(
-            value,
-            policy.resolved_id,
-            human_review_destinations(policy),
-            derived_epoch=concrete.derived_epoch(),
-        )
+        proposal = current_proposal(concrete, value)
         concrete.publish_proposal(proposal)
         evaluations.append(proposal.proposal_set_id)
         return proposal.proposal_set_id
