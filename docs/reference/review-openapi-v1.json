@@ -3912,7 +3912,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v15",
+            "const": "review-case-detail-v16",
             "title": "Schema Version",
             "type": "string"
           },
@@ -6232,7 +6232,8 @@
           "application": {
             "enum": [
               "apply",
-              "recorded_only"
+              "recorded_only",
+              "settled"
             ],
             "title": "Application",
             "type": "string"
@@ -7425,7 +7426,8 @@
               {
                 "enum": [
                   "apply",
-                  "recorded_only"
+                  "recorded_only",
+                  "settled"
                 ],
                 "type": "string"
               },
@@ -7478,7 +7480,10 @@
             "type": "string"
           },
           "kind": {
-            "const": "human_decision_recorded",
+            "enum": [
+              "human_decision_recorded",
+              "human_decision_carried"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -8001,7 +8006,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v8",
+            "const": "review-case-history-v9",
             "title": "Schema Version",
             "type": "string"
           }

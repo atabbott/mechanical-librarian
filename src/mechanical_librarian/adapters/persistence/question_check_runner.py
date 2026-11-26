@@ -98,11 +98,22 @@ _COMPANION_SQL = (
     "CAST(json_extract(document,'$.plan.subtitle_companion.authority.decision_id') "
     "AS TEXT) IN (" + _CHAIN_SQL + ") ORDER BY rowid DESC LIMIT 1"
 )
+# Every title plan that writes the chain's subtitle as its companion.
+_COMPANION_PLANS_SQL = (
+    "SELECT state,document FROM field_effects WHERE "
+    "CAST(json_extract(document,'$.plan.subtitle_companion.authority.decision_id') "
+    "AS TEXT) IN (" + _CHAIN_SQL + ")"
+)
 _IN_FLIGHT = frozenset({"planned", "claimed", "applying", "reconciling", "retryable"})
 # A plan stopped on one of these waits for the owner (ADR-0108, step 3).
 _STOPPED_FOR_OWNER = frozenset(
     {"third_value", "target_changed", "readback", "restore_unavailable"}
 )
+
+
+def _in_flight(state: str, failure: object) -> bool:
+    """A plan still writing, or stale for its connection (ADR-0039)."""
+    return state in _IN_FLIGHT or (state == "stale" and failure == "connection")
 
 
 def _chain_plan(
@@ -112,7 +123,11 @@ def _chain_plan(
     plan's desired value, else the subtitle a verified title plan wrote as
     its companion, else the projected value of a chain decision with nothing
     to write, else None (ADR-0108, steps 2 and 3). Whether anything is
-    written at all is `answer_written_sql`'s answer."""
+    written at all is `answer_written_sql`'s answer.
+
+    A write of the answer is still under way while its own plan, or a title
+    plan writing it as its subtitle companion, is in flight: the companion
+    arm mirrors `answer_written_sql`'s (root ruling on #2040, h2b item 6)."""
     plan: Literal["none", "in_flight", "stopped"] = "none"
     written: tuple[object] | None = None
     stopped = False
@@ -123,12 +138,15 @@ def _chain_plan(
         (answer_id,),
     ):
         failure = json.loads(document).get("failure")
-        if state in _IN_FLIGHT or (state == "stale" and failure == "connection"):
+        if _in_flight(state, failure):
             plan = "in_flight"
         elif state == "verified":
             written = (json.loads(document)["plan"]["desired_value"],)
         elif failure in _STOPPED_FOR_OWNER:
             stopped = True
+    for state, document in connection.execute(_COMPANION_PLANS_SQL, (answer_id,)):
+        if _in_flight(state, json.loads(document).get("failure")):
+            plan = "in_flight"
     # Whether the chain is written at all is the ledger's own predicate; the
     # value it wrote is read only then.
     is_written = bool(

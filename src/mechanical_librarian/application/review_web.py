@@ -157,10 +157,12 @@ from mechanical_librarian.domain.value_flags import value_flags
 # v13: a field says whether its owner accept needs no write (ADR-0105);
 # v14: a description's current and proposed values carry their formatted
 # copies (#1995).
-# v15: a field an earlier decision holds in Preview says so (ADR-0085).
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v15"]
+# v15: a field an earlier decision holds in Preview says so (ADR-0085);
+# v16: an owner decision the question check carried may be `settled`
+# (ADR-0108).
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v16"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v15"
+    "review-case-detail-v16"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
@@ -177,10 +179,11 @@ ReviewAttentionSchemaVersion = Literal["review-attention-v1"]
 REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v1"
 # v5: a keep says which write it went back on (#1523); v6: the book link's
 # history events (#1477); v7: a link named by an identifiers file (#1478);
-# v8: a description value's formatted copy, and advice as it is written (#2003).
-ReviewCaseHistorySchemaVersion = Literal["review-case-history-v8"]
+# v8: a description value's formatted copy, and advice as it is written (#2003);
+# v9: the question check's carried decision, `settled` or applied (ADR-0108).
+ReviewCaseHistorySchemaVersion = Literal["review-case-history-v9"]
 REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
-    "review-case-history-v8"
+    "review-case-history-v9"
 )
 
 # One book link History event; v2: a file link's identifier, source and
