@@ -17,6 +17,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import astuple, replace
+from typing import Literal
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.owner_field_answer import (
@@ -481,6 +482,23 @@ def withdraw_answer(connection: sqlite3.Connection, decision_id: str) -> None:
         _write(connection, replace(restored, open_resume_id=current.open_resume_id))
 
 
+def resume_state(
+    connection: sqlite3.Connection, key: ItemKey
+) -> Literal["none", "open", "failed"]:
+    """The field's Resume as the question check reads it: no open request,
+    one open, or one whose latest event is its failure, which no longer
+    counts as open (ADR-0108, step 0)."""
+    request = _open_request(connection, key)
+    if request is None:
+        return "none"
+    latest = connection.execute(
+        "SELECT kind FROM owner_field_events WHERE request_id=? "
+        "ORDER BY rowid DESC LIMIT 1",
+        (request[0],),
+    ).fetchone()
+    return "failed" if latest == ("resume_failed",) else "open"
+
+
 def close_resume_over_answer(
     connection: sqlite3.Connection, key: ItemKey, at: int
 ) -> bool:
@@ -910,6 +928,7 @@ __all__ = [
     "record_answer",
     "record_differences",
     "request_resume",
+    "resume_state",
     "retire_record_answer",
     "stored_answers",
     "validate_owner_field_answers",

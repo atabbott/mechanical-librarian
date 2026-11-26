@@ -961,12 +961,10 @@ class ContinuousGuardedApplication:
         planned = 0
         for document in documents:
             decision = self._decision(document)
-            if (
-                type(decision) is HumanDecision
-                and decision.application == "recorded_only"
-            ):
+            if type(decision) is HumanDecision and decision.application != "apply":
                 # A decision retained from before audiobook writes existed
-                # is history, not pending work. Advancing past it keeps the
+                # is history, not pending work, and a carried `settled` row
+                # plans nothing (ADR-0108). Advancing past it keeps the
                 # schedule moving and forms no plan the target could ever
                 # receive (#968).
                 self._advance_schedule_cursor(decision, generation)

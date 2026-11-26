@@ -165,6 +165,7 @@ from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
 from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_EVENT_KINDS,
     HUMAN_DECISION_EVENT_SCHEMA,
     OWNER_ENTRY_DESTINATIONS,
     VALUE_OUTCOMES,
@@ -244,8 +245,11 @@ _ActivityStamp = tuple[tuple[int, int], _ActivityDatabaseIdentity]
 # pending work: it must not be offered for consent, counted as prepared, or
 # handed to the scheduler at all.  The scheduler skips one too, but a decision
 # the owner is told about is decided here (#968).
+# A carried copy of a written answer or a refusal (`settled`) is not work
+# either: it settles its field and plans nothing (ADR-0108).
 _RECORDED_ONLY_EXCLUDED_SQL = (
-    "json_extract(human.document,'$.application') IS NOT 'recorded_only' AND "
+    "COALESCE(json_extract(human.document,'$.application'),'') "
+    "NOT IN ('recorded_only','settled') AND "
 )
 
 # An effect holds its decision unless it was superseded, abandoned, or staled
@@ -4199,7 +4203,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             if (
                 set(raw) != event_keys
                 or raw.get("schema_version") != HUMAN_DECISION_EVENT_SCHEMA
-                or raw.get("kind") != "human_decision_recorded"
+                or raw.get("kind") not in HUMAN_DECISION_EVENT_KINDS
                 or raw.get("event_id") != row.event_id
                 or raw.get("decision_id") != decision.decision_id
                 or raw.get("decision_id") != row.source_identity
