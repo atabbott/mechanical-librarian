@@ -862,7 +862,7 @@ export interface OwnerControlView {
   // What owner entry compares with: on the case that wrote the field, the
   // written value (#1523).
   current: string | readonly string[] | null
-  withdraw: 'available' | 'automatic_hold' | 'in_progress' | 'written' | null
+  withdraw: 'available' | 'in_progress' | 'written' | null
 }
 export interface CoverObservationView {
   candidateReference: string

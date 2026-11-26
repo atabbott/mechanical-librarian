@@ -459,10 +459,6 @@ describe('owner-entered values', () => {
   )
 
   it.each([
-    [
-      'automatic_hold',
-      'This decision is holding automatic handling, so it can’t be withdrawn. Use Resume automatic handling to release it.',
-    ],
     ['written', 'This decision has been written to your library, so it can’t be withdrawn.'],
   ] as const)('V6 states why %s withdraw is not offered', async (state, copy) => {
     const http = owner(() => [{ ...enteredTitle, ownerControl: control({ withdraw: state }) }])
@@ -2087,7 +2083,7 @@ describe('the written choice', () => {
         {
           ...written(true, !noChangeRequired),
           noChangeRequired,
-          ownerControl: control({ withdraw: noChangeRequired ? 'automatic_hold' : 'written' }),
+          ownerControl: control({ withdraw: noChangeRequired ? null : 'written' }),
           pinControl: { pin: 'change_waiting', unpin: false },
         },
       ])

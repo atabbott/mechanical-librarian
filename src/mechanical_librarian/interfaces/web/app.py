@@ -1088,7 +1088,7 @@ class _OwnerControl(_ClosedModel):
     names: _OwnerNames | None
     clear: StrictBool
     current: StrictStr | list[StrictStr] | None
-    withdraw: Literal["available", "automatic_hold", "in_progress", "written"] | None
+    withdraw: Literal["available", "in_progress", "written"] | None
 
 
 class _FieldPin(_ClosedModel):

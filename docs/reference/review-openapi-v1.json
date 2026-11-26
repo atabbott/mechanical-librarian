@@ -9571,7 +9571,6 @@
               {
                 "enum": [
                   "available",
-                  "automatic_hold",
                   "in_progress",
                   "written"
                 ],
