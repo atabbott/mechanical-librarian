@@ -167,8 +167,14 @@ def test_every_ledger_document_re_encodes_byte_for_byte() -> None:
         ("human_decisions", "selected_value_document", "' '||selected_value_document"),
         ("field_effect_events", "document", "replace(document,'\":','\": ')"),
         ("owner_settings", "document", "replace(document,'\"','\"\"')"),
+        # Canonical JSON still, but a rule no build or edit writes.
+        (
+            "cover_taste_profile_versions",
+            "document",
+            'replace(document,\'"provenance":"model"\',\'"provenance":"other"\')',
+        ),
     ],
-    ids=["leading_space", "spaced_separator", "unparseable"],
+    ids=["leading_space", "spaced_separator", "unparseable", "taste_rule_unwritable"],
 )
 def test_a_document_that_does_not_re_encode_is_found(
     tmp_path: Path, table: str, column: str, change: str
