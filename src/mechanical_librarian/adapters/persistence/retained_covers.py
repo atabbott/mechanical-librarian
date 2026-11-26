@@ -12,6 +12,9 @@ from __future__ import annotations
 import re
 import sqlite3
 
+from mechanical_librarian.adapters.persistence.regeneration_backup import (
+    database_backup_held,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -252,9 +255,13 @@ class SQLiteRetainedCoverRepository(ConnectionScoped):
     def pending_retained_cover_removals(
         self, limit: int
     ) -> tuple[tuple[str, str, bool], ...]:
-        """Each pending removal's plan, digest and whether another binding shares it."""
+        """Each pending removal's plan, digest and whether another binding
+        shares it; none while a regeneration's restore point is kept, so the
+        copy and the retained originals stay a pair (ADR-0108)."""
         if type(limit) is not int or not 1 <= limit <= 100:
             raise FieldEffectError("invalid_limit")
+        if database_backup_held(self._connection, self._binding):
+            return ()
         return tuple(
             (str(plan_id), str(digest), bool(shared))
             for plan_id, digest, shared in self._connection.execute(

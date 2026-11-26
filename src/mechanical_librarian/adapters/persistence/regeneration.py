@@ -55,6 +55,10 @@ from mechanical_librarian.adapters.persistence.owner_field_answers import (
     close_resume_over_answer,
     retire_record_answer,
 )
+from mechanical_librarian.adapters.persistence.regeneration_backup import (
+    BACKUP_DIRECTORY,
+    backup_held,
+)
 from mechanical_librarian.adapters.persistence.schema import (
     DERIVED_VERSION,
     LEDGER_FORMAT_VERSION,
@@ -89,7 +93,6 @@ from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 
 _INCOMPATIBLE = "database is unavailable or incompatible"
 _SCRATCH_COPY = "database.sqlite"
-BACKUP_DIRECTORY = "regeneration-backup"
 _BACKUP_COPY = re.compile(r"epoch-(0|[1-9][0-9]*)\.sqlite3")
 # The retained copy, then crash recovery's copies of the file and its
 # journal and the rollback journal itself (ADR-0108 step 1).
@@ -483,26 +486,6 @@ class SQLiteRegenerationSession:
             (library.connection, library.name) for library in document.libraries
         )
 
-    def _backup_held(self) -> bool:
-        """Whether `regeneration-backup` holds an earlier copy, or is not a
-        directory this command would use as it stands."""
-        parent = self._binding.parent_descriptor
-        try:
-            entry = os.stat(BACKUP_DIRECTORY, dir_fd=parent, follow_symlinks=False)
-        except FileNotFoundError:
-            return False
-        if not stat.S_ISDIR(entry.st_mode):
-            return True
-        directory = os.open(
-            BACKUP_DIRECTORY,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-            dir_fd=parent,
-        )
-        try:
-            return bool(os.listdir(directory))
-        finally:
-            os.close(directory)
-
     def _causes(
         self, configured: Libraries | None
     ) -> Callable[[str | None, str | None, str | None], tuple[Cause, ...]]:
@@ -584,7 +567,7 @@ class SQLiteRegenerationSession:
             tuple(blocking),
             tuple(retirable),
             self._reports(),
-            self._backup_held(),
+            backup_held(self._binding.parent_descriptor),
         )
 
     def _reports(self) -> tuple[LibraryReport, ...]:
@@ -1016,4 +999,4 @@ def _revoke_authorities(
     return len(current)
 
 
-__all__ = ["BACKUP_DIRECTORY", "SQLiteRegenerationSession", "SQLiteRegenerationStore"]
+__all__ = ["SQLiteRegenerationSession", "SQLiteRegenerationStore"]

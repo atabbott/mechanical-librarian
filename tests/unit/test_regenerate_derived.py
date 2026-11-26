@@ -1024,6 +1024,42 @@ def test_a_policy_change_still_checking_settles_with_the_flag(tmp_path: Path) ->
     assert _counts(path)["policy_transitions_settled"] == 1
 
 
+def test_the_sweep_keeps_every_file_while_the_restore_point_is_kept(
+    owner: OwnerStore,
+) -> None:
+    """After a regeneration the artifact sweep removes nothing while
+    `regeneration-backup` holds the copy, and removes an unreferenced file
+    once the owner deletes the folder."""
+    import shutil
+
+    from mechanical_librarian.adapters.persistence.cover_artifacts import (
+        CoverArtifactStore,
+    )
+
+    owner.decide("accept", GENRES, destination="genres")
+    path = _closed(owner)
+    assert _run(path)[0] == 0
+    backup = path.parent / "regeneration-backup"
+    assert os.listdir(backup) == ["epoch-0.sqlite3"]
+    store = CoverArtifactStore(path.parent / "artifacts")
+    stray = path.parent / "artifacts" / ("e" * 64)
+    stray.write_bytes(b"left by an earlier epoch")
+    stray.chmod(0o600)
+
+    def sweep() -> None:
+        repository = open_repository(path, create=False)
+        try:
+            store.recover_unreferenced(repository.artifact_is_referenced)
+        finally:
+            repository.close()
+
+    sweep()
+    assert stray.exists()
+    shutil.rmtree(backup)
+    sweep()
+    assert not stray.exists()
+
+
 def test_the_next_start_asks_every_configured_library_to_scan(tmp_path: Path) -> None:
     path = _fresh(tmp_path / "data")
     libraries = (("home", "Books", "library-books"), ("home", "Talks", "library-talks"))
@@ -1234,6 +1270,120 @@ def test_the_pointer_plan_keeps_repoints_or_deletes() -> None:
         ("home", "Books", "deleted", None),
         ("home", "Books", "repointed", later),
     ]
+
+
+def test_the_ledger_references_the_owners_covers() -> None:
+    """On rows put straight in, the sweep's ledger references: a pointer's
+    selection, a cover answer the record holds and each work's latest written
+    selection are kept by original and preview, and a waiting cover plan by
+    its desired original; an earlier written selection a later one replaced,
+    an unwritten one nothing names and a closed plan's value are not."""
+    from mechanical_librarian.adapters.persistence import reports
+
+    connection = sqlite3.connect(":memory:")
+    schema._register_casefold(connection)
+    schema._create_schema(connection)
+    for (name,) in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger'"
+    ).fetchall():
+        connection.execute(f'DROP TRIGGER "{name}"')
+    connection.execute("PRAGMA foreign_keys=OFF")
+    ordinal = iter(range(1, 100))
+
+    def choice(item: str, tag: str, *, written: bool = False) -> str:
+        decision = "human_decision_" + tag * 64
+        selection = "cover_selection_" + tag * 64
+        connection.execute(
+            "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,proposal_id,"
+            "target_fingerprint,destination,actor,outcome,selected_value_document,"
+            "idempotency_digest,request_digest,occurred_at,document,connection_name,"
+            "library_name,item_id,target_field_document) VALUES(?,?,?,?,?,'cover',"
+            "'owner','accept','null',?,?,1,'{}','home','Books',?,'null')",
+            (
+                next(ordinal),
+                decision,
+                "review_case_" + "0" * 64,
+                "review_proposal_" + "0" * 64,
+                "0" * 64,
+                tag * 64,
+                "0" * 64,
+                item,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO owner_cover_selections(selection_id,connection_name,"
+            "library_name,item_id,decision_id,consideration_id,occurred_at,document,"
+            "cover_took_over) VALUES(?,'home','Books',?,?,?,1,?,0)",
+            (
+                selection,
+                item,
+                decision,
+                "cover_consideration_" + "0" * 64,
+                json.dumps(
+                    {
+                        "schema_version": COVER_SELECTION_AUTHORITY_SCHEMA,
+                        "candidate_artifact_id": "cover_" + tag * 64,
+                        "original_sha256": tag * 64,
+                        "preview_sha256": tag * 63 + "f",
+                    }
+                ),
+            ),
+        )
+        if written:
+            connection.execute(
+                "INSERT INTO field_effect_no_changes(decision_id,review_case_id,"
+                "report_id,connection_name,library_name,work_id,destination,"
+                "target_fingerprint,target_version,origin,occurred_at,event_id) "
+                "VALUES(?,?,?,'home','Books',?,'cover','0','0','human',1,?)",
+                (decision, "review_case_" + "0" * 64, "report_" + "0" * 64, item, tag),
+            )
+        return selection
+
+    connection.execute(
+        "INSERT INTO owner_cover_pointers VALUES('home','Books','pointed',?)",
+        (choice("pointed", "1"),),
+    )
+    connection.execute(
+        "INSERT INTO owner_field_answers(connection_name,library_name,item_id,"
+        "destination,source,answer_id,ordinal,outcome,value_document,recorded_at,"
+        "review_case_id,episode,carry_eligible,cover_selection_id) VALUES('home',"
+        "'Books','answered','cover','human',?,50,'accept','null',1,?,0,1,?)",
+        (
+            "human_decision_" + "2" * 64,
+            "review_case_" + "0" * 64,
+            choice("answered", "2"),
+        ),
+    )
+    choice("written", "3", written=True)
+    choice("written", "4", written=True)
+    choice("unnamed", "5")
+    for state, tag in (("planned", "6"), ("superseded", "7")):
+        connection.execute(
+            "INSERT INTO field_effects(plan_id,decision_id,connection_name,"
+            "library_name,work_id,destination,state,attempt,updated_at,document) "
+            "VALUES(?,?,'home','Books','planned','cover',?,0,1,?)",
+            (
+                "effect_plan_" + tag * 64,
+                "automatic_decision_" + tag * 64,
+                state,
+                json.dumps({"plan": {"desired_value": "cover_" + tag * 64}}),
+            ),
+        )
+
+    def referenced(digest: str) -> bool:
+        return (
+            connection.execute(
+                reports._LEDGER_COVER_REFERENCE_SQL,
+                {"artifact": "cover_" + digest, "digest": digest},
+            ).fetchone()
+            is not None
+        )
+
+    for tag in "124":
+        assert referenced(tag * 64) and referenced(tag * 63 + "f"), tag
+    assert referenced("6" * 64)
+    for tag in "357":
+        assert not referenced(tag * 64) and not referenced(tag * 63 + "f"), tag
 
 
 def test_an_unwritten_authored_description_needs_the_flag(
