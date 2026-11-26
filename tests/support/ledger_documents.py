@@ -30,6 +30,7 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     FIELD_EFFECT_CONSENT_STATE_SCHEMA,
 )
+from mechanical_librarian.application.contained_reviewer_contract import canonical_json
 from mechanical_librarian.domain import (
     decision_question,
     field_effect,
@@ -38,7 +39,10 @@ from mechanical_librarian.domain import (
     owner_field_answer,
     question_check,
 )
-from mechanical_librarian.domain.cover_taste import COVER_TASTE_PROFILE_SCHEMA
+from mechanical_librarian.domain.cover_taste import (
+    COVER_TASTE_PROFILE_SCHEMA,
+    TasteProfile,
+)
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceCandidate,
@@ -128,6 +132,26 @@ def _canonical(value: object) -> str:
     return value.canonical_json
 
 
+def _taste_version(document: str) -> object:
+    """A taste profile version: its rules through the product's reader
+    (`TasteProfile.from_rules`), beside the rest of the version."""
+    value = _labelled(COVER_TASTE_PROFILE_SCHEMA)(document)
+    assert type(value) is dict
+    return (
+        {key: item for key, item in value.items() if key != "rules"},
+        TasteProfile.from_rules(value["rules"]),
+    )
+
+
+def _taste_version_json(value: object) -> str:
+    """The version as its writer stores it (`canonical_json`), with the rules
+    the profile gives back."""
+    assert type(value) is tuple
+    rest, profile = value
+    assert type(rest) is dict and type(profile) is TasteProfile
+    return canonical_json({**rest, "rules": profile.rules_data()})
+
+
 def _settings(document: str) -> object:
     """The owner's settings, or first run's state before it is promoted."""
     if json.loads(document).get("schema_version") == SETUP_STATE_SCHEMA:
@@ -143,7 +167,7 @@ DOCUMENTS: dict[tuple[str, str], LedgerDocument] = {
         _json, _canonical_json
     ),
     ("cover_taste_profile_versions", "document"): LedgerDocument(
-        _json, _canonical_json, (COVER_TASTE_PROFILE_SCHEMA,)
+        _taste_version, _taste_version_json, (COVER_TASTE_PROFILE_SCHEMA,)
     ),
     ("derived_regenerations", "counts_document"): LedgerDocument(_counts, _counts_json),
     ("field_effect_actions", "document"): LedgerDocument(
