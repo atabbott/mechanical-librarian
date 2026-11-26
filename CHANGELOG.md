@@ -17,6 +17,9 @@ brackets are GitHub issues.
   rebuilds, and records each field's latest answer in one place. Only today's
   holds still link to review cases, until that record replaces them. Nothing
   you see changes yet (#2038).
+- A library whose write was stopped while SQLite was still writing its journal
+  now starts again, and a partly written store is rolled back. Before, it
+  refused with "database recovery state is unsupported" (#2052).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).
