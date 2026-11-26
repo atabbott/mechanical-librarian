@@ -503,6 +503,14 @@ _ACTIVE_GENERATION_DESCRIPTION_SQL = (
 # or cover plans only while the record holds no answer for the field of its
 # case's book, and a field decision only while no owner decision on its case
 # still keeps Automatic off it (one Resume has not taken back).
+# Every case the projection has published as its book's current case.
+_PUBLISHED_CASES_SQL = (
+    "SELECT lineage.review_case_id FROM current_review_case_lineages lineage JOIN "
+    "current_review_packages package ON package.connection_name=lineage.connection_name "
+    "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
+    "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
+    "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint"
+)
 _RECORD_NAMES_HUMAN_SQL = (
     "EXISTS (SELECT 1 FROM owner_field_answers record WHERE "
     "record.source='human' AND record.answer_id=human.decision_id)"
@@ -2926,7 +2934,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
                 + _RECORDED_ONLY_EXCLUDED_SQL
-                + "(human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) OR ("
+                # A carried row also takes the automatic arm's package join:
+                # it plans only once the projection published its case
+                # (ADR-0108, "The owner's arm after Resume").
+                + "(human.carried_from IS NULL OR human.review_case_id IN ("
+                + _PUBLISHED_CASES_SQL
+                + ")) AND "
+                "(human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) OR ("
                 "human.destination='cover' AND EXISTS (SELECT 1 FROM "
                 "cover_consideration_events selected JOIN current_cover_considerations current "
                 "ON current.consideration_id=selected.consideration_id "
@@ -2949,12 +2963,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT automatic.decision_id,automatic.occurred_at,automatic.document "
                 "FROM automatic_decisions automatic WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=automatic.review_case_id AND automatic.destination='description') AND "
                 "json_extract(automatic.document,'$.outcome') IN ('candidate','keep_current') AND "
-                "+automatic.review_case_id IN (SELECT lineage.review_case_id FROM current_review_case_lineages lineage JOIN "
-                "current_review_packages package ON package.connection_name=lineage.connection_name "
-                "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
-                "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
-                "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint)"
-                " AND "
+                "+automatic.review_case_id IN ("
+                + _PUBLISHED_CASES_SQL
+                + ") AND "
                 + _AUTOMATIC_UNANSWERED_SQL
                 + " AND "
                 # Only the active generation's decision is pending (#1573).

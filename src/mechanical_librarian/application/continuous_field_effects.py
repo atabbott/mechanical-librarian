@@ -952,6 +952,12 @@ class ContinuousGuardedApplication:
 
     def _schedule(self, limit: int, affected_review_case_ids: set[str]) -> int:
         self._complete_owner_field_resumes()
+        # A question check left waiting for a plan or a Resume is checked
+        # again once that has ended (ADR-0108, contract T12); like Resume's
+        # completion, only where the application runs beside preparation.
+        retry = getattr(self._repository, "retry_question_checks", None)
+        if retry is not None and self._scan_progress is not None:
+            retry(None, self._clock(), provisional_only=True)
         with self._schedule_lock:
             generation = self._schedule_generation
             cursor = self._schedule_cursor
