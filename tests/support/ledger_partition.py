@@ -21,7 +21,12 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.regeneration import (
+    SQLiteRegenerationStore,
+)
+from mechanical_librarian.application.configuration import ApplicationConfiguration
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.regenerate_derived import regenerate_derived
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceCandidate,
@@ -112,8 +117,33 @@ def _without_triggers[T](path: Path, change: Callable[[sqlite3.Connection], T]) 
     return result
 
 
+def _store_mode() -> ApplicationConfiguration:
+    """No configuration file: the command reads the stored settings."""
+    raise FileNotFoundError
+
+
+def regenerate_as_the_command(path: Path) -> None:
+    """Run the real `regenerate-derived` over the closed store at ``path`` as
+    an upgrade leaves it (the ledger names another derived version), without
+    `--retire-pending`, and require that it regenerated: the derived epoch
+    moves on, so the next read of a work admits a new case, and the run's
+    audit row and revocations are written as the command writes them."""
+    assert rewrite(path, "UPDATE ledger_meta SET derived_version=2") == 1
+    path.chmod(0o600)  # as the server's own file is; a copy is made 0644
+    outcome = regenerate_derived(
+        SQLiteRegenerationStore(path, lambda: 1_700_000_000),
+        retire_pending=False,
+        configuration=_store_mode,
+    )
+    assert outcome.kind == "regenerated", outcome
+
+
 def regenerate(path: Path) -> None:
-    """Delete every derived row and put back what a new schema sets up."""
+    """Delete every derived row and put back what a new schema sets up.
+
+    Only the derived rows: unlike `regenerate_as_the_command`, the derived
+    epoch, the audit row and the authorities stay as they were. For proofs
+    about what open admits without derived rows."""
     setup = _derived_setup()
 
     def change(connection: sqlite3.Connection) -> None:

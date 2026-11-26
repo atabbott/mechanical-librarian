@@ -63,7 +63,12 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
-from tests.support.ledger_partition import copied_store, opens, regenerate
+from tests.support.ledger_partition import (
+    copied_store,
+    opens,
+    regenerate,
+    regenerate_as_the_command,
+)
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report, _report_entry
 
 
@@ -1038,7 +1043,7 @@ def test_failed_works_are_retryable_only_while_their_items_remain(
     assert repository.metadata_policy_transition() == transition
     repository.close()
 
-    regenerate(state_path)
+    regenerate_as_the_command(state_path)
 
     reopened = open_repository(state_path)
     try:

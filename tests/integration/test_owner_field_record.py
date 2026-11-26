@@ -42,7 +42,7 @@ from tests.integration.test_cover_rules_activation import (
 )
 from tests.integration.test_cover_taste_automatic import _keep_cover
 from tests.support.audiobook_covers import SYNTHETIC_MEASURED_RECORD
-from tests.support.ledger_partition import regenerate
+from tests.support.ledger_partition import regenerate_as_the_command
 from tests.support.owner_field_record import (
     assert_record_recomputes,
     complete_resume,
@@ -1795,11 +1795,11 @@ def test_a_later_description_case_asks_and_a_failed_resume_keeps_asking(
 
 
 def _regenerated(store: OwnerStore) -> OwnerStore:
-    """Close the store, delete its derived rows as `regenerate-derived`
-    does, and reopen it on the same policy (#2039, T-W)."""
+    """Close the store, run the real `regenerate-derived` over it, and
+    reopen it on the same policy (#2039, T-W)."""
     resolved, ticks = store.resolved, store.ticks
     store.close()
-    regenerate(store.root / "owner.sqlite")
+    regenerate_as_the_command(store.root / "owner.sqlite")
     reopened = OwnerStore(store.root, None)
     reopened.resolved, reopened.ticks = resolved, ticks
     return reopened
@@ -1849,17 +1849,17 @@ def _apply_planned(store: OwnerStore) -> None:
 
 
 @pytest.mark.parametrize("outcome", ("accept", "keep_current"))
-@pytest.mark.parametrize("read", ("same_case", "later_case"))
+@pytest.mark.parametrize("read", ("unchanged", "changed"))
 def test_the_write_lane_runs_on_a_regenerated_store(
     tmp_path: Path, outcome: str, read: str
 ) -> None:
-    """T-W (#2039): after the derived rows are deleted and the store is
-    reopened, the write lane's schedule and its pending reads run and plan
-    nothing, since no case is current. Re-preparation then reads the work
-    again: read unchanged it is the same case, whose record still holds the
-    answer; read with an unrelated field changed it is a later case asking
-    the same question, to which the question check carries the answer. An
-    unwritten accept is planned once and written once either way; a keep,
+    """T-W (#2039): after the real `regenerate-derived` and a reopen, the
+    write lane's schedule and its pending reads run and plan nothing, since
+    no case is current. Re-preparation then reads the work again, unchanged
+    or with an unrelated field changed: either way the regeneration moved
+    the derived epoch on, so the read admits a new case asking the same
+    question, and the question check carries the answer to it. An unwritten
+    accept, carried to apply, is planned once and written once; a keep,
     carried settled, plans nothing."""
     store, report, _ = _owner_store(tmp_path, posture="preview")
     store.publish(report)
@@ -1871,6 +1871,9 @@ def test_the_write_lane_runs_on_a_regenerated_store(
     )
     store = _regenerated(store)
     try:
+        assert store.repository._connection.execute(
+            "SELECT derived_epoch_before,derived_epoch_after FROM derived_regenerations"
+        ).fetchall() == [(0, 1)]
         lane = _scheduler(store)
         assert _pending_reads(store) == []
         assert lane.schedule() == 0
@@ -1878,22 +1881,21 @@ def test_the_write_lane_runs_on_a_regenerated_store(
             "SELECT count(*) FROM field_effects"
         ).fetchone() == (0,)
 
-        later = read == "later_case"
         store.publish(
-            rewritten(report, publisher="Changed Elsewhere") if later else report
+            report
+            if read == "unchanged"
+            else rewritten(report, publisher="Changed Elsewhere")
         )
-        assert (store.case.review_case_id != first) is later
-        carried = store.repository._connection.execute(
-            "SELECT decision_id,carried_from,json_extract(document,"
-            "'$.application') FROM human_decisions WHERE carried_from IS NOT NULL"
-        ).fetchall()
-        if later:
-            ((held, carried_from, application),) = carried
-            assert carried_from == answer.decision_id
-            assert application == ("apply" if outcome == "accept" else "settled")
-        else:
-            assert carried == []
-            held = answer.decision_id
+        assert store.case.review_case_id != first
+        ((held, carried_from, application, case),) = (
+            store.repository._connection.execute(
+                "SELECT decision_id,carried_from,json_extract(document,"
+                "'$.application'),review_case_id FROM human_decisions "
+                "WHERE carried_from IS NOT NULL"
+            ).fetchall()
+        )
+        assert (carried_from, case) == (answer.decision_id, store.case.review_case_id)
+        assert application == ("apply" if outcome == "accept" else "settled")
         for _ in range(3):
             lane.schedule()
             _apply_planned(store)

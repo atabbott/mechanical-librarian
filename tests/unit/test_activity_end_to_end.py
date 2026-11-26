@@ -91,6 +91,7 @@ from tests.support.ledger_partition import (
     copied_store,
     opens,
     regenerate,
+    regenerate_as_the_command,
     reopen_without_derived_rows,
     rewrite_no_change,
 )
@@ -509,7 +510,7 @@ def _regenerated_reading(path: Path) -> tuple[dict[str, str], set[str]]:
         if row_id in ledger
     }
     assert set(before) == ledger
-    regenerate(path)
+    regenerate_as_the_command(path)
     assert opens(path)
     after = _activity_paths(path)
     assert ledger <= set(after)
