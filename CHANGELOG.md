@@ -29,6 +29,9 @@ brackets are GitHub issues.
 - A later read, an upgrade included, keeps your answer when it asks the same
   question and writes a choice not yet written once; it asks again when the
   choices or the value in Audiobookshelf changed (#2038, #2040).
+- A library whose write was stopped while SQLite was still writing its journal
+  now starts again, and a partly written store is rolled back. Before, it
+  refused with "database recovery state is unsupported" (#2052).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).
