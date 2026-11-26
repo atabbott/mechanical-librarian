@@ -288,7 +288,7 @@ export const historyDecisionItem = (overrides: Overrides = {}) => ({
   outcome: 'accept',
   previous_value: null,
   review_case_id: 'case-1',
-  schema_version: 'human-decision-event-v1',
+  schema_version: 'human-decision-event-v2',
   selected_value: null,
   ...overrides,
 })

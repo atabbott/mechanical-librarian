@@ -952,6 +952,12 @@ class ContinuousGuardedApplication:
 
     def _schedule(self, limit: int, affected_review_case_ids: set[str]) -> int:
         self._complete_owner_field_resumes()
+        # A question check left waiting for a plan or a Resume is checked
+        # again once that has ended (ADR-0108, contract T12); like Resume's
+        # completion, only where the application runs beside preparation.
+        retry = getattr(self._repository, "retry_question_checks", None)
+        if retry is not None and self._scan_progress is not None:
+            retry(None, self._clock(), provisional_only=True)
         with self._schedule_lock:
             generation = self._schedule_generation
             cursor = self._schedule_cursor
@@ -961,12 +967,10 @@ class ContinuousGuardedApplication:
         planned = 0
         for document in documents:
             decision = self._decision(document)
-            if (
-                type(decision) is HumanDecision
-                and decision.application == "recorded_only"
-            ):
+            if type(decision) is HumanDecision and decision.application != "apply":
                 # A decision retained from before audiobook writes existed
-                # is history, not pending work. Advancing past it keeps the
+                # is history, not pending work, and a carried `settled` row
+                # plans nothing (ADR-0108). Advancing past it keeps the
                 # schedule moving and forms no plan the target could ever
                 # receive (#968).
                 self._advance_schedule_cursor(decision, generation)

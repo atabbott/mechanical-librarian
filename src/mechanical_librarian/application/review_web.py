@@ -67,6 +67,7 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.field_outcomes import language_is_unknown
 from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_EVENT_KINDS,
     OWNER_NAMES_DESTINATIONS,
     OWNER_NAMES_MAXIMUM,
     OWNER_SUBSET_DESTINATION,
@@ -401,6 +402,14 @@ class CurrentReviewCaseSnapshot:
     # and they are asked where the case offers a decision (ADR-0108,
     # Withdrawal and carry eligibility).
     withdrawn_destinations: tuple[str, ...] = ()
+    # Held destinations whose answer from elsewhere the question check asks
+    # again on this case (the choices or the value changed, the answer is no
+    # longer carried, or its carry was refused): asked where the case offers
+    # a decision (ADR-0108, Attention).
+    asked_again_destinations: tuple[str, ...] = ()
+    # Held destinations the question check left waiting on this case for a
+    # plan in flight or an open Resume: settled meanwhile (ADR-0108).
+    carry_waiting_destinations: tuple[str, ...] = ()
     # This case's owner decisions a completed Resume took back: they no
     # longer decide their field, and keep only a recorded line (D3).
     covered_decision_ids: tuple[str, ...] = ()
@@ -1501,6 +1510,12 @@ def _classify_field(
             and not actions
             and automatic_decision is None
         )
+        # A field the question check left waiting reads as the owner's
+        # where Automatic does not settle it (ADR-0108, Attention).
+        or (
+            destination in snapshot.carry_waiting_destinations
+            and not _automatic_settles(snapshot, destination)
+        )
         or (
             destination == "cover"
             and cover_is_current
@@ -1519,7 +1534,7 @@ def _classify_field(
         classify_review_field,
         attention_candidate=(
             (
-                _record_answered_elsewhere(snapshot, destination)
+                destination in snapshot.asked_again_destinations
                 or destination in snapshot.withdrawn_destinations
             )
             and bool(actions)
@@ -2619,7 +2634,7 @@ class InspectCurrentReviewCase:
         history_items = []
         for raw in snapshot.history:
             item = dict(raw)
-            if item.get("kind") == "human_decision_recorded":
+            if item.get("kind") in HUMAN_DECISION_EVENT_KINDS:
                 decision_id = item.get("decision_id")
                 projected = (
                     decisions.get(decision_id) if type(decision_id) is str else None

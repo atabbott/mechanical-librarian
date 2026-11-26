@@ -958,10 +958,15 @@ class ProposalSet:
     media_kind: str = "ebook"
     schema_version: str = PROPOSAL_SCHEMA
     policy_version: str = POLICY_VERSION
+    # The ledger's derived epoch the set was evaluated at (ADR-0108). The
+    # document names it only above 0, so ids made before it existed hold.
+    derived_epoch: int = 0
 
     def __post_init__(self) -> None:
         if (
             _PROPOSAL_SET_ID.fullmatch(self.proposal_set_id) is None
+            or type(self.derived_epoch) is not int
+            or self.derived_epoch < 0
             or _REPORT_ID.fullmatch(self.report_id) is None
             or _DIGEST.fullmatch(self.target_fingerprint) is None
             or self.media_kind not in MEDIA_KINDS
@@ -1052,7 +1057,10 @@ class ProposalSet:
         resolved_policy_id: str,
         bibliographic_combinations: tuple[BibliographicCombination, ...] = (),
         media_kind: str = "ebook",
+        derived_epoch: int = 0,
     ) -> Self:
+        if type(derived_epoch) is not int or derived_epoch < 0:
+            raise ProposalValueError("proposal set is invalid")
         combinations = tuple(
             sorted(
                 bibliographic_combinations,
@@ -1067,6 +1075,7 @@ class ProposalSet:
                 resolved_policy_id,
                 combinations,
                 media_kind,
+                derived_epoch,
             )
         )
         return cls(
@@ -1077,6 +1086,7 @@ class ProposalSet:
             resolved_policy_id,
             combinations,
             media_kind,
+            derived_epoch=derived_epoch,
         )
 
     def _identity_data(self) -> dict[str, object]:
@@ -1090,6 +1100,7 @@ class ProposalSet:
             self.resolved_policy_id,
             self.bibliographic_combinations,
             self.media_kind,
+            self.derived_epoch,
         )
 
     def to_json(self) -> str:
@@ -1548,8 +1559,12 @@ def evaluate_report(
     policy_destinations: Mapping[str, str] | None = None,
     *,
     work_identity_level: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER,
+    derived_epoch: int = 0,
 ) -> ProposalSet:
     """Evaluate one exact report without I/O, configuration, or provider calls.
+
+    ``derived_epoch`` is the ledger's epoch the set is addressed over
+    (ADR-0108); every caller in ``src`` names it.
 
     At ``identifier`` this is the live derivation, whatever level is
     configured. A wider ``work_identity_level`` derives the level set (#1355,
@@ -1733,6 +1748,7 @@ def evaluate_report(
         media_kind=(
             "audiobook" if report.file.format in AUDIO_FILE_FORMATS else "ebook"
         ),
+        derived_epoch=derived_epoch,
     )
 
 
@@ -7621,8 +7637,10 @@ def _proposal_data(
     resolved_policy_id: str,
     bibliographic_combinations: tuple[BibliographicCombination, ...],
     media_kind: str,
+    derived_epoch: int,
 ) -> dict[str, object]:
     return {
+        **({"derived_epoch": derived_epoch} if derived_epoch > 0 else {}),
         "media_kind": media_kind,
         "policy_version": POLICY_VERSION,
         "resolved_policy_id": resolved_policy_id,
@@ -7642,18 +7660,22 @@ def _proposal_data(
 
 
 def _proposal_from_data(raw: object) -> ProposalSet:
-    root = _object(
-        raw,
-        {
-            "media_kind",
-            "policy_version",
-            "resolved_policy_id",
-            "relationships",
-            "report",
-            "results",
-            "schema_version",
-        },
-    )
+    keys = {
+        "media_kind",
+        "policy_version",
+        "resolved_policy_id",
+        "relationships",
+        "report",
+        "results",
+        "schema_version",
+    }
+    # An epoch is named only above 0: a document naming 0 is not canonical.
+    epoch = raw.get("derived_epoch", 0) if type(raw) is dict else 0
+    if type(raw) is dict and "derived_epoch" in raw:
+        keys.add("derived_epoch")
+        if type(epoch) is not int or epoch < 1:
+            raise ProposalValueError("proposal document is invalid")
+    root = _object(raw, keys)
     report = _object(
         root["report"],
         {"report_id", "target_fingerprint"},
@@ -7676,6 +7698,7 @@ def _proposal_from_data(raw: object) -> ProposalSet:
         resolved_policy_id=root["resolved_policy_id"],
         bibliographic_combinations=combinations,
         media_kind=root["media_kind"],
+        derived_epoch=epoch,
     )
     if (
         root["schema_version"] != proposal_set.schema_version

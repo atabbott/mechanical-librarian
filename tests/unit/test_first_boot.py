@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from mechanical_librarian.adapters.persistence.provider_responses import (
     SQLiteProviderResponseStore,
+)
+from mechanical_librarian.application.metadata_report import (
+    DerivedRegenerationRequired,
+    LedgerRebuildRequired,
+    MetadataReportError,
+    PersistedStateRefusal,
 )
 from mechanical_librarian.bootstrap.composition import _open_review_session_store
 from mechanical_librarian.infrastructure.first_boot import (
@@ -567,3 +574,77 @@ def test_a_v4_setup_record_left_mid_setup_fails_closed(tmp_path: Path) -> None:
             resumable_setup=resumable_setup,
         )
     assert database.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [DerivedRegenerationRequired, LedgerRebuildRequired],
+    ids=["derived", "ledger"],
+)
+@pytest.mark.parametrize("probe", ["complete", "resume"], ids=["complete", "resume"])
+def test_a_persisted_state_refusal_passes_through_unchanged(
+    tmp_path: Path, refusal: type[PersistedStateRefusal], probe: str
+) -> None:
+    """The owner reads startup's guidance in file and store mode (ADR-0108)."""
+    (tmp_path / "application.sqlite3").touch()
+    raised = refusal()
+
+    def refuse() -> bool:
+        raise raised
+
+    with pytest.raises(refusal) as caught:
+        select_first_boot_mode(
+            tmp_path,
+            complete_store=refuse if probe == "complete" else lambda: False,
+            resumable_setup=refuse if probe == "resume" else lambda: False,
+        )
+    assert caught.value is raised
+
+
+def test_any_other_probe_failure_still_fails_closed(tmp_path: Path) -> None:
+    (tmp_path / "application.sqlite3").touch()
+
+    def fail() -> bool:
+        raise MetadataReportError("database is unavailable or incompatible")
+
+    with pytest.raises(FirstBootError):
+        select_first_boot_mode(tmp_path, complete_store=fail, resumable_setup=fail)
+
+
+def test_the_private_regeneration_backup_does_not_block_setup_resume(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "application.sqlite3").touch()
+    backup = tmp_path / "regeneration-backup"
+    backup.mkdir(mode=0o700)
+    (backup / "epoch-1.sqlite3").touch(mode=0o600)
+    assert _select(tmp_path, resume=True) is FirstBootMode.RESUME_SETUP
+
+
+def _wide_directory(path: Path) -> None:
+    path.mkdir(mode=0o700)
+    path.chmod(0o755)
+
+
+def _regular_file(path: Path) -> None:
+    path.touch(mode=0o600)
+
+
+def _directory_link(path: Path) -> None:
+    target = path.with_name("elsewhere")
+    target.mkdir(mode=0o700)
+    path.symlink_to(target.name)
+
+
+@pytest.mark.parametrize(
+    "make",
+    [_wide_directory, _regular_file, _directory_link],
+    ids=["wide_directory", "regular_file", "link"],
+)
+def test_an_unsafe_regeneration_backup_entry_fails_closed(
+    tmp_path: Path, make: Callable[[Path], None]
+) -> None:
+    (tmp_path / "application.sqlite3").touch()
+    make(tmp_path / "regeneration-backup")
+    with pytest.raises(FirstBootError):
+        _select(tmp_path, resume=True)

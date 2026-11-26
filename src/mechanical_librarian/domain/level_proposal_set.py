@@ -315,6 +315,7 @@ def derive_level(
         live.resolved_policy_id,
         policy_destinations,
         work_identity_level=level,
+        derived_epoch=live.derived_epoch,
     )
     lineage = _lineage(level_set, evidence)
     identity, document = level_proposal_set_document(live, level_set, level, lineage)

@@ -34,6 +34,7 @@ from mechanical_librarian.application.review_web import (
     REVIEW_LIBRARY_SCHEMA,
 )
 from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain.human_decision import HUMAN_DECISION_EVENT_SCHEMA
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.owner_settings import (
     OWNER_SETTINGS_SCHEMA,
@@ -2664,7 +2665,7 @@ def _rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     "outcome": "accept",
                     "previous_value": {"kind": "text", "value": "Current title"},
                     "review_case_id": case_id,
-                    "schema_version": "human-decision-event-v1",
+                    "schema_version": HUMAN_DECISION_EVENT_SCHEMA,
                     "selected_value": {"kind": "text", "value": HOSTILE_TEXT},
                 },
                 {

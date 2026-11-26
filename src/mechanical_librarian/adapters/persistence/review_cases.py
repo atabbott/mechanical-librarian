@@ -47,6 +47,7 @@ from typing import cast
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.catalogue import CatalogueReadAdmission
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.ledger_meta import derived_epoch
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
     reconcile_case_level_in_transaction,
 )
@@ -439,6 +440,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 None
                 if current_policy is None
                 else human_review_destinations(current_policy),
+                derived_epoch=derived_epoch(self._connection),
             ).to_json()
         ):
             raise ReviewAdmissionIncompatibleError
@@ -770,7 +772,10 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 or proposal.target_fingerprint != case.target_fingerprint
                 or proposal.to_json()
                 != evaluate_report(
-                    report, proposal.resolved_policy_id, policy_destinations
+                    report,
+                    proposal.resolved_policy_id,
+                    policy_destinations,
+                    derived_epoch=derived_epoch(self._connection),
                 ).to_json()
                 or report.target.to_data() != case.target
                 or report.target.fingerprint != case.target_fingerprint

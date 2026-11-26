@@ -62,6 +62,8 @@ class ProposalInternalError(ProposalSetError):
 class ProposalSetRepository(Protocol):
     def get_proposal_input(self, report_id: str) -> str: ...
 
+    def derived_epoch(self) -> int: ...
+
     def publish_proposal(self, proposal_set: ProposalSet) -> str: ...
 
     def get_proposal(self, proposal_set_id: str) -> str: ...
@@ -138,6 +140,7 @@ class CreateProposalSet:
                 None
                 if type(policy) is str
                 else human_review_destinations(cast("ResolvedMetadataPolicy", policy)),
+                derived_epoch=self._repository.derived_epoch(),
             )
         except ProposalSetError:
             raise

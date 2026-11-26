@@ -5,11 +5,24 @@ from __future__ import annotations
 import os
 import signal
 import stat
+import sys
+import time
+from collections.abc import Sequence
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.regeneration import (
+    SQLiteRegenerationStore,
+)
+from mechanical_librarian.application.metadata_report import PersistedStateRefusal
+from mechanical_librarian.application.regenerate_derived import regenerate_derived
 from mechanical_librarian.bootstrap.composition import run_review_server
+from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.first_boot import select_first_boot_mode
+from mechanical_librarian.interfaces.cli.regenerate import (
+    parse_container_arguments,
+    render,
+)
 
 DATA = Path("/data")
 CONFIG = DATA / "config.json"
@@ -28,12 +41,35 @@ def _exit_on_container_stop(_signal_number: int, _frame: object) -> None:
     raise SystemExit(0)
 
 
-def main() -> None:
-    signal.signal(signal.SIGTERM, _exit_on_container_stop)
+def main(argv: Sequence[str] | None = None) -> None:
+    # The argument vector is parsed before anything under /data is touched.
+    retire_pending = parse_container_arguments(sys.argv[1:] if argv is None else argv)
+    try:
+        if retire_pending is None:
+            _serve()
+            return
+        _data_volume()
+        outcome = regenerate_derived(
+            SQLiteRegenerationStore(DATABASE, lambda: int(time.time())),
+            retire_pending=retire_pending,
+            configuration=lambda: load_configuration_file(CONFIG),
+        )
+        raise SystemExit(render(outcome, sys.stdout.write))
+    except PersistedStateRefusal as refusal:
+        # One line on stderr and exit status 1, the owner's guidance only.
+        raise SystemExit(str(refusal)) from None
+
+
+def _data_volume() -> None:
     information = DATA.lstat()
     if not stat.S_ISDIR(information.st_mode) or information.st_uid != os.geteuid():
         raise RuntimeError("container data volume is unavailable")
     os.chmod(DATA, 0o700)
+
+
+def _serve() -> None:
+    signal.signal(signal.SIGTERM, _exit_on_container_stop)
+    _data_volume()
 
     def complete_store() -> bool:
         repository = open_repository(

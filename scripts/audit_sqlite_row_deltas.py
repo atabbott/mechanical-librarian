@@ -63,10 +63,12 @@ def run() -> int:
                         "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
                     )
                 }
-                if set(baseline).issubset(tables):
+                name = self.execute("PRAGMA database_list").fetchone()[2]
+                # Only a store on disk is a state; the in-memory schema the
+                # build's partition is derived from is not (#2040).
+                if name and set(baseline).issubset(tables):
                     _register_casefold(self)
                     _validate_schema(self)
-                    name = self.execute("PRAGMA database_list").fetchone()[2]
                     states[current, name] = {
                         table: self.execute(
                             f'SELECT count(*) FROM "{table}"'

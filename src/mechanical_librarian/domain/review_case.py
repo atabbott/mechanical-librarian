@@ -104,6 +104,7 @@ def _review_proposals(
         results=proposal.results,
         resolved_policy_id=proposal.resolved_policy_id,
         media_kind=proposal.media_kind,
+        derived_epoch=proposal.derived_epoch,
     ).proposal_set_id
     return tuple(
         {

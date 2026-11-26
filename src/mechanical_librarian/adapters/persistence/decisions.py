@@ -93,6 +93,7 @@ from mechanical_librarian.domain.automatic_decision import (
 from mechanical_librarian.domain.cover_automatic_decision import (
     parse_automatic_authority,
 )
+from mechanical_librarian.domain.decision_question import DecisionQuestion
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceCandidate,
@@ -107,10 +108,12 @@ from mechanical_librarian.domain.field_effect import (
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import (
+    CARRIED_OUTCOMES,
     HUMAN_DECISION_EVENT_SCHEMA,
     DecisionScope,
     HumanDecision,
     HumanDecisionError,
+    case_question,
     chosen_value_fingerprint,
     description_unrestorable,
     pinned_field_fingerprint,
@@ -126,6 +129,25 @@ from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
     ShadowOutcomeSet,
 )
+
+
+def _question_halves(
+    decision: HumanDecision, case: ReviewCase, offer: tuple[dict[str, object], ...]
+) -> tuple[str | None, str | None]:
+    """The question an owner answer is given against, for the question check
+    at the book's next case or episode (ADR-0108): its offer part and target
+    part. A cover, a pin, an unpin and a withdrawal have none."""
+    question = (
+        case_question(case, offer, decision.destination)
+        if decision.outcome in CARRIED_OUTCOMES and decision.destination != "cover"
+        else None
+    )
+    return (
+        (None, None)
+        if question is None
+        else (question.offer_part, question.target_part)
+    )
+
 
 _REPLACEMENT_BLOCKING_EFFECT_SQL = (
     "(state IN ('claimed','applying','reconciling') OR (state='verified' AND ?))"
@@ -959,40 +981,13 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 if annotation
                 else self._replacement_authorities(decision, case)
             )
-            selected = _canonical_json(decision.selected_value)
-            copies = decision_copies(case, decision.destination)
-            self._connection.execute(
-                HUMAN_DECISION_INSERT_SQL,
-                (
-                    next_ordinal(self._connection),
-                    decision.decision_id,
-                    decision.review_case_id,
-                    decision.proposal_id,
-                    decision.target_fingerprint,
-                    decision.destination,
-                    decision.actor,
-                    decision.outcome,
-                    selected,
-                    decision.idempotency_digest,
-                    decision.request_digest,
-                    decision.occurred_at,
-                    decision.to_json(),
-                    *copies,
-                    # What review history shows an accepted description
-                    # chose, read from its offer now (#2003, ADR-0108).
-                    self._chosen_form(decision, case)
-                    if decision.destination == "description"
-                    and decision.outcome == "accept"
-                    else None,
-                ),
-            )
+            self._insert_owner_decision(decision, case, offer)
             self._record_cover_decision_outcome(
                 decision,
                 cover_consideration_id,
                 cover_confirmation,
                 took_over=automatic is not None,
             )
-            self._record_human_decision_event(decision, copies[:3])
             if annotation:
                 # A pin over the standing answer, or an unpin, marks the
                 # record's answer; nothing else changes, so its write goes on.
@@ -1035,11 +1030,121 @@ class SQLiteDecisionRepository(ConnectionScoped):
             transaction.rollback()
             raise MetadataReportError("human decision persistence failed") from error
 
+    def _insert_owner_decision(
+        self,
+        decision: HumanDecision,
+        case: ReviewCase,
+        offer: tuple[dict[str, object], ...],
+    ) -> None:
+        """Insert an owner decision with its ordinal, copies, question halves
+        and audit event, inside the caller's transaction: the rows an owner's
+        request and a carried answer both write (ADR-0108)."""
+        copies = decision_copies(case, decision.destination)
+        self._connection.execute(
+            HUMAN_DECISION_INSERT_SQL,
+            (
+                next_ordinal(self._connection),
+                decision.decision_id,
+                decision.review_case_id,
+                decision.proposal_id,
+                decision.target_fingerprint,
+                decision.destination,
+                decision.actor,
+                decision.outcome,
+                _canonical_json(decision.selected_value),
+                decision.idempotency_digest,
+                decision.request_digest,
+                decision.occurred_at,
+                decision.to_json(),
+                *copies,
+                # What review history shows an accepted description chose,
+                # read from its offer now (#2003, ADR-0108).
+                self._chosen_form(decision, case)
+                if decision.destination == "description"
+                and decision.outcome == "accept"
+                else None,
+                decision.carried_from,
+                *_question_halves(decision, case, offer),
+            ),
+        )
+        self._record_human_decision_event(decision, copies[:3])
+
+    def record_carried_decision(
+        self,
+        case: ReviewCase,
+        offer: tuple[dict[str, object], ...],
+        answer_id: str,
+        expected: DecisionQuestion,
+        written: bool,
+        episode: int,
+        occurred_at: int,
+    ) -> str:
+        """Carry the record's answer ``answer_id`` to ``case``, a later case
+        or episode of its book asking the same question, inside the caller's
+        transaction (ADR-0108, step 4). Returns the carried decision's id.
+
+        The question check runs under the projection's staged-currentness
+        guard or the retry's current-case checks, in place of an owner
+        request's. The carried row goes through the ordinary recording
+        steps: its write follows what the episode last wrote, the
+        authorities it replaces are closed (an agreeing automatic decision on
+        the case among them), its audit event is `human_decision_carried`,
+        and the record takes it, restoring its root. A carry writes no
+        no-change row. A constructor refusal raises `HumanDecisionError`.
+        """
+        row = self._connection.execute(
+            "SELECT document FROM human_decisions WHERE decision_id=?",
+            (answer_id,),
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("human decision persistence failed")
+        original = HumanDecision.from_json(row[0])
+        target = case.target
+        entered = original.outcome == "owner_entered"
+        written_values = (
+            dict(self._written_field_values(case.review_case_id)) if entered else {}
+        )
+        decision = HumanDecision.carried(
+            case,
+            original,
+            offer=offer,
+            expected=expected,
+            written=written,
+            episode=episode,
+            occurred_at=occurred_at,
+            previous=dict(
+                self._previous_field_values(
+                    str(target["connection"]),
+                    str(target["library"]),
+                    str(target["item"]),
+                )
+            ).get(original.destination)
+            if entered
+            else None,
+            case_written=(written_values[original.destination],)
+            if original.destination in written_values
+            else None,
+        )
+        follows, _nothing_to_write = self._recorded_follows(decision)
+        decision = replace(decision, follows=follows)
+        previous, authored, automatic = self._replacement_authorities(decision, case)
+        self._insert_owner_decision(decision, case, offer)
+        self._close_replaced_authorities(
+            decision, previous, authored, automatic, pin=None
+        )
+        return decision.decision_id
+
     def _record_human_decision_event(
         self, decision: HumanDecision, item: tuple[str, ...]
     ) -> None:
-        """Write the `human_decision_recorded` audit event with the decision's
-        item key (ADR-0108)."""
+        """Write the decision's audit event with its item key (ADR-0108):
+        `human_decision_carried` for an answer the question check carried,
+        else `human_decision_recorded`."""
+        kind = (
+            "human_decision_recorded"
+            if decision.carried_from is None
+            else "human_decision_carried"
+        )
         event_id = (
             "human_decision_event_"
             + hashlib.sha256(
@@ -1054,7 +1159,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "decision_id": decision.decision_id,
                 "destination": decision.destination,
                 "event_id": event_id,
-                "kind": "human_decision_recorded",
+                "kind": kind,
                 "occurred_at": decision.occurred_at,
                 "outcome": decision.outcome,
                 "review_case_id": decision.review_case_id,
@@ -1065,13 +1170,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
             "INSERT INTO human_decision_events("
             "event_id,decision_id,review_case_id,destination,actor,kind,"
             "occurred_at,document,connection_name,library_name,item_id) "
-            "VALUES(?,?,?,?,?,'human_decision_recorded',?,?,?,?,?)",
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (
                 event_id,
                 decision.decision_id,
                 decision.review_case_id,
                 decision.destination,
                 decision.actor,
+                kind,
                 decision.occurred_at,
                 event_document,
                 *item,
@@ -1410,7 +1516,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
     def _require_withdrawable(self, decision: HumanDecision) -> None:
         """Refuse a withdraw in its fixed order; nothing is written (ADR-0085)."""
         latest = self._connection.execute(
-            "SELECT decision_id,outcome FROM human_decisions "
+            "SELECT decision_id,outcome,carried_from FROM human_decisions "
             "WHERE review_case_id=? AND destination=? "
             "AND outcome NOT IN ('pin','unpin') AND "
             + _episode_decision_sql("human_decisions")
@@ -1440,13 +1546,29 @@ class SQLiteDecisionRepository(ConnectionScoped):
             (decision.review_case_id, decision.destination),
         ).fetchone():
             raise HumanDecisionError("automatic_hold")
+        # A carried copy is written wherever its chain was: whether it can be
+        # withdrawn follows `carried_from` to the plans of its root original
+        # and every row carried from it (ADR-0108).
+        chain = (
+            (latest[0],)
+            if latest[2] is None
+            else tuple(
+                str(row[0])
+                for row in self._connection.execute(
+                    "SELECT decision_id FROM human_decisions "
+                    "WHERE decision_id=? OR carried_from=?",
+                    (latest[2], latest[2]),
+                )
+            )
+        )
         states = {
             row[0]
+            for answer in chain
             for row in self._connection.execute(
                 "SELECT state FROM field_effects WHERE rowid IN (SELECT rowid FROM "
                 "field_effects WHERE decision_id=? UNION ALL SELECT rowid FROM "
                 "field_effects WHERE " + _FIELD_EFFECT_COMPANION_DECISION_SQL + "=?)",
-                (latest[0], latest[0]),
+                (answer, answer),
             )
         }
         if states & {"claimed", "applying", "reconciling"}:

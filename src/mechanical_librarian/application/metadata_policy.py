@@ -748,10 +748,20 @@ def _library_impact(
     # outcome rows both read the same pair of pure proposal results.
     compiled_pairs = tuple(
         (
-            evaluate_report(report, active.resolved_id, active_destinations),
-            evaluate_report(report, resolved.resolved_id, resolved_destinations),
+            evaluate_report(
+                report,
+                active.resolved_id,
+                active_destinations,
+                derived_epoch=proposal.derived_epoch,
+            ),
+            evaluate_report(
+                report,
+                resolved.resolved_id,
+                resolved_destinations,
+                derived_epoch=proposal.derived_epoch,
+            ),
         )
-        for report, _ in pairs
+        for report, proposal in pairs
     )
     active_cases = tuple(
         _kept_without_alternative(

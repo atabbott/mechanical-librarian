@@ -7528,7 +7528,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "human-decision-event-v1",
+            "const": "human-decision-event-v2",
             "title": "Schema Version",
             "type": "string"
           },

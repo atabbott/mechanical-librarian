@@ -27,6 +27,14 @@ else:
     fcntl = None
 
 
+class DatabaseInUse(MetadataReportError):
+    """Another process holds the database's binding lock.
+
+    The message is the binding's ordinary one; only regenerate-derived reads
+    the type, to say the server is still running (ADR-0108).
+    """
+
+
 class _LinuxDirectoryChain:
     def __init__(
         self,
@@ -209,7 +217,12 @@ class _LinuxDatabaseBinding:
             expected = os.fstat(descriptor)
             expected_identity = (expected.st_dev, expected.st_ino)
             if authority is None:
-                fcntl.flock(parent_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                try:
+                    fcntl.flock(parent_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as error:
+                    raise DatabaseInUse(
+                        "database private binding is unavailable"
+                    ) from error
                 locked = True
             elif type(authority) is not cls:
                 raise MetadataReportError("database authority changed")

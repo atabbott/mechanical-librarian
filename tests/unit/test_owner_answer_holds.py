@@ -31,6 +31,7 @@ from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.evidence_led_titles import isbn_title_report
 from tests.support.genre_reports import genre_report
 from tests.support.owner_field_record import (
+    hold_root,
     hold_token,
     record_recomputes,  # noqa: F401
     resume,
@@ -135,10 +136,16 @@ def _automatic_writes_first(store: OwnerStore, report: MetadataReport) -> None:
     assert _queued(store) is None
 
 
+def _root(store: OwnerStore, destination: str = "title") -> str | None:
+    return hold_root(store.repository, store.case.review_case_id, destination)
+
+
 def _held_from_automatic(store: OwnerStore, token: str) -> None:
     """The current case holds the field with the owner's answer, Automatic's
-    decision on it waits for Resume, and the case shows Resume."""
-    assert _hold(store) == token
+    decision on it waits for Resume, and the case shows Resume. A later case
+    asking the same question holds it as the copy the question check carried
+    there (ADR-0108, step 4)."""
+    assert _root(store) == token
     assert _queued(store) is None
     assert _automatic(store, "title")[-1].review_case_id == store.case.review_case_id
     assert _field(store, "title")["manual_hold"] is True
@@ -168,7 +175,9 @@ def test_the_original_title_put_back_stays(tmp_path: Path) -> None:
     decision = store.decide("owner_entered", {"kind": "text", "value": ORIGINAL})
     store.write(decision)
     store.publish(rewritten(report, title=ORIGINAL))  # the first case recurs
-    assert _hold(store) == decision.decision_id
+    # The first case recurs in a new episode and asks the same question, so
+    # the written answer is carried there, settled (ADR-0108, step 4).
+    assert _root(store) == decision.decision_id
     assert _queued(store) is None
     store.publish(rewritten(report, title=ORIGINAL, publisher="Changed Elsewhere"))
     _held_from_automatic(store, decision.decision_id)
@@ -264,7 +273,8 @@ def test_genres_kept_in_preview_stay_after_automatic_is_turned_on(
     repository.persist_shadow_outcome(first.review_case_id, store.clock())
     assert _queued(store, "genres") is None
     store.publish(rewritten(GENRES, publisher="Changed Elsewhere"))
-    assert _hold(store, "genres") == decision.decision_id
+    # Carried to the successor, which asks the same question (step 4).
+    assert _root(store, "genres") == decision.decision_id
     assert _queued(store, "genres") is None
     assert _field(store, "genres")["manual_hold"] is True
     store.close()
@@ -328,11 +338,11 @@ def test_a_withdrawn_answer_restores_the_earlier_hold(tmp_path: Path) -> None:
     store.publish(report)
     earlier = store.decide("keep_current", destination="title")
     store.publish(rewritten(report, publisher="Changed Elsewhere"))
-    assert _hold(store) == earlier.decision_id  # carried to the successor
+    assert _root(store) == earlier.decision_id  # carried to the successor
     later = store.decide("owner_entered", OWN)
     assert _hold(store) == later.decision_id
     store.decide("withdraw", destination="title")
-    assert _hold(store) == earlier.decision_id
+    assert _root(store) == earlier.decision_id
     _activate(store, _profile("Second policy", "automatic"), ask, report.target.library)
     store.publish(rewritten(report, publisher="Changed Again"))
     _held_from_automatic(store, earlier.decision_id)
@@ -401,7 +411,7 @@ def test_a_withdrawal_that_restores_an_earlier_hold_still_refuses_automatic(
     earlier = store.decide("keep_current", destination="title")
     successor = rewritten(report, publisher="Changed Elsewhere")
     store.publish(successor)
-    assert _hold(store) == earlier.decision_id  # carried to the successor
+    assert _root(store) == earlier.decision_id  # carried to the successor
     decided = _automatic(store, "title")[-1]
     assert decided.review_case_id == store.case.review_case_id
     store.decide("owner_entered", OWN)
@@ -412,7 +422,7 @@ def test_a_withdrawal_that_restores_an_earlier_hold_still_refuses_automatic(
     store.publish(successor)
     assert store.case.review_case_id == decided.review_case_id
     store.decide("withdraw", destination="title")
-    assert _hold(store) == earlier.decision_id
+    assert _root(store) == earlier.decision_id
     # The preparation pipeline settles the case's reconciliation, then
     # Automatic is turned on again: the withdrawal still keeps it off the field.
     connection = store.repository._connection

@@ -166,6 +166,7 @@ from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
 from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_EVENT_KINDS,
     HUMAN_DECISION_EVENT_SCHEMA,
     OWNER_ENTRY_DESTINATIONS,
     VALUE_OUTCOMES,
@@ -245,8 +246,11 @@ _ActivityStamp = tuple[tuple[int, int], _ActivityDatabaseIdentity]
 # pending work: it must not be offered for consent, counted as prepared, or
 # handed to the scheduler at all.  The scheduler skips one too, but a decision
 # the owner is told about is decided here (#968).
+# A carried copy of a written answer or a refusal (`settled`) is not work
+# either: it settles its field and plans nothing (ADR-0108).
 _RECORDED_ONLY_EXCLUDED_SQL = (
-    "json_extract(human.document,'$.application') IS NOT 'recorded_only' AND "
+    "COALESCE(json_extract(human.document,'$.application'),'') "
+    "NOT IN ('recorded_only','settled') AND "
 )
 
 # An effect holds its decision unless it was superseded, abandoned, or staled
@@ -494,6 +498,25 @@ _ACTIVE_GENERATION_DESCRIPTION_SQL = (
 )
 
 
+# A case the projection has published as its book's current case: its
+# lineage and its package agree.
+_PUBLISHED_JOIN_SQL = (
+    "current_review_case_lineages lineage JOIN "
+    "current_review_packages package ON package.connection_name=lineage.connection_name "
+    "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
+    "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
+    "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint"
+)
+_PUBLISHED_CASES_SQL = "SELECT lineage.review_case_id FROM " + _PUBLISHED_JOIN_SQL
+# A row the question check carried plans only once the projection has
+# published its case, as an automatic decision does (ADR-0108, "The owner's
+# arm after Resume"). It is tested per carried row only, so the owner arm
+# still builds no list of its own.
+_CARRIED_PUBLISHED_SQL = (
+    "(human.carried_from IS NULL OR EXISTS (SELECT 1 FROM "
+    + _PUBLISHED_JOIN_SQL
+    + " WHERE package.review_case_id=human.review_case_id)) AND "
+)
 # The planning query's record clauses (ADR-0108, "The owner's arm after
 # Resume" and "Readers"): an owner's row, human or authored description,
 # plans only while the record names it; an automatic decision, description
@@ -3003,6 +3026,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
                 + _RECORDED_ONLY_EXCLUDED_SQL
+                + _CARRIED_PUBLISHED_SQL
                 + "(human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) OR ("
                 "human.destination='cover' AND EXISTS (SELECT 1 FROM "
                 "cover_consideration_events selected JOIN current_cover_considerations current "
@@ -3026,12 +3050,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT automatic.decision_id,automatic.occurred_at,automatic.document "
                 "FROM automatic_decisions automatic WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=automatic.review_case_id AND automatic.destination='description') AND "
                 "json_extract(automatic.document,'$.outcome') IN ('candidate','keep_current') AND "
-                "+automatic.review_case_id IN (SELECT lineage.review_case_id FROM current_review_case_lineages lineage JOIN "
-                "current_review_packages package ON package.connection_name=lineage.connection_name "
-                "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
-                "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
-                "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint)"
-                " AND "
+                "+automatic.review_case_id IN ("
+                + _PUBLISHED_CASES_SQL
+                + ") AND "
                 + _AUTOMATIC_UNANSWERED_SQL
                 + " AND "
                 # Only the active generation's decision is pending (#1573).
@@ -4308,7 +4329,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             if (
                 set(raw) != event_keys
                 or raw.get("schema_version") != HUMAN_DECISION_EVENT_SCHEMA
-                or raw.get("kind") != "human_decision_recorded"
+                or raw.get("kind") not in HUMAN_DECISION_EVENT_KINDS
                 or raw.get("event_id") != row.event_id
                 or raw.get("decision_id") != decision.decision_id
                 or raw.get("decision_id") != row.source_identity
@@ -5115,7 +5136,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON episode.review_case_id=decision.review_case_id "
                 "JOIN current_review_packages current "
                 "ON current.review_case_id=decision.review_case_id "
-                "WHERE decision.ordinal<=episode.decision_floor AND event.event_id IN ("
+                "WHERE decision.ordinal<=episode.decision_floor "
+                # An answer the question check carried into the case's
+                # current episode was not asked again (ADR-0108).
+                "AND NOT EXISTS (SELECT 1 FROM human_decisions carried "
+                "WHERE carried.carried_from=COALESCE(decision.carried_from,"
+                "decision.decision_id) "
+                "AND carried.review_case_id=decision.review_case_id "
+                "AND json_extract(carried.document,'$.episode')="
+                "episode.decision_floor) AND event.event_id IN ("
                 + ",".join("?" for _ in decisions)
                 + ")",
                 decisions,

@@ -45,6 +45,7 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_EVENT_SCHEMA,
     HumanDecision,
     decision_actions,
     offer_digest,
@@ -207,7 +208,7 @@ def _event_id(decision: HumanDecision) -> str:
     return (
         "human_decision_event_"
         + hashlib.sha256(
-            ("human-decision-event-v1:" + decision.decision_id).encode()
+            (HUMAN_DECISION_EVENT_SCHEMA + ":" + decision.decision_id).encode()
         ).hexdigest()
     )
 

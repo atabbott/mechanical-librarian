@@ -224,19 +224,21 @@ def _write_marker(
 # Every owner decision is inserted with its work and copies (ADR-0108): its
 # ordinal from the owner-answer counter, the decision's own columns, then its
 # item key, its case's display title and authors (each bound to the case) and
-# target field, and an accepted description's chosen copy.
+# target field, an accepted description's chosen copy, the root original a
+# carried row copies, and the question halves it was given against.
 HUMAN_DECISION_INSERT_SQL = (
     "INSERT INTO human_decisions(ordinal,"
     "decision_id,review_case_id,proposal_id,target_fingerprint,"
     "destination,actor,outcome,selected_value_document,"
     "idempotency_digest,request_digest,occurred_at,document,"
     "connection_name,library_name,item_id,display_title,display_authors,"
-    "target_field_document,selected_form) "
+    "target_field_document,selected_form,carried_from,offer_digest,"
+    "seen_target_digest) "
     "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
     + _CASE_TITLE_SQL
     + ","
     + _CASE_AUTHORS_SQL
-    + ",?,?)"
+    + ",?,?,?,?,?)"
 )
 
 
@@ -345,6 +347,10 @@ def _ask_changed_fields(
                 cause.occurred_at,
                 cause.to_json(),
                 *decision_copies(case, cause.destination),
+                None,
+                # A valueless row is no answer: no root, no question halves.
+                None,
+                None,
                 None,
             ),
         ).rowcount

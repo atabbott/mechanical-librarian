@@ -513,6 +513,14 @@ def test_automatic_description_waits_for_resume_under_either_owner_source(
                 )
             )
         report, fresh = _publish_successor(repository, binding)
+        # The successor is admitted without a projection here, so the
+        # question check runs from its retry (ADR-0108): an authored answer
+        # is asked again, a keep of a description that changed too.
+        assert repository.retry_question_checks(None, 12) == 1
+        assert repository._connection.execute(
+            "SELECT outcome FROM carry_outcomes WHERE review_case_id=?",
+            (fresh.review_case_id,),
+        ).fetchall() == [("asked_again" if source == "authored" else "target_changed",)]
         candidate = DescriptionAdviceService(
             store, access[0], store.current_settings, lambda: 12
         ).prepare(report, fresh, lambda: store.binding_is_current(fresh))
@@ -939,10 +947,14 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
         # The case page and Attention ask it alike.
         page, attention = _asked(library)
         assert "authors" in page and "authors" in attention
-        # The work returns to the first case's content: a new episode.
+        # The work returns to the first case's content: a new episode. It
+        # asks the question the answer was given against, so the question
+        # check carries it (ADR-0108, step 4; V19), except under Automatic,
+        # where the check closed the failed Resume on the later case and the
+        # answer is no longer carried (step 0).
         _read_back(library, original, 18)
         assert library.case_id() == first
-        assert reads() == {"authors": (*_ASKED, automatic)}
+        assert reads() == {"authors": (*(_ASKED if automatic else _DECIDED), automatic)}
 
         # The other posture, with the record unchanged. Preview leaves the
         # failed Resume with nothing to ask again, which the store would
@@ -952,7 +964,9 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
             library.leave_automatic()
         else:
             _confirm_automatic(library, 40)
-        assert reads() == {"authors": (*_ASKED, not automatic)}
+        assert reads() == {
+            "authors": (*(_ASKED if automatic else _DECIDED), not automatic)
+        }
         assert all(
             cause != "nothing_to_decide"
             for value in seen
@@ -1710,6 +1724,14 @@ def test_a_later_description_case_asks_and_a_failed_resume_keeps_asking(
                 )
             )
         report, fresh = _publish_successor(repository, binding)
+        # The successor is admitted without a projection here, so the
+        # question check runs from its retry (ADR-0108): an authored answer
+        # is asked again, a keep of a description that changed too.
+        assert repository.retry_question_checks(None, 12) == 1
+        assert repository._connection.execute(
+            "SELECT outcome FROM carry_outcomes WHERE review_case_id=?",
+            (fresh.review_case_id,),
+        ).fetchall() == [("asked_again" if source == "authored" else "target_changed",)]
         candidate = DescriptionAdviceService(
             store, access[0], store.current_settings, lambda: 12
         ).prepare(report, fresh, lambda: store.binding_is_current(fresh))

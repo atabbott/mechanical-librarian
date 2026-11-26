@@ -59,6 +59,7 @@ CURRENT_VERSIONS: tuple[tuple[str, str], ...] = (
     ("mechanical_librarian.domain.value_flags", "VALUE_FLAG_RULES_VERSION"),
     ("mechanical_librarian.domain.human_decision", "HUMAN_DECISION_SCHEMA"),
     ("mechanical_librarian.domain.human_decision", "HUMAN_DECISION_EVENT_SCHEMA"),
+    ("mechanical_librarian.domain.decision_question", "DECISION_QUESTION_SCHEMA"),
     ("mechanical_librarian.application.review_web", "HUMAN_DECISION_ACK_SCHEMA"),
     ("mechanical_librarian.application.cover_consideration", "SCHEMA_VERSION"),
     ("mechanical_librarian.application.cover_identity", "SCHEMA_VERSION"),

@@ -68,6 +68,7 @@ from mechanical_librarian.domain.description_advice import DescriptionAdviceBind
 from mechanical_librarian.domain.failure_diagnostics import FailureCategory
 from mechanical_librarian.domain.field_effect import LIST_DESTINATIONS
 from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_EVENT_SCHEMA,
     HumanDecision,
 )
 from mechanical_librarian.domain.library_visit import ListingPositions
@@ -659,7 +660,9 @@ class FakeReviewRepository:
         event_id = (
             "human_decision_event_"
             + hashlib.sha256(
-                ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
+                (HUMAN_DECISION_EVENT_SCHEMA + ":" + decision.decision_id).encode(
+                    "utf-8"
+                )
             ).hexdigest()
         )
         target = next(
@@ -688,7 +691,7 @@ class FakeReviewRepository:
                 if current is None
                 else {"kind": kind, "value": current},
                 "review_case_id": decision.review_case_id,
-                "schema_version": "human-decision-event-v1",
+                "schema_version": HUMAN_DECISION_EVENT_SCHEMA,
                 "selected_value": decision.selected_value
                 if decision.outcome == "accept"
                 else None

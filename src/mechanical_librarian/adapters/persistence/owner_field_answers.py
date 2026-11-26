@@ -17,6 +17,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import astuple, replace
+from typing import Literal
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.owner_field_answer import (
@@ -142,7 +143,9 @@ OWNER_FIELD_EVENTS_SQL = (
     f"answer_id TEXT CHECK(answer_id IS NULL OR ({_HUMAN_ID.format('answer_id')})), "
     "occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer' AND occurred_at>=0), "
     "CHECK((kind IN ('resume_requested','retired'))=(request_id IS NULL)), "
-    "CHECK(kind<>'resume_requested' OR scan_id IS NOT NULL))"
+    "CHECK(kind<>'resume_requested' OR scan_id IS NOT NULL), "
+    # A retirement names the answer whose plan it retired (C4', #2040).
+    "CHECK(kind<>'retired' OR answer_id IS NOT NULL))"
 )
 OWNER_FIELD_EVENTS_KEY_INDEX_SQL = (
     "CREATE INDEX owner_field_events_key "
@@ -160,7 +163,8 @@ OWNER_FIELD_EVENT_TRIGGERS = {
     for operation in ("update", "delete")
 }
 # One row per field of a book: the owner's latest answer there. The question
-# halves stay null until the question check (C4'), both or neither.
+# halves are the answer's own (null for a cover, a pin, an authored
+# description), both or neither.
 OWNER_FIELD_ANSWERS_SQL = (
     "CREATE TABLE owner_field_answers ("
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
@@ -209,7 +213,9 @@ _UPSERT_SQL = (
 )
 # The ledger rows the record folds, in `OwnerAnswerRow`'s field order: every
 # owner decision, each cover answer naming its owner selection, and every
-# owner authored description. `{human}` and `{authored}` narrow each arm.
+# owner authored description, with its question halves and where it counts as
+# given (a carried row's root's case and episode). `{human}` and `{authored}`
+# narrow each arm.
 _LEDGER_ANSWERS_SQL = (
     "SELECT 'human',decision.decision_id,decision.ordinal,decision.connection_name,"
     "decision.library_name,decision.item_id,decision.destination,"
@@ -217,12 +223,18 @@ _LEDGER_ANSWERS_SQL = (
     "decision.outcome,json_extract(decision.document,'$.cause'),"
     "decision.selected_value_document,decision.display_title,decision.occurred_at,"
     "decision.target_field_document,(SELECT selection.selection_id FROM "
-    "owner_cover_selections selection WHERE selection.decision_id=decision.decision_id) "
-    "FROM human_decisions decision WHERE {human} UNION ALL "
+    "owner_cover_selections selection WHERE selection.decision_id=decision.decision_id),"
+    "decision.offer_digest,decision.seen_target_digest,decision.carried_from,"
+    "COALESCE(root.review_case_id,decision.review_case_id),"
+    "COALESCE(json_extract(root.document,'$.episode'),"
+    "json_extract(decision.document,'$.episode')) "
+    "FROM human_decisions decision LEFT JOIN human_decisions root "
+    "ON root.decision_id=decision.carried_from WHERE {human} UNION ALL "
     "SELECT 'authored_description',authored.decision_id,authored.ordinal,"
     "authored.connection_name,authored.library_name,authored.item_id,'description',"
     "authored.review_case_id,authored.episode,'authored',NULL,'null',"
-    "authored.display_title,json_extract(authored.document,'$.occurred_at'),'null',NULL "
+    "authored.display_title,json_extract(authored.document,'$.occurred_at'),'null',NULL,"
+    "NULL,NULL,NULL,authored.review_case_id,authored.episode "
     "FROM owner_authored_descriptions authored WHERE {authored}"
 )
 
@@ -310,8 +322,8 @@ def record_differences(
     The fold takes the owner's answers and Resume's events, so every column
     compares, `open_resume_id` included: a completion the record missed, a
     request it does not name as open or one it names after the request
-    closed all differ. `offer_digest` and `seen_target_digest` compare as the
-    fold gives them, null, until the question check (C4') writes them.
+    closed all differ. `offer_digest` and `seen_target_digest` are the
+    answer's own question halves, copied from its ledger row.
     """
     stored = {answer.key: answer for answer in stored_answers(connection)}
     folded = fold_owner_field_answers(
@@ -370,6 +382,7 @@ def record_answer(
     so an open request never covers less than the record's answer (S10).
     """
     row = _ledger_row(connection, source, answer_id)
+    current = _current(connection, row.key)
     request = _open_request(connection, row.key)
     if request is not None:
         _append_event(
@@ -381,7 +394,17 @@ def record_answer(
             answer_id=answer_id,
             at=row.recorded_at,
         )
-    _write(connection, answer_from(row, _current(connection, row.key), pin_fingerprint))
+    _write(
+        connection,
+        answer_from(
+            row,
+            current,
+            pin_fingerprint,
+            None
+            if current is None
+            else _ledger_row(connection, current.source, current.answer_id).given_on,
+        ),
+    )
 
 
 def _decision(connection: sqlite3.Connection, decision_id: str) -> tuple[ItemKey, int]:
@@ -457,6 +480,101 @@ def withdraw_answer(connection: sqlite3.Connection, decision_id: str) -> None:
         connection.execute(f"DELETE FROM owner_field_answers WHERE {_KEY_SQL}", key)
     else:
         _write(connection, replace(restored, open_resume_id=current.open_resume_id))
+
+
+def resume_state(
+    connection: sqlite3.Connection, key: ItemKey
+) -> Literal["none", "open", "failed"]:
+    """The field's Resume as the question check reads it: no open request,
+    one open, or one whose latest event is its failure, which no longer
+    counts as open (ADR-0108, step 0)."""
+    request = _open_request(connection, key)
+    if request is None:
+        return "none"
+    latest = connection.execute(
+        "SELECT kind FROM owner_field_events WHERE request_id=? "
+        "ORDER BY rowid DESC LIMIT 1",
+        (request[0],),
+    ).fetchone()
+    return "failed" if latest == ("resume_failed",) else "open"
+
+
+def close_resume_over_answer(
+    connection: sqlite3.Connection, key: ItemKey, at: int
+) -> bool:
+    """Close the field's open Resume `resume_superseded` naming the record's
+    answer it covers, inside the caller's transaction: the answer stays, no
+    longer carried, so nothing carries or plans and the field is asked again
+    with Resume offered (ADR-0108, step 0; `--retire-pending` alike, contract
+    T5). False, changing nothing, with no open request over the answer."""
+    current = _current(connection, key)
+    request = _open_request(connection, key)
+    if current is None or request is None or current.ordinal > request[1]:
+        return False
+    _append_event(
+        connection,
+        key,
+        "resume_superseded",
+        request_id=request[0],
+        scan_id=None,
+        answer_id=current.answer_id,
+        at=at,
+    )
+    _write(connection, replace(current, open_resume_id=None, carry_eligible=False))
+    return True
+
+
+def retire_record_answer(
+    connection: sqlite3.Connection, key: ItemKey, answer_id: str, at: int
+) -> None:
+    """``answer_id``'s plan was retired: write `retired` naming it, inside the
+    caller's transaction. Where it is the field's answer it stays, no longer
+    carried, so it is asked again and Automatic stays off (ADR-0108)."""
+    _append_event(
+        connection,
+        key,
+        "retired",
+        request_id=None,
+        scan_id=None,
+        answer_id=answer_id,
+        at=at,
+    )
+    connection.execute(
+        f"UPDATE owner_field_answers SET carry_eligible=0 WHERE {_KEY_SQL} "
+        "AND answer_id=?",
+        (*key, answer_id),
+    )
+
+
+def answer_written_sql(answer: str) -> str:
+    """Whether owner answer `answer` (an SQL expression naming a decision id)
+    is written: a verified plan or a no-change row of it or of its carry
+    chain, its root and every row carried from that root. Ledger rows only,
+    so it reads the same with or without derived rows (ADR-0108, step 3).
+
+    A title plan writes its subtitle companion's answer too, and an authored
+    description, which has no `human_decisions` row and is never carried, is
+    written by its own plan or no-change row (regenerate-derived, #2040).
+    `answer` appears once, so one positional parameter can name it."""
+    owners = (
+        "(SELECT decision_id,carried_from FROM human_decisions UNION ALL "
+        "SELECT decision_id,NULL FROM owner_authored_descriptions)"
+    )
+    return (
+        f"EXISTS (SELECT 1 FROM {owners} written_answer JOIN {owners} "
+        "written_chain ON written_chain.decision_id=COALESCE("
+        "written_answer.carried_from,written_answer.decision_id) "
+        "OR written_chain.carried_from=COALESCE(written_answer.carried_from,"
+        f"written_answer.decision_id) WHERE written_answer.decision_id={answer} "
+        "AND (EXISTS (SELECT 1 FROM field_effects written_plan "
+        "WHERE written_plan.decision_id=written_chain.decision_id "
+        "AND written_plan.state='verified') OR EXISTS (SELECT 1 FROM field_effects "
+        "WHERE state='verified' AND CAST(json_extract(document,"
+        "'$.plan.subtitle_companion.authority.decision_id') AS TEXT)"
+        "=written_chain.decision_id) OR EXISTS (SELECT 1 FROM "
+        "field_effect_no_changes written_nothing "
+        "WHERE written_nothing.decision_id=written_chain.decision_id)))"
+    )
 
 
 def matching_changed(
@@ -808,7 +926,9 @@ __all__ = [
     "OWNER_FIELD_EVENTS_SQL",
     "OWNER_FIELD_EVENT_TRIGGERS",
     "SETUP_OWNER_ANSWER_ORDINAL_ROW",
+    "answer_written_sql",
     "case_episode",
+    "close_resume_over_answer",
     "complete_resume",
     "fail_open_resumes_for_scan",
     "has_open_resume_for_scan",
@@ -820,6 +940,8 @@ __all__ = [
     "record_answer",
     "record_differences",
     "request_resume",
+    "resume_state",
+    "retire_record_answer",
     "stored_answers",
     "validate_owner_field_answers",
     "withdraw_answer",

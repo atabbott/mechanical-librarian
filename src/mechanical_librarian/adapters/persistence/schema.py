@@ -25,6 +25,7 @@ import sqlite3
 import sys
 import unicodedata
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -73,6 +74,13 @@ from mechanical_librarian.adapters.persistence.owner_settings import (
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     validate_preparation_presentation,
 )
+
+# C4' question check (#2040).
+from mechanical_librarian.adapters.persistence.question_check import (
+    CARRY_OUTCOME_TRIGGERS,
+    CARRY_OUTCOMES_SQL,
+    validate_carry_outcomes,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
     _CURRENT_LIBRARY_FROM_SQL,
@@ -88,7 +96,11 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 from mechanical_librarian.application.cover_consideration import (
     cover_consideration_currentness_document,
 )
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    DerivedRegenerationRequired,
+    LedgerRebuildRequired,
+    MetadataReportError,
+)
 from mechanical_librarian.domain.automatic_decision import (
     AUTOMATIC_POSTURE,
     AutomaticDecisionError,
@@ -106,6 +118,7 @@ from mechanical_librarian.domain.cover_taste import (
 from mechanical_librarian.domain.human_decision import (
     AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA,
     COVER_SELECTION_AUTHORITY_SCHEMA,
+    HUMAN_DECISION_EVENT_KINDS,
     HumanDecision,
     HumanDecisionError,
     field_fingerprint,
@@ -969,6 +982,14 @@ _HUMAN_DECISIONS_SQL = (
     "display_authors TEXT CHECK(display_authors IS NULL OR (typeof(display_authors)='text' AND json_valid(display_authors) AND json_type(display_authors)='array')), "
     "target_field_document TEXT NOT NULL CHECK(typeof(target_field_document)='text' AND json_valid(target_field_document) AND json_type(target_field_document) IN ('object','null')), "
     "selected_form TEXT CHECK(selected_form IS NULL OR (typeof(selected_form)='text' AND destination='description' AND outcome='accept')), "
+    # C4' question check (#2040): a carried row names its root original, as
+    # its document does, and every answer keeps the question halves it was
+    # given against, both or neither; a carried row always has them
+    # (ADR-0108).
+    "carried_from TEXT CHECK(carried_from IS NULL OR (carried_from GLOB 'human_decision_[0-9a-f]*' "
+    "AND length(carried_from)=79 AND carried_from<>decision_id)), "
+    "offer_digest TEXT CHECK(offer_digest IS NULL OR (length(offer_digest)=64 AND offer_digest NOT GLOB '*[^0-9a-f]*')), "
+    "seen_target_digest TEXT CHECK(seen_target_digest IS NULL OR (length(seen_target_digest)=64 AND seen_target_digest NOT GLOB '*[^0-9a-f]*')), "
     # The selected value is null or one closed kind; the owner's empty value
     # carries no value and only an owner-entered decision selects it (ADR-0105).
     "CHECK(selected_value_document='null' OR (json_valid(selected_value_document) "
@@ -979,7 +1000,11 @@ _HUMAN_DECISIONS_SQL = (
     "OR (outcome='owner_entered' AND json_type(selected_value_document,'$.value')='null')), "
     # A decision names the write it follows, frozen when it is recorded
     # (ADR-0105).
-    "CHECK(json_valid(document)=0 OR json_type(document,'$.follows') IN ('null','text')))"
+    "CHECK(json_valid(document)=0 OR json_type(document,'$.follows') IN ('null','text')), "
+    # C4' question check (#2040): see the carried_from column.
+    "CHECK((offer_digest IS NULL)=(seen_target_digest IS NULL)), "
+    "CHECK(carried_from IS NULL OR offer_digest IS NOT NULL), "
+    "CHECK(json_valid(document)=0 OR json_extract(document,'$.carried_from') IS carried_from))"
 )
 # Browse, counts and detail ask for a case's decisions per destination, and the
 # latest by ordinal (the rowid, so the index carries it); without this every
@@ -1006,7 +1031,11 @@ _HUMAN_DECISION_EVENTS_SQL = (
     "decision_id TEXT NOT NULL UNIQUE REFERENCES human_decisions(decision_id), "
     "review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), "
     "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
-    "actor TEXT NOT NULL CHECK(actor='owner'), kind TEXT NOT NULL CHECK(kind='human_decision_recorded'), "
+    "actor TEXT NOT NULL CHECK(actor='owner'), "
+    # C4' question check (#2040): a carried answer has its own kind.
+    "kind TEXT NOT NULL CHECK(kind IN ("
+    + ",".join(f"'{kind}'" for kind in HUMAN_DECISION_EVENT_KINDS)
+    + ")), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536), "
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL)"
@@ -2031,6 +2060,13 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
         "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,"
         "{row}.destination",
     ),
+    # C4' question check (#2040): its outcome asks a field again or leaves it
+    # waiting, settled meanwhile (ADR-0108, Attention).
+    "carry_outcomes": (
+        ("insert", "update"),
+        "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,"
+        "{row}.destination",
+    ),
 }
 
 
@@ -2092,6 +2128,19 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
         "answer_id",
         "open_resume_id",
         "pin_fingerprint",
+        # C4' question check (#2040).
+        "carry_eligible",
+    ),
+    # C4' question check (#2040).
+    "carry_outcomes": (
+        "answer_id",
+        "review_case_id",
+        "episode",
+        "connection_name",
+        "library_name",
+        "item_id",
+        "destination",
+        "outcome",
     ),
 }
 
@@ -2150,6 +2199,109 @@ def _create_attention_facts(connection: sqlite3.Connection) -> None:
         "destination) SELECT connection_name,library_name,item_id,NULL "
         "FROM current_review_packages"
     )
+
+
+# --- The ledger's own record (ADR-0108, #2040) -------------------------------
+# `ledger_meta` names the ledger's format and the derived partition it sits
+# beside; `derived_regenerations` audits each `regenerate-derived` run; and
+# `regeneration_notice_dismissals` holds the owner's one dismissal of each
+# run's upgrade notice. All three are ledger.
+LEDGER_FORMAT_VERSION = 1
+DERIVED_VERSION = 1
+
+
+def _whole(column: str, minimum: int) -> str:
+    return f"{column} INTEGER NOT NULL CHECK(typeof({column})='integer' AND {column}>={minimum})"
+
+
+def _hex_digest(column: str) -> str:
+    return (
+        f"{column} TEXT NOT NULL CHECK(typeof({column})='text' AND "
+        f"length({column})=64 AND {column} NOT GLOB '*[^0-9a-f]*')"
+    )
+
+
+_LEDGER_META_SQL = (
+    "CREATE TABLE ledger_meta ("
+    "singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
+    f"{_whole('ledger_format_version', 1)}, "
+    f"{_whole('derived_epoch', 0)}, "
+    f"{_whole('derived_version', 1)}, "
+    f"{_hex_digest('derived_schema_digest')})"
+)
+_DERIVED_REGENERATIONS_SQL = (
+    "CREATE TABLE derived_regenerations ("
+    "regeneration_id INTEGER PRIMARY KEY NOT NULL CHECK(regeneration_id>=1), "
+    f"{_whole('derived_epoch_before', 0)}, "
+    "derived_epoch_after INTEGER NOT NULL UNIQUE CHECK(typeof(derived_epoch_after)"
+    "='integer' AND derived_epoch_after=derived_epoch_before+1), "
+    f"{_whole('derived_version_before', 1)}, "
+    f"{_whole('derived_version_after', 1)}, "
+    f"{_hex_digest('derived_schema_digest_before')}, "
+    f"{_hex_digest('derived_schema_digest_after')}, "
+    f"{_whole('ledger_format_version_before', 1)}, "
+    "ledger_format_version_after INTEGER NOT NULL CHECK(typeof("
+    "ledger_format_version_after)='integer' AND "
+    "ledger_format_version_after>=ledger_format_version_before), "
+    "build_version TEXT NOT NULL CHECK(typeof(build_version)='text' AND "
+    "length(build_version) BETWEEN 1 AND 128), "
+    f"{_whole('started_at', 0)}, "
+    "finished_at INTEGER NOT NULL CHECK(typeof(finished_at)='integer' AND "
+    "finished_at>=started_at), "
+    f"{_hex_digest('backup_sha256')}, "
+    f"{_whole('decision_ordinal_hwm', 0)}, "
+    "retire_pending INTEGER NOT NULL CHECK(retire_pending IN (0,1)), "
+    "counts_document TEXT NOT NULL CHECK(typeof(counts_document)='text' AND "
+    "length(CAST(counts_document AS BLOB)) BETWEEN 2 AND 65536 AND "
+    "json_valid(counts_document) AND json_type(counts_document)='object'))"
+)
+_REGENERATION_NOTICE_DISMISSALS_SQL = (
+    "CREATE TABLE regeneration_notice_dismissals ("
+    "regeneration_id INTEGER PRIMARY KEY NOT NULL "
+    "REFERENCES derived_regenerations(regeneration_id), "
+    f"{_whole('dismissed_at', 0)})"
+)
+_LEDGER_STATE_TRIGGERS = {
+    f"{table}_no_{operation}": (
+        f"CREATE TRIGGER {table}_no_{operation} BEFORE {operation.upper()} ON "
+        f"{table} BEGIN SELECT RAISE(ABORT, '{noun} are append-only'); END"
+    )
+    for table, noun in (
+        ("derived_regenerations", "derived regenerations"),
+        ("regeneration_notice_dismissals", "regeneration notice dismissals"),
+    )
+    for operation in ("update", "delete")
+}
+# A dismissal is of a regeneration that had finished.
+_DISMISSAL_BEFORE_ITS_REGENERATION_SQL = (
+    "SELECT 1 FROM regeneration_notice_dismissals dismissal "
+    "JOIN derived_regenerations regeneration USING(regeneration_id) "
+    "WHERE dismissal.dismissed_at<regeneration.finished_at LIMIT 1"
+)
+
+
+def _create_ledger_state(connection: sqlite3.Connection) -> None:
+    """Create the ledger's record last and seed it for the schema just made.
+
+    The seed names this build's derived partition by the digest of the
+    objects this very connection now holds, which are the build's.
+    """
+    for statement in (
+        _LEDGER_META_SQL,
+        _DERIVED_REGENERATIONS_SQL,
+        _REGENERATION_NOTICE_DISMISSALS_SQL,
+        *_LEDGER_STATE_TRIGGERS.values(),
+    ):
+        connection.execute(statement)
+    _, derived = _partition(_creation_order(connection))
+    connection.execute(
+        "INSERT INTO ledger_meta(singleton,ledger_format_version,derived_epoch,"
+        "derived_version,derived_schema_digest) VALUES(?,?,?,?,?)",
+        (1, LEDGER_FORMAT_VERSION, 0, DERIVED_VERSION, _derived_digest(derived)),
+    )
+
+
+# --- end of the ledger's own record ------------------------------------------
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
@@ -2318,6 +2470,10 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_HUMAN_DECISION_NO_DELETE_SQL)
     for sql in OWNER_FIELD_EVENT_TRIGGERS.values():
         connection.execute(sql)
+    # C4' question check (#2040).
+    connection.execute(CARRY_OUTCOMES_SQL)
+    for sql in CARRY_OUTCOME_TRIGGERS.values():
+        connection.execute(sql)
     connection.execute(_HUMAN_DECISION_EVENT_NO_UPDATE_SQL)
     connection.execute(_HUMAN_DECISION_EVENT_NO_DELETE_SQL)
     connection.execute(_COVER_CONSIDERATION_NO_UPDATE_SQL)
@@ -2359,6 +2515,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_OWNER_LINK_NO_DELETE_SQL)
     connection.execute(_OWNER_LINKS_IMPORT_INDEX_SQL)
     connection.execute(_CURRENT_OWNER_LINKS_SQL)
+    _create_ledger_state(connection)
     connection.commit()
 
 
@@ -2979,9 +3136,163 @@ LEDGER_TABLES = frozenset(
         "reviewer_access",
         "reviewer_access_secrets",
         "reviewer_task_requests",
+        # The ledger's own record (#2040).
+        "derived_regenerations",
+        "ledger_meta",
+        "regeneration_notice_dismissals",
+        # C4' question check (#2040).
+        "carry_outcomes",
     }
 )
 LEDGER_VIEWS = frozenset({"current_owner_links"})
+
+
+# --- The build's partition and startup's ledger check (ADR-0108, #2040) ------
+_Object = tuple[str, str, str, str | None]  # type, name, owning table, sql
+_DERIVED_ON_LEDGER = frozenset(
+    name for kind, name, _ in _ATTENTION_FACT_OBJECTS if kind == "trigger"
+)
+
+
+def _creation_order(connection: sqlite3.Connection) -> list[_Object]:
+    """Every object the schema names, in the order it was created."""
+    return connection.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_master "
+        "WHERE name NOT LIKE 'sqlite_%' ORDER BY rowid"
+    ).fetchall()
+
+
+def _partition(objects: list[_Object]) -> tuple[list[_Object], list[_Object]]:
+    """Split objects into the ledger's and the derived partition's.
+
+    An object is ledger when it belongs to a ledger table or view and is not a
+    trigger that writes derived state; anything else is derived (ADR-0108).
+    """
+    ledger: list[_Object] = []
+    derived: list[_Object] = []
+    for value in objects:
+        owned = value[2] in LEDGER_TABLES | LEDGER_VIEWS
+        (ledger if owned and value[1] not in _DERIVED_ON_LEDGER else derived).append(
+            value
+        )
+    return ledger, derived
+
+
+def _derived_digest(derived: list[_Object]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            sorted((kind, name, sql) for kind, name, _, sql in derived),
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+    ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class BuildPartition:
+    """What a fresh schema of this build holds, split by partition.
+
+    The objects are in creation order; the seed rows are each derived table's
+    rows in a fresh schema, in that order.
+    """
+
+    ledger_objects: tuple[_Object, ...]
+    derived_objects: tuple[_Object, ...]
+    derived_schema_digest: str
+    derived_seed_rows: tuple[tuple[str, tuple[tuple[object, ...], ...]], ...]
+
+
+def build_partition() -> BuildPartition:
+    """Derive this build's partition from a fresh in-memory schema."""
+    return _build_partition(tuple(_expected_schema_objects()))
+
+
+@lru_cache(maxsize=4)
+def _build_partition(
+    _contract: tuple[tuple[str, str, str | None], ...],
+) -> BuildPartition:
+    """Build the partition once per object contract, so a schema a caller has
+    changed in process never reads a partition made for another."""
+    connection = sqlite3.connect(":memory:")
+    try:
+        _create_schema(connection)
+        ledger, derived = _partition(_creation_order(connection))
+        return BuildPartition(
+            tuple(ledger),
+            tuple(derived),
+            _derived_digest(derived),
+            tuple(
+                (name, tuple(connection.execute(f'SELECT * FROM "{name}"')))
+                for kind, name, _, _ in derived
+                if kind == "table"
+            ),
+        )
+    finally:
+        connection.close()
+
+
+def setup_ledger_meta_row() -> tuple[int, int, int, int, str]:
+    """The ledger record a fresh schema of this build holds."""
+    return (
+        1,
+        LEDGER_FORMAT_VERSION,
+        0,
+        DERIVED_VERSION,
+        build_partition().derived_schema_digest,
+    )
+
+
+def _validate_ledger_meta(connection: sqlite3.Connection) -> None:
+    """Refuse another build's database before anything else is compared.
+
+    The precedence is frozen (ADR-0108 "Startup"): no ledger record, or
+    another ledger format, needs a clean rebuild; an altered ledger object
+    refuses as today; another build's derived partition needs a regeneration;
+    the full comparison that follows refuses a planted or altered derived
+    object as today.
+    """
+    try:
+        rows = connection.execute(
+            "SELECT ledger_format_version,derived_version,derived_schema_digest "
+            "FROM ledger_meta"
+        ).fetchall()
+    except sqlite3.Error as error:
+        raise LedgerRebuildRequired from error
+    if len(rows) != 1:
+        raise LedgerRebuildRequired
+    format_version, version, digest = rows[0]
+    if type(format_version) is not int or format_version != LEDGER_FORMAT_VERSION:
+        raise LedgerRebuildRequired
+    build = build_partition()
+    stored = {(kind, name, sql) for kind, name, _, sql in _creation_order(connection)}
+    if any(
+        (kind, name, sql) not in stored for kind, name, _, sql in build.ledger_objects
+    ):
+        raise MetadataReportError("database is unavailable or incompatible")
+    if (
+        type(version) is not int
+        or version != DERIVED_VERSION
+        or digest != build.derived_schema_digest
+    ):
+        raise DerivedRegenerationRequired
+
+
+def _ledger_state_objects() -> tuple[tuple[str, str, str | None], ...]:
+    """The ledger's own record (#2040)."""
+    return (
+        ("table", "ledger_meta", _LEDGER_META_SQL),
+        ("table", "derived_regenerations", _DERIVED_REGENERATIONS_SQL),
+        ("index", "sqlite_autoindex_derived_regenerations_1", None),
+        (
+            "table",
+            "regeneration_notice_dismissals",
+            _REGENERATION_NOTICE_DISMISSALS_SQL,
+        ),
+        *_named_objects("trigger", _LEDGER_STATE_TRIGGERS),
+    )
+
+
+# --- end of the build's partition ---------------------------------------------
 
 
 def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
@@ -2996,7 +3307,17 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             *_report_and_setting_objects(),
             *_review_objects(),
             *_ATTENTION_FACT_OBJECTS,
+            *_ledger_state_objects(),
+            *_question_check_objects(),
         )
+    )
+
+
+def _question_check_objects() -> tuple[tuple[str, str, str | None], ...]:
+    """C4' question check (#2040): its ledger outcomes and their triggers."""
+    return (
+        ("table", "carry_outcomes", CARRY_OUTCOMES_SQL),
+        *_named_objects("trigger", CARRY_OUTCOME_TRIGGERS),
     )
 
 
@@ -3100,9 +3421,15 @@ def _validate_schema_against(
 
 
 def _validate_schema_contents(
-    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
+    connection: sqlite3.Connection,
+    documents: ActivityDocuments | None = None,
+    *,
+    offline: bool = False,
 ) -> None:
-    _validate_schema_contents_without_attention_facts(connection, documents)
+    """`offline` is regenerate-derived's ledger-only admission (ADR-0108)."""
+    _validate_schema_contents_without_attention_facts(
+        connection, documents, offline=offline
+    )
     _require_equal_facts(
         connection,
         (
@@ -3117,7 +3444,10 @@ def _validate_schema_contents(
 
 
 def _validate_schema_contents_without_attention_facts(
-    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
+    connection: sqlite3.Connection,
+    documents: ActivityDocuments | None = None,
+    *,
+    offline: bool = False,
 ) -> None:
     """Validate every content rule #1232's exact predecessor also enforced.
 
@@ -3125,7 +3455,7 @@ def _validate_schema_contents_without_attention_facts(
     root's ``documents``, what validates is kept there by its exact bytes for
     the Activity reader (#1231).
     """
-    _validate_schema_contents_without_review_field_facts(connection)
+    _validate_schema_contents_without_review_field_facts(connection, offline=offline)
     _validate_review_field_facts(connection)
     parse = (
         lru_cache(maxsize=1)(MetadataReport.from_json)
@@ -3141,7 +3471,7 @@ def _validate_schema_contents_without_attention_facts(
 
 
 def _validate_schema_contents_without_review_field_facts(
-    connection: sqlite3.Connection,
+    connection: sqlite3.Connection, *, offline: bool = False
 ) -> None:
     if connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute(
         "PRAGMA integrity_check"
@@ -3155,14 +3485,17 @@ def _validate_schema_contents_without_review_field_facts(
         raise MetadataReportError("database is unavailable or incompatible") from error
     _validate_metadata_policy_documents(connection)
     _validate_cover_selection_authorities(connection)
-    _validate_field_effect_state(connection)
+    _validate_field_effect_state(connection, offline=offline)
     if (
         connection.execute(_OWNER_ITEM_KEY_DISAGREES_SQL).fetchone()
         or connection.execute(_LEDGER_COPY_DISAGREES_SQL).fetchone()
         or connection.execute(_OWNER_CONTROL_NOT_ONE_ROW_SQL).fetchone()
+        or connection.execute(_DISMISSAL_BEFORE_ITS_REGENERATION_SQL).fetchone()
     ):
         raise MetadataReportError("database is unavailable or incompatible")
     validate_owner_field_answers(connection)
+    # C4' question check (#2040).
+    validate_carry_outcomes(connection)
     validate_preparation_presentation(connection)
     try:
         _validate_owner_settings_content(connection)
@@ -3804,6 +4137,7 @@ def _validate_schema(
     read_only: bool = False,
 ) -> None:
     """Prove the exact current schema; `read_only` marks a `mode=ro` connection."""
+    _validate_ledger_meta(connection)
     _validate_schema_against(
         connection, _expected_schema_objects(), documents, read_only=read_only
     )
@@ -3904,6 +4238,8 @@ def _validate_review_browse_row(
         raise MetadataReportError("review browse row is invalid")
     case = ReviewCase.from_json(row[0])  # type: ignore[index]
     report = MetadataReport.from_json(row[1])  # type: ignore[index]
+    # Only the results are compared, so the stored set's own epoch serves.
+    proposal = ProposalSet.from_json(case.proposal_document)
     if (
         case.report_id != report.report_id
         or case.target != report.target.to_data()
@@ -3913,8 +4249,9 @@ def _validate_review_browse_row(
             value.to_data()
             for value in evaluate_report(
                 report,
-                ProposalSet.from_json(case.proposal_document).resolved_policy_id,
+                proposal.resolved_policy_id,
                 policy_destinations,
+                derived_epoch=proposal.derived_epoch,
             ).results
         )
         != case.results

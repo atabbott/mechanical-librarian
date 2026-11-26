@@ -74,6 +74,10 @@ class _Repository:
             raise ValueError
         return self.report.to_json()
 
+    def derived_epoch(self) -> int:
+        self.events.append("derived_epoch")
+        return 0
+
     def publish_proposal(self, proposal_set) -> str:
         self.events.append("publish")
         serialized = proposal_set.to_json()
@@ -100,7 +104,14 @@ def test_currentness_precedes_publication_and_readback_is_exact() -> None:
     serialized = CreateProposalSet(repository, current).run(report.report_id)
     proposal_set = evaluate_report(report)
     assert proposal_set.to_json() == serialized
-    assert ["get_report", "current", "publish", "get_proposal"] == repository.events
+    # The ledger's epoch is read before the set is evaluated (ADR-0108).
+    assert [
+        "get_report",
+        "derived_epoch",
+        "current",
+        "publish",
+        "get_proposal",
+    ] == repository.events
     assert serialized == GetProposalSet(repository).run(proposal_set.proposal_set_id)
 
 

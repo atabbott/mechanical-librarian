@@ -61,7 +61,7 @@ from tests.integration.test_policy_activation_waiting_writes import (
     _owner_decision_id,
     _reopen_fields,
 )
-from tests.support.owner_field_record import hold_token
+from tests.support.owner_field_record import hold_root
 from tests.support.owner_values import rewritten
 from tests.support.prepared_library import PRODUCER as _PRODUCER
 from tests.support.prepared_library import Library as _Library
@@ -730,7 +730,10 @@ def _changed_search_rows(
     )
     _assert_field_closed(library, lane, decision_id, waiting_id)
     return (
-        hold_token(library.root, case_after, destination),
+        # The new case asks the same question of this field, so the question
+        # check carries the answer there; the record names the carried copy
+        # of it (ADR-0108, step 4).
+        hold_root(library.root, case_after, destination),
         decision_id,
         tuple(
             library.root._connection.execute(

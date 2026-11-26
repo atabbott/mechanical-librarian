@@ -204,6 +204,7 @@ def test_triggers_writing_derived_state_are_derived_and_ledger_triggers_read_led
             assert _references(_body(sql), names) <= _LEDGER, name
     assert derived_on_ledger == {
         "automatic_safety_state",
+        "carry_outcomes",
         "field_effect_suspensions",
         "human_decisions",
         "metadata_policy_resolutions",

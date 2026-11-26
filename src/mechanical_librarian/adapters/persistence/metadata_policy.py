@@ -1173,6 +1173,19 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 raise PolicyContentionError(
                     "stale", "metadata policy transition is stale"
                 )
+            # A regeneration drops the item rows and keeps the settled header
+            # (ADR-0108); recounting none would write counts open refuses.
+            if (
+                self._connection.execute(
+                    "SELECT 1 FROM metadata_policy_transition_items "
+                    "WHERE transition_id=? LIMIT 1",
+                    (transition_id,),
+                ).fetchone()
+                is None
+            ):
+                raise PolicyContentionError(
+                    "stale", "metadata policy transition has no items"
+                )
             failed = self._connection.execute(
                 "SELECT connection_name,library_name,item_id,report_id,work_id FROM metadata_policy_transition_items WHERE transition_id=? AND state='failed'",
                 (transition_id,),

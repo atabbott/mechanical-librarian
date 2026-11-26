@@ -3358,3 +3358,46 @@ def test_enable_preserves_combined_invalid_rejection_precedence(
     with pytest.raises(GuardedApplicationError) as raised:
         service.enable((("alpha", ("invalid" if malformed else "title",)),))
     assert raised.value.code == code
+
+
+class _QuestionCheckRepository(_HoldRepository):
+    """Records each question-check retry the schedule asks for."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.retries: list[tuple[object, int, bool]] = []
+
+    def retry_question_checks(self, library, retried_at, *, provisional_only=False):
+        self.retries.append((library, retried_at, provisional_only))
+        return 0
+
+
+@pytest.mark.parametrize(
+    "beside_preparation", (True, False), ids=("runs", "projection")
+)
+def test_the_schedule_sweeps_waiting_question_checks_beside_resume(
+    beside_preparation: bool,
+) -> None:
+    """T12: each schedule pass, beside Resume's completion, asks the store to
+    check again every question check left waiting on a plan or a Resume
+    (ADR-0108); like the completion, only where the application runs beside
+    preparation, never from the read-only Activity projection."""
+    repository = _QuestionCheckRepository()
+    progress = SimpleNamespace(
+        scan_id="review_scan", state="processing", rescan_requested=False, updated_at=1
+    )
+    service = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 7,
+        lambda *_: progress,
+        scan_progress=(lambda *_: progress) if beside_preparation else None,
+    )
+    service.schedule()
+    assert repository.retries == ([(None, 7, True)] if beside_preparation else [])
