@@ -18,6 +18,7 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
     current_level_offer,
 )
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    answer_written_sql,
     case_episode,
     close_resume_over_answer,
     resume_state,
@@ -113,7 +114,14 @@ def _chain_plan(
             written = (json.loads(document)["plan"]["desired_value"],)
         elif failure in _STOPPED_FOR_OWNER:
             stopped = True
-    if written is None:
+    # Whether the chain is written at all is the ledger's own predicate; the
+    # value it wrote is read only then.
+    is_written = bool(
+        connection.execute(
+            "SELECT " + answer_written_sql("?"), (answer_id,)
+        ).fetchone()[0]
+    )
+    if is_written and written is None:
         unchanged = connection.execute(
             "SELECT decision.selected_value_document FROM field_effect_no_changes "
             "no_change JOIN human_decisions decision "
@@ -129,7 +137,7 @@ def _chain_plan(
                 )
             except FieldEffectError:
                 written = None
-    if plan == "none" and stopped and written is None:
+    if plan == "none" and stopped and not is_written:
         plan = "stopped"
     return plan, written
 
