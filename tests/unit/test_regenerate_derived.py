@@ -419,6 +419,219 @@ def test_the_free_space_refusal_names_an_earlier_restore_point(
     assert lines[0].endswith(" " + cli.NO_SPACE_HELD)
 
 
+def _held_after_a_stopped_run(path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A run that took its restore point and then stopped inside the
+    transaction, leaving the database as it was and `epoch-0` held: the
+    state recovery leaves after a run killed there."""
+    real = regeneration._recreate_derived
+
+    def failing(*arguments: Any) -> Any:
+        real(*arguments)
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(regeneration, "_recreate_derived", failing)
+    assert _run(path)[2].refusal is regeneration.Refusal.ROLLED_BACK
+    monkeypatch.undo()
+    held = path.parent / "regeneration-backup" / "epoch-0.sqlite3"
+    assert os.listdir(held.parent) == [held.name]
+    return held
+
+
+def _fits_only_with(
+    path: Path, held: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[int, int]:
+    """The free-space measure reports a volume that holds the reserve only
+    when the held copy's bytes count as free."""
+    needed = 4 * path.stat().st_size
+    free = needed - held.stat().st_size
+    monkeypatch.setattr(
+        regeneration.os,
+        "fstatvfs",
+        lambda _descriptor: SimpleNamespace(f_bavail=free, f_frsize=1),
+    )
+    return free, needed
+
+
+def test_a_held_copy_the_rerun_replaces_counts_as_free_space(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After a stopped run, its own restore point of the same epoch and
+    ledger counts as free; it is removed just before the new copy is taken,
+    and the new copy and the database keep the ledger as it stood."""
+    path = _fresh(tmp_path / "data")
+    _another_build(path)
+    ledger = _ledger(path)
+    held = _held_after_a_stopped_run(path, monkeypatch)
+    assert _ledger(held) == ledger
+    _fits_only_with(path, held, monkeypatch)
+    events: list[object] = []
+    real_unlink, real_verify = os.unlink, regeneration._verify_copy
+
+    def unlink(name: Any, *arguments: Any, **keywords: Any) -> None:
+        if name == held.name:
+            # The new copy's scratch file exists and is still empty.
+            scratch = path.parent.glob(".metadata-report-recovery-*/database.sqlite")
+            events.append(("unlink", [copy.stat().st_size for copy in scratch]))
+        real_unlink(name, *arguments, **keywords)
+
+    def verify(source: sqlite3.Connection, copy: Path) -> None:
+        events.append("copy_taken")
+        real_verify(source, copy)
+
+    monkeypatch.setattr(regeneration.os, "unlink", unlink)
+    monkeypatch.setattr(regeneration, "_verify_copy", verify)
+    status, lines, outcome = _run(path)
+    assert (status, outcome.kind) == (0, "regenerated"), lines
+    assert events == [("unlink", [0]), "copy_taken"]
+    assert os.listdir(held.parent) == [held.name]
+    assert _ledger(held) == ledger
+    assert _ledger(path, but=_WRITTEN_BY_THE_RUN) == {
+        table: rows
+        for table, rows in ledger.items()
+        if table not in _WRITTEN_BY_THE_RUN
+    }
+    assert opens(path)
+
+
+def test_a_volume_with_room_never_reads_the_held_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _fresh(tmp_path / "data")
+    _another_build(path)
+    _held_after_a_stopped_run(path, monkeypatch)
+    monkeypatch.setattr(
+        regeneration, "_replaced_copy", _fails_with(AssertionError("read"))
+    )
+    assert _run(path)[0] == 0
+
+
+def test_without_the_credit_at_the_gate_the_copy_is_replaced_after_the_new_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Admission needed the held copy's bytes, but the volume had room by the
+    time the run checked again: the held copy is replaced by the rename, as
+    without a credit, and never removed before the new copy exists."""
+    path = _fresh(tmp_path / "data")
+    _another_build(path)
+    held = _held_after_a_stopped_run(path, monkeypatch)
+    free, _ = _fits_only_with(path, held, monkeypatch)
+    measures = iter([free])
+    monkeypatch.setattr(
+        regeneration.os,
+        "fstatvfs",
+        lambda _descriptor: SimpleNamespace(
+            f_bavail=next(measures, 1 << 40), f_frsize=1
+        ),
+    )
+    real_unlink = os.unlink
+    removed: list[Any] = []
+
+    def unlink(name: Any, *arguments: Any, **keywords: Any) -> None:
+        removed.append(name)
+        real_unlink(name, *arguments, **keywords)
+
+    monkeypatch.setattr(regeneration.os, "unlink", unlink)
+    assert _run(path)[0] == 0
+    assert held.name not in removed
+    assert os.listdir(held.parent) == [held.name]
+
+
+def _another_epoch(held: Path, _monkeypatch: pytest.MonkeyPatch) -> Path:
+    return held.rename(held.with_name("epoch-7.sqlite3"))
+
+
+def _ledger_differs(held: Path, _monkeypatch: pytest.MonkeyPatch) -> Path:
+    assert rewrite(held, "UPDATE field_effect_control SET paused=1") == 1
+    return held
+
+
+def _no_ledger_table(held: Path, _monkeypatch: pytest.MonkeyPatch) -> Path:
+    connection = sqlite3.connect(held)
+    try:
+        connection.execute("DROP TABLE owner_answer_ordinal")
+        connection.commit()
+    finally:
+        connection.close()
+    return held
+
+
+def _not_sqlite(held: Path, _monkeypatch: pytest.MonkeyPatch) -> Path:
+    held.write_bytes(b"\xff" * held.stat().st_size)
+    return held
+
+
+def _swap(held: Path) -> None:
+    """The same bytes and times under the same name, in another file."""
+    other = held.with_name("swapped")
+    other.write_bytes(held.read_bytes())
+    information = held.stat()
+    os.utime(other, ns=(information.st_atime_ns, information.st_mtime_ns))
+    other.chmod(0o600)
+    os.replace(other, held)
+
+
+def _swapped_before_the_gate(held: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    real = regeneration.SQLiteRegenerationSession.inspect
+
+    def inspect(self: Any, configured: Any) -> Any:
+        _swap(held)
+        return real(self, configured)
+
+    monkeypatch.setattr(regeneration.SQLiteRegenerationSession, "inspect", inspect)
+    return held
+
+
+def _swapped_before_the_copy(held: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    real = regeneration.SQLiteRegenerationSession.back_up
+
+    def back_up(self: Any) -> None:
+        _swap(held)
+        real(self)
+
+    monkeypatch.setattr(regeneration.SQLiteRegenerationSession, "back_up", back_up)
+    return held
+
+
+@pytest.mark.parametrize(
+    "spoil",
+    [
+        _another_epoch,
+        _ledger_differs,
+        _no_ledger_table,
+        _not_sqlite,
+        _swapped_before_the_gate,
+        _swapped_before_the_copy,
+    ],
+    ids=[
+        "another_epoch",
+        "ledger_differs",
+        "no_ledger_table",
+        "not_sqlite",
+        "swapped_before_the_gate",
+        "swapped_before_the_copy",
+    ],
+)
+def test_a_held_copy_that_does_not_qualify_refuses_for_space_and_is_kept(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    spoil: Callable[[Path, pytest.MonkeyPatch], Path],
+) -> None:
+    """Only a held copy of the database's epoch and ledger, unchanged since
+    admission checked it, counts as free; otherwise the free-space refusal
+    stands as it reads today and the copy stays."""
+    path = _fresh(tmp_path / "data")
+    _another_build(path)
+    kept = spoil(_held_after_a_stopped_run(path, monkeypatch), monkeypatch)
+    free, needed = _fits_only_with(path, kept, monkeypatch)
+    before = _sha(kept)
+    _, lines, outcome = _refuses_unchanged(path)
+    assert (outcome.kind, outcome.free, outcome.needed) == ("no_space", free, needed)
+    assert outcome.backup_held
+    assert lines == [_no_space_line(outcome)]
+    assert os.listdir(kept.parent) == [kept.name]
+    assert _sha(kept) == before
+
+
 def _scratch_entries(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Record each scratch copy the run starts; the copy is still made."""
     real = regeneration._scratch
