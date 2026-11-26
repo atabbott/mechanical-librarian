@@ -79,11 +79,24 @@ _UNCHECKED_SQL = (
     "AND outcome.episode=:episode AND {settled}) ORDER BY record.destination"
 )
 # The carry chain of answer `?`: its root and every row carried from it.
+# The answer's carry chain: its root and every row carried from that root.
+# An authored description has no `human_decisions` row and is never carried,
+# so it is its own chain (as in `answer_written_sql`).
+_OWNERS_SQL = (
+    "(SELECT decision_id,carried_from FROM human_decisions UNION ALL "
+    "SELECT decision_id,NULL FROM owner_authored_descriptions)"
+)
 _CHAIN_SQL = (
-    "SELECT chain.decision_id FROM human_decisions answer JOIN human_decisions "
+    f"SELECT chain.decision_id FROM {_OWNERS_SQL} answer JOIN {_OWNERS_SQL} "
     "chain ON chain.decision_id=COALESCE(answer.carried_from,answer.decision_id) "
     "OR chain.carried_from=COALESCE(answer.carried_from,answer.decision_id) "
     "WHERE answer.decision_id=?"
+)
+# A verified title plan that wrote the chain's subtitle as its companion.
+_COMPANION_SQL = (
+    "SELECT document FROM field_effects WHERE state='verified' AND "
+    "CAST(json_extract(document,'$.plan.subtitle_companion.authority.decision_id') "
+    "AS TEXT) IN (" + _CHAIN_SQL + ") ORDER BY rowid DESC LIMIT 1"
 )
 _IN_FLIGHT = frozenset({"planned", "claimed", "applying", "reconciling", "retryable"})
 # A plan stopped on one of these waits for the owner (ADR-0108, step 3).
@@ -96,8 +109,10 @@ def _chain_plan(
     connection: sqlite3.Connection, answer_id: str, destination: str
 ) -> tuple[Literal["none", "in_flight", "stopped"], tuple[object] | None]:
     """The carry chain's plan state and the value it wrote: a verified
-    plan's desired value, else the projected value of a chain decision with
-    nothing to write, else None (ADR-0108, steps 2 and 3)."""
+    plan's desired value, else the subtitle a verified title plan wrote as
+    its companion, else the projected value of a chain decision with nothing
+    to write, else None (ADR-0108, steps 2 and 3). Whether anything is
+    written at all is `answer_written_sql`'s answer."""
     plan: Literal["none", "in_flight", "stopped"] = "none"
     written: tuple[object] | None = None
     stopped = False
@@ -121,6 +136,12 @@ def _chain_plan(
             "SELECT " + answer_written_sql("?"), (answer_id,)
         ).fetchone()[0]
     )
+    if is_written and written is None:
+        companion = connection.execute(_COMPANION_SQL, (answer_id,)).fetchone()
+        if companion is not None:
+            written = (
+                json.loads(companion[0])["plan"]["subtitle_companion"]["desired_value"],
+            )
     if is_written and written is None:
         unchanged = connection.execute(
             "SELECT decision.selected_value_document FROM field_effect_no_changes "
