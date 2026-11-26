@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.persistence.activity_documents import (
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import (
+    LedgerRebuildRequired,
     MetadataReportError,
 )
 from mechanical_librarian.domain.cover_automatic_decision import (
@@ -657,6 +658,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("current_metadata_reports",),
             ("current_review_case_lineages",),
             ("current_review_packages",),
+            ("derived_regenerations",),
             ("description_advice_attempts",),
             ("description_advice_candidates",),
             ("description_preparation_pending",),
@@ -673,6 +675,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("human_decisions",),
             ("identifier_import_events",),
             ("identifier_imports",),
+            ("ledger_meta",),
             ("level_decision_notes",),
             ("level_proposal_sets",),
             ("library_visit",),
@@ -698,6 +701,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("proposal_set_browse_facts",),
             ("proposal_sets",),
             ("provider_recovery_outbox",),
+            ("regeneration_notice_dismissals",),
             ("retained_cover_bindings",),
             ("retained_cover_listings",),
             ("retained_cover_removals",),
@@ -2623,7 +2627,8 @@ def test_owner_cover_predecessor_refuses_without_mutation(tmp_path, name):
         connection.executescript(raw.decode())
     database.chmod(0o600)
     before = database.read_bytes()
-    with pytest.raises(MetadataReportError, match="incompatible"):
+    # It has no ledger record, so startup asks for a clean rebuild (ADR-0108).
+    with pytest.raises(LedgerRebuildRequired):
         open_repository(database)
     assert database.read_bytes() == before
 

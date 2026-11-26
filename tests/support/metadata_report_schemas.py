@@ -553,6 +553,17 @@ def set_pre_2038_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         persistence_schema, "validate_owner_field_answers", lambda connection: None
     )
+    # Nor had it the ledger's record, which startup reads first (#2040).
+    monkeypatch.setattr(
+        persistence_schema, "_create_ledger_state", lambda connection: None
+    )
+    monkeypatch.setattr(
+        persistence_schema, "_validate_ledger_meta", lambda connection: None
+    )
+    monkeypatch.setattr(persistence_schema, "_ledger_state_objects", lambda: ())
+    monkeypatch.setattr(
+        persistence_schema, "_DISMISSAL_BEFORE_ITS_REGENERATION_SQL", "SELECT 1 WHERE 0"
+    )
 
 
 # Nor did it keep the owner's preparation controls apart from scheduling: one

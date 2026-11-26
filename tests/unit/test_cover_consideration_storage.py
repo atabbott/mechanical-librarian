@@ -18,7 +18,10 @@ from mechanical_librarian.adapters.persistence.cover_consideration_documents imp
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    LedgerRebuildRequired,
+    MetadataReportError,
+)
 from mechanical_librarian.domain.cover_automatic_decision import (
     SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
 )
@@ -227,6 +230,8 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             schema, "_CURRENT_REVIEW_PACKAGES_SQL", PRIOR_CURRENT_REVIEW_PACKAGES_SQL
         ),
         patch.object(schema, "_PACKAGE_POSITION_OBJECTS", ()),
+        # It predates the ledger's record (#2040).
+        patch.object(schema, "_create_ledger_state", lambda connection: None),
         # Its reviewer access CHECK names v3 (#1372 moved it).
         patch.object(
             schema,
@@ -319,7 +324,8 @@ def test_actual_embedded_predecessor_refused_without_mutation(
     connection.commit()
     connection.close()
     before = database.read_bytes()
-    with pytest.raises(MetadataReportError, match="unavailable or incompatible"):
+    # It has no ledger record, so startup asks for a clean rebuild (ADR-0108).
+    with pytest.raises(LedgerRebuildRequired):
         open_repository(database, create=False)
     assert database.read_bytes() == before
 

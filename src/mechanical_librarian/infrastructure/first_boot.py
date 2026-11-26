@@ -9,6 +9,7 @@ from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 
+from mechanical_librarian.application.metadata_report import PersistedStateRefusal
 from mechanical_librarian.infrastructure.setup_claim_token import (
     SETUP_CLAIM_TOKEN_NAME,
 )
@@ -75,6 +76,24 @@ def _private_file(path: Path) -> bool:
     return (
         stat.S_ISREG(information.st_mode)
         and stat.S_IMODE(information.st_mode) == 0o600
+        and information.st_uid == os.geteuid()
+    )
+
+
+# `regenerate-derived` keeps its restore point in this directory of the volume
+# (ADR-0108). First-boot detection ignores it when it is the private directory
+# the command makes; anything else under that name keeps failing closed.
+_REGENERATION_BACKUP = "regeneration-backup"
+
+
+def _private_directory(path: Path) -> bool:
+    try:
+        information = path.lstat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(information.st_mode)
+        and stat.S_IMODE(information.st_mode) == 0o700
         and information.st_uid == os.geteuid()
     )
 
@@ -157,6 +176,8 @@ def select_first_boot_mode(
         # Root admission may remove verified retained aliases. Inspect what
         # actually remains; never subtract filenames presumed to be recovered.
         entries = {entry.name for entry in data_path.iterdir()}
+    except PersistedStateRefusal:
+        raise
     except Exception as error:
         raise FirstBootError("first boot state is unavailable") from error
     # The private directory holds the dedicated session database (#912), which
@@ -166,6 +187,10 @@ def select_first_boot_mode(
     # failing closed as before.
     setup_entries = set(entries)
     setup_entries.discard("reviewer")
+    if _REGENERATION_BACKUP in entries and _private_directory(
+        data_path / _REGENERATION_BACKUP
+    ):
+        setup_entries.discard(_REGENERATION_BACKUP)
     if "private" in entries:
         try:
             private_entries = {
@@ -206,6 +231,8 @@ def select_first_boot_mode(
             return FirstBootMode.INITIALIZE_SETUP
         if setup_entries == {database_name} and resumable_setup():
             return FirstBootMode.RESUME_SETUP
+    except PersistedStateRefusal:
+        raise
     except Exception as error:
         raise FirstBootError("first boot state is unavailable") from error
     raise FirstBootError("first boot state is unavailable")

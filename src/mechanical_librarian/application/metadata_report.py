@@ -203,6 +203,37 @@ class MetadataReportError(RuntimeError):
     """A value-free operational failure at the command boundary."""
 
 
+class PersistedStateRefusal(MetadataReportError):
+    """Startup refuses a database another build made, with the owner's guidance.
+
+    The one family a startup refusal raises (ADR-0108): first-boot detection
+    passes it through unchanged and the container prints its message. It is a
+    ``MetadataReportError``, so every open path that re-raises those carries it
+    as it is.
+    """
+
+
+class LedgerRebuildRequired(PersistedStateRefusal):
+    """The ledger is another format, or the database has no ledger record."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "This database is from a build this one cannot read, so it needs a "
+            "clean rebuild. Upgrades has the steps."
+        )
+
+
+class DerivedRegenerationRequired(PersistedStateRefusal):
+    """The ledger is this build's; what preparation made is another build's."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "This database was prepared by another build. Stop the container, "
+            "run docker compose run --rm mechanical-librarian regenerate-derived, "
+            "then start it again. Upgrades has the steps."
+        )
+
+
 class ReportStorageError(MetadataReportError):
     """The report store could not publish; ``busy`` says it may succeed later.
 
@@ -5456,16 +5487,19 @@ __all__ = [
     "CoverTimeoutError",
     "CredentialError",
     "CurrentnessError",
+    "DerivedRegenerationRequired",
     "EpubInspector",
     "GenerateMetadataReport",
     "ArtifactAuthorityError",
     "InspectionResult",
     "ItemInspectionError",
+    "LedgerRebuildRequired",
     "MetadataDiscoveryLane",
     "MetadataDiscoveryPlan",
     "MetadataLookup",
     "MetadataProvider",
     "MetadataReportError",
+    "PersistedStateRefusal",
     "ProviderBinding",
     "ProviderCoverDescriptor",
     "ProviderResult",

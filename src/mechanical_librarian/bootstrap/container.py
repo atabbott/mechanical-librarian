@@ -8,6 +8,7 @@ import stat
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.application.metadata_report import PersistedStateRefusal
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.infrastructure.first_boot import select_first_boot_mode
 
@@ -29,6 +30,14 @@ def _exit_on_container_stop(_signal_number: int, _frame: object) -> None:
 
 
 def main() -> None:
+    try:
+        _serve()
+    except PersistedStateRefusal as refusal:
+        # One line on stderr and exit status 1, the owner's guidance only.
+        raise SystemExit(str(refusal)) from None
+
+
+def _serve() -> None:
     signal.signal(signal.SIGTERM, _exit_on_container_stop)
     information = DATA.lstat()
     if not stat.S_ISDIR(information.st_mode) or information.st_uid != os.geteuid():
