@@ -15,9 +15,9 @@ import shutil
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Generic, NoReturn, TypeVar, cast
+from typing import Any, Generic, NoReturn, TypeVar, cast
 
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
@@ -39,6 +39,11 @@ from mechanical_librarian.application.metadata_policy import (
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.owner_search import OwnerSearchRefused
+from mechanical_librarian.application.regeneration_notice import (
+    RegenerationNotice,
+    RegenerationNoticeDismissalInvalid,
+    RegenerationNoticeStore,
+)
 from mechanical_librarian.application.review_covers import (
     CalibrationRow,
     CoverKey,
@@ -128,7 +133,7 @@ _LIMITING_STATUSES = frozenset(
     }
 )
 _AttentionRow = tuple[
-    str, str, str, int, str | None, ReviewFieldCause | None, bool, bool
+    str, str, str, int, str | None, ReviewFieldCause | None, bool, bool, str | None
 ]
 
 
@@ -229,6 +234,12 @@ class FakeReviewRepository:
         self.preparation_presentation_value: PreparationPresentation | None = None
         self.dismissed_preparation_runs: list[str] = []
         self.dismiss_preparation_error: Exception | None = None
+        # The latest regeneration of the derived rows (#2039); none by
+        # default, as the ledger's store answers before the first.
+        self.regeneration_notice: RegenerationNotice | None = None
+        self.dismissed_regenerations: list[int] = []
+        self.upgrade_notice_error: Exception | None = None
+        self.notice_configured: frozenset[tuple[str, str]] | None = None
         # Each recorded use of Library, and what the next one answers (#1351).
         self.library_visits: list[tuple[ListingPositions | None, int]] = []
         self.library_visit_moves: bool | Exception = False
@@ -310,6 +321,38 @@ class FakeReviewRepository:
             raise PreparationPresentationError("not_dismissible")
         self.dismissed_preparation_runs.append(run_id)
         self.preparation_presentation_value = None
+
+    def regeneration_notice_store(self) -> RegenerationNoticeStore:
+        return self
+
+    def read_regeneration_notice(
+        self, configured: frozenset[tuple[str, str]]
+    ) -> RegenerationNotice | None:
+        self.notice_configured = configured
+        if self.upgrade_notice_error is not None:
+            raise self.upgrade_notice_error
+        return self.regeneration_notice
+
+    def dismiss_regeneration_notice(
+        self, regeneration_id: int, dismissed_at: int
+    ) -> bool:
+        # As the ledger's store answers: one dismissal per regeneration, a
+        # second one changes nothing, and an unknown regeneration or one not
+        # finished at `dismissed_at` is refused.
+        if self.upgrade_notice_error is not None:
+            raise self.upgrade_notice_error
+        notice = self.regeneration_notice
+        if (
+            notice is None
+            or notice.regeneration_id != regeneration_id
+            or dismissed_at < notice.finished_at
+        ):
+            raise RegenerationNoticeDismissalInvalid
+        if notice.dismissed:
+            return False
+        self.dismissed_regenerations.append(regeneration_id)
+        self.regeneration_notice = replace(notice, dismissed=True)
+        return True
 
     def record_library_visit(self, listing: ListingPositions | None, now: int) -> bool:
         if isinstance(self.library_visit_moves, Exception):
@@ -434,17 +477,7 @@ class FakeReviewRepository:
 
     def acknowledge_metadata_policy_transition(self, transition_id, acknowledged_at):
         value = cast(PolicyTransition, self.policy_transition)
-        self.policy_transition = PolicyTransition(
-            value.transition_id,
-            value.from_policy_id,
-            value.to_policy_id,
-            value.generation,
-            value.state,
-            value.completed,
-            value.total,
-            value.failed,
-            True,
-        )
+        self.policy_transition = replace(value, acknowledged=True)
         return self.policy_transition
 
     def current_resolved_policy_id(self, library):
@@ -666,6 +699,7 @@ class FakeReviewRepository:
                 "destination": decision.destination,
                 "event_id": event_id,
                 "kind": "human_decision_recorded",
+                "kept_from": None,
                 "occurred_at": decision.occurred_at,
                 "outcome": decision.outcome,
                 "previous_value": None
@@ -1052,6 +1086,7 @@ class FakeReviewRepository:
                 self.attention_causes.get(cast(str, proposal["destination"])),
                 proposal["destination"] in self.policy_attention_destinations,
                 False,
+                None,
             )
             for case, report, proposal in rows[offset : offset + limit]
         ]
@@ -1587,11 +1622,13 @@ def review_web_context(
     *,
     mode: str = "direct",
     store_mode: bool = False,
+    review_preparation: FakePreparation | None = None,
 ) -> Iterator[ReviewWebContext[RepositoryT]]:
     """Yield one signed-out transport application over `repository_factory`.
 
     ``store_mode`` serves the owner verifier from an in-memory store, as a
-    store deployment does, instead of from the hash file.
+    store deployment does, instead of from the hash file;
+    ``review_preparation`` is the preparation lane, none by default.
     """
 
     temporary = tempfile.TemporaryDirectory()
@@ -1624,6 +1661,7 @@ def review_web_context(
             configuration,
             clock=lambda: context.now,
             owner_password=owner_password,
+            review_preparation=cast(Any, review_preparation),
         ),
         base_url="http://review.test" if mode == "proxy" else origin,
         client=("127.0.0.1", 12345),
@@ -1644,3 +1682,34 @@ def review_web_context(
     )
     yield context
     context.close()
+
+
+class _IdlePreparation(FakePreparation):
+    """A preparation lane that reads one configured library and runs
+    nothing, and drains and stops as an application lifespan asks."""
+
+    def __init__(self, connection: str, library: str) -> None:
+        super().__init__()
+        self.libraries = ((connection, library, "lib-1"),)
+
+    def progress(self, connection: str, library: str):
+        return None
+
+    def status(self):
+        self.status_calls += 1
+        return ((None,), self.is_paused)
+
+    def begin_drain(self) -> None:
+        return None
+
+    def resume_admission(self) -> None:
+        return None
+
+    def stop(self, deadline: float | None = None) -> None:
+        del deadline
+
+
+def idle_preparation(connection: str, library: str) -> Any:
+    """What the server tells the upgrade notice is configured, while idle:
+    a stand-in for the preparation supervisor."""
+    return _IdlePreparation(connection, library)

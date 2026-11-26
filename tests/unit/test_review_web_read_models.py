@@ -132,7 +132,9 @@ from mechanical_librarian.domain.review_browse import ReviewBrowseValueError
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import ReviewFieldState
 from mechanical_librarian.interfaces.web.app import (
+    METADATA_POLICY_ACTIVATION_SCHEMA,
     METADATA_POLICY_NOTEBOOK_SCHEMA,
+    METADATA_POLICY_TRANSITION_SCHEMA,
     AbortedResponseBody,
     _CaseDetailResponse,
     _CoverOmission,
@@ -1729,12 +1731,12 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(
         },
     )
     assert 200 == activated.status_code
-    assert "metadata-policy-activation-v1" == activated.json()["schema_version"]
+    assert METADATA_POLICY_ACTIVATION_SCHEMA == activated.json()["schema_version"]
     assert (
         policy_id == web.client.get("/api/v1/metadata-policy/state").json()["policy_id"]
     )
     transition = web.client.get("/api/v1/metadata-policy/transition")
-    assert "metadata-policy-transition-v1" == transition.json()["schema_version"]
+    assert METADATA_POLICY_TRANSITION_SCHEMA == transition.json()["schema_version"]
     dismissed = web.client.post(
         f"/api/v1/metadata-policy/transitions/{transition.json()['transition_id']}/acknowledge",
         headers=headers,
@@ -4797,7 +4799,8 @@ def test_attention_consecutive_documents_keep_row_specific_classification():
         (4, None, "automatic_safety_suspended", False),
     )
     rows = tuple(
-        (case.to_json(), report.to_json(), "title", *flag, False) for flag in flags
+        (case.to_json(), report.to_json(), "title", *flag, False, None)
+        for flag in flags
     )
     expected = [
         item
@@ -4858,7 +4861,8 @@ def test_attention_equal_ids_never_replace_exact_document_validation(
             )
             documents[index] = json.dumps(value)
     rows = tuple(
-        (*pair, "title", 1, None, None, False, False) for pair in (original, documents)
+        (*pair, "title", 1, None, None, False, False, None)
+        for pair in (original, documents)
     )
     repository = Mock()
     repository.read_review_attention.return_value = ReviewAttentionSnapshot(rows, 2)
@@ -4892,7 +4896,7 @@ def test_attention_revalidates_each_raw_page_and_fresh_request(
     case, report = canonical_attention_pair
     documents = (case.to_json(), report.to_json())
     rows = tuple(
-        (*documents, destination, 1, None, None, False, False)
+        (*documents, destination, 1, None, None, False, False, None)
         for destination in ("authors", "authors", "title")
     )
     repository = Mock()
@@ -4951,6 +4955,7 @@ def test_attention_nonconsecutive_pair_is_parsed_again(canonical_attention_pair)
             None,
             False,
             False,
+            None,
         )
         for selected_case, selected_report in (
             (case, report),

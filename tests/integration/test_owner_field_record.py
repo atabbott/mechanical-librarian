@@ -13,8 +13,16 @@ from typing import Any, cast
 
 import pytest
 
+from mechanical_librarian.adapters.field_effect_authority import (
+    PersistedFieldEffectAuthority,
+)
+from mechanical_librarian.adapters.field_effect_fakes import FakeCapabilityObserver
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.domain import cover_qualification_policy
+from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
@@ -34,6 +42,7 @@ from tests.integration.test_cover_rules_activation import (
 )
 from tests.integration.test_cover_taste_automatic import _keep_cover
 from tests.support.audiobook_covers import SYNTHETIC_MEASURED_RECORD
+from tests.support.ledger_partition import regenerate
 from tests.support.owner_field_record import (
     assert_record_recomputes,
     complete_resume,
@@ -41,6 +50,7 @@ from tests.support.owner_field_record import (
     request_resume,
     resume,
 )
+from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
 from tests.support.prepared_library import (
     PRODUCER,
     Library,
@@ -51,6 +61,8 @@ from tests.support.prepared_library import (
 )
 from tests.support.prepared_library import library as library
 from tests.support.prepared_library import preview_library as preview_library
+from tests.unit.test_owner_answer_holds import SOURCES
+from tests.unit.test_owner_answer_holds import _store as _owner_store
 
 
 def _confirm_automatic(library: Library, at: int) -> None:
@@ -778,6 +790,9 @@ def _resume_control_reaches_the_offer(library: Library) -> None:
 
 _DECIDED = ("human_recorded", "human_decided")
 _ASKED = ("needs_attention", "review_needed")
+# The record's earlier answer asked again on a later case or episode says
+# so (#2039): its cause is its own, ahead of Automatic's.
+_ASKED_AGAIN = ("needs_attention", "asked_again")
 _NOTHING = ("unsupported", "nothing_to_decide")
 
 
@@ -943,7 +958,7 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
         # A later case: the answer is the earlier case's, and nothing carried.
         _read_back(library, ("Someone Else",), 16)
         assert library.case_id() != first
-        assert reads() == {"authors": (*_ASKED, automatic)}
+        assert reads() == {"authors": (*_ASKED_AGAIN, automatic)}
         # The case page and Attention ask it alike.
         page, attention = _asked(library)
         assert "authors" in page and "authors" in attention
@@ -954,7 +969,9 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
         # answer is no longer carried (step 0).
         _read_back(library, original, 18)
         assert library.case_id() == first
-        assert reads() == {"authors": (*(_ASKED if automatic else _DECIDED), automatic)}
+        assert reads() == {
+            "authors": (*(_ASKED_AGAIN if automatic else _DECIDED), automatic)
+        }
 
         # The other posture, with the record unchanged. Preview leaves the
         # failed Resume with nothing to ask again, which the store would
@@ -965,7 +982,7 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
         else:
             _confirm_automatic(library, 40)
         assert reads() == {
-            "authors": (*(_ASKED if automatic else _DECIDED), not automatic)
+            "authors": (*(_ASKED_AGAIN if automatic else _DECIDED), not automatic)
         }
         assert all(
             cause != "nothing_to_decide"
@@ -1237,7 +1254,7 @@ def test_withdrawing_a_later_cases_answer_restores_the_earlier_one(
 
         assert _record_of(root) == (a.decision_id, first, 0, None)
         field = _fields(library)["authors"]
-        assert (field["classification"], field["classification_cause"]) == _ASKED
+        assert (field["classification"], field["classification_cause"]) == _ASKED_AGAIN
         assert field["manual_hold"] is automatic
         page, attention = _asked(library)
         assert "authors" in page and "authors" in attention
@@ -1275,7 +1292,7 @@ def _withdrawn_on_y(library: Library) -> tuple[str, str]:
 
 def _assert_asked(library: Library) -> None:
     field = _fields(library)["authors"]
-    assert (field["classification"], field["classification_cause"]) == _ASKED
+    assert (field["classification"], field["classification_cause"]) == _ASKED_AGAIN
     page, attention = _asked(library)
     assert "authors" in page and "authors" in attention
     assert _authors_fact(library) is True
@@ -1452,7 +1469,7 @@ def test_a_new_case_after_an_answer_asks_the_field(
         )
         _read_back(library, ("Someone Else",), 12)
         field = _fields(library)["authors"]
-        assert (field["classification"], field["classification_cause"]) == _ASKED
+        assert (field["classification"], field["classification_cause"]) == _ASKED_AGAIN
         assert field["manual_hold"] is automatic
         page, attention = _asked(library)
         assert "authors" in page and "authors" in attention
@@ -1490,15 +1507,78 @@ def test_a_failed_resume_asks_the_field(tmp_path: Path, posture: str) -> None:
         if posture == "preview":
             library.leave_automatic()
         field = _fields(library)["authors"]
-        assert (field["classification"], field["classification_cause"]) == _ASKED
+        assert (field["classification"], field["classification_cause"]) == _ASKED_AGAIN
         offered = posture == "automatic"
         assert (field["manual_hold"], field["manual_return_failed"]) == (
             offered,
             offered,
         )
+        # The failure reads either way; outside the offer only its status
+        # line says it (R1, C2b-21).
+        assert field["resume_failed"] is True
         page, attention = _asked(library)
         assert "authors" in page and "authors" in attention
         assert library.pending() == []
+        assert_record_recomputes(root._connection)
+
+
+def _fail(root: Any, request: str, at: int) -> None:
+    """End the request's scan with failures, as preparation settles it."""
+    (scan,) = root._connection.execute(
+        "SELECT scan_id FROM owner_field_events WHERE event_id=?", (request,)
+    ).fetchone()
+    assert root._fail_open_resumes_for_scan(scan, at) == 1
+
+
+@pytest.mark.parametrize(
+    ("state", "failed"),
+    (
+        ("pending", False),
+        ("failed_in_preview", True),
+        ("asked_again", False),
+        ("superseded_in_preview", False),
+        ("completed", False),
+    ),
+)
+def test_resume_failed_reads_only_an_open_request_that_failed(
+    tmp_path: Path, state: str, failed: bool
+) -> None:
+    """R1 (U10): `resume_failed` reads the record's open Resume for the
+    field, whatever the offer: true once its scan ended with failures, false
+    while it waits, once it is asked again (the new request has not failed),
+    once a new answer supersedes it, and once a later run completes it."""
+    with prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root = library.root
+        root.record_human_decision(
+            accept(library.case(), "authors", "owner-answers-authors", 11)
+        )
+        _read_back(library, ("Someone Else",), 12)
+        request = request_resume(root, library.case_id(), "authors", 14)
+        assert request is not None
+        if state != "pending":
+            _fail(root, request, 15)
+        if state == "asked_again":
+            assert request_resume(root, library.case_id(), "authors", 16) is not None
+        if state == "completed":
+            assert complete_resume(root, request, 16)
+            assert _record_row(root, "authors") is None
+        if state in {"failed_in_preview", "superseded_in_preview"}:
+            library.leave_automatic()
+        if state == "superseded_in_preview":
+            root.record_human_decision(
+                _owner_command(library, "keep_current", "owner-keeps-authors", 17)
+            )
+            assert root._connection.execute(
+                "SELECT kind FROM owner_field_events WHERE request_id=? ORDER BY rowid",
+                (request,),
+            ).fetchall() == [("resume_failed",), ("resume_superseded",)]
+        field = _fields(library)["authors"]
+        assert field["resume_failed"] is failed
+        if state == "failed_in_preview":
+            assert (field["manual_hold"], field["manual_return_failed"]) == (
+                False,
+                False,
+            )
         assert_record_recomputes(root._connection)
 
 
@@ -1686,7 +1766,10 @@ def test_a_later_description_case_asks_and_a_failed_resume_keeps_asking(
 
         def asked() -> None:
             value = field()
-            assert (value["classification"], value["classification_cause"]) == _ASKED
+            assert (
+                value["classification"],
+                value["classification_cause"],
+            ) == _ASKED_AGAIN
             assert value["needs_attention"] is True
             assert repository._connection.execute(
                 "SELECT count(*) FROM review_attention_facts "
@@ -1709,3 +1792,123 @@ def test_a_later_description_case_asks_and_a_failed_resume_keeps_asking(
         assert_record_recomputes(repository._connection)
     finally:
         repository.close()
+
+
+def _regenerated(store: OwnerStore) -> OwnerStore:
+    """Close the store, run the real `regenerate-derived` over it, and
+    reopen it on the same policy (#2039, T-W)."""
+    resolved, ticks = store.resolved, store.ticks
+    store.close()
+    regenerate(store.root / "owner.sqlite")
+    reopened = OwnerStore(store.root, None)
+    reopened.resolved, reopened.ticks = resolved, ticks
+    return reopened
+
+
+def _scheduler(store: OwnerStore) -> ContinuousGuardedApplication:
+    """The write lane over the store's guarded service, with the title
+    consented in the store and in the service's currentness."""
+    key = ("primary", "ebooks")
+    store.repository.grant_field_effect_consents(
+        "primary", ("ebooks",), ("title",), store.clock()
+    )
+    store.consent.allow(connection="primary", library="ebooks", destination="title")
+    return ContinuousGuardedApplication(
+        store.repository,
+        {key: store.service},
+        {key: FakeCapabilityObserver(CAPABILITY)},
+        PersistedFieldEffectAuthority(store.repository),
+        (key,),
+        store.clock,
+        lambda *_: None,
+    )
+
+
+def _pending_reads(store: OwnerStore) -> list[str]:
+    """Every read the write lane makes of what is pending; return the
+    decisions waiting for a plan."""
+    repository = store.repository
+    repository.pending_field_effect_plan_ids(100)
+    repository.pending_field_effect_action_plan_ids(100)
+    repository.pending_field_effect_decision_counts()
+    repository.pending_field_effect_plan_entries(None, 100, ("ebooks",))
+    repository.pending_owner_field_resumes(100)
+    return [
+        json.loads(document)["decision_id"]
+        for document in repository.pending_field_effect_decision_documents(100)
+    ]
+
+
+def _apply_planned(store: OwnerStore) -> None:
+    """Apply every plan the lane left planned to the fake library."""
+    for plan_id, document in store.repository._connection.execute(
+        "SELECT plan_id,document FROM field_effects WHERE state='planned'"
+    ).fetchall():
+        store.target.seed(FieldEffectOperation.from_json(document).plan)
+        store.service.apply(plan_id)
+
+
+@pytest.mark.parametrize("outcome", ("accept", "keep_current"))
+@pytest.mark.parametrize("read", ("unchanged", "changed"))
+def test_the_write_lane_runs_on_a_regenerated_store(
+    tmp_path: Path, outcome: str, read: str
+) -> None:
+    """T-W (#2039): after the real `regenerate-derived` and a reopen, the
+    write lane's schedule and its pending reads run and plan nothing, since
+    no case is current. Re-preparation then reads the work again, unchanged
+    or with an unrelated field changed: either way the regeneration moved
+    the derived epoch on, so the read admits a new case asking the same
+    question, and the question check carries the answer to it. An unwritten
+    accept, carried to apply, is planned once and written once; a keep,
+    carried settled, plans nothing."""
+    store, report, _ = _owner_store(tmp_path, posture="preview")
+    store.publish(report)
+    first = store.case.review_case_id
+    answer = (
+        store.decide("accept", {"kind": "text", "value": SOURCES})
+        if outcome == "accept"
+        else store.decide("keep_current")
+    )
+    store = _regenerated(store)
+    try:
+        assert store.repository._connection.execute(
+            "SELECT derived_epoch_before,derived_epoch_after FROM derived_regenerations"
+        ).fetchall() == [(0, 1)]
+        lane = _scheduler(store)
+        assert _pending_reads(store) == []
+        assert lane.schedule() == 0
+        assert store.repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+
+        store.publish(
+            report
+            if read == "unchanged"
+            else rewritten(report, publisher="Changed Elsewhere")
+        )
+        assert store.case.review_case_id != first
+        ((held, carried_from, application, case),) = (
+            store.repository._connection.execute(
+                "SELECT decision_id,carried_from,json_extract(document,"
+                "'$.application'),review_case_id FROM human_decisions "
+                "WHERE carried_from IS NOT NULL"
+            ).fetchall()
+        )
+        assert (carried_from, case) == (answer.decision_id, store.case.review_case_id)
+        assert application == ("apply" if outcome == "accept" else "settled")
+        for _ in range(3):
+            lane.schedule()
+            _apply_planned(store)
+        plans = store.repository._connection.execute(
+            "SELECT decision_id,state FROM field_effects"
+        ).fetchall()
+        if outcome == "accept":
+            assert plans == [(held, "verified")]
+            assert len(store.patches) == 1
+        else:
+            assert plans == []
+            assert store.patches == []
+        assert _pending_reads(store) == []
+        assert_record_recomputes(store.repository._connection)
+    finally:
+        store.close()

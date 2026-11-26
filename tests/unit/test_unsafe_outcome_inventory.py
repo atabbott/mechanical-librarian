@@ -525,6 +525,14 @@ INVENTORY: dict[tuple[str, str], Row] = {
         (409, "import_withdrawn"): "pre-commit",
         (409, "nothing_to_withdraw"): "pre-commit",
     },
+    # --- upgrade notice (#2039) --------------------------------------------------
+    # `dismiss_upgrade_notice`: 409 `stale` is the application's id check or
+    # the store's refusal before its write (`review_application.py`
+    # `dismiss_upgrade_notice`); a store fault answers 503.
+    ("POST", "/api/v1/upgrade-notice/{regeneration_id}/dismiss"): {
+        (409, "stale"): "pre-commit",
+        (503, "persistence"): "post-commit",
+    },
     # --- review preparation -----------------------------------------------------
     ("POST", "/api/v1/review-preparation/dismiss"): _PREPARATION,
     ("POST", "/api/v1/review-preparation/first-boot/acknowledge"): {

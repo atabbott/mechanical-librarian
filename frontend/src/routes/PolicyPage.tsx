@@ -1194,7 +1194,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         </div>
         {activationNotice ? (
           <div className="policy-workflow-actions">
-            {activationNotice.failed ? (
+            {/* After a regeneration the failed count stays but no per-work
+                rows are left, so a retry would only refuse (#2039). */}
+            {activationNotice.failed > 0 && activationNotice.items_present ? (
               <button
                 aria-disabled={command.isPending || undefined}
                 onClick={() => {

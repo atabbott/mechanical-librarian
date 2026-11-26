@@ -753,7 +753,7 @@ rejected.
 | ADR-0084 | Attention triggers on ledger tables are derived objects. |
 | ADR-0087 | Automatic decisions are derived; nothing decodes an old qualification digest. |
 | ADR-0105 | A clear holds its field through the record, and a case is kept while a pin on the record reads changed (Amendment 1). |
-| ADR-0095 | The taste profile and its builds are ledger; profile eligibility reads copies in the owner selection rows, so an owner's earlier picks keep counting after a regeneration. Judgements and verdicts are derived. |
+| ADR-0095 | The taste profile and its builds are ledger, so a profile is kept after a regeneration. The owner selection rows copy the facts profile eligibility reads, but a build can use only a choice whose comparison is still there, so after a regeneration a new profile is built from choices made since: the count shown, the 25 and 10 thresholds and Try again read only those. Judgements and verdicts are derived. |
 
 ADR-0077 is not amended: no read admission or currentness-fact rule changes.
 

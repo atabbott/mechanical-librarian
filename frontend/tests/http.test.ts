@@ -33,6 +33,7 @@ import {
 } from './wireFixtures'
 import activationCapture from './wire/post-metadata-policy-activate.200.json'
 import libraryProgressCapture from './wire/get-library-progress.200.json'
+import upgradeNoticeCapture from './wire/get-upgrade-notice.200.json'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import {
@@ -2110,10 +2111,37 @@ describe('ReviewApiClient', () => {
     expect(JSON.stringify(view)).not.toContain('internal-item-1')
   })
 
+  it('maps why the record asks a field again, and the day a carried answer kept (#2039)', async () => {
+    const askedAgain = {
+      reason: 'withdrawn',
+      earlier: { outcome: 'keep_current', value: { kind: 'text', value: 'Old' }, occurred_at: 5 },
+    } as const
+    const view = await readAttention(
+      attention({ items: [attentionItem({ asked_again: askedAgain })], total: 1 }),
+    )
+    expect(view.items[0]?.askedAgain).toEqual(askedAgain)
+    // An item asked for any other reason carries none.
+    expect((await readAttention(attention())).items[0]).not.toHaveProperty('askedAgain')
+    await expect(
+      readAttention(
+        attention({
+          items: [attentionItem({ asked_again: { ...askedAgain, reason: 'lost' } })],
+          total: 1,
+        }),
+      ),
+    ).rejects.toMatchObject(refused('enum@/items/0/asked_again/reason'))
+    const history = await readHistory(
+      caseHistory({ items: [historyDecisionItem({ kept_from: 1 })] }),
+    )
+    expect(history.items[0]).toMatchObject({ category: 'owner', keptFrom: 1 })
+    const plain = await readHistory(caseHistory({ items: [historyDecisionItem()] }))
+    expect(plain.items[0]).not.toHaveProperty('keptFrom')
+  })
+
   // The checks `mapAttention` held before the decoder (S30-S34, and the type
   // and presence checks) now refuse the read with the decoder's pointer (#1687).
   it.each([
-    [attention({ schema_version: 'review-attention-v2' }), 'const@/schema_version'],
+    [attention({ schema_version: 'review-attention-v3' }), 'const@/schema_version'],
     [attention({ total: -1 }), 'min@/total'],
     [attention({ query: 7 }), 'type@/query'],
     [attention({ next_cursor: undefined }), 'required@/next_cursor'],
@@ -4996,7 +5024,7 @@ describe('central response decoding (#1685)', () => {
     [
       'GET /api/v1/metadata-policy/transition',
       (client: ReviewApiClient) => client.getPolicyTransition(),
-      { schema_version: 'metadata-policy-transition-v1' },
+      { schema_version: 'metadata-policy-transition-v2' },
       '/acknowledged',
     ],
     [
@@ -6768,9 +6796,10 @@ const readTasteProfile = (document: unknown) =>
     fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
   }).getTasteProfile()
 const tasteDocument = {
-  schema_version: 'review-taste-profile-v4',
+  schema_version: 'review-taste-profile-v5',
   configured: true,
   chosen: 30,
+  since_upgrade: false,
   required: 25,
   daily_limit: 8,
   build: null,
@@ -8255,6 +8284,63 @@ describe('taste preview decoder (#1372 PR 5)', () => {
     await expect(readTastePreview({ ...previewDocument, ...change })).rejects.toMatchObject({
       status: 502,
       code: 'invalid_taste_preview',
+    })
+  })
+})
+
+describe('the upgrade notice wire (#2039)', () => {
+  const answering = (body: unknown, status = 200) => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      body === undefined ? new Response(null, { status }) : Response.json(body, { status }),
+    )
+    return {
+      client: new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) }),
+      fetchMock,
+    }
+  }
+  const notice = {
+    regeneration_id: 'regeneration_1',
+    preparing: false,
+    kept: 12,
+    asked_again: 3,
+    not_yet_checked: 0,
+  }
+
+  it('reads the notice, and nothing once there is none', async () => {
+    for (const body of [
+      upgradeNoticeCapture.body,
+      { schema_version: 'upgrade-notice-v1', notice },
+    ]) {
+      const { client, fetchMock } = answering(body)
+      await expect(client.getUpgradeNotice()).resolves.toEqual(body)
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/upgrade-notice')
+    }
+  })
+
+  it('refuses a notice with a negative count', async () => {
+    await expect(
+      answering({
+        schema_version: 'upgrade-notice-v1',
+        notice: { ...notice, kept: -1 },
+      }).client.getUpgradeNotice(),
+    ).rejects.toMatchObject({ name: 'ResponseDecodeError' })
+  })
+
+  it('dismisses the named regeneration and accepts the 204', async () => {
+    const { client, fetchMock } = answering(undefined, 204)
+    await expect(client.dismissUpgradeNotice('regeneration/1')).resolves.toBeUndefined()
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/upgrade-notice/regeneration%2F1/dismiss')
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('POST')
+  })
+
+  it('reads a stale dismissal as a refusal', async () => {
+    const { client } = answering(
+      { schema_version: 'review-error-v1', error: { code: 'stale' } },
+      409,
+    )
+    await expect(client.dismissUpgradeNotice('regeneration_1')).rejects.toMatchObject({
+      status: 409,
+      code: 'stale',
     })
   })
 })

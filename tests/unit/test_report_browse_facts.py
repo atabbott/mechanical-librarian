@@ -400,9 +400,22 @@ def _oracle_attention(
         ).fetchone()
         is None
     )
+    # It also predates the asked-again reason (#2039): these stores ask no
+    # owner answer again, so every row's reason is None; a reason's own
+    # Attention row is compared in test_asked_again_reasons.
     return (
         tuple(
-            (row[0], row[1], row[3], row[4], row[5], row[6], bool(row[7]), False)
+            (
+                row[0],
+                row[1],
+                row[3],
+                row[4],
+                row[5],
+                row[6],
+                bool(row[7]),
+                False,
+                None,
+            )
             for row in rows
             if row[8] == 1
         ),

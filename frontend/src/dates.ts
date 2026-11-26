@@ -41,6 +41,21 @@ export const formatDay = (seconds: number, zone: DateZone = {}) =>
     timeZone: zone.timeZone,
   }).format(new Date(seconds * 1000))
 
+// A day on its own, as a sentence names it: `Tue 3 Nov`, with the year only
+// when it is not this year (`Tue, 3 Nov 2025` in en-GB). `formatDay` always shows the
+// year, so a ledger heading never reads as this year's by accident.
+export const formatDate = (seconds: number, now: Date, zone: DateZone = {}) => {
+  const at = new Date(seconds * 1000)
+  const sameYear = dayKey(at, zone).slice(0, 4) === dayKey(now, zone).slice(0, 4)
+  return new Intl.DateTimeFormat(zone.locale, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+    timeZone: zone.timeZone,
+  }).format(at)
+}
+
 /**
  * `dayShown` says the reader already sees the day, as under a ledger's day
  * heading, so a time on another day reads as its clock time alone.
@@ -59,15 +74,7 @@ export const formatWhen = (
       : relative.format(-Math.round(elapsed / 60), 'minute')
   }
   if (dayShown || dayKey(at, zone) === dayKey(now, zone)) return formatClock(seconds, zone)
-  const sameYear = dayKey(at, zone).slice(0, 4) === dayKey(now, zone).slice(0, 4)
-  const date = new Intl.DateTimeFormat(zone.locale, {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    ...(sameYear ? {} : { year: 'numeric' }),
-    timeZone: zone.timeZone,
-  }).format(at)
-  return `${date}, ${formatClock(seconds, zone)}`
+  return `${formatDate(seconds, now, zone)}, ${formatClock(seconds, zone)}`
 }
 
 // How long, in milliseconds from `now`, until `formatWhen` reads `seconds`

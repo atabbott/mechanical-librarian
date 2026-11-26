@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from mechanical_librarian.adapters.operational_evidence import SupportBundle
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.cover_taste import _ELIGIBLE, _USABLE
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -38,6 +39,7 @@ from mechanical_librarian.application.cover_taste_contract import (
     AdmittedTasteBuildRequest,
     TasteBuildReply,
 )
+from mechanical_librarian.application.cover_taste_inputs import assemble_taste_inputs
 from mechanical_librarian.application.operations import support_preparation_incidents
 from mechanical_librarian.application.reviewer_access import (
     OpenRouterFactory,
@@ -47,11 +49,16 @@ from mechanical_librarian.application.reviewer_contracts import (
     ReviewerProvisioningStatus,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+from mechanical_librarian.domain.cover_taste import TASTE_MIN_ARTS, TasteProfile
 from mechanical_librarian.interfaces.web.app import REVIEW_TASTE_PROFILE_SCHEMA
 from tests.support.cover_selections import ALL_COVER_SELECTIONS
 from tests.support.cover_taste import record_owner_cover_decisions
 from tests.support.ledger_copies import assert_ledger_copies
-from tests.support.ledger_partition import reopen_without_derived_rows
+from tests.support.ledger_partition import (
+    copied_store,
+    regenerate,
+    reopen_without_derived_rows,
+)
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
@@ -134,6 +141,25 @@ class _Built:
     openrouter: list[_TasteOpenRouter]
 
 
+def _reviewer_access(
+    repository: SQLiteMetadataReportRepository,
+    factory: Callable[[str, str], _TasteOpenRouter],
+    codex: Callable[[bytes, Any], str] | None = None,
+) -> ReviewerAccessOperations:
+    return ReviewerAccessOperations(
+        repository.reviewer_access_store(),
+        codex_auth=_Auth("usable"),
+        codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(True, None),
+        codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+        codex_identity=lambda: CODEX,
+        codex_binding=lambda: (*CODEX, _never),
+        codex_description_binding=lambda: (*CODEX, _never),
+        codex_taste_binding=lambda: (*CODEX, codex or _never),
+        # A taste build uses only `run_taste_build` and `close`.
+        openrouter_factory=cast("OpenRouterFactory", factory),
+    )
+
+
 @contextmanager
 def _built(
     root: Path,
@@ -153,18 +179,7 @@ def _built(
         clients.append(client)
         return client
 
-    access = ReviewerAccessOperations(
-        repository.reviewer_access_store(),
-        codex_auth=_Auth("usable"),
-        codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(True, None),
-        codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
-        codex_identity=lambda: CODEX,
-        codex_binding=lambda: (*CODEX, _never),
-        codex_description_binding=lambda: (*CODEX, _never),
-        codex_taste_binding=lambda: (*CODEX, codex or _never),
-        # A taste build uses only `run_taste_build` and `close`.
-        openrouter_factory=cast("OpenRouterFactory", factory),
-    )
+    access = _reviewer_access(repository, factory, codex)
     try:
         record_owner_cover_decisions(root, repository, decisions)
         revision = access.read().revision
@@ -250,6 +265,8 @@ def test_a_profile_is_written_from_owner_choices_and_shown(tmp_path) -> None:
             body = response.json()
             assert body["schema_version"] == REVIEW_TASTE_PROFILE_SCHEMA
             assert body["chosen"] == 25
+            # No upgrade left a pick out, so the count is today's (#2039).
+            assert body["since_upgrade"] is False
             assert body["profile"]["version"] == 1
             assert body["profile"]["kind"] == "built"
             assert body["profile"]["rules"][0] == {
@@ -592,3 +609,202 @@ def _client(built: _Built) -> Iterator[tuple[TestClient, dict[str, str]]]:
                 "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
             },
         )
+
+
+def _taste_reading(path: Path, watermark: int) -> tuple[object, ...]:
+    """Which choices were made, then those a build can use: the count, the
+    count shown, those since `watermark`, and whether a cadence build is then
+    due."""
+    repository = open_repository(path, create=False)
+    try:
+        store = repository.cover_taste_store()
+        made = [
+            row[0]
+            for row in repository._connection.execute(
+                f"SELECT selection.selection_id {_ELIGIBLE} ORDER BY selection.rowid",
+                (TASTE_MIN_ARTS,),
+            )
+        ]
+        new = repository._connection.execute(
+            f"SELECT count(*) {_USABLE} AND selection.rowid>?",
+            (TASTE_MIN_ARTS, watermark),
+        ).fetchone()[0]
+        return (
+            made,
+            store.eligible_count(),
+            store.read()["eligible"],
+            new,
+            store.schedule(NOW + 86_400, True, 8),
+        )
+    finally:
+        repository.close()
+
+
+def _decide_then_regenerate(
+    tmp_path: Path, count: int, at_25: Callable[[Any], None]
+) -> tuple[Path, Path]:
+    """`count` owner keeps, calling `at_25` with the store once 25 are made,
+    and a copy of the store after the real `regenerate-derived`. Keeps: a
+    regeneration keeps the owner's pointer to a keep, but repoints or clears
+    one to a choice never written."""
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path, cross_thread=True)
+    try:
+        store = repository.cover_taste_store()
+
+        def first_build(_case_id: str) -> None:
+            if store.eligible_count() == 25 and not store.read()["versions"]:
+                assert store.schedule(NOW, True, 8)
+                at_25(store)
+
+        record_owner_cover_decisions(
+            tmp_path, repository, count, keep=True, before_decision=first_build
+        )
+        regenerated = copied_store(repository, tmp_path / "regenerated")
+    finally:
+        repository.close()
+    regenerate(regenerated)
+    return path, regenerated
+
+
+def _taste_body(root: Path, repository: SQLiteMetadataReportRepository) -> Any:
+    """The owner's taste read over HTTP, through the shipped route."""
+
+    def factory(key: str, model: str) -> _TasteOpenRouter:
+        return _TasteOpenRouter(key, model)
+
+    access = _reviewer_access(repository, factory)
+    service = CoverTasteBuildService(
+        repository.cover_taste_store,
+        access,
+        CoverArtifactStore(root / "artifacts", create=False).read_preview_digest,
+        daily_limit=8,
+        clock=lambda: NOW,
+    )
+    with _client(_Built(root, repository, access, service, [])) as (client, headers):
+        response = client.get("/api/v1/covers/taste", headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_build_waits_for_choices_it_can_use_after_a_regeneration(
+    tmp_path,
+) -> None:
+    """ADR-0108: after a regeneration a new profile is built from choices
+    made since. The copies still name every earlier choice, but the count
+    shown, the thresholds and Try again read only choices a build can use:
+    no build is due and no failure is shown, as before 25 picks, until 25 new
+    choices make one due with inputs to send."""
+    failed: list[str] = []
+
+    def fail(store: Any) -> None:
+        # The first build fails, so the next one is due 10 choices later.
+        build_id = store.pending()
+        store.fail(build_id, NOW, "unavailable")
+        failed.append(build_id)
+
+    path, regenerated = _decide_then_regenerate(tmp_path, 35, fail)
+    (build_id,) = failed
+    repository = open_repository(path, create=False)
+    try:
+        (watermark,) = repository._connection.execute(
+            "SELECT selection_watermark FROM cover_taste_builds"
+        ).fetchone()
+    finally:
+        repository.close()
+    before = _taste_reading(path, watermark)
+    assert before[1:] == (35, 35, 10, True)
+    assert _taste_reading(regenerated, watermark) == (before[0], 0, 0, 0, False)
+    # A store never regenerated left no pick out of its count (#2039).
+    repository = open_repository(path, create=False, cross_thread=True)
+    try:
+        assert repository.cover_taste_store().read()["since_upgrade"] is False
+    finally:
+        repository.close()
+
+    repository = open_repository(regenerated, create=False, cross_thread=True)
+    try:
+        store = repository.cover_taste_store()
+        shown = store.read()
+        # Today's state before 25 picks: no profile, no build, no failure.
+        assert (shown["eligible"], shown["build"], shown["versions"]) == (0, None, [])
+        # The count says it started again after the upgrade (#2039).
+        assert shown["since_upgrade"] is True
+        assert store.request_retry(build_id, NOW + 86_400, 8) is None
+        assert store.decisions() == ()
+        record_owner_cover_decisions(tmp_path, repository, 1, start=35, keep=True)
+        body = _taste_body(tmp_path, repository)
+        assert (body["chosen"], body["since_upgrade"], body["build"]) == (1, True, None)
+        assert body["profile"] is None
+        record_owner_cover_decisions(tmp_path, repository, 23, start=36, keep=True)
+        assert (store.eligible_count(), store.schedule(NOW + 86_400, True, 8)) == (
+            24,
+            False,
+        )
+        record_owner_cover_decisions(tmp_path, repository, 1, start=59, keep=True)
+        assert store.schedule(NOW + 86_400, True, 8)
+        inputs = assemble_taste_inputs(
+            store.decisions(),
+            CoverArtifactStore(
+                tmp_path / "artifacts", create=False
+            ).read_preview_digest,
+            kept=(),
+            left_out=(),
+        )
+        assert inputs is not None
+        assert (inputs.record["eligible"], inputs.record["included"]) == (25, 25)
+    finally:
+        repository.close()
+
+
+def test_a_profile_is_kept_after_a_regeneration(tmp_path) -> None:
+    """A store with a profile keeps it after a regeneration, shows no
+    failure, and rebuilds once it has 25 new choices a build can use."""
+
+    def succeed(store: Any) -> None:
+        build_id = store.pending()
+        assert store.claim(build_id, NOW, MODEL, 8) is None
+        assert (
+            store.succeed(
+                build_id,
+                NOW,
+                TasteProfile.from_output(
+                    {
+                        "sections": {
+                            "drawn_to": ["Calm colour."],
+                            "avoid": [],
+                            "trade_offs": [],
+                            "keep_or_switch": [],
+                        }
+                    }
+                ),
+                {
+                    "corrections": 0,
+                    "dropped": 0,
+                    "eligible": 25,
+                    "images": 50,
+                    "included": 25,
+                    "input_sha256": "0" * 64,
+                    "truncated": False,
+                },
+                failure="invalid_output",
+            )
+            == 1
+        )
+
+    _path, regenerated = _decide_then_regenerate(tmp_path, 26, succeed)
+    repository = open_repository(regenerated, create=False, cross_thread=True)
+    try:
+        store = repository.cover_taste_store()
+        shown = store.read()
+        assert [version for version, *_ in shown["versions"]] == [1]
+        assert (shown["eligible"], shown["build"]) == (0, None)
+        assert not store.schedule(NOW + 86_400, True, 8)
+        # As before a first profile, a build is due on 25 it can use.
+        record_owner_cover_decisions(tmp_path, repository, 24, start=26, keep=True)
+        assert not store.schedule(NOW + 86_400, True, 8)
+        record_owner_cover_decisions(tmp_path, repository, 1, start=50, keep=True)
+        assert store.schedule(NOW + 86_400, True, 8)
+        assert [version for version, *_ in store.read()["versions"]] == [1]
+    finally:
+        repository.close()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from _thread import RLock
 from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -67,6 +68,10 @@ from mechanical_librarian.application.owner_search import (
     OwnerSearchService,
 )
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
+from mechanical_librarian.application.regeneration_notice import (
+    RegenerationNoticeDismissalInvalid,
+    RegenerationNoticeStore,
+)
 from mechanical_librarian.application.review_covers import (
     CoverBrowseStore,
     cover_calibration,
@@ -127,6 +132,7 @@ from mechanical_librarian.domain.preparation_presentation import (
 )
 from mechanical_librarian.domain.proposal_set import work_route_cover_offered
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
+from mechanical_librarian.domain.upgrade_notice import UpgradeNotice
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 if TYPE_CHECKING:
@@ -141,6 +147,12 @@ REVIEW_PREPARATION_SCHEMA: Final[ReviewPreparationSchemaVersion] = (
 )
 
 _Result = TypeVar("_Result")
+# The ledger's regeneration id is a positive SQLite integer, named in the
+# dismissal's path in decimal; any other segment names no regeneration.
+_REGENERATION_ID = re.compile(r"[1-9][0-9]{0,17}")
+# A library's preparation is running in these states: the `active` the
+# preparation read reports to Library and background activity.
+_PREPARATION_RUNNING = frozenset({"queued", "discovering", "processing"})
 
 
 class SerializedGate(Protocol):
@@ -185,6 +197,10 @@ class BrowserStateOwner(IdentifierImportStore, Protocol):
     def dismiss_preparation_presentation(
         self, run_id: str, dismissed_at: int
     ) -> None: ...
+
+    # The upgrade notice (#2039): the latest regeneration of the derived rows
+    # and its one dismissal, both in the ledger (#2040).
+    def regeneration_notice_store(self) -> RegenerationNoticeStore: ...
 
     def record_library_visit(
         self, listing: ListingPositions | None, now: int
@@ -2217,10 +2233,7 @@ class ReviewApplication:
             libraries,
             paused,
             not recovery_required
-            and any(
-                item["state"] in {"queued", "discovering", "processing"}
-                for item in libraries
-            ),
+            and any(item["state"] in _PREPARATION_RUNNING for item in libraries),
             # A library whose only failures are books Audiobookshelf has no
             # file for ends `completed` so its automatic scans go on (#2013),
             # but those books still need the owner.
@@ -2255,6 +2268,59 @@ class ReviewApplication:
             raise ReviewApplicationError(code) from error
         self._updates.publish("preparation")
         return self.preparation()
+
+    def upgrade_notice(self) -> UpgradeNotice | None:
+        store = self._state_owner.regeneration_notice_store()
+        # The libraries preparation reads now: file mode keeps them outside
+        # the database, and an answer whose library left can never be checked.
+        configured = frozenset(
+            ()
+            if self._preparation is None
+            else (
+                (connection, library)
+                for connection, library, *_ in self._preparation.libraries
+            )
+        )
+        notice = self.serialized(lambda: store.read_regeneration_notice(configured))
+        if notice is None or notice.dismissed:
+            return None
+        # Counts can stay short of every answer for good (a book left the
+        # library, a first case stays deferred), so the notice says it is
+        # preparing only while preparation runs, as Library reads it.
+        return UpgradeNotice(
+            str(notice.regeneration_id),
+            self._preparation_running(),
+            notice.kept,
+            notice.asked_again,
+            notice.not_yet_checked,
+        )
+
+    def _preparation_running(self) -> bool:
+        """The preparation read's `active`, without the rest of that read."""
+        if self._preparation is None or self._preparation.recovery_required:
+            return False
+        progress_values, _paused = self._preparation.status()
+        return any(
+            progress is not None and progress.state in _PREPARATION_RUNNING
+            for progress in progress_values
+        )
+
+    def dismiss_upgrade_notice(self, regeneration_id: str) -> None:
+        # Dismissing it again changes nothing and is accepted; an unknown
+        # regeneration, or one not yet finished, is stale.
+        if not _REGENERATION_ID.fullmatch(regeneration_id):
+            raise ReviewApplicationError("stale")
+        store = self._state_owner.regeneration_notice_store()
+        try:
+            self.serialized(
+                lambda: store.dismiss_regeneration_notice(
+                    int(regeneration_id), self._clock()
+                )
+            )
+        except RegenerationNoticeDismissalInvalid as error:
+            # Any other store failure is a plain MetadataReportError: the
+            # store is unavailable.
+            raise ReviewApplicationError("stale") from error
 
     def acknowledge_first_boot_preparation(self) -> PreparationView:
         if self._acknowledge_first_boot is None:

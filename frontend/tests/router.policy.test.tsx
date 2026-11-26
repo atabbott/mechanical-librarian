@@ -158,7 +158,7 @@ describe('Policy route', () => {
   })
 
   const transition = (overrides: Record<string, unknown> = {}) => ({
-    schema_version: 'metadata-policy-transition-v1' as const,
+    schema_version: 'metadata-policy-transition-v2' as const,
     transition_id: 'policy_transition_1',
     from_policy_id: 'policy-a',
     to_policy_id: 'policy-a',
@@ -169,6 +169,7 @@ describe('Policy route', () => {
     failed: 0,
     acknowledged: false,
     origin: 'baseline',
+    items_present: false,
     ...overrides,
   })
 
@@ -197,6 +198,7 @@ describe('Policy route', () => {
       completed: 9,
       total: 11,
       failed: 2,
+      items_present: true,
     })
     let read: (value: never) => void = () => undefined
     const http: ReviewHttp = {
@@ -227,6 +229,34 @@ describe('Policy route', () => {
     expect(screen.getByRole('button', { name: 'Retry failed works' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Dismiss update' })).toBeVisible()
     expect(screen.getByText(/^Active policy$/u)).toBeVisible()
+  })
+
+  // A regeneration keeps the failed count and removes the per-work rows, so
+  // nothing is left to retry; the notice and its dismissal stay (#2039).
+  it('hides Retry when the failed works have no rows left to retry', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPolicyTransition: vi.fn(
+        async () =>
+          transition({
+            generation: 2,
+            origin: 'activation',
+            state: 'completed_with_failures',
+            completed: 9,
+            total: 11,
+            failed: 2,
+            items_present: false,
+          }) as never,
+      ),
+    }
+    renderRoute('/policy', http)
+
+    expect(
+      await screen.findByRole('heading', { name: 'Activation completed with failures' }),
+    ).toBeVisible()
+    expect(screen.getByText('9 of 11 undecided works checked.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Dismiss update' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Retry failed works' })).toBeNull()
   })
 
   it('announces activation progress and its failure from one status region', async () => {
@@ -1560,7 +1590,7 @@ describe('Policy route', () => {
       if (path === 'activate')
         return {
           policy_id: 'policy-draft',
-          schema_version: 'metadata-policy-activation-v1',
+          schema_version: 'metadata-policy-activation-v2',
           transition: null,
         }
       return { policy_id: 'policy-valid' }
@@ -2154,7 +2184,7 @@ describe('Policy route', () => {
           activated = true
           return {
             policy_id: 'policy-draft',
-            schema_version: 'metadata-policy-activation-v1',
+            schema_version: 'metadata-policy-activation-v2',
             transition: transition({ origin: 'activation', generation: 2, transition_id: 'mine' }),
           }
         }
@@ -2363,7 +2393,7 @@ describe('Policy route', () => {
       'another policy’s',
       {
         policy_id: 'policy-other',
-        schema_version: 'metadata-policy-activation-v1',
+        schema_version: 'metadata-policy-activation-v2',
         transition: null,
       },
     ],
@@ -3409,7 +3439,7 @@ it('keeps the draft after a real stale envelope and binds explicit repreview to 
     }
     if (path === 'activate')
       return {
-        schema_version: 'metadata-policy-activation-v1',
+        schema_version: 'metadata-policy-activation-v2',
         policy_id: 'draft',
         transition: null,
       }
@@ -3491,7 +3521,7 @@ it.each([
           }
         : path === 'activate'
           ? {
-              schema_version: 'metadata-policy-activation-v1',
+              schema_version: 'metadata-policy-activation-v2',
               policy_id: 'draft',
               transition: null,
             }
@@ -3734,7 +3764,7 @@ describe('Policy keyboard focus (#1288)', () => {
   it('encodes the transition id in its retry and dismiss paths', async () => {
     const user = userEvent.setup()
     const transition = {
-      schema_version: 'metadata-policy-transition-v1' as const,
+      schema_version: 'metadata-policy-transition-v2' as const,
       transition_id: 'policy/transition?2',
       from_policy_id: 'policy-a',
       to_policy_id: 'policy-b',
@@ -3745,6 +3775,7 @@ describe('Policy keyboard focus (#1288)', () => {
       failed: 2,
       acknowledged: false,
       origin: 'activation',
+      items_present: true,
     }
     const fetchMock = vi.fn<typeof fetch>(async () => Response.json(transition))
     const transport = new ReviewApiClient({
@@ -3780,7 +3811,7 @@ describe('Policy keyboard focus (#1288)', () => {
     let release: () => void = () => undefined
     let retried = false
     const transition = {
-      schema_version: 'metadata-policy-transition-v1' as const,
+      schema_version: 'metadata-policy-transition-v2' as const,
       transition_id: 'policy_transition_2',
       from_policy_id: 'policy-a',
       to_policy_id: 'policy-b',
@@ -3791,6 +3822,7 @@ describe('Policy keyboard focus (#1288)', () => {
       failed: 2,
       acknowledged: false,
       origin: 'activation',
+      items_present: true,
     }
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
       await new Promise<void>((resolve) => (release = resolve))
@@ -3825,7 +3857,7 @@ describe('Policy keyboard focus (#1288)', () => {
     const user = userEvent.setup()
     let retried = false
     const transition = {
-      schema_version: 'metadata-policy-transition-v1' as const,
+      schema_version: 'metadata-policy-transition-v2' as const,
       transition_id: 'policy_transition_2',
       from_policy_id: 'policy-a',
       to_policy_id: 'policy-b',
@@ -3836,6 +3868,7 @@ describe('Policy keyboard focus (#1288)', () => {
       failed: 2,
       acknowledged: false,
       origin: 'activation',
+      items_present: true,
     }
     const reconciled = { ...transition, state: 'completed', completed: 11, failed: 0 }
     const policyCommand = vi.fn(async (): Promise<unknown> => {
@@ -3865,7 +3898,7 @@ describe('Policy keyboard focus (#1288)', () => {
     let reads = 0
     let retried = false
     const transition = {
-      schema_version: 'metadata-policy-transition-v1' as const,
+      schema_version: 'metadata-policy-transition-v2' as const,
       transition_id: 'policy_transition_2',
       from_policy_id: 'policy-a',
       to_policy_id: 'policy-b',
@@ -3876,6 +3909,7 @@ describe('Policy keyboard focus (#1288)', () => {
       failed: 2,
       acknowledged: false,
       origin: 'activation',
+      items_present: true,
     }
     const processing = { ...transition, state: 'processing', failed: 0 }
     const reconciled = { ...transition, state: 'completed', completed: 11, failed: 0 }

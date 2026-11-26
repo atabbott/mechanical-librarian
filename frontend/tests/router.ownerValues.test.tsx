@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, displayValue } from '../src/api/http'
+import { ApiError, displayValue, ReviewApiClient } from '../src/api/http'
 import type {
   CaseDetailView,
   DecisionCommand,
@@ -11,6 +11,7 @@ import type {
   ReviewHttp,
   TargetDestination,
 } from '../src/api/http'
+import { formatDate } from '../src/dates'
 import { decisionQuestion } from '../src/fieldDecision'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
 import {
@@ -22,6 +23,7 @@ import {
   renderRoute,
   loadRouteModules,
 } from './fixtures'
+import { caseHistory, historyDecisionItem } from './wireFixtures'
 
 beforeAll(loadRouteModules)
 
@@ -459,10 +461,6 @@ describe('owner-entered values', () => {
   )
 
   it.each([
-    [
-      'automatic_hold',
-      'This decision is holding automatic handling, so it can’t be withdrawn. Use Resume automatic handling to release it.',
-    ],
     ['written', 'This decision has been written to your library, so it can’t be withdrawn.'],
   ] as const)('V6 states why %s withdraw is not offered', async (state, copy) => {
     const http = owner(() => [{ ...enteredTitle, ownerControl: control({ withdraw: state }) }])
@@ -2087,7 +2085,7 @@ describe('the written choice', () => {
         {
           ...written(true, !noChangeRequired),
           noChangeRequired,
-          ownerControl: control({ withdraw: noChangeRequired ? 'automatic_hold' : 'written' }),
+          ownerControl: control({ withdraw: noChangeRequired ? null : 'written' }),
           pinControl: { pin: 'change_waiting', unpin: false },
         },
       ])
@@ -2124,4 +2122,123 @@ describe('the written choice', () => {
       }
     },
   )
+})
+
+// Why the record's earlier answer is asked again, under the field's question
+// and on its Attention row (#2039, contract 3.1).
+describe('an earlier answer asked again', () => {
+  const at = Math.floor(Date.now() / 1000) - 3 * 86_400
+  const askedAgain = {
+    reason: 'target_changed',
+    earlier: { outcome: 'accept', value: { kind: 'text', value: 'Old title' }, occurred_at: at },
+  } as const
+  const sentence = `Audiobookshelf shows a different value from when you chose “Old title” on ${formatDate(at, new Date())}.`
+  const asked: Field = {
+    ...base,
+    classificationCause: 'asked_again',
+    classificationReason: 'This field needs your review.',
+    askedAgain,
+  }
+
+  it('says why under the question, ahead of the server reason', async () => {
+    const http = owner(() => [asked])
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    expect(await screen.findByText(sentence)).toBeVisible()
+    expect(screen.queryByText('This field needs your review.')).toBeNull()
+  })
+
+  it('says why on the Attention row, and the server reason without one', async () => {
+    const item = {
+      id: 'case-1',
+      destination: 'title' as const,
+      title: 'A Book',
+      authors: [],
+      library: 'Books',
+      mediaKind: 'epub' as const,
+      classificationReason: 'This field needs your review.',
+      notices: [],
+      provenance: [],
+      workAttentionCount: 2,
+    }
+    const http = {
+      ...owner(() => [asked]),
+      getAttention: vi.fn(async () => ({
+        total: 2,
+        items: [
+          { ...item, askedAgain },
+          { ...item, destination: 'authors' as const },
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all&attention=open', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    expect(
+      await within(rail).findByRole('button', { name: `Title · ${sentence}, A Book` }),
+    ).toBeVisible()
+    expect(
+      within(rail).getByRole('button', { name: 'Authors · This field needs your review., A Book' }),
+    ).toBeVisible()
+  })
+
+  it('says in History which choice a carried answer kept', async () => {
+    const getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
+      items: [
+        {
+          category: 'owner',
+          occurredAt: at + 86_400,
+          applicationReason: null,
+          destination: 'title' as const,
+          outcome: 'accept',
+          previousValue: { kind: 'text', value: 'Before' },
+          selectedValue: { kind: 'text', value: 'Old title' },
+          keptFrom: at,
+        },
+        {
+          category: 'owner',
+          occurredAt: at,
+          applicationReason: null,
+          destination: 'subtitle' as const,
+          outcome: 'accept',
+          previousValue: { kind: 'text', value: 'Before' },
+          selectedValue: { kind: 'text', value: 'Chosen' },
+        },
+      ],
+    }))
+    renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
+    const title = (await screen.findByRole('heading', { name: 'Title' })).closest('article')
+    expect(title).toHaveTextContent(
+      `Kept from your choice on ${formatDate(at, new Date())}, because the same choices were offered.`,
+    )
+    const subtitle = screen.getByRole('heading', { name: 'Subtitle' }).closest('article')
+    expect(subtitle).not.toHaveTextContent('Kept from your choice')
+  })
+
+  it('reads a carried history event off the wire as an owner row with its kept-from line', async () => {
+    // The wire's own `human_decision_carried` event, through the client's
+    // decoder and mapper, is the row History words (#2039).
+    const document = caseHistory({
+      items: [
+        historyDecisionItem({
+          application: 'settled',
+          kind: 'human_decision_carried',
+          kept_from: at,
+          occurred_at: at + 86_400,
+          outcome: 'keep_current',
+          previous_value: { kind: 'text', value: 'Kept title' },
+          selected_value: { kind: 'text', value: 'Kept title' },
+        }),
+      ],
+    })
+    const client = new ReviewApiClient({
+      csrf: { current: () => 'a'.repeat(32), renew: async () => 'b'.repeat(32) },
+      fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+    })
+    const getHistory = vi.fn<ReviewHttp['getHistory']>((...read) => client.getHistory(...read))
+    renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
+    const title = (await screen.findByRole('heading', { name: 'Title' })).closest('article')
+    expect(title).toHaveTextContent('You kept the current value.')
+    expect(title).toHaveTextContent(
+      `Kept from your choice on ${formatDate(at, new Date())}, because the same choices were offered.`,
+    )
+  })
 })

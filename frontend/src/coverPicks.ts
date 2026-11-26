@@ -21,5 +21,7 @@ export const tasteQuery = (http: ReturnType<typeof useReviewContext>['http']) =>
     retry: false,
   })
 
-export const picksSaved = (chosen: number, required: number) =>
-  `${String(Math.min(chosen, required))} of ${String(required)} picks saved.`
+// After an upgrade that left earlier picks out of the count (ADR-0108), the
+// line above Start says the count started again (#2039).
+export const picksSaved = (chosen: number, required: number, sinceUpgrade: boolean) =>
+  `${String(Math.min(chosen, required))} of ${String(required)} picks saved${sinceUpgrade ? ' since the upgrade' : ''}.`

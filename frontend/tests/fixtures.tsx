@@ -155,6 +155,8 @@ export const detail: CaseDetailView = {
       manualHold: false,
       manualReturnRequested: false,
       manualReturnFailed: false,
+      resumeFailed: false,
+      askedAgain: null,
       currentValue: 'Old title',
       currentRaw: 'Old title',
       proposedValues: [{ kind: 'text', value: 'New title' }],
@@ -198,7 +200,7 @@ export const activity = (
 ): ActivityView => {
   const { events = [], ...rest } = value
   return {
-    schema_version: 'continuous-field-activity-v5',
+    schema_version: 'continuous-field-activity-v6',
     backup_ready: null,
     owner_action_required: 0,
     paused: false,
@@ -352,9 +354,10 @@ export const idlePreparation: PreparationView = {
 type ScriptedPolicyCommand = (path: string, body?: unknown) => Promise<never>
 // Covers → Taste profile before any build: configured, nothing chosen yet.
 export const tasteProfile: TasteProfileView = {
-  schema_version: 'review-taste-profile-v4',
+  schema_version: 'review-taste-profile-v5',
   configured: true,
   chosen: 0,
+  since_upgrade: false,
   required: 25,
   daily_limit: 8,
   build: null,
@@ -487,6 +490,11 @@ export const createHttp = (): ReviewHttp => ({
   getPreparation: vi.fn(async (): Promise<PreparationView> => idlePreparation),
   preparationAction: vi.fn(async (): Promise<PreparationView> => idlePreparation),
   dismissPreparation: vi.fn(async (): Promise<PreparationView> => idlePreparation),
+  getUpgradeNotice: vi.fn(async () => ({
+    schema_version: 'upgrade-notice-v1' as const,
+    notice: null,
+  })),
+  dismissUpgradeNotice: vi.fn(async () => undefined),
   retryProviderRecovery: vi.fn(async () => {
     throw new Error('not configured')
   }),

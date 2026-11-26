@@ -73,15 +73,29 @@ export const categoryLabel: Record<ActivityCategory, string> = {
 export type ActivityNote = NonNullable<ActivityEventView['note']>
 export const noteLabel: Record<ActivityNote, string> = {
   asked_again: 'Asked again',
+  asked_again_choices: 'Asked again',
   asked_again_matching: 'Asked again',
   asked_again_matching_written: 'Asked again',
+  asked_again_resume: 'Asked again',
+  asked_again_retired: 'Asked again',
+  asked_again_value: 'Asked again',
+  asked_again_withdrawn: 'Asked again',
   held: 'Held by you',
   held_back: 'Held back',
   waiting_for_check: 'Waiting for check',
 }
+// The record's answer the work's current case asks again says why (#2039):
+// each reason has its sentence; `asked_again` is any other reason.
 export const noteSentence: Record<ActivityNote, string> = {
-  asked_again:
-    'This choice was made before the work came back for review, so the field asks you again.',
+  asked_again: 'This choice no longer counts, so the field asks you again.',
+  asked_again_choices: 'The choices changed after this choice, so the field asks you again.',
+  asked_again_value:
+    'The value in Audiobookshelf changed after this choice, so the field asks you again.',
+  asked_again_withdrawn:
+    'You withdrew a later choice, so this one came back and the field asks you again.',
+  asked_again_resume: 'Resume automatic handling did not finish, so the field asks you again.',
+  asked_again_retired:
+    'This choice was not written before the upgrade, so the field asks you again.',
   asked_again_matching:
     'Book matching changed what this field offers, so this choice no longer counts and the field is asking you again.',
   // The server names a choice it had already written and verified (#1355).

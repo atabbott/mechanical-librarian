@@ -19,6 +19,9 @@ from mechanical_librarian.adapters.persistence.cover_taste_judge import (
     taste_judge_facts,
     taste_preview_walk,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _OWNER_SELECTION_COPY_JOIN_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -58,29 +61,26 @@ VERSIONS_SHOWN = 50
 # S2: the newest owner selection per item, naming a previewed cover that is
 # not a retained original, on a consideration offering at least two arts. The
 # chosen cover must be one the build sends (a previewed `candidate`, never a
-# larger copy) and the report must name a file format, so the count shown and
-# the 25/10 thresholds read exactly the decisions `_decision_source` keeps.
+# larger copy) and the report must name a file format. `_ELIGIBLE` reads the
+# selection's own copies of those facts, which open holds equal to the
+# comparison and report while they are there, so it still names every choice
+# made after a regeneration (ADR-0108).
 _ELIGIBLE = (
     "FROM owner_cover_pointers current "
     "JOIN owner_cover_selections selection "
     "ON selection.selection_id=current.selection_id "
-    "JOIN cover_considerations consideration "
-    "ON consideration.consideration_id=selection.consideration_id "
-    "JOIN metadata_report_browse_facts facts "
-    "ON facts.report_id=consideration.report_id "
-    "WHERE json_extract(selection.document,'$.preview_sha256') IS NOT NULL "
+    + _OWNER_SELECTION_COPY_JOIN_SQL
+    + " WHERE json_extract(selection.document,'$.preview_sha256') IS NOT NULL "
     "AND json_extract(selection.document,'$.candidate_kind') IS NOT 'retained' "
-    "AND json_extract(consideration.currentness_document,'$.cover_stage.arts')>=? "
-    "AND typeof(facts.format)='text' "
-    "AND EXISTS (SELECT 1 FROM json_each(consideration.document,'$.candidates') "
-    "offered WHERE json_extract(offered.value,'$.reference')="
-    "json_extract(selection.document,'$.candidate_reference') "
-    "AND json_extract(offered.value,'$.candidate_kind')='candidate' "
-    "AND json_type(offered.value,'$.preview_sha256')='text' "
-    "AND json_type(offered.value,'$.transport_sha256')='text' "
-    "AND json_type(offered.value,'$.width')='integer' "
-    "AND json_type(offered.value,'$.height')='integer')"
+    "AND selection.offered_arts>=? AND selection.report_format IS NOT NULL "
+    "AND selection.transport_sha256 IS NOT NULL "
+    "AND selection.width IS NOT NULL AND selection.height IS NOT NULL"
 )
+# The choices a build can use: those whose comparison is still there, as
+# `_decision_source` needs its candidates and stage. After a regeneration a
+# new profile is built from choices made since (ADR-0108), so the count shown,
+# the 25/10 thresholds and Try again read exactly the decisions it keeps.
+_USABLE = _ELIGIBLE + " AND consideration.consideration_id IS NOT NULL"
 _RECORD_KEYS = frozenset(
     {
         "corrections",
@@ -173,12 +173,38 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
 
     @local_operation
     def eligible_count(self) -> int:
+        return self._usable()
+
+    def _usable(self, after: int | None = None) -> int:
+        """The choices a build can use, or those recorded after `after`."""
         return cast(
             int,
             self._connection.execute(
-                f"SELECT count(*) {_ELIGIBLE}", (TASTE_MIN_ARTS,)
+                f"SELECT count(*) {_USABLE}", (TASTE_MIN_ARTS,)
+            ).fetchone()[0]
+            if after is None
+            else self._connection.execute(
+                f"SELECT count(*) {_USABLE} AND selection.rowid>?",
+                (TASTE_MIN_ARTS, after),
             ).fetchone()[0],
         )
+
+    def _left_out(self) -> bool:
+        """Some choices made are ones no build can use. Comparisons are
+        append-only, so only a regeneration takes one away: the count then
+        started again from the choices made since (ADR-0108)."""
+        (left_out,) = self._connection.execute(
+            f"SELECT EXISTS(SELECT 1 {_ELIGIBLE} "
+            "AND consideration.consideration_id IS NULL)",
+            (TASTE_MIN_ARTS,),
+        ).fetchone()
+        return bool(left_out)
+
+    def _short_of_choices(self) -> bool:
+        """Fewer choices a build can use than any build is due on, as after
+        a regeneration: a failed build is then neither shown nor tried again,
+        so the owner sees the picks still needed, not a failure."""
+        return self._usable() < TASTE_FIRST_BUILD_DECISIONS
 
     def _requests_today(self, now: int) -> tuple[int, str | None]:
         row = self._connection.execute(
@@ -253,17 +279,8 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
             ):
                 transaction.commit()
                 return False
-            total = self._connection.execute(
-                f"SELECT count(*) {_ELIGIBLE}", (TASTE_MIN_ARTS,)
-            ).fetchone()[0]
-            new = (
-                total
-                if counted is None
-                else self._connection.execute(
-                    f"SELECT count(*) {_ELIGIBLE} AND selection.rowid>?",
-                    (TASTE_MIN_ARTS, counted[0]),
-                ).fetchone()[0]
-            )
+            total = self._usable()
+            new = total if counted is None else self._usable(counted[0])
             due = total >= TASTE_FIRST_BUILD_DECISIONS and (
                 counted is None or new >= TASTE_REBUILD_DECISIONS
             )
@@ -290,7 +307,12 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
             last = self._connection.execute(
                 "SELECT build_id,state FROM cover_taste_builds ORDER BY rowid DESC LIMIT 1"
             ).fetchone()
-            if last is None or last[0] != build_id or last[1] != "failed":
+            if (
+                last is None
+                or last[0] != build_id
+                or last[1] != "failed"
+                or self._short_of_choices()
+            ):
                 transaction.commit()
                 return None
             retry = self._insert(now, "retry", build_id, daily_limit)
@@ -568,7 +590,8 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
         corrected the suggestion in force when it was made (J9)."""
         rows = self._connection.execute(
             "SELECT selection.selection_id,selection.document,consideration.document,"
-            f"facts.format,{VERDICT_IN_FORCE_SQL} {_ELIGIBLE} ORDER BY selection.rowid",
+            f"selection.report_format,{VERDICT_IN_FORCE_SQL} {_USABLE} "
+            "ORDER BY selection.rowid",
             (TASTE_MIN_ARTS,),
         ).fetchall()
         sources = (_decision_source(*row) for row in rows)
@@ -637,9 +660,12 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
             )
         ]
         return {
-            "eligible": self.eligible_count(),
+            "eligible": self._usable(),
+            "since_upgrade": self._left_out(),
             "build": None
-            if build is None or build[1] == "succeeded"
+            if build is None
+            or build[1] == "succeeded"
+            or (build[1] == "failed" and self._short_of_choices())
             else {
                 "build_id": build[0],
                 "failure": build[2],
@@ -654,11 +680,14 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
 def _decision_source(
     selection_id: str,
     selection_document: str,
-    consideration_document: str,
+    consideration_document: str | None,
     file_format: object,
     verdict_document: str | None,
 ) -> TasteDecisionSource | None:
-    """One recorded decision's previewed covers and stage facts, or None to skip."""
+    """One recorded decision's previewed covers and stage facts, or None to
+    skip: a regeneration took the comparison it was made over."""
+    if consideration_document is None:
+        return None
     try:
         selection = json.loads(selection_document)
         consideration = json.loads(consideration_document)

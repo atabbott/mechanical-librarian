@@ -1,0 +1,9 @@
+{
+  "body": {
+    "notice": null,
+    "schema_version": "upgrade-notice-v1"
+  },
+  "method": "GET",
+  "path": "/api/v1/upgrade-notice",
+  "status": 200
+}

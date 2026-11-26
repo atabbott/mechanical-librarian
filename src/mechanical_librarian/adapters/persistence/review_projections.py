@@ -73,7 +73,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _read_as_own_sql,
     _resumed_decision_sql,
     _withdrawn_automatic_sql,
-    asked_again_sql,
+    asked_again_document_sql,
     carry_waiting_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -467,10 +467,12 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         ADR-0108), in force or not as read on this case (S15).
 
         The pinned value is the chosen value where the pinned answer chose
-        one, and otherwise the value of that answer's case. The chosen value
-        is parsed here, not extracted in SQL, which would read a JSON boolean
-        as an integer. Kept apart so `read_current_review_case` stays under
-        the code-size guide.
+        one, and otherwise the value of that answer's case, read from the
+        answer's own copy of its case's target field (ADR-0108), never from
+        the case, which a regeneration deletes. The chosen value is parsed
+        here, not extracted in SQL, which would read a JSON boolean as an
+        integer. Kept apart so `read_current_review_case` stays under the
+        code-size guide.
         """
         return tuple(
             (
@@ -489,15 +491,13 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             for row in self._connection.execute(
                 "SELECT pinned.destination,"
                 + pin_in_force_sql(":case", "pinned.destination")
-                + ",human.outcome,human.selected_value_document,target.value FROM "
+                + ",human.outcome,human.selected_value_document,"
+                "human.target_field_document FROM "
                 + _CASE_RECORD_ROWS_SQL.format(alias="pinned")
                 + " JOIN human_decisions human ON human.decision_id=pinned.answer_id "
                 "AND human.outcome IN ('pin','keep_current','accept','owner_entered') "
-                "JOIN review_cases review "
-                "ON review.review_case_id=human.review_case_id,"
-                "json_each(review.document,'$.target.fields') target "
                 "WHERE pinned.pin_fingerprint IS NOT NULL "
-                "AND json_extract(target.value,'$.destination')=pinned.destination "
+                "AND json_type(human.target_field_document)='object' "
                 "ORDER BY pinned.destination",
                 {"case": review_case_id},
             )
@@ -514,7 +514,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         (C2b-15), a pin taken back only where Automatic decided it (C2b-27,
         C2b-28); each the owner withdrew beside Automatic's decision on the
         case, which then settles nothing (`_withdrawn_automatic_sql`); each
-        the question check asks again here (`asked_again_sql`), or left
+        the question check asks again here (`asked_again_sql`), with why and
+        the earlier answer (`asked_again_document_sql`), or left
         waiting for a plan or a Resume (`carry_waiting_sql`, ADR-0108); and
         the case's owner decisions a completed Resume took back, which no
         longer decide their field (D3). Kept apart so `read_current_review_case`
@@ -526,6 +527,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "resume_offer_destinations": [],
             "own_answer_destinations": [],
             "asked_again_destinations": [],
+            "asked_again_answers": [],
             "carry_waiting_destinations": [],
         }
         for (
@@ -548,7 +550,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             + " END,"
             + _read_as_own_sql("held", ":case", "held.destination")
             + ","
-            + asked_again_sql("held", ":case", "held.destination")
+            + asked_again_document_sql("held", ":case", "held.destination")
             + ","
             + carry_waiting_sql("held", ":case")
             + " FROM "
@@ -567,8 +569,14 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 states["resume_offer_destinations"].append(destination)
             if own:
                 states["own_answer_destinations"].append(destination)
-            if asked_again and destination != "cover":
+            if asked_again is not None and destination != "cover":
                 states["asked_again_destinations"].append(destination)
+                states["asked_again_answers"].append(
+                    json.dumps(
+                        {"destination": destination, **json.loads(asked_again)},
+                        sort_keys=True,
+                    )
+                )
             if waiting and destination != "cover":
                 states["carry_waiting_destinations"].append(destination)
         return {

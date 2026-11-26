@@ -169,6 +169,10 @@ from mechanical_librarian.domain.reviewer_access import (
     DescriptionModelMetadata,
     OpenRouterModelId,
 )
+from mechanical_librarian.domain.upgrade_notice import (
+    UPGRADE_NOTICE_SCHEMA,
+    UpgradeNoticeSchemaVersion,
+)
 from mechanical_librarian.domain.value_flags import ValueFlagDestination, ValueFlagRule
 from mechanical_librarian.interfaces.web import (
     find_this_book,
@@ -391,13 +395,25 @@ class _PasswordChangeRequest(BaseModel):
 REVIEW_SESSION_SCHEMA: Final = "review-session-v1"
 # v3: the suggestion model's state and the suggestions confirmed (#1372 PR 4b).
 # v4: whether switching by taste has its qualification record (#1372 PR 5).
-ReviewTasteProfileSchemaVersion = Literal["review-taste-profile-v4"]
+# v5: whether an upgrade left earlier picks out of the count (#2039).
+ReviewTasteProfileSchemaVersion = Literal["review-taste-profile-v5"]
 REVIEW_TASTE_PROFILE_SCHEMA: Final[ReviewTasteProfileSchemaVersion] = (
-    "review-taste-profile-v4"
+    "review-taste-profile-v5"
 )
 MetadataPolicyNotebookSchemaVersion = Literal["metadata-policy-notebook-v2"]
 METADATA_POLICY_NOTEBOOK_SCHEMA: Final[MetadataPolicyNotebookSchemaVersion] = (
     "metadata-policy-notebook-v2"
+)
+# v2: whether any per-work rows are left to retry (`items_present`, #2039).
+# Not the transition id's hash input, which stays at its v1 label.
+MetadataPolicyTransitionSchemaVersion = Literal["metadata-policy-transition-v2"]
+METADATA_POLICY_TRANSITION_SCHEMA: Final[MetadataPolicyTransitionSchemaVersion] = (
+    "metadata-policy-transition-v2"
+)
+# v2: embeds metadata-policy-transition-v2 (#2039).
+MetadataPolicyActivationSchemaVersion = Literal["metadata-policy-activation-v2"]
+METADATA_POLICY_ACTIVATION_SCHEMA: Final[MetadataPolicyActivationSchemaVersion] = (
+    "metadata-policy-activation-v2"
 )
 
 
@@ -1082,7 +1098,7 @@ class _OwnerControl(_ClosedModel):
     names: _OwnerNames | None
     clear: StrictBool
     current: StrictStr | list[StrictStr] | None
-    withdraw: Literal["available", "automatic_hold", "in_progress", "written"] | None
+    withdraw: Literal["available", "in_progress", "written"] | None
 
 
 class _FieldPin(_ClosedModel):
@@ -1095,6 +1111,31 @@ class _FieldPin(_ClosedModel):
 class _PinControl(_ClosedModel):
     pin: Literal["available", "change_waiting"] | None
     unpin: StrictBool
+
+
+class _AskedAgainEarlier(_ClosedModel):
+    """The record's earlier answer a field is asked again over: what the
+    owner did, the value (a keep's is the one its case showed; a decline has
+    none) and the day, its root original's for a carried answer."""
+
+    outcome: Literal["accept", "keep_current", "reject", "owner_entered"]
+    value: _OwnerValue | None
+    occurred_at: StrictInt = Field(ge=0)
+
+
+class _AskedAgain(_ClosedModel):
+    """Why the record's earlier answer is asked again (contract #2039 3.1)."""
+
+    reason: Literal[
+        "question_changed",
+        "target_changed",
+        "withdrawn",
+        "resume_failed",
+        "retired",
+        "matching_changed",
+        "other",
+    ]
+    earlier: _AskedAgainEarlier
 
 
 class _ReviewField(_ClosedModel):
@@ -1134,6 +1175,11 @@ class _ReviewField(_ClosedModel):
     manual_hold: bool
     manual_return_requested: bool
     manual_return_failed: bool
+    # The record's open Resume for the field failed, offered or not (ADR-0108).
+    resume_failed: bool
+    # Why the record's earlier answer is asked again, on a field asked for
+    # that reason (ADR-0108; v17).
+    asked_again: _AskedAgain | None
     manual_required: bool
     needs_attention: bool
     navigation_role: Literal["attention", "inspect"]
@@ -1403,6 +1449,8 @@ class _HistoryDecisionItem(_ClosedModel):
     event_id: str
     # An owner's own request, or the question check's carry (ADR-0108).
     kind: Literal["human_decision_recorded", "human_decision_carried"]
+    # A carried answer's root original's day: the choice it kept (v10).
+    kept_from: _Instant | None
     occurred_at: _Instant
     outcome: _HumanDecisionOutcome
     previous_value: _ProposedValue | None
@@ -1942,6 +1990,9 @@ class _TasteProfileResponse(_ClosedModel):
     schema_version: ReviewTasteProfileSchemaVersion
     configured: StrictBool
     chosen: StrictInt = Field(ge=0)
+    # An upgrade left earlier picks out, so `chosen` counts picks made since
+    # (ADR-0108).
+    since_upgrade: StrictBool
     required: Literal[25]
     daily_limit: StrictInt = Field(ge=1, le=100)
     build: _TasteBuild | None
@@ -2038,6 +2089,7 @@ def _taste_response(data: dict[str, object]) -> _TasteProfileResponse:
         schema_version=REVIEW_TASTE_PROFILE_SCHEMA,
         configured=cast(bool, data["configured"]),
         chosen=cast(int, data["eligible"]),
+        since_upgrade=cast(bool, data["since_upgrade"]),
         required=TASTE_FIRST_BUILD_DECISIONS,
         daily_limit=cast(int, data["daily_limit"]),
         build=None
@@ -2366,6 +2418,9 @@ class _LibraryProgressResponse(_ClosedModel):
 
 
 class _AttentionItem(_ClosedModel):
+    # Why the record's earlier answer asks the field again, as the case
+    # page says it (review-attention v2).
+    asked_again: _AskedAgain | None
     authors: list[str]
     classification_reason: str
     destination: _TargetDestination
@@ -2478,12 +2533,20 @@ class _ActivityEvent(_ClosedModel):
     # matching asked again that was already written and verified reads
     # `asked_again_matching_written`, since Audiobookshelf keeps its value.
     # An automatic choice an owner hold keeps unwritten until Resume reads
-    # `held` (ADR-0085).
+    # `held` (ADR-0085). The record's answer the work's current case asks
+    # again says why (#2039): the choices or the value changed, a later
+    # choice was withdrawn, Resume did not finish, the plan was retired, or
+    # Book matching changed it; `asked_again` is any other reason.
     note: (
         Literal[
             "asked_again",
+            "asked_again_choices",
             "asked_again_matching",
             "asked_again_matching_written",
+            "asked_again_resume",
+            "asked_again_retired",
+            "asked_again_value",
+            "asked_again_withdrawn",
             "held",
             "held_back",
             "waiting_for_check",
@@ -2792,6 +2855,23 @@ class _PreparationPresentation(_ClosedModel):
     total: int = Field(ge=0)
     dismissible: bool
     now: _PreparationNow | None = None
+
+
+class _UpgradeNotice(_ClosedModel):
+    """The answers a regeneration kept and asked again, until dismissed."""
+
+    regeneration_id: StrictStr = Field(min_length=1, max_length=128)
+    # The first new cases are still being checked; the counts are so far.
+    preparing: bool
+    kept: int = Field(ge=0)
+    asked_again: int = Field(ge=0)
+    # Answers no new case has checked yet; some can stay so for good.
+    not_yet_checked: int = Field(ge=0)
+
+
+class _UpgradeNoticeResponse(_ClosedModel):
+    notice: _UpgradeNotice | None
+    schema_version: UpgradeNoticeSchemaVersion = UPGRADE_NOTICE_SCHEMA
 
 
 class _PreparationDismissRequest(_ClosedModel):
@@ -3262,16 +3342,17 @@ class _PolicyTransitionResponse(_ClosedModel):
     failed: int
     acknowledged: bool
     origin: str
-    schema_version: Literal["metadata-policy-transition-v1"] = (
-        "metadata-policy-transition-v1"
+    items_present: bool
+    schema_version: MetadataPolicyTransitionSchemaVersion = (
+        METADATA_POLICY_TRANSITION_SCHEMA
     )
 
 
 class _PolicyActivationResponse(_ClosedModel):
     policy_id: str
     transition: _PolicyTransitionResponse | None
-    schema_version: Literal["metadata-policy-activation-v1"] = (
-        "metadata-policy-activation-v1"
+    schema_version: MetadataPolicyActivationSchemaVersion = (
+        METADATA_POLICY_ACTIVATION_SCHEMA
     )
 
 
@@ -3432,6 +3513,7 @@ class _PolicyTransitionFields(TypedDict):
     failed: int
     acknowledged: bool
     origin: str
+    items_present: bool
 
 
 def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionResponse:
@@ -3449,6 +3531,7 @@ def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionRes
                 "failed": value.failed,
                 "acknowledged": value.acknowledged,
                 "origin": value.origin,
+                "items_present": value.items_present,
             },
         )
     )
@@ -3931,6 +4014,9 @@ def _register_routes(
     )
     identifier_import.register_routes(
         app, application, session_cookie, authenticated_session_cookie, _require_session
+    )
+    _register_upgrade_notice_routes(
+        app, application, session_cookie, authenticated_session_cookie
     )
     _register_taste_routes(
         app, application, session_cookie, authenticated_session_cookie
@@ -6241,6 +6327,56 @@ def _register_browse_and_preparation_routes(
         return _HistoryResponse.model_validate(
             _case_call(lambda: application.history(review_case_id))
         )
+
+
+def _register_upgrade_notice_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    session_cookie: APIKeyCookie,
+    authenticated_session_cookie: _SessionDependency,
+) -> None:
+    """The notice after an upgrade, and its one dismissal (#2039)."""
+    sessions = application
+
+    @app.get(
+        "/api/v1/upgrade-notice",
+        response_model=_UpgradeNoticeResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def upgrade_notice(
+        ml_session: str | None = Security(session_cookie),
+    ) -> _UpgradeNoticeResponse:
+        _require_session(sessions, ml_session)
+        try:
+            notice = application.upgrade_notice()
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        return _UpgradeNoticeResponse.model_validate(
+            {"notice": None if notice is None else notice.to_data()}
+        )
+
+    @app.post(
+        "/api/v1/upgrade-notice/{regeneration_id}/dismiss",
+        status_code=204,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def dismiss_upgrade_notice(
+        regeneration_id: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> Response:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            application.dismiss_upgrade_notice(regeneration_id)
+        except ReviewApplicationError as error:
+            if error.code == "stale":
+                raise HTTPException(409, detail={"code": "stale"}) from None
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        return Response(status_code=204)
 
 
 def _register_live_update_route(

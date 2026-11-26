@@ -2366,8 +2366,13 @@
               {
                 "enum": [
                   "asked_again",
+                  "asked_again_choices",
                   "asked_again_matching",
                   "asked_again_matching_written",
+                  "asked_again_resume",
+                  "asked_again_retired",
+                  "asked_again_value",
+                  "asked_again_withdrawn",
                   "held",
                   "held_back",
                   "waiting_for_check"
@@ -2821,7 +2826,7 @@
             "type": "array"
           },
           "schema_version": {
-            "const": "continuous-field-activity-v5",
+            "const": "continuous-field-activity-v6",
             "title": "Schema Version",
             "type": "string"
           },
@@ -3249,9 +3254,89 @@
         "title": "_AsinQualification",
         "type": "object"
       },
+      "_AskedAgain": {
+        "additionalProperties": false,
+        "description": "Why the record's earlier answer is asked again (contract #2039 3.1).",
+        "properties": {
+          "earlier": {
+            "$ref": "#/components/schemas/_AskedAgainEarlier"
+          },
+          "reason": {
+            "enum": [
+              "question_changed",
+              "target_changed",
+              "withdrawn",
+              "resume_failed",
+              "retired",
+              "matching_changed",
+              "other"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "earlier"
+        ],
+        "title": "_AskedAgain",
+        "type": "object"
+      },
+      "_AskedAgainEarlier": {
+        "additionalProperties": false,
+        "description": "The record's earlier answer a field is asked again over: what the\nowner did, the value (a keep's is the one its case showed; a decline has\nnone) and the day, its root original's for a carried answer.",
+        "properties": {
+          "occurred_at": {
+            "minimum": 0.0,
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "outcome": {
+            "enum": [
+              "accept",
+              "keep_current",
+              "reject",
+              "owner_entered"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_EmptyValue"
+              },
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "outcome",
+          "value",
+          "occurred_at"
+        ],
+        "title": "_AskedAgainEarlier",
+        "type": "object"
+      },
       "_AttentionItem": {
         "additionalProperties": false,
         "properties": {
+          "asked_again": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_AskedAgain"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "authors": {
             "items": {
               "type": "string"
@@ -3350,6 +3435,7 @@
           }
         },
         "required": [
+          "asked_again",
           "authors",
           "classification_reason",
           "destination",
@@ -3399,7 +3485,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-attention-v1",
+            "const": "review-attention-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -3912,7 +3998,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v16",
+            "const": "review-case-detail-v17",
             "title": "Schema Version",
             "type": "string"
           },
@@ -7479,6 +7565,19 @@
             "title": "Event Id",
             "type": "string"
           },
+          "kept_from": {
+            "anyOf": [
+              {
+                "maximum": 8640000000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kept From"
+          },
           "kind": {
             "enum": [
               "human_decision_recorded",
@@ -7571,6 +7670,7 @@
           "destination",
           "event_id",
           "kind",
+          "kept_from",
           "occurred_at",
           "outcome",
           "previous_value",
@@ -8006,7 +8106,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v9",
+            "const": "review-case-history-v10",
             "title": "Schema Version",
             "type": "string"
           }
@@ -9576,7 +9676,6 @@
               {
                 "enum": [
                   "available",
-                  "automatic_hold",
                   "in_progress",
                   "written"
                 ],
@@ -10594,8 +10693,8 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "metadata-policy-activation-v1",
-            "default": "metadata-policy-activation-v1",
+            "const": "metadata-policy-activation-v2",
+            "default": "metadata-policy-activation-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -11076,13 +11175,17 @@
             "title": "Generation",
             "type": "integer"
           },
+          "items_present": {
+            "title": "Items Present",
+            "type": "boolean"
+          },
           "origin": {
             "title": "Origin",
             "type": "string"
           },
           "schema_version": {
-            "const": "metadata-policy-transition-v1",
-            "default": "metadata-policy-transition-v1",
+            "const": "metadata-policy-transition-v2",
+            "default": "metadata-policy-transition-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -11113,7 +11216,8 @@
           "total",
           "failed",
           "acknowledged",
-          "origin"
+          "origin",
+          "items_present"
         ],
         "title": "_PolicyTransitionResponse",
         "type": "object"
@@ -13284,6 +13388,16 @@
       "_ReviewField": {
         "additionalProperties": false,
         "properties": {
+          "asked_again": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_AskedAgain"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "automatic_decision": {
             "anyOf": [
               {
@@ -13370,7 +13484,8 @@
               "nothing_to_decide",
               "pinned",
               "pin_changed",
-              "held_in_preview"
+              "held_in_preview",
+              "asked_again"
             ],
             "title": "Classification Cause",
             "type": "string"
@@ -13661,6 +13776,10 @@
             "title": "Restore Unavailable",
             "type": "boolean"
           },
+          "resume_failed": {
+            "title": "Resume Failed",
+            "type": "boolean"
+          },
           "target_fingerprint": {
             "title": "Target Fingerprint",
             "type": "string"
@@ -13695,6 +13814,8 @@
           "manual_hold",
           "manual_return_requested",
           "manual_return_failed",
+          "resume_failed",
+          "asked_again",
           "manual_required",
           "needs_attention",
           "navigation_role",
@@ -14986,9 +15107,13 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "review-taste-profile-v4",
+            "const": "review-taste-profile-v5",
             "title": "Schema Version",
             "type": "string"
+          },
+          "since_upgrade": {
+            "title": "Since Upgrade",
+            "type": "boolean"
           },
           "versions": {
             "items": {
@@ -15003,6 +15128,7 @@
           "schema_version",
           "configured",
           "chosen",
+          "since_upgrade",
           "required",
           "daily_limit",
           "build",
@@ -15326,6 +15452,72 @@
           "status"
         ],
         "title": "_UnavailableDecisionConfirmation",
+        "type": "object"
+      },
+      "_UpgradeNotice": {
+        "additionalProperties": false,
+        "description": "The answers a regeneration kept and asked again, until dismissed.",
+        "properties": {
+          "asked_again": {
+            "minimum": 0.0,
+            "title": "Asked Again",
+            "type": "integer"
+          },
+          "kept": {
+            "minimum": 0.0,
+            "title": "Kept",
+            "type": "integer"
+          },
+          "not_yet_checked": {
+            "minimum": 0.0,
+            "title": "Not Yet Checked",
+            "type": "integer"
+          },
+          "preparing": {
+            "title": "Preparing",
+            "type": "boolean"
+          },
+          "regeneration_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Regeneration Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "regeneration_id",
+          "preparing",
+          "kept",
+          "asked_again",
+          "not_yet_checked"
+        ],
+        "title": "_UpgradeNotice",
+        "type": "object"
+      },
+      "_UpgradeNoticeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "notice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_UpgradeNotice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "const": "upgrade-notice-v1",
+            "default": "upgrade-notice-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "notice"
+        ],
+        "title": "_UpgradeNoticeResponse",
         "type": "object"
       },
       "_WillLinkRow": {
@@ -25100,6 +25292,145 @@
           }
         ],
         "summary": "Subscribe to ordered invalidation for this session"
+      }
+    },
+    "/api/v1/upgrade-notice": {
+      "get": {
+        "operationId": "upgrade_notice_api_v1_upgrade_notice_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_UpgradeNoticeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Upgrade Notice"
+      }
+    },
+    "/api/v1/upgrade-notice/{regeneration_id}/dismiss": {
+      "post": {
+        "operationId": "dismiss_upgrade_notice_api_v1_upgrade_notice__regeneration_id__dismiss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "regeneration_id",
+            "required": true,
+            "schema": {
+              "title": "Regeneration Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Dismiss Upgrade Notice"
       }
     }
   }

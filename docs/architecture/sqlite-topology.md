@@ -325,7 +325,10 @@ hang. After changing how a shared connection is used, run:
 
 Activity uses its own query-only connection (`query_only=ON` is verified),
 with a 150 ms busy timeout and its own admission coordinator, so a Library
-operation cannot queue an Activity read behind itself.
+operation cannot queue an Activity read behind itself. Once a regeneration
+removes the derived rows a ledger row was made against, Activity reads that
+row through its display copies
+([ADR-0108](decisions/0108-ledger-and-derived-state.md)).
 
 Activity reads a root-owned serialized fact store of at most 64 MiB
 ([ADR-0082](decisions/0082-runtime-activity-facts.md)). It never grants

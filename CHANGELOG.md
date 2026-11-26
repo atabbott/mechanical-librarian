@@ -19,6 +19,16 @@ brackets are GitHub issues.
   decisions, choices, controls and write plans apart from what preparation
   rebuilds. One record of each field's latest answer keeps Automatic off it on
   every later read until Resume automatic handling, which a field set to
+  Automatic offers while Automatic is on; a new read asks again a field you
+  made a choice on, where it offers a choice. Withdraw works beside
+  Automatic's decision (#2038).
+- A field asked again says why, with your earlier answer and its day, on the
+  field, in Attention and in Activity's Details. An answer kept from an
+  earlier read adds no Activity row, and History names the day it was kept
+  from. After an upgrade, a notice on Activity and in Attention counts the
+  answers kept and asked again until you dismiss it. A failed Resume automatic
+  handling is said even where Resume is not offered, and Retry failed works
+  shows only while failed works remain (#2039).
   Automatic offers while Automatic is on. Withdraw works beside Automatic's
   decision (#2038).
 - **Clean rebuild required.** After this rebuild, an upgrade that changes only

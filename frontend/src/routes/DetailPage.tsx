@@ -14,7 +14,7 @@ import type {
   TargetDestination,
 } from '../api/http'
 import { BuildMismatchError, CLEARED_TEXT, displayValue, isClear } from '../api/http'
-import { humanReasons } from '../fieldReasons'
+import { humanReasons, keptFromSentence } from '../fieldReasons'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { railOffers } from '../reviewChoiceCounts'
 import { ObservationValue } from './FieldDecisionChoices'
@@ -212,6 +212,10 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         <p>{action}</p>
         {item.category === 'owner' && item.applicationReason ? (
           <p className="diagnostic-note">{item.applicationReason}</p>
+        ) : null}
+        {item.category === 'owner' && item.keptFrom != null ? (
+          // A carried answer keeps the choice it was carried from (#2039).
+          <p className="diagnostic-note">{keptFromSentence(item.keptFrom)}</p>
         ) : null}
         {isRetention(item) ? (
           <HistoryValue

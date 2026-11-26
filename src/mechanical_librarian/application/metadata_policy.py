@@ -351,6 +351,10 @@ class PolicyTransition:
     # indistinguishable from a completed owner activation, and the interface
     # reported one that never happened.
     origin: str = "activation"
+    # Whether any per-work rows remain for this transition. They are derived,
+    # so a regeneration removes them while the header keeps its counts; with
+    # none left, a retry has no work to retry.
+    items_present: bool = False
 
 
 @dataclass(frozen=True, slots=True)

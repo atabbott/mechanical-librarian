@@ -1,8 +1,8 @@
 """A carried decision on the owner's wire (ADR-0108; #2040 packet 6).
 
 The question check carries an answer to a later case of the same book, and
-the case's detail (`review-case-detail-v16`) and history
-(`review-case-history-v9`) read it through the real endpoints: the carried
+the case's detail (`review-case-detail-v17`) and history
+(`review-case-history-v10`) read it through the real endpoints: the carried
 row is the field's owner decision, `settled` where it plans nothing, and its
 audit event is `human_decision_carried`. Until C3 words it, it reads as an
 owner row does; Activity's response is unchanged by it.

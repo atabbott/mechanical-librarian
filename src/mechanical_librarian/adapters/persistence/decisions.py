@@ -1956,6 +1956,16 @@ class SQLiteDecisionRepository(ConnectionScoped):
             )
             previous_formatted = plan.desired_form
         kind = decision_value_kind(decision.destination)
+        # A carried answer keeps its root original's choice: its day (#2039).
+        root = (
+            None
+            if decision.carried_from is None
+            else self._connection.execute(
+                "SELECT occurred_at FROM human_decisions WHERE decision_id=?",
+                (decision.carried_from,),
+            ).fetchone()
+        )
+        value["kept_from"] = None if root is None else int(root[0])
         value["previous_value"] = (
             {"kind": kind, "value": previous} if previous is not None else None
         )

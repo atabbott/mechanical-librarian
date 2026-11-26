@@ -244,6 +244,7 @@ def _attention_rows(case_document: str, report_document: str):
             cause,
             flag,
             False,
+            None,
         )
         for destination in TargetDestination
         for outcome, cause, flag in (

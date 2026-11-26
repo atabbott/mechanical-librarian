@@ -193,7 +193,9 @@ def project_readable_activity_event(
     connection = event.pop("connection", None)
     report_id = event.pop("report_id", None)
     event["work_label"] = event.get("work_label", "Recorded work")
-    event["author_label"] = "Author details are not recorded"
+    # An owner row whose report is gone reads its copy's author label
+    # (ADR-0108); a report, when there, names its own.
+    event["author_label"] = event.get("author_label", "Author details are not recorded")
     if connection is None and report_id is None:
         readable_activity_event(event, None)
         return

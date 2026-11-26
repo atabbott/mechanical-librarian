@@ -41,6 +41,7 @@ ReviewFieldClassificationCause = Literal[
     "pinned",
     "pin_changed",
     "held_in_preview",
+    "asked_again",
 ]
 _CAUSE_GUIDANCE: dict[ReviewFieldCause, str] = {
     "unsupported": "Your library service cannot change this field.",
@@ -99,6 +100,7 @@ def classify_review_field(
     pin: Literal["in_force", "changed"] | None = None,
     repeated_description: bool = False,
     held_in_preview: bool = False,
+    asked_again: bool = False,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use.
 
@@ -125,6 +127,9 @@ def classify_review_field(
     `held_in_preview` says that, in Preview, an earlier answer or a taken-back
     pin still holds the field; it changes only a field that would otherwise
     have nothing to decide while a source offers a different value.
+    `asked_again` says the record holds the owner's earlier answer against
+    Automatic and asks the field again over it (ADR-0108): it asks ahead of
+    Automatic's abstention or decision, which the answer keeps off the field.
     """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
@@ -166,34 +171,24 @@ def classify_review_field(
             "inspect",
             preservation_only,
         )
-    if automatic_outcome == "abstention":
+    if asked_again and not suspended:
+        # The server's sentence is the review one; the page says why from
+        # the field's `asked_again` document.
         return ReviewFieldClassification(
-            "manual_fallback",
-            "This field needs your choice.",
-            "automatic_abstained",
+            "needs_attention",
+            "This field needs your review.",
+            "asked_again",
             True,
             True,
             False,
             "attention",
             preservation_only,
         )
-    if automatic_outcome is not None:
-        return ReviewFieldClassification(
-            "automatic_recorded",
-            (
-                "Automatic decided this field. You can change it here."
-                if override_available and changeable
-                else "Automatic decided this field."
-                if override_available
-                else "Automatic\u2019s change is being applied and cannot be changed yet."
-            ),
-            "automatic_decided",
-            False,
-            override_available,
-            True,
-            "inspect",
-            preservation_only,
-        )
+    automatic = _automatic_classification(
+        automatic_outcome, override_available, changeable, preservation_only
+    )
+    if automatic is not None:
+        return automatic
     if cause == "automatic_safety_suspended":
         return ReviewFieldClassification(
             "needs_attention",
@@ -267,6 +262,47 @@ def classify_review_field(
         differing=differing,
         preservation_only=preservation_only,
     )
+
+
+def _automatic_classification(
+    automatic_outcome: str | None,
+    override_available: bool,
+    changeable: bool,
+    preservation_only: bool,
+) -> ReviewFieldClassification | None:
+    """Automatic's abstention or decision on the field, or None without one.
+
+    Kept apart so `classify_review_field` stays under the code-size guide.
+    """
+    if automatic_outcome == "abstention":
+        return ReviewFieldClassification(
+            "manual_fallback",
+            "This field needs your choice.",
+            "automatic_abstained",
+            True,
+            True,
+            False,
+            "attention",
+            preservation_only,
+        )
+    if automatic_outcome is not None:
+        return ReviewFieldClassification(
+            "automatic_recorded",
+            (
+                "Automatic decided this field. You can change it here."
+                if override_available and changeable
+                else "Automatic decided this field."
+                if override_available
+                else "Automatic\u2019s change is being applied and cannot be changed yet."
+            ),
+            "automatic_decided",
+            False,
+            override_available,
+            True,
+            "inspect",
+            preservation_only,
+        )
+    return None
 
 
 def _unchanged_classification(

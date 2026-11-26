@@ -69,15 +69,18 @@ def record_owner_cover_decisions(
     *,
     start: int = 0,
     before_decision: Callable[[str], None] | None = None,
-    propose: Callable[[MetadataReport], ProposalSet] = evaluate_report,
+    keep: bool = False,
+    propose: Callable[[MetadataReport], ProposalSet] | None = None,
 ) -> None:
     """Record `count` owner cover choices through the real decision command.
 
     Each item's consideration offers its current cover and one larger
-    candidate of another art; the owner chooses the candidate.
-    `before_decision`, when given, runs with each case id just before its
-    decision is recorded. `propose` evaluates each report; a store with an
-    active policy needs it evaluated under that policy.
+    candidate of another art; the owner chooses the candidate, or keeps the
+    current cover when `keep`. `before_decision`, when given, runs with each
+    case id just before its decision is recorded. `propose` evaluates each
+    report (by default over the ledger's derived epoch, which a regeneration
+    moves on); a store with an active policy needs it evaluated under that
+    policy.
     """
     base, _ = _qualified_cover_report(root, candidate_size=(1200, 1800))
     artifacts = CoverArtifactStore(root / "artifacts")
@@ -111,7 +114,11 @@ def record_owner_cover_decisions(
             cover_sources=base.cover_sources,
         )
         repository.publish(report, lambda: True)
-        proposal_set = propose(report)
+        proposal_set = (
+            evaluate_report(report, derived_epoch=repository.derived_epoch())
+            if propose is None
+            else propose(report)
+        )
         repository.publish_proposal(proposal_set)
         case_id = json.loads(repository.admit_review_case(proposal_set))[
             "review_case_id"
@@ -135,13 +142,15 @@ def record_owner_cover_decisions(
             target_fingerprint=case.target_fingerprint,
             destination="cover",
             actor="owner",
-            outcome="accept",
-            selected_value={"kind": "cover", "value": chosen["artifact_id"]},
+            outcome="keep_current" if keep else "accept",
+            selected_value=None
+            if keep
+            else {"kind": "cover", "value": chosen["artifact_id"]},
             idempotency_key=f"synthetic-taste-owner-{index:04d}",
             consideration_id=str(consideration["consideration_id"]),
             cover_confirmation={
                 "expected_selection_id": None,
-                "confirm_unverified_match": True,
+                "confirm_unverified_match": not keep,
             },
         )
 

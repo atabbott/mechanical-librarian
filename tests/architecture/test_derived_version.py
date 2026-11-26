@@ -91,6 +91,15 @@ NEITHER: frozenset[tuple[str, str]] = frozenset(
         (_APPLICATION + "review_web", "OWNER_LINK_VIEW_SCHEMA"),
         (_APPLICATION + "metadata_policy", "PREVIEW_OUTCOME_SAMPLE_SCHEMA"),
         ("mechanical_librarian.interfaces.web.app", "METADATA_POLICY_NOTEBOOK_SCHEMA"),
+        (
+            "mechanical_librarian.interfaces.web.app",
+            "METADATA_POLICY_TRANSITION_SCHEMA",
+        ),
+        (
+            "mechanical_librarian.interfaces.web.app",
+            "METADATA_POLICY_ACTIVATION_SCHEMA",
+        ),
+        (_APPLICATION + "review_web", "REVIEW_ATTENTION_SCHEMA"),
         (_APPLICATION + "review_web", "REVIEW_LIBRARY_SCHEMA"),
         (_APPLICATION + "review_web", "REVIEW_REPORT_DETAIL_SCHEMA"),
         (

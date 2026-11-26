@@ -674,6 +674,14 @@ describe('a pin after a value command', () => {
     )
   })
 
+  // The store refuses a withdrawal when a Resume was asked between the page's
+  // read and the press; the page never offers Withdraw in that state (W1).
+  it('says a withdrawal refused by a Resume asked meanwhile in the owner’s words', () => {
+    expect(ownerRefusalCopy(new ApiError(409, 'automatic_hold'), offered)).toBe(
+      'You asked to resume automatic handling for this field, so this choice can’t be withdrawn.',
+    )
+  })
+
   it('says why a keep of a description with formatting is refused (#1424)', () => {
     expect(ownerRefusalCopy(new ApiError(409, 'restore_unavailable'), offered)).toBe(
       'The earlier description has a link or formatting Mechanical Librarian can’t write, so restore it in Audiobookshelf.',

@@ -97,6 +97,9 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _active_generation_automatic_sql,
     _authored_description_sql,
     _episode_decision_sql,
+    asked_again_reason_sql,
+    asked_again_sql,
+    asked_again_unsettled_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _AUTOMATIC_POSTURE_SQL,
@@ -121,6 +124,7 @@ from mechanical_librarian.application.write_plan import LOCAL_LIBRARY_RECORD
 from mechanical_librarian.domain.activity_records import (
     ReadableActivityEvent,
     activity_search_text,
+    author_label,
     report_work_labels,
 )
 from mechanical_librarian.domain.automatic_decision import (
@@ -645,6 +649,17 @@ def _unwritten_choice_sql(decision: str) -> str:
 # table. Leaving Automatic always starts a new generation, so an
 # active-generation choice means Automatic is on. Bound by the page's
 # automatic event ids as JSON, twice.
+# The Activity note on the record's answer a work's current case asks again,
+# by why (`asked_again_reason_sql`; contract #2039 3.3).
+_ASKED_AGAIN_NOTES: Final = {
+    "question_changed": "asked_again_choices",
+    "target_changed": "asked_again_value",
+    "withdrawn": "asked_again_withdrawn",
+    "resume_failed": "asked_again_resume",
+    "retired": "asked_again_retired",
+    "matching_changed": "asked_again_matching",
+    "other": "asked_again",
+}
 _HELD_AUTOMATIC_NOTE_SQL = (
     "SELECT automatic.decision_id FROM automatic_decisions automatic "
     "JOIN current_review_packages current "
@@ -804,6 +819,9 @@ class _ActivityRow:
     policy_from: Any
     policy_to: Any
     source_valid: Any
+    # An owner row's copy of its work's authors, read when its report is
+    # gone (ADR-0108).
+    authors: Any
     _: KW_ONLY
     raw: dict[str, Any]
     change_id: str = ""
@@ -889,6 +907,7 @@ def _shared_activity_record(
 ) -> dict[str, object]:
     """Finish the checks every source shares and begin its closed record."""
     row.event_title = _activity_scalar(row.title, nullable=True)
+    row.authors = _activity_scalar(row.authors, 65_536, nullable=True)
     row.failure = _activity_scalar(row.raw.get("failure"), nullable=True)
     if row.report_id is not None:
         _activity_scalar(row.report_id)
@@ -953,6 +972,14 @@ def _activity_event(
         "state": row.state,
         "work_id": row.work_id,
         **({"work_label": row.event_title} if row.event_title else {}),
+        # The copy's author label is attached whenever the row has a copy;
+        # while the row's report is there, the report's own label overrides
+        # it (`project_readable_activity_event`, ADR-0108).
+        **(
+            {"author_label": author_label(json.loads(row.authors))}
+            if row.authors is not None
+            else {}
+        ),
         "record": durable,
     }
 
@@ -1016,7 +1043,7 @@ _ACTIVITY_LEDGER_COLUMNS = (
     "event_id,connection,destination,library,occurred_at,origin,report_id,state,"
     "work_id,document,event_type,title,detail,source_kind,source_document,"
     "source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid"
-    ",report_target"
+    ",authors,report_target"
 )
 _ACTIVITY_GROUP_IDENTITY = (
     "CASE WHEN source_kind='field_effect' THEN source_parent_id ELSE event_id END"
@@ -1031,7 +1058,7 @@ _ACTIVITY_SELECT = (
     "SELECT event_id,connection,destination,library,occurred_at,origin,"
     "report_id,state,work_id,document,event_type,title,detail,source_kind,"
     "source_document,source_parent_id,source_sequence,source_identity,"
-    "policy_from,policy_to,source_valid FROM activity_events"
+    "policy_from,policy_to,source_valid,authors FROM activity_events"
 )
 _SELECTED_ACTIVITY_PROJECTION = ", selected_activity_events AS MATERIALIZED ("
 _RESTORED_ACTIVITY_PROJECTION = (
@@ -1095,11 +1122,23 @@ def _restored_activity_columns() -> str:
                 if name == "title"
                 else ""
             )
+            # A row whose report a regeneration took keeps the title, library
+            # and work id its arm read from the ledger copies; its connection
+            # is the report's alone (ADR-0108).
+            restored = (
+                _ACTIVITY_REPORT_SCALARS[name]
+                if name == "connection"
+                else "COALESCE("
+                + _ACTIVITY_REPORT_SCALARS[name]
+                + ",event."
+                + name
+                + ")"
+            )
             restored_columns.append(
                 "CASE WHEN "
                 + source_condition
                 + " THEN "
-                + _ACTIVITY_REPORT_SCALARS[name]
+                + restored
                 + isbn_case
                 + " ELSE event."
                 + name
@@ -1124,23 +1163,30 @@ def _field_effect_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
                         WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='human' THEN 'review'
                         WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='automatic_policy' THEN 'metadata'
                         ELSE 'unknown' END,
-                   {scalar["title"]}, NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id, NULL, NULL,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, 0, 0
+                   COALESCE({scalar["title"]}, effect.display_title), NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id, NULL, NULL,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, effect.display_authors, 0, 0
               FROM field_effect_events event
               JOIN field_effects effect ON effect.plan_id=event.plan_id{_PLAN_REPORT_JOIN_SQL}{scope("field_effect", "event.plan_id", "WHERE")}"""
 
 
 def _human_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
-    """Every recorded owner decision."""
+    """Every recorded owner decision but a carried one: the question check
+    carried an earlier answer, which already has its row (ADR-0108, Q1).
+
+    Once a regeneration took its case and report, the row reads its work and
+    title from the decision's copies and names no connection or report, as an
+    owner link's row does (ADR-0108).
+    """
     return f"""
             SELECT event.event_id, {scalar["connection"]}, event.destination,
-                   {scalar["library"]}, event.occurred_at, 'human', review.report_id,
-                   decision.outcome, {scalar["work_id"]}, event.document, 'review', {scalar["title"]}, NULL, 'human_decision', decision.document, event.review_case_id, NULL, event.decision_id, NULL, NULL,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, 0, 0
+                   COALESCE({scalar["library"]}, decision.library_name), event.occurred_at, 'human', report.report_id,
+                   decision.outcome, COALESCE({scalar["work_id"]}, decision.item_id), event.document, 'review', COALESCE({scalar["title"]}, decision.display_title), NULL, 'human_decision', decision.document, event.review_case_id, NULL, event.decision_id, NULL, NULL,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, decision.display_authors, 0, 0
               FROM human_decision_events event
               JOIN human_decisions decision ON decision.decision_id=event.decision_id
-              JOIN review_cases review ON review.review_case_id=event.review_case_id
-              JOIN metadata_reports report ON report.report_id=review.report_id{scope("human_decision", "event.event_id", "WHERE")}"""
+         LEFT JOIN review_cases review ON review.review_case_id=event.review_case_id
+         LEFT JOIN metadata_reports report ON report.report_id=review.report_id
+             WHERE event.kind<>'human_decision_carried'{scope("human_decision", "event.event_id", "AND")}"""
 
 
 def _automatic_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
@@ -1149,7 +1195,7 @@ def _automatic_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) ->
             SELECT decision.decision_id, {scalar["connection"]}, decision.destination,
                    {scalar["library"]}, decision.occurred_at, 'automatic_policy', review.report_id,
                    'recorded', {scalar["work_id"]}, decision.document, 'metadata', {scalar["title"]}, NULL, 'automatic_decision', NULL, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
-                   CASE WHEN typeof(decision.document)='text' AND length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(decision.document) THEN 1 ELSE 0 END, 1, 1
+                   CASE WHEN typeof(decision.document)='text' AND length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(decision.document) THEN 1 ELSE 0 END, NULL, 1, 1
               FROM automatic_decisions decision
               JOIN review_cases review ON review.review_case_id=decision.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id{scope("automatic_decision", "decision.decision_id", "WHERE")}"""
@@ -1165,7 +1211,7 @@ def _description_preparation_arm(
                    attempt.state, json_extract(report.document,'$.target.item'),
                    json_object('attempt_id',attempt.attempt_id,'engine',attempt.engine,'model',attempt.model,'state',attempt.state,'failure',attempt.failure,'updated_at',attempt.updated_at),
                    'metadata', json_extract(report.document,'$.target.fields[0].value'), NULL,
-                   'description_preparation', candidate.document, review.review_case_id, NULL, attempt.attempt_id, NULL, NULL, 1, 0, candidate.candidate_id
+                   'description_preparation', candidate.document, review.review_case_id, NULL, attempt.attempt_id, NULL, NULL, 1, NULL, 0, candidate.candidate_id
               FROM description_advice_attempts attempt
               JOIN review_cases review ON review.review_case_id=json_extract(attempt.binding_document,'$.review_case_id')
               JOIN metadata_reports report ON report.report_id=review.report_id
@@ -1181,17 +1227,34 @@ def _description_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) 
 
 
 def _description_decision_half_arm(scope: _ActivityArmScope, table: str) -> str:
+    # The owner's half is ledger: once a regeneration took its candidate,
+    # case and report, it reads its work, title and candidate from its own
+    # copies and names no connection or report. Automatic's is derived and
+    # goes with them (ADR-0108).
+    owner = table == "owner_authored_descriptions"
+    join = "LEFT JOIN" if owner else "JOIN"
+    library, item, title, candidate, authors = (
+        (
+            "decision.library_name",
+            "decision.item_id",
+            "decision.display_title",
+            "decision.candidate_document",
+            "decision.display_authors",
+        )
+        if owner
+        else ("NULL", "NULL", "NULL", "NULL", "NULL")
+    )
     return f"""
             SELECT decision.decision_id, json_extract(report.document,'$.target.connection'), 'description',
-                   json_extract(report.document,'$.target.library'), json_extract(decision.document,'$.occurred_at'), json_extract(decision.document,'$.origin'), review.report_id,
-                   'recorded', json_extract(report.document,'$.target.item'), decision.document,
+                   COALESCE(json_extract(report.document,'$.target.library'), {library}), json_extract(decision.document,'$.occurred_at'), json_extract(decision.document,'$.origin'), report.report_id,
+                   'recorded', COALESCE(json_extract(report.document,'$.target.item'), {item}), decision.document,
                    CASE json_extract(decision.document,'$.origin') WHEN 'human' THEN 'review' ELSE 'metadata' END,
-                   json_extract(report.document,'$.target.fields[0].value'), NULL, 'description_decision', candidate.document, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
-                   CASE WHEN length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 16384 AND json_valid(decision.document) THEN 1 ELSE 0 END, 0, 0
+                   COALESCE(json_extract(report.document,'$.target.fields[0].value'), {title}), NULL, 'description_decision', COALESCE(candidate.document, {candidate}), decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
+                   CASE WHEN length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 16384 AND json_valid(decision.document) THEN 1 ELSE 0 END, {authors}, 0, 0
               FROM {table} decision
-              JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id
-              JOIN review_cases review ON review.review_case_id=decision.review_case_id
-              JOIN metadata_reports report ON report.report_id=review.report_id{scope("description_decision", "decision.decision_id", "WHERE")}"""
+              {join} description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id
+              {join} review_cases review ON review.review_case_id=decision.review_case_id
+              {join} metadata_reports report ON report.report_id=review.report_id{scope("description_decision", "decision.decision_id", "WHERE")}"""
 
 
 def _cover_selection_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
@@ -1200,7 +1263,7 @@ def _cover_selection_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> st
             SELECT selection.decision_id, selection.connection_name, 'cover',
                    selection.library_name, selection.occurred_at, 'automatic_policy', review.report_id,
                    'recorded', selection.item_id, json_extract(selection.document,'$.decision_document'), 'metadata', {scalar["title"]}, NULL, 'automatic_decision', NULL, review.review_case_id, NULL, selection.decision_id, NULL, NULL,
-                   CASE WHEN typeof(selection.document)='text' AND length(CAST(selection.document AS BLOB)) BETWEEN 2 AND 131072 AND json_valid(selection.document) AND json_valid(json_extract(selection.document,'$.decision_document')) THEN 1 ELSE 0 END, 0, 0
+                   CASE WHEN typeof(selection.document)='text' AND length(CAST(selection.document AS BLOB)) BETWEEN 2 AND 131072 AND json_valid(selection.document) AND json_valid(json_extract(selection.document,'$.decision_document')) THEN 1 ELSE 0 END, NULL, 0, 0
               FROM automatic_cover_selections selection
               JOIN cover_considerations consideration ON consideration.consideration_id=selection.consideration_id
               JOIN review_cases review ON review.review_case_id=consideration.review_case_id
@@ -1211,17 +1274,19 @@ def _field_effect_no_change_arm(
     scope: _ActivityArmScope, scalar: dict[str, str]
 ) -> str:
     """Every decision that needed no write; an owner's is the owner's own
-    choice, listed with the owner's (ADR-0105)."""
+    choice, listed with the owner's (ADR-0105). Once a regeneration took its
+    report, the row reads its title from its copy and names no connection or
+    report; its projector reads the stored report id (ADR-0108)."""
     return f"""
-            SELECT no_change.event_id, no_change.connection_name, no_change.destination,
+            SELECT no_change.event_id, CASE WHEN report.report_id IS NULL THEN NULL ELSE no_change.connection_name END, no_change.destination,
                    no_change.library_name, no_change.occurred_at, no_change.origin,
-                   no_change.report_id, 'no_change_required', no_change.work_id, '{{}}',
+                   CASE WHEN report.report_id IS NULL THEN NULL ELSE no_change.report_id END, 'no_change_required', no_change.work_id, '{{}}',
                    CASE no_change.origin WHEN 'human' THEN 'review' ELSE 'metadata' END,
-                   {scalar["title"]},
+                   COALESCE({scalar["title"]}, no_change.display_title),
                    NULL, 'field_effect_no_change', NULL, no_change.review_case_id,
-                   NULL, no_change.decision_id, NULL, NULL, 1, 0, 0
+                   NULL, no_change.decision_id, NULL, NULL, 1, no_change.display_authors, 0, 0
               FROM field_effect_no_changes no_change
-              JOIN metadata_reports report ON report.report_id=no_change.report_id{scope("field_effect_no_change", "no_change.event_id", "WHERE")}"""
+         LEFT JOIN metadata_reports report ON report.report_id=no_change.report_id{scope("field_effect_no_change", "no_change.event_id", "WHERE")}"""
 
 
 def _cover_safeguard_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
@@ -1233,7 +1298,7 @@ def _cover_safeguard_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> st
                    event.document,
                    CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' WHEN event.kind='automatic_prepared' THEN 'metadata' WHEN event.kind IN ('owner_retry_prepared','selected','kept_incumbent','no_action') THEN 'review' ELSE 'unknown' END,
                    {scalar["title"]}, NULL, 'cover_safeguard', CASE WHEN json_extract(consideration.document, '$.reviewer_status') IN ('completed','unavailable','failed') THEN json_object('reviewer_status', json_extract(consideration.document, '$.reviewer_status')) ELSE '{{}}' END, event.review_case_id, NULL, event.consideration_id, NULL, NULL,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) AND report.report_id=review.report_id AND report.document_digest=json_extract(consideration.document,'$.report_document_digest') THEN 1 ELSE 0 END, 0, 0
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) AND report.report_id=review.report_id AND report.document_digest=json_extract(consideration.document,'$.report_document_digest') THEN 1 ELSE 0 END, NULL, 0, 0
               FROM cover_consideration_events event
               JOIN cover_considerations consideration ON consideration.consideration_id=event.consideration_id
               JOIN review_cases review ON review.review_case_id=event.review_case_id
@@ -1248,7 +1313,7 @@ def _policy_transition_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> 
     return f"""
             SELECT transition.transition_id, NULL, 'policy', 'Library policy', transition.updated_at,
                    'policy', NULL, transition.state, 'Library policy', '{{}}', 'policy',
-                   'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, transition.from_policy_id, transition.to_policy_id, 1, 0, 0
+                   'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, transition.from_policy_id, transition.to_policy_id, 1, NULL, 0, 0
               FROM metadata_policy_transitions transition{scope("policy_transition", "transition.transition_id", "WHERE")}"""
 
 
@@ -1270,7 +1335,7 @@ def _owner_link_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
                    CASE link.action WHEN 'link' THEN 'linked' WHEN 'replace' THEN 'link_changed' ELSE 'link_withdrawn' END,
                    link.item_id,
                    json_object('action',link.action,'scope',COALESCE(link.scope,prior.scope),'provider',COALESCE(link.provider,prior.provider),'title',COALESCE(link.display_title,prior.display_title),'source',COALESCE(prior.source,link.source),'identity',COALESCE(link.record_identity,prior.record_identity)),
-                   'review', NULL, NULL, 'owner_link', NULL, NULL, NULL, link.link_row_id, NULL, NULL, 1, 0, 0
+                   'review', NULL, NULL, 'owner_link', NULL, NULL, NULL, link.link_row_id, NULL, NULL, 1, NULL, 0, 0
               FROM owner_links link
          LEFT JOIN owner_links prior ON link.action='withdraw'
                AND prior.connection_name=link.connection_name AND prior.library_name=link.library_name
@@ -1294,7 +1359,7 @@ def _identifier_import_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> 
                    CASE event.kind WHEN 'imported' THEN 'imported' ELSE 'withdraw' END,
                    'Identifiers file',
                    json_object('kind',event.kind,'import_id',event.import_id,'rows',held.row_count,'linked',held.will_link,'affected',event.affected),
-                   'review', 'Identifiers file', NULL, 'identifier_import', NULL, NULL, NULL, event.event_id, NULL, NULL, 1, 0, 0
+                   'review', 'Identifiers file', NULL, 'identifier_import', NULL, NULL, NULL, event.event_id, NULL, NULL, 1, NULL, 0, 0
               FROM identifier_import_events event
               JOIN identifier_imports held ON held.import_id=event.import_id{scope("identifier_import", "event.event_id", "WHERE")}"""
 
@@ -1316,7 +1381,7 @@ def _isbn_refusal_arm(scoped: bool, title: str) -> str:
                    'unchanged', report.item_id, outcome.document, 'metadata',
                    {title},
                    NULL, 'isbn_refusal', NULL, outcome.review_case_id, NULL,
-                   outcome.outcome_set_id, NULL, NULL, 1, 0, outcome.outcome_set_id
+                   outcome.outcome_set_id, NULL, NULL, 1, NULL, 0, outcome.outcome_set_id
               FROM shadow_decision_outcomes outcome
               JOIN metadata_reports report ON report.report_id=outcome.report_id
               JOIN json_each(CASE WHEN json_valid(outcome.document) THEN outcome.document ELSE '{{}}' END, '$.outcomes') field
@@ -1849,6 +1914,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except ValueError as error:
             raise FieldEffectError("authority_binding") from error
 
+    def _copied_target_field(self, decision_id: str) -> dict[str, object] | None:
+        """An owner decision's copy of its case's target field, which it reads
+        in place of the case once a regeneration took it (ADR-0108); None
+        where the case read no such field."""
+        row = self._connection.execute(
+            "SELECT target_field_document FROM human_decisions WHERE decision_id=?",
+            (decision_id,),
+        ).fetchone()
+        field = None if row is None else json.loads(row[0])
+        return cast("dict[str, object]", field) if type(field) is dict else None
+
     def _read_current_case(self, review_case_id: str) -> ReviewCase:
         envelope = json.loads(self.get_review_case(review_case_id))
         if (
@@ -2264,11 +2340,22 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if followed is None:
             return None
         try:
-            case = self._recorded_case(decision.review_case_id)
-            before = self._case_target_pre_value(case, decision.destination)
             written = _written_plan(
                 followed[0], decision.review_case_id, decision.destination
             ).desired_value
+            try:
+                case = self._recorded_case(decision.review_case_id)
+            except FieldEffectError as error:
+                # Its case gone, the decision's copy of the field reads as
+                # the case's own value did; a cover's bytes are the report's.
+                copied = self._copied_target_field(decision.decision_id)
+                if error.code != "authority_binding" or (
+                    copied is None or decision.destination == "cover"
+                ):
+                    raise
+                before = copied.get("value") if copied.get("state") == "value" else None
+            else:
+                before = self._case_target_pre_value(case, decision.destination)
         except FieldEffectError:
             return None
         return {
@@ -2294,9 +2381,21 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             if followed is not None:
                 plan = _written_plan(followed[0], review_case_id, "description")
                 pairs.append((plan.desired_value, plan.desired_form))
-            target = self._case_target_field(
-                self._recorded_case(review_case_id), "description"
-            )
+            try:
+                target = self._case_target_field(
+                    self._recorded_case(review_case_id), "description"
+                )
+            except FieldEffectError as error:
+                # An owner decision whose case is gone reads its copy of the
+                # case's field (ADR-0108).
+                copied = (
+                    None
+                    if decision is None
+                    else self._copied_target_field(decision.decision_id)
+                )
+                if error.code != "authority_binding" or copied is None:
+                    raise
+                target = copied
             if target["state"] == "value":
                 pairs.append((target.get("value"), target.get("formatted")))
         except FieldEffectError as error:
@@ -3904,12 +4003,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             str, tuple[AuthoredDescriptionDecision, DescriptionAdviceCandidate]
         ] = {}
         if authored_ids:
+            # The owner's keep their chosen candidate verbatim, so they read
+            # without its derived row (ADR-0108).
+            marks = ",".join("?" for _ in authored_ids)
             for document, candidate_document in self._connection.execute(
-                _authored_description_sql(
-                    "SELECT d.document,c.document FROM {table} d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.decision_id IN ("
-                    + ",".join("?" for _ in authored_ids)
-                    + ")"
-                ),
+                "SELECT document,candidate_document FROM owner_authored_descriptions "
+                "WHERE decision_id IN (" + marks + ") UNION ALL "
+                "SELECT d.document,c.document FROM automatic_description_decisions d "
+                "JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id "
+                "WHERE d.decision_id IN (" + marks + ")",
                 authored_ids * 2,
             ):
                 authored = AuthoredDescriptionDecision.from_json(document)
@@ -4077,24 +4179,32 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         with _persisted_source_checks():
             if row.raw or row.document != "{}" or row.source_document is not None:
                 raise FieldEffectError("persistence")
+            # The row's event id binds the report and connection it stored,
+            # which its row names only while that report is there (ADR-0108).
+            report_id, connection, target_fingerprint, target_version, kept = (
+                self._connection.execute(
+                    "SELECT report_id,connection_name,target_fingerprint,"
+                    "target_version,kept_value_document FROM field_effect_no_changes "
+                    "WHERE decision_id=?",
+                    (row.source_identity,),
+                ).fetchone()
+            )
+            if row.report_id is not None and (
+                row.report_id != report_id or row.connection != connection
+            ):
+                raise FieldEffectError("persistence")
             record = FieldEffectNoChange.create(
                 decision_id=row.source_identity,
                 review_case_id=row.source_parent_id,
+                report_id=report_id,
+                connection=connection,
                 # _activity_scalar() without nullable=True raises rather than
                 # returning None, so these are always str here.
-                report_id=row.report_id,
-                connection=row.connection,
                 library=cast(str, row.library),
                 work_id=cast(str, row.work_id),
                 destination=cast(str, row.destination),
-                target_fingerprint=self._connection.execute(
-                    "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
-                    (row.source_identity,),
-                ).fetchone()[0],
-                target_version=self._connection.execute(
-                    "SELECT target_version FROM field_effect_no_changes WHERE decision_id=?",
-                    (row.source_identity,),
-                ).fetchone()[0],
+                target_fingerprint=target_fingerprint,
+                target_version=target_version,
                 occurred_at=row.occurred_at,
                 origin=cast("Literal['human', 'automatic_policy']", row.origin),
             )
@@ -4105,10 +4215,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ):
                 raise FieldEffectError("persistence")
         durable = _shared_activity_record(row, dependencies.authored_records)
-        durable["target_fingerprint"] = self._connection.execute(
-            "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
-            (row.source_identity,),
-        ).fetchone()[0]
+        durable["target_fingerprint"] = target_fingerprint
         owner = self._connection.execute(
             "SELECT selected_value_document,document FROM human_decisions "
             "WHERE decision_id=?",
@@ -4126,6 +4233,25 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 )
                 if kept_form is not None:
                     durable["kept_form"] = kept_form
+        elif (
+            row.report_id is None
+            and record.origin == "human"
+            and row.source_identity in dependencies.authored_records
+        ):
+            # The owner's authored description kept the text it chose, which
+            # its report read as the field's value; once a regeneration took
+            # the report, the chosen candidate names it (ADR-0108).
+            _, candidate = dependencies.authored_records[row.source_identity]
+            advised = advised_description(candidate.output.description)
+            durable["kept_value"] = (
+                candidate.output.description if advised is None else advised[0]
+            )
+            if advised is not None and advised[1] is not None:
+                durable["kept_form"] = advised[1]
+        elif row.report_id is None and kept is not None:
+            # Automatic kept the value its report showed; once a regeneration
+            # took the report, the row's copy names it (ADR-0108).
+            durable["kept_value"] = json.loads(kept)
         return _finished_activity_event(row, durable)
 
     def _project_description_preparation(
@@ -4186,7 +4312,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 authored.to_json() != row.document
                 or authored.decision_id != row.event_id
                 or authored.review_case_id != row.source_parent_id
-                or authored.report_id != row.report_id
+                # Once a regeneration took its report, the row names none.
+                or row.report_id not in {None, authored.report_id}
                 or authored.origin != row.origin
                 or authored.occurred_at != row.occurred_at
                 or row.destination != "description"
@@ -4273,6 +4400,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             durable["pre_value"] = project_decision_value(
                 decision.destination, decision.selected_value
             )
+        if row.report_id is None:
+            self._copied_decision_values(decision, durable)
         if decision.outcome == "keep_current":
             planned = dependencies.went_back.get(decision.decision_id)
             if planned is None:
@@ -4289,6 +4418,30 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if decision.destination == "description":
             self._owner_forms(decision, durable)
         return _finished_activity_event(row, durable)
+
+    def _copied_decision_values(
+        self, decision: HumanDecision, durable: dict[str, object]
+    ) -> None:
+        """What an owner decision's row reads from its case and report, read
+        from the decision's copies once a regeneration took them (ADR-0108):
+        the field's value and copy before it, where no plan named them, and an
+        accepted description's chosen copy."""
+        if "pre_value" not in durable:
+            copied = self._copied_target_field(decision.decision_id)
+            if copied is not None:
+                durable["pre_value"] = (
+                    copied.get("value") if copied.get("state") == "value" else None
+                )
+                formatted = copied.get("formatted")
+                if decision.destination == "description" and type(formatted) is str:
+                    durable["pre_form"] = formatted
+        if decision.destination == "description" and decision.outcome == "accept":
+            (selected_form,) = self._connection.execute(
+                "SELECT selected_form FROM human_decisions WHERE decision_id=?",
+                (decision.decision_id,),
+            ).fetchone()
+            if type(selected_form) is str:
+                durable["selected_form"] = selected_form
 
     def _project_automatic_decision(
         self, row: _ActivityRow, dependencies: _ActivityDependencies
@@ -4994,27 +5147,50 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 )
                 for row in rows
             )
+            # The record's answer the work's current case asks again (or its
+            # root, where it was carried) says why, as Attention and the case
+            # page do, and not while Automatic's decision settles the field
+            # (`asked_again_unsettled_sql`); it wins over Book matching's note
+            # above (contract #2039 3.3). A carried row has no row of its own
+            # (Q1).
             rows = self._connection.execute(
-                "SELECT event.event_id FROM human_decision_events event "
+                "SELECT event.event_id,"
+                + asked_again_reason_sql("asked", "current.review_case_id")
+                + " FROM human_decision_events event "
                 "JOIN human_decisions decision ON decision.decision_id=event.decision_id "
-                "JOIN review_case_episodes episode "
-                "ON episode.review_case_id=decision.review_case_id "
+                "JOIN owner_field_answers asked "
+                "ON asked.connection_name=decision.connection_name "
+                "AND asked.library_name=decision.library_name "
+                "AND asked.item_id=decision.item_id "
+                "AND asked.destination=decision.destination "
                 "JOIN current_review_packages current "
-                "ON current.review_case_id=decision.review_case_id "
-                "WHERE decision.ordinal<=episode.decision_floor "
-                # An answer the question check carried into the case's
-                # current episode was not asked again (ADR-0108).
-                "AND NOT EXISTS (SELECT 1 FROM human_decisions carried "
-                "WHERE carried.carried_from=COALESCE(decision.carried_from,"
-                "decision.decision_id) "
-                "AND carried.review_case_id=decision.review_case_id "
-                "AND json_extract(carried.document,'$.episode')="
-                "episode.decision_floor) AND event.event_id IN ("
+                "ON current.connection_name=asked.connection_name "
+                "AND current.library_name=asked.library_name "
+                "AND current.item_id=asked.item_id "
+                "JOIN review_case_field_facts asked_field "
+                "ON asked_field.review_case_id=current.review_case_id "
+                "AND asked_field.destination=asked.destination "
+                "AND asked_field.has_owner_decision_actions=1 "
+                "WHERE event.event_id IN ("
                 + ",".join("?" for _ in decisions)
-                + ")",
+                + ") AND asked.destination<>'cover' AND decision.decision_id="
+                "COALESCE((SELECT asked_decision.carried_from FROM human_decisions "
+                "asked_decision WHERE asked_decision.decision_id=asked.answer_id),"
+                "asked.answer_id) AND "
+                + asked_again_sql(
+                    "asked", "current.review_case_id", "asked.destination"
+                )
+                + " AND "
+                + asked_again_unsettled_sql(
+                    "asked", "current.review_case_id", "asked.destination"
+                ),
                 decisions,
             ).fetchall()
-            notes.update((row[0], "asked_again") for row in rows)
+            notes.update(
+                (row[0], _ASKED_AGAIN_NOTES[row[1]])
+                for row in rows
+                if row[1] in _ASKED_AGAIN_NOTES
+            )
         if planned:
             posture = self._connection.execute(
                 "SELECT posture FROM metadata_policy_state WHERE singleton=1"

@@ -38,8 +38,6 @@ const EMPTY_VALUE = { kind: 'empty', value: null } as const
 const quotedValue = (value: { kind: string; value: unknown } | null | undefined) =>
   value && !isClear(value) ? `“${displayValue(value.value)}”` : 'nothing'
 const withdrawCopy = {
-  automatic_hold:
-    'This decision is holding automatic handling, so it can’t be withdrawn. Use Resume automatic handling to release it.',
   in_progress:
     'This decision is being written to your library. You can change it once the write finishes.',
   written: writtenRefusal,
@@ -500,11 +498,10 @@ export function OwnerControls({
         >
           {busy && progress.command.outcome === 'withdraw' ? 'Withdrawing…' : 'Withdraw'}
         </button>
-      ) : control.withdraw &&
-        control.withdraw !== 'in_progress' &&
+      ) : control.withdraw === 'written' &&
         // The refusal already says it in the same words.
-        !(control.withdraw === 'written' && refusal === writtenRefusal) ? (
-        <p className="owner-note">{withdrawCopy[control.withdraw]}</p>
+        refusal !== writtenRefusal ? (
+        <p className="owner-note">{withdrawCopy.written}</p>
       ) : null}
       {mode === 'idle' ? refusalNotice : null}
       <p ref={statusLine} tabIndex={-1} className="owner-status" role="status">

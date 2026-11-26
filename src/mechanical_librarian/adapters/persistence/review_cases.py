@@ -75,6 +75,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _TERMINAL_LIBRARY_SEARCH_SQL,
     _pin_record_sql,
     _terminal_library_sql,
+    record_asked_again_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _proposal_browse_fact_pair,
@@ -191,7 +192,17 @@ class ReviewAttentionPage:
     """Validated Attention fields and their total from one filtered population."""
 
     rows: tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool, bool],
+        tuple[
+            str,
+            str,
+            str,
+            int,
+            str | None,
+            ReviewFieldCause | None,
+            bool,
+            bool,
+            str | None,
+        ],
         ...,
     ]
     total: int
@@ -1161,7 +1172,17 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         offset: int,
         library_labels: LibraryLabels = (),
     ) -> tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool, bool],
+        tuple[
+            str,
+            str,
+            str,
+            int,
+            str | None,
+            ReviewFieldCause | None,
+            bool,
+            bool,
+            str | None,
+        ],
         ...,
     ]:
         return self.read_current_attention_page(
@@ -1232,6 +1253,14 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "CASE WHEN "
                 + _pin_record_sql("rc.review_case_id", "result.destination", False)
                 + " THEN 1 ELSE 0 END AS pin_changed,"
+                # Why the record's earlier answer asks the field, where it
+                # does (`_record_asks_sql`), as the case page says it.
+                "(SELECT CASE WHEN result.has_owner_decision_actions=1 THEN "
+                + record_asked_again_sql(
+                    "asked_case", "rc.review_case_id", "result.destination"
+                )
+                + " END FROM current_review_case_lineages asked_case "
+                "WHERE asked_case.review_case_id=rc.review_case_id) AS asked_again,"
                 "COALESCE(page.present,0),totals.total FROM totals LEFT JOIN page ON 1 "
                 "LEFT JOIN review_cases rc ON rc.review_case_id=page.review_case_id "
                 "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
@@ -1263,17 +1292,17 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             envelope: tuple[dict[str, object], dict[str, object]]
             for row in rows:
                 if (
-                    len(row) != 11
-                    or type(row[9]) is not int
-                    or row[9] not in (0, 1)
-                    or row[10] != total
+                    len(row) != 12
+                    or type(row[10]) is not int
+                    or row[10] not in (0, 1)
+                    or row[11] != total
                 ):
                     raise MetadataReportError("review attention field is invalid")
-                if row[9] == 0:
+                if row[10] == 0:
                     if (
                         len(rows) != 1
                         or any(value is not None for value in row[:6])
-                        or row[6:9] != (None, 0, 0)
+                        or row[6:10] != (None, 0, 0, None)
                     ):
                         raise MetadataReportError("review attention field is invalid")
                     continue
@@ -1296,6 +1325,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     or type(row[7]) is not int
                     or row[7] not in (0, 1)
                     or row[8] not in (0, 1)
+                    or (row[9] is not None and type(row[9]) is not str)
                 ):
                     raise MetadataReportError("review attention field is invalid")
                 values.append(
@@ -1308,6 +1338,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                         cast("ReviewFieldCause | None", row[6]),
                         bool(row[7]),
                         bool(row[8]),
+                        row[9],
                     )
                 )
             return ReviewAttentionPage(tuple(values), total)

@@ -1375,6 +1375,57 @@ describe('Library review ownership', () => {
     expect(screen.getByRole('button', { name: 'Resume automatic handling' })).toBeEnabled()
   })
 
+  // Outside the Resume offer, for example in Preview, a failed Resume has no
+  // control; one status line says it (R1, C2b-21). Where the panel shows, its
+  // own failure line says it, so the status line stays away.
+  const R1 = 'Resume automatic handling did not finish. The fresh checks ended with failures.'
+  it.each([
+    ['outside the offer', false],
+    ['beside the panel', true],
+  ] as const)('says a failed Resume once %s', async (_, manualHold) => {
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...field,
+            manualHold,
+            manualReturnFailed: manualHold,
+            resumeFailed: true,
+            humanDecision: ownDecision(field),
+          },
+        ],
+      })),
+      returnToAutomatic: vi.fn(async () => undefined),
+    })
+    if (manualHold) {
+      await screen.findByText(F1)
+      expect(screen.queryByText(R1)).toBeNull()
+      return
+    }
+    const line = await screen.findByText(R1)
+    expect(line).toHaveAttribute('role', 'status')
+    expect(screen.queryByRole('region', { name: 'Automatic handling' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Resume automatic handling' })).toBeNull()
+  })
+
+  it('says nothing of Resume where the record’s Resume did not fail', async () => {
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [{ ...field, resumeFailed: false, humanDecision: ownDecision(field) }],
+      })),
+    })
+    await screen.findByRole('heading', { level: 2 })
+    expect(screen.queryByText(R1)).toBeNull()
+  })
+
   it('shows checks that ended with failures in the open panel when a reread finds them', async () => {
     const user = userEvent.setup()
     const field = detail.fields[0]

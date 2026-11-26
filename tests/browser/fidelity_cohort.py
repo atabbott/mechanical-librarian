@@ -28,6 +28,7 @@ from mechanical_librarian.application.review_application import (
 )
 from mechanical_librarian.application.review_web import (
     OWNER_LINK_VIEW_SCHEMA,
+    REVIEW_ATTENTION_SCHEMA,
     REVIEW_CASE_DETAIL_SCHEMA,
     REVIEW_CASE_EVIDENCE_SCHEMA,
     REVIEW_CASE_HISTORY_SCHEMA,
@@ -40,7 +41,11 @@ from mechanical_librarian.domain.owner_settings import (
     OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
 )
-from mechanical_librarian.interfaces.web.app import METADATA_POLICY_NOTEBOOK_SCHEMA
+from mechanical_librarian.domain.upgrade_notice import UPGRADE_NOTICE_SCHEMA
+from mechanical_librarian.interfaces.web.app import (
+    METADATA_POLICY_NOTEBOOK_SCHEMA,
+    METADATA_POLICY_TRANSITION_SCHEMA,
+)
 
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
@@ -472,6 +477,7 @@ def _field(
     manual_hold: bool = False,
     manual_return_requested: bool = False,
     manual_return_failed: bool = False,
+    resume_failed: bool = False,
     notices: list[str] | None = None,
     provenance: list[str] | None = None,
     corroboration_sources: list[str] | None = None,
@@ -577,6 +583,8 @@ def _field(
         "pin_control": pin_control,
         "manual_return_requested": manual_return_requested,
         "manual_return_failed": manual_return_failed,
+        "resume_failed": resume_failed,
+        "asked_again": None,
         "manual_required": needs_attention,
         "navigation_role": navigation_role
         or ("attention" if needs_attention else "inspect"),
@@ -1422,6 +1430,7 @@ def _attention() -> dict[str, object]:
                     "media_kind": work["media_kind"],
                     "item": work["item"],
                     "detail_url": f"/review/{work['review_case_id']}?field={destination}",
+                    "asked_again": None,
                     "classification_reason": "This field needs your review.",
                     "notices": ["Conflicting retained evidence"],
                     "provenance": [
@@ -1432,7 +1441,7 @@ def _attention() -> dict[str, object]:
                 }
             )
     return {
-        "schema_version": "review-attention-v1",
+        "schema_version": REVIEW_ATTENTION_SCHEMA,
         "query": None,
         "next_cursor": None,
         "total": len(items),
@@ -2656,6 +2665,7 @@ def _rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     "destination": "title",
                     "event_id": "event-owner-internal",
                     "kind": "human_decision_recorded",
+                    "kept_from": None,
                     "occurred_at": 1_754_858_100,
                     "outcome": "accept",
                     "previous_value": {"kind": "text", "value": "Current title"},
@@ -2951,7 +2961,7 @@ def _rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         }
     if path == "/api/v1/metadata-policy/transition":
         return {
-            "schema_version": "metadata-policy-transition-v1",
+            "schema_version": METADATA_POLICY_TRANSITION_SCHEMA,
             "transition_id": "transition-1",
             "from_policy_id": "policy-active-0",
             "to_policy_id": "policy-active-1",
@@ -2962,6 +2972,7 @@ def _rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "failed": 1,
             "acknowledged": False,
             "origin": "activation",
+            "items_present": True,
         }
     if path == "/api/v1/activity/permission-readiness":
         value = _activity(query)
@@ -2993,6 +3004,10 @@ def _rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         }
     if path == "/api/v1/activity":
         return {**_activity(query), "backup_ready": None, "example": None}
+    # Activity and the Attention rail read the upgrade notice; the cohort's
+    # library has had no regeneration, so there is none (#2039).
+    if path == "/api/v1/upgrade-notice":
+        return {"schema_version": UPGRADE_NOTICE_SCHEMA, "notice": None}
     if path.startswith("/api/v1/activity/") and path.endswith("/transitions"):
         after_sequence = int(query.get("after_sequence", ["0"])[0])
         transitions = [

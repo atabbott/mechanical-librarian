@@ -726,6 +726,8 @@ export interface LibraryProgressView {
   }[]
   fields: readonly { destination: TargetDestination; needYou: number }[]
 }
+// Why the record's earlier answer is asked again, and that answer (#2039).
+export type AskedAgainView = ResponseSchema<'_AskedAgain'>
 export interface AttentionItemView {
   id: string
   destination: TargetDestination
@@ -735,6 +737,7 @@ export interface AttentionItemView {
   libraryDisplayName?: string
   mediaKind: MediaKind
   classificationReason?: string
+  askedAgain?: AskedAgainView | null
   notices: readonly string[]
   provenance: readonly string[]
   workAttentionCount: number
@@ -789,6 +792,12 @@ export interface ReviewFieldView {
   // The requested checks finished with failures; the hold stays and nothing
   // retries them, so the owner can request them again.
   manualReturnFailed: boolean
+  // The record's open Resume for the field failed, whether or not the field
+  // offers Resume; outside the offer only a status line says so (C2b-21).
+  resumeFailed: boolean
+  // Why the record's earlier answer is asked again here, on a field asked
+  // for that reason (#2039).
+  askedAgain: AskedAgainView | null
   currentValue: string
   currentRaw: unknown
   // A description's formatted copy, which its card shows in place of the
@@ -862,7 +871,7 @@ export interface OwnerControlView {
   // What owner entry compares with: on the case that wrote the field, the
   // written value (#1523).
   current: string | readonly string[] | null
-  withdraw: 'available' | 'automatic_hold' | 'in_progress' | 'written' | null
+  withdraw: 'available' | 'in_progress' | 'written' | null
 }
 export interface CoverObservationView {
   candidateReference: string
@@ -1031,6 +1040,8 @@ export type HistoryItemView = (
       // Each description value's formatted copy (#2003).
       previousFormatted?: string | null
       selectedFormatted?: string | null
+      // A carried answer's root original's day: the choice it kept (#2039).
+      keptFrom?: number | null
     }
   | {
       category: 'automatic'
@@ -1122,6 +1133,10 @@ export interface WorkAddress {
   item: string
 }
 export type PreparationView = ResponseSchema<'_PreparationResponse'>
+// The notice after an upgrade (#2039): null when no regeneration has run or
+// its notice was dismissed.
+export type UpgradeNoticeView = ResponseSchema<'_UpgradeNoticeResponse'>
+export type UpgradeNotice = NonNullable<UpgradeNoticeView['notice']>
 // The preparation controls `preparationAction` sends, under
 // `/api/v1/review-preparation/`; each segment hole is one encoded name.
 export type PreparationActionPath =
@@ -1465,6 +1480,8 @@ export interface ReviewHttp {
    * showed; every other use sends null, which keeps the visit going.
    */
   recordLibraryVisit(listing: LibraryListing | null, signal?: AbortSignal): Promise<void>
+  getUpgradeNotice(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<UpgradeNoticeView>
+  dismissUpgradeNotice(regenerationId: string, signal?: AbortSignal): Promise<void>
   getReportDetail(
     detailUrl: string,
     signal?: AbortSignal,
@@ -2630,6 +2647,23 @@ export class ReviewApiClient implements ReviewHttp {
     await this.mutate('/api/v1/library/visit', { listing }, signal, undefined, 'POST', true)
   }
 
+  async getUpgradeNotice(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return await this.read('/api/v1/upgrade-notice', signal, workClass)
+  }
+  // One dismissal per regeneration, so a CSRF renewal sends it again; a
+  // notice another tab dismissed or a newer regeneration replaced is a 409
+  // `stale` refusal.
+  async dismissUpgradeNotice(regenerationId: string, signal?: AbortSignal) {
+    await this.mutate(
+      `/api/v1/upgrade-notice/${encodeURIComponent(regenerationId)}/dismiss`,
+      undefined,
+      signal,
+      undefined,
+      'POST',
+      true,
+    )
+  }
+
   private async read<P extends RoutablePath<'GET'>>(
     path: P,
     signal?: AbortSignal,
@@ -3435,6 +3469,7 @@ export const mapAttention = (value: AttentionDto): AttentionView => ({
     libraryDisplayName: item.library_display_name ?? item.library,
     mediaKind: item.media_kind,
     classificationReason: item.classification_reason,
+    ...(item.asked_again ? { askedAgain: item.asked_again } : {}),
     notices: item.notices,
     provenance: item.provenance,
     workAttentionCount: item.work_attention_count,
@@ -3538,6 +3573,8 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   manualHold: field.manual_hold,
   manualReturnRequested: field.manual_return_requested,
   manualReturnFailed: field.manual_return_failed,
+  resumeFailed: field.resume_failed,
+  askedAgain: field.asked_again,
   navigationRole: field.navigation_role,
   // An empty or unreadable current value says which, in Audiobookshelf's
   // name, rather than one word for both (#1286). A cover's value is an
@@ -3752,6 +3789,7 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
       previousValue: item.previous_value,
       selectedValue: item.selected_value,
       ...mapHistoryFormatted(item),
+      ...(item.kept_from === null ? {} : { keptFrom: item.kept_from }),
     }
   if (item.schema_version === 'automatic-decision-history-event-v1')
     return {

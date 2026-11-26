@@ -1,15 +1,16 @@
 {
   "body": {
     "policy_id": "policy_da8453b5de7a86fc671ca7f64159cd87cbf35f42e1651e921821032b2b4c4dd9",
-    "schema_version": "metadata-policy-activation-v1",
+    "schema_version": "metadata-policy-activation-v2",
     "transition": {
       "acknowledged": false,
       "completed": 0,
       "failed": 0,
       "from_policy_id": "policy_c1280edcaffc78aa739aad98249e425e850797ba513f223af594a97e10f555a9",
       "generation": 2,
+      "items_present": false,
       "origin": "activation",
-      "schema_version": "metadata-policy-transition-v1",
+      "schema_version": "metadata-policy-transition-v2",
       "state": "completed",
       "to_policy_id": "policy_da8453b5de7a86fc671ca7f64159cd87cbf35f42e1651e921821032b2b4c4dd9",
       "total": 0,

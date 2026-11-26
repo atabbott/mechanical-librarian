@@ -207,7 +207,7 @@ def _oracle_attention(
     )
     return (
         tuple(
-            (row[0], row[1], row[3], row[4], row[5], row[6], bool(row[7]), False)
+            (row[0], row[1], row[3], row[4], row[5], row[6], bool(row[7]), False, None)
             for row in rows
             if row[8] == 1
         ),

@@ -43,7 +43,8 @@
       "version": 1
     },
     "required": 25,
-    "schema_version": "review-taste-profile-v4",
+    "schema_version": "review-taste-profile-v5",
+    "since_upgrade": false,
     "versions": [
       {
         "created_at": 1000,

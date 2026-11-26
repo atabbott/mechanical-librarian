@@ -21,8 +21,8 @@ from mechanical_librarian.adapters.persistence.cover_considerations import (
     _OWNER_SELECTION_INSERT_SQL,
 )
 from mechanical_librarian.adapters.persistence.cover_taste import (
-    _ELIGIBLE,
     _INHERITED,
+    _USABLE,
     SQLiteCoverTasteRepository,
     validate_cover_taste_versions,
 )
@@ -301,7 +301,7 @@ def test_eligible_count_reads_considerations_by_key_only(repository) -> None:
     plan = " ".join(
         row[-1]
         for row in repository._connection.execute(
-            f"EXPLAIN QUERY PLAN SELECT count(*) {_ELIGIBLE}", (2,)
+            f"EXPLAIN QUERY PLAN SELECT count(*) {_USABLE}", (2,)
         )
     )
     assert "SCAN consideration" not in plan

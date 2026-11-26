@@ -7,6 +7,13 @@ import { sessionRefreshedCopy } from '../api/http'
 import type { useAutomaticHandling } from '../automaticHandling'
 import type { ReviewField } from '../fieldDecision'
 
+// Outside the Resume offer (for example in Preview) a failed Resume has no
+// control to ask again, so the field only says so (C2b-21).
+export const resumeFailedOutsideOffer =
+  'Resume automatic handling did not finish. The fresh checks ended with failures.'
+
+export const ResumeFailedLine = () => <p role="status">{resumeFailedOutsideOffer}</p>
+
 export const AutomaticHandlingPanel = ({
   handling,
   selected,

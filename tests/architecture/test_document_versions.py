@@ -86,7 +86,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.interfaces.web.app",
         "REVIEW_TASTE_PROFILE_SCHEMA",
-        "review-taste-profile-v4",
+        "review-taste-profile-v5",
     ),
     (
         "mechanical_librarian.application.review_covers",
@@ -116,7 +116,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_DETAIL_SCHEMA",
-        "review-case-detail-v16",
+        "review-case-detail-v17",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -131,7 +131,12 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_HISTORY_SCHEMA",
-        "review-case-history-v9",
+        "review-case-history-v10",
+    ),
+    (
+        "mechanical_librarian.application.review_web",
+        "REVIEW_ATTENTION_SCHEMA",
+        "review-attention-v2",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -152,6 +157,16 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "mechanical_librarian.interfaces.web.app",
         "METADATA_POLICY_NOTEBOOK_SCHEMA",
         "metadata-policy-notebook-v2",
+    ),
+    (
+        "mechanical_librarian.interfaces.web.app",
+        "METADATA_POLICY_TRANSITION_SCHEMA",
+        "metadata-policy-transition-v2",
+    ),
+    (
+        "mechanical_librarian.interfaces.web.app",
+        "METADATA_POLICY_ACTIVATION_SCHEMA",
+        "metadata-policy-activation-v2",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -181,7 +196,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.continuous_field_effects",
         "CONTINUOUS_FIELD_ACTIVITY_SCHEMA",
-        "continuous-field-activity-v5",
+        "continuous-field-activity-v6",
     ),
     (
         "mechanical_librarian.domain.reviewer_access",

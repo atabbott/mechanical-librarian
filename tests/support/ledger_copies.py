@@ -66,6 +66,31 @@ def _origin(repository: SQLiteMetadataReportRepository, decision_id: str) -> str
     return "unbound"
 
 
+# Taste eligibility as the comparison and report give it, which the copies
+# `cover_taste._ELIGIBLE` reads must equal while they are there.
+_DERIVED_ELIGIBLE = (
+    "FROM owner_cover_pointers current "
+    "JOIN owner_cover_selections selection "
+    "ON selection.selection_id=current.selection_id "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=selection.consideration_id "
+    "JOIN metadata_report_browse_facts facts "
+    "ON facts.report_id=consideration.report_id "
+    "WHERE json_extract(selection.document,'$.preview_sha256') IS NOT NULL "
+    "AND json_extract(selection.document,'$.candidate_kind') IS NOT 'retained' "
+    "AND json_extract(consideration.currentness_document,'$.cover_stage.arts')>=? "
+    "AND typeof(facts.format)='text' "
+    "AND EXISTS (SELECT 1 FROM json_each(consideration.document,'$.candidates') "
+    "offered WHERE json_extract(offered.value,'$.reference')="
+    "json_extract(selection.document,'$.candidate_reference') "
+    "AND json_extract(offered.value,'$.candidate_kind')='candidate' "
+    "AND json_type(offered.value,'$.preview_sha256')='text' "
+    "AND json_type(offered.value,'$.transport_sha256')='text' "
+    "AND json_type(offered.value,'$.width')='integer' "
+    "AND json_type(offered.value,'$.height')='integer')"
+)
+
+
 def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[str]:
     """Compare every copy in the store with its derived reading now."""
     connection = repository._connection
@@ -79,6 +104,8 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
         ).fetchone()
         assert tuple(copies) == (row[1], row[3], row[8], row[11])
         assert _authors(repository, row[6], authors)
+        # The arm reads the copy, for a row whose report is gone.
+        assert row[21] == authors
         assert connection.execute(
             "SELECT connection_name,library_name,item_id FROM human_decision_events "
             "WHERE event_id=?",
@@ -92,7 +119,7 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
             "WHERE plan_id=?",
             (row[15],),
         ).fetchone()
-        assert title == row[11]
+        assert (title, authors) == (row[11], row[21])
         origin = _origin(repository, decision_id)
         # Only the owner's plans keep their authors.
         if origin in {"human", "owner_description"}:
@@ -108,7 +135,7 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
             "target_fingerprint FROM field_effect_no_changes WHERE event_id=?",
             (row[0],),
         ).fetchone()
-        assert title == row[11]
+        assert (title, authors) == (row[11], row[21])
         if row[5] == "human":
             assert _authors(repository, row[6], authors)
             assert kept is None
@@ -144,6 +171,7 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
                 (row[0],),
             ).fetchone()
             assert _authors(repository, row[6], authors)
+            assert row[21] == authors
             checked["activity_owner_description"] += 1
     # Review history: each authored description shows the candidate it chose.
     for decision_id, (*_, candidate_document) in owner_descriptions.items():
@@ -225,14 +253,25 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
             chosen_source.height,
         )
         checked["taste_decision"] += 1
-    for selection_id, arts, report_format in connection.execute(
-        "SELECT selection.selection_id,json_extract("
-        "consideration.currentness_document,'$.cover_stage.arts'),facts.format "
-        + cover_taste._ELIGIBLE,
-        (cover_taste.TASTE_MIN_ARTS,),
-    ):
-        assert taste_copies[selection_id][3:] == (arts, report_format)
-        checked["taste_eligible"] += 1
+    # Eligibility reads the copies; while the comparison is there it admits
+    # exactly the choices the comparison and report would.
+    eligible = {
+        row[0]
+        for row in connection.execute(
+            "SELECT selection.selection_id "
+            + cover_taste._ELIGIBLE
+            + " AND consideration.consideration_id IS NOT NULL",
+            (cover_taste.TASTE_MIN_ARTS,),
+        )
+    }
+    assert eligible == {
+        row[0]
+        for row in connection.execute(
+            "SELECT selection.selection_id " + _DERIVED_ELIGIBLE,
+            (cover_taste.TASTE_MIN_ARTS,),
+        )
+    }
+    checked["taste_eligible"] += len(eligible)
     # Review history: every decision, with an event or not, reads its case's
     # target field; an accepted description shows the copy its offer chose.
     histories: dict[str, dict[str, dict[str, object]]] = {}
