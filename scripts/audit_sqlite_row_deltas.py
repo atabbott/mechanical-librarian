@@ -37,7 +37,7 @@ def _baseline() -> dict[str, int]:
             name: connection.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
             for (name,) in connection.execute(
                 "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                "WHERE type='table' AND name NOT GLOB 'sqlite_*'"
             )
         }
     finally:
@@ -60,7 +60,7 @@ def run() -> int:
                     row[0]
                     for row in self.execute(
                         "SELECT name FROM sqlite_master "
-                        "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                        "WHERE type='table' AND name NOT GLOB 'sqlite_*'"
                     )
                 }
                 name = self.execute("PRAGMA database_list").fetchone()[2]

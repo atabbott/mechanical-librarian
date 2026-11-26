@@ -133,7 +133,7 @@ def _objects(connection: sqlite3.Connection, kind: str) -> dict[str, tuple[str, 
         name: (table, sql)
         for name, table, sql in connection.execute(
             "SELECT name,tbl_name,sql FROM sqlite_master "
-            "WHERE type=? AND name NOT LIKE 'sqlite_%'",
+            "WHERE type=? AND name NOT GLOB 'sqlite_*'",
             (kind,),
         )
     }

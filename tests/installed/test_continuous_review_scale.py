@@ -393,7 +393,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
                 "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
             )
             rows = repository._connection.execute(
-                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name"
             ).fetchall()
             assert len(rows) == 104
             assert (

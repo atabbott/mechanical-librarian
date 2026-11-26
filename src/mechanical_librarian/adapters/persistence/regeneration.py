@@ -844,7 +844,7 @@ def _drop_derived(connection: sqlite3.Connection, build: BuildPartition) -> int:
         (kind, name, table)
         for kind, name, table, sql in connection.execute(
             "SELECT type,name,tbl_name,sql FROM sqlite_master "
-            "WHERE name NOT LIKE 'sqlite_%' ORDER BY rowid"
+            "WHERE name NOT GLOB 'sqlite_*' ORDER BY rowid"
         ).fetchall()
         if (kind, name, sql) not in ledger
     ]

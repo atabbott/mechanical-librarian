@@ -807,7 +807,7 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
             + "".join(sql + ";" for (sql,) in kept)
         )
         rows = connection.execute(
-            "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' "
+            "SELECT type,name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' "
             "ORDER BY type,name"
         ).fetchall()
     finally:

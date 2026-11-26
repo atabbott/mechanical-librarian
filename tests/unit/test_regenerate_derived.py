@@ -538,9 +538,14 @@ def test_an_earlier_builds_derived_partition_is_replaced(owner: OwnerStore) -> N
     connection = sqlite3.connect(path)
     try:
         connection.executescript(FIXTURE.read_text(encoding="utf-8"))
+        # Names SQLite does not reserve, though `LIKE 'sqlite_%'` matches
+        # them: only the exact `sqlite_` prefix is SQLite's own.
+        connection.executescript(
+            "CREATE TABLE sqlitex(a); CREATE INDEX sqlitey ON human_decisions(ordinal);"
+        )
         objects = connection.execute(
             "SELECT type,name,tbl_name,sql FROM sqlite_master "
-            "WHERE name NOT LIKE 'sqlite_%' ORDER BY rowid"
+            "WHERE name NOT GLOB 'sqlite_*' ORDER BY rowid"
         ).fetchall()
     finally:
         connection.close()
@@ -554,6 +559,8 @@ def test_an_earlier_builds_derived_partition_is_replaced(owner: OwnerStore) -> N
         "library_visit_previous",
         "review_cases_previous_order",
         "human_decisions_previous_attention",
+        "sqlitex",
+        "sqlitey",
     } <= names
     with pytest.raises(DerivedRegenerationRequired):
         open_repository(path, create=False)
@@ -581,9 +588,11 @@ def test_an_earlier_builds_derived_partition_is_replaced(owner: OwnerStore) -> N
     # trigger on a ledger table included (S12).
     ledger_list = {(k, n, q) for k, n, _, q in schema.build_partition().ledger_objects}
     planted = [o for o in objects if (o[0], o[1], o[3]) not in ledger_list]
-    assert ("trigger", "human_decisions_previous_attention") in {
-        (k, n) for k, n, _, _ in planted
-    }
+    assert {
+        ("trigger", "human_decisions_previous_attention"),
+        ("table", "sqlitex"),
+        ("index", "sqlitey"),
+    } <= {(k, n) for k, n, _, _ in planted}
     assert json.loads(counts)["derived_objects_dropped"] == len(planted)
 
 
