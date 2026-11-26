@@ -27,24 +27,20 @@ from tests.support.ledger_fixture import FIXTURE, generate, ledger_dump
 from tests.support.ledger_partition import _derived_setup, regenerate, rewrite
 
 MUTATED = Path(__file__).parents[1] / "fixtures" / "derived" / "pre-cutover-mutated.sql"
-# Ledger tables the generator writes no row into yet: their documents are
-# registered and pinned, but no fixture row proves they re-encode.
+# Ledger tables no store of this build can hold a row of: their documents are
+# registered and pinned, but no fixture row proves they re-encode. Each one is
+# written only for an automatic cover switch over a populated cover, which
+# needs a replacement qualification record, and this build has none
+# (`cover_qualification_policy`: every `*_REPLACEMENT_QUALIFICATION_SHA256` is
+# None); a fill over a known-empty cover keeps no original.
 EMPTY = frozenset(
     {
-        "cover_taste_builds",
-        "cover_taste_profile_versions",
-        "field_effect_actions",
-        "field_effect_cleanups",
-        "field_effect_no_changes",
-        "identifier_import_events",
-        "identifier_imports",
-        "owner_authored_descriptions",
-        "owner_cover_pointers",
-        "owner_links",
+        # Bound when such a switch keeps the cover it replaces.
         "retained_cover_bindings",
+        # Listed when such a switch is verified.
         "retained_cover_listings",
+        # Owed when a bound switch ends unverified, is kept or is put back.
         "retained_cover_removals",
-        "reviewer_task_requests",
     }
 )
 # Ledger rows a regeneration without the flag writes (its record and every
