@@ -626,7 +626,7 @@ class SetupStateStore(ConnectionScoped):
         tables = {
             name
             for (name,) in self._connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*'"
             )
         }
         for table in tables - _SETUP_ROW_TABLES:

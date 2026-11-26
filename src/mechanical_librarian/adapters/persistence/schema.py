@@ -3158,7 +3158,7 @@ def _creation_order(connection: sqlite3.Connection) -> list[_Object]:
     """Every object the schema names, in the order it was created."""
     return connection.execute(
         "SELECT type,name,tbl_name,sql FROM sqlite_master "
-        "WHERE name NOT LIKE 'sqlite_%' ORDER BY rowid"
+        "WHERE name NOT GLOB 'sqlite_*' ORDER BY rowid"
     ).fetchall()
 
 

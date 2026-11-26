@@ -625,7 +625,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
 
         connection = sqlite3.connect(path)
         tables = connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*' ORDER BY name"
         ).fetchall()
         schema_version = connection.execute(
             "SELECT schema_version FROM metadata_reports"
@@ -1039,7 +1039,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
             )
             rows = repository._connection.execute(
-                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name"
             ).fetchall()
             assert len(rows) == 104
             assert (
@@ -1148,7 +1148,7 @@ def test_existing_schema_rejects_unexpected_objects_without_mutation(
         connection.execute(statement)
         connection.commit()
         expected_objects = connection.execute(
-            "SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+            "SELECT type,name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name"
         ).fetchall()
         expected_counts = connection.execute(
             "SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)"
@@ -1161,7 +1161,7 @@ def test_existing_schema_rejects_unexpected_objects_without_mutation(
         connection = sqlite3.connect(path)
         assert (
             connection.execute(
-                "SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+                "SELECT type,name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name"
             ).fetchall()
             == expected_objects
         )
@@ -2886,7 +2886,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "ON metadata_policy_resolutions(library_name,resolved_policy_id,generation);"
                 )
             rows = repository._connection.execute(
-                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name"
             ).fetchall()
             assert (
                 hashlib.sha256(

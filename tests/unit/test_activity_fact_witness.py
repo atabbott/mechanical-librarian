@@ -880,7 +880,7 @@ def _transplant(target: Path, source: Path) -> None:
         raw.execute("BEGIN")
         for table, without_rowid in raw.execute(
             "SELECT name,wr FROM pragma_table_list "
-            "WHERE schema='main' AND type='table' AND name NOT LIKE 'sqlite_%'"
+            "WHERE schema='main' AND type='table' AND name NOT GLOB 'sqlite_*'"
         ).fetchall():
             names = [row[1] for row in raw.execute(f"PRAGMA table_info({table})")]
             columns = ",".join(names if without_rowid else ["rowid", *names])

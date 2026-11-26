@@ -4,8 +4,11 @@ The store side lives in `adapters/persistence/regeneration.py` and the words
 in `interfaces/cli/regenerate.py`. This module holds the order of the steps
 and the decision rule: admission, nothing to do, the free-space reserve, the
 gate, the report, the rule that only `--retire-pending` lets lists 3, 4 and 5
-go ahead, the retained backup and the one transaction. It returns what
-happened; the caller prints it and turns it into the exit status.
+go ahead, the retained backup and the one transaction. Admission's scratch
+copy of the ledger is the run's first write, so the store checks the same
+reserve before it, and a write that meets a full volume later is the same
+refusal. It returns what happened; the caller prints it and turns it into the
+exit status.
 """
 
 from __future__ import annotations
@@ -19,7 +22,10 @@ from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     ConfigurationError,
 )
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    MetadataReportError,
+    PersistedStateRefusal,
+)
 
 Libraries = frozenset[tuple[str, str]]
 
@@ -33,6 +39,8 @@ class Refusal(StrEnum):
     BACKUP_UNSAFE = "backup_unsafe"
     BACKUP_MISMATCH = "backup_mismatch"
     ROLLED_BACK = "rolled_back"
+    # An altered ledger object refuses with startup's own line (S1 precedence).
+    LEDGER_ALTERED = "ledger_altered"
 
 
 class RegenerationRefusal(MetadataReportError):
@@ -41,6 +49,17 @@ class RegenerationRefusal(MetadataReportError):
     def __init__(self, refusal: Refusal) -> None:
         super().__init__(refusal.value)
         self.refusal = refusal
+
+
+class InsufficientSpace(MetadataReportError):
+    """The volume cannot hold what the run writes: found before a write, or
+    a write that met a full volume. Nothing was changed."""
+
+    def __init__(self, free: int, needed: int, backup_held: bool) -> None:
+        super().__init__("insufficient space")
+        self.free = free
+        self.needed = needed
+        self.backup_held = backup_held
 
 
 class Reason(StrEnum):
@@ -158,10 +177,15 @@ class RegenerationStore(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class Outcome:
-    """What the run did. `kind` decides the words and the exit status."""
+    """What the run did. `kind` decides the words and the exit status.
+
+    `startup` carries a startup refusal's own guidance as `message`; a
+    `failed` run carries no text, as nothing internal is shown.
+    """
 
     kind: Literal[
         "refused",
+        "startup",
         "failed",
         "nothing_to_do",
         "no_space",
@@ -204,18 +228,31 @@ def regenerate_derived(
     `regenerated`."""
     try:
         session = store.admit()
-    except RegenerationRefusal as refused:
-        return Outcome("refused", refusal=refused.refusal)
-    except MetadataReportError as error:
-        return Outcome("failed", message=str(error))
+    except (MetadataReportError, OSError) as error:
+        return _stopped(error)
     try:
         return _run(session, retire_pending, configuration)
-    except RegenerationRefusal as refused:
-        return Outcome("refused", refusal=refused.refusal)
-    except MetadataReportError as error:
-        return Outcome("failed", message=str(error))
+    except (MetadataReportError, OSError) as error:
+        return _stopped(error)
     finally:
         session.close()
+
+
+def _stopped(error: MetadataReportError | OSError) -> Outcome:
+    """The outcome of a run that stopped with nothing changed: a refusal the
+    command names, a full volume, a startup refusal, or else a failure."""
+    if isinstance(error, RegenerationRefusal):
+        return Outcome("refused", refusal=error.refusal)
+    if isinstance(error, InsufficientSpace):
+        return Outcome(
+            "no_space",
+            free=error.free,
+            needed=error.needed,
+            backup_held=error.backup_held,
+        )
+    if isinstance(error, PersistedStateRefusal):
+        return Outcome("startup", message=str(error))
+    return Outcome("failed")
 
 
 def _run(
@@ -255,6 +292,7 @@ __all__ = [
     "BlockingItem",
     "Cause",
     "CoverPointer",
+    "InsufficientSpace",
     "Inspection",
     "LibraryReport",
     "Outcome",

@@ -97,7 +97,7 @@ def _tables(connection: sqlite3.Connection) -> set[str]:
         name
         for (name,) in connection.execute(
             "SELECT name FROM sqlite_schema WHERE type='table' "
-            "AND name NOT LIKE 'sqlite_%'"
+            "AND name NOT GLOB 'sqlite_*'"
         )
     }
 
