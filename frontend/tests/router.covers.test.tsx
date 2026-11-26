@@ -1495,9 +1495,10 @@ describe('Measured cover rules (#1363)', () => {
 // Covers → Taste profile (#1372): its states from one read, and the owner's
 // edits (PR 2).
 const tasteView = (value: Partial<TasteProfileView> = {}): TasteProfileView => ({
-  schema_version: 'review-taste-profile-v4',
+  schema_version: 'review-taste-profile-v5',
   configured: true,
   chosen: 0,
+  since_upgrade: false,
   required: 25,
   daily_limit: 8,
   build: null,
@@ -1610,6 +1611,39 @@ describe('Covers → Taste profile (#1372)', () => {
       expect(await screen.findByRole('heading', { name: 'Pick the cover you like' })).toHaveFocus()
     },
   )
+
+  it.each([
+    [false, '3 of 25 picks saved.'],
+    [true, '3 of 25 picks saved since the upgrade.'],
+  ])(
+    'says the count started again only after an upgrade left picks out (%s)',
+    async (since_upgrade, line) => {
+      const http = {
+        ...tasteHttp(tasteView({ chosen: 3, since_upgrade })),
+        getCoverCalibration: vi.fn(() => new Promise<never>(() => undefined)),
+      }
+      renderRoute(tasteRoute, http)
+      const empty = (await screen.findByRole('heading', { name: 'No taste profile yet' })).closest(
+        'section',
+      )
+      if (!empty) throw new Error('the empty state is required')
+      expect(within(empty).getByText(line)).toBeVisible()
+      expect(within(empty).getAllByText(/picks saved/u)).toHaveLength(1)
+    },
+  )
+
+  it('says nothing of the count after an upgrade until a new pick is saved', async () => {
+    const http = {
+      ...tasteHttp(tasteView({ chosen: 0, since_upgrade: true })),
+      getCoverCalibration: vi.fn(() => new Promise<never>(() => undefined)),
+    }
+    renderRoute(tasteRoute, http)
+    const empty = (await screen.findByRole('heading', { name: 'No taste profile yet' })).closest(
+      'section',
+    )
+    if (!empty) throw new Error('the empty state is required')
+    expect(within(empty).queryByText(/picks saved/u)).toBeNull()
+  })
 
   it('says a first build is being written once 25 picks count, before it starts', async () => {
     renderRoute(tasteRoute, tasteHttp(tasteView({ chosen: 25 })))
@@ -2517,9 +2551,10 @@ describe("Covers' picks (#1372 PR 3)", () => {
       ...http,
       getCoverCalibration: vi.fn<ReviewHttp['getCoverCalibration']>(async () => calibration(ids)),
       getTasteProfile: vi.fn<ReviewHttp['getTasteProfile']>(async () => ({
-        schema_version: 'review-taste-profile-v4',
+        schema_version: 'review-taste-profile-v5',
         configured: true,
         chosen: typeof chosen === 'function' ? chosen() : chosen,
+        since_upgrade: false,
         required: 25,
         daily_limit: 8,
         build: null,
@@ -2784,6 +2819,17 @@ describe("Covers' picks (#1372 PR 3)", () => {
     await waitFor(() => expect(router.state.location.search.tab).toBe('decide'))
     expect(await screen.findByText('3 of 25 picks saved.')).toBeVisible()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Start' })).toHaveFocus())
+  })
+
+  it('keeps the count sentence when it stops after an upgrade', async () => {
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1', 'case-2'], 3, { since_upgrade: true })
+    const { router } = renderRoute(picksRoute, http)
+    await screen.findByRole('heading', { level: 3, name: 'First Book' })
+    await user.click(screen.getByRole('button', { name: 'Stop' }))
+    await waitFor(() => expect(router.state.location.search.tab).toBe('decide'))
+    expect(await screen.findByText('3 of 25 picks saved.')).toBeVisible()
+    expect(screen.queryByText(/since the upgrade/u)).toBeNull()
   })
 
   it('opens Taste profile, being written, after the 25th pick', async () => {

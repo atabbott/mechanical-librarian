@@ -15107,9 +15107,13 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "review-taste-profile-v4",
+            "const": "review-taste-profile-v5",
             "title": "Schema Version",
             "type": "string"
+          },
+          "since_upgrade": {
+            "title": "Since Upgrade",
+            "type": "boolean"
           },
           "versions": {
             "items": {
@@ -15124,6 +15128,7 @@
           "schema_version",
           "configured",
           "chosen",
+          "since_upgrade",
           "required",
           "daily_limit",
           "build",
