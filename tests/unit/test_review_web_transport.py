@@ -55,7 +55,10 @@ from mechanical_librarian.application.owner_settings import (
     FileOwnerSettingsRepository,
     OwnerSettingsOperations,
 )
-from mechanical_librarian.application.regeneration_notice import RegenerationNotice
+from mechanical_librarian.application.regeneration_notice import (
+    RegenerationNotice,
+    RegenerationNoticeDismissalInvalid,
+)
 from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
     ReviewApplication,
@@ -2028,7 +2031,7 @@ def test_upgrade_notice_reads_nothing_before_the_first_regeneration(
     try:
         store = repository.regeneration_notice_store()
         assert store.read_regeneration_notice() is None
-        with pytest.raises(MetadataReportError, match="dismissal is invalid"):
+        with pytest.raises(RegenerationNoticeDismissalInvalid):
             store.dismiss_regeneration_notice(1, 10)
     finally:
         repository.close()
@@ -2190,6 +2193,16 @@ def test_upgrade_notice_dismissal_is_authenticated_guarded_and_stale_safe(
     unavailable = web.client.post(path, headers=headers)
     assert unavailable.status_code == 503
     assert unavailable.json()["error"]["code"] == "persistence"
+    # The facade maps the store's refusal by its type, not its text: a plain
+    # MetadataReportError is the store being unavailable, whatever it says.
+    web.repository.upgrade_notice_error = MetadataReportError(
+        "regeneration notice dismissal is invalid"
+    )
+    plain = web.client.post(path, headers=headers)
+    assert (plain.status_code, plain.json()["error"]["code"]) == (503, "persistence")
+    web.repository.upgrade_notice_error = RegenerationNoticeDismissalInvalid()
+    typed = web.client.post(path, headers=headers)
+    assert (typed.status_code, typed.json()["error"]["code"]) == (409, "stale")
     web.repository.upgrade_notice_error = None
     assert web.repository.dismissed_regenerations == []
 

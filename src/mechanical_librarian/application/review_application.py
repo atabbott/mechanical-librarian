@@ -69,6 +69,7 @@ from mechanical_librarian.application.owner_search import (
 )
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.regeneration_notice import (
+    RegenerationNoticeDismissalInvalid,
     RegenerationNoticeStore,
 )
 from mechanical_librarian.application.review_covers import (
@@ -149,9 +150,6 @@ _Result = TypeVar("_Result")
 # The ledger's regeneration id is a positive SQLite integer, named in the
 # dismissal's path in decimal; any other segment names no regeneration.
 _REGENERATION_ID = re.compile(r"[1-9][0-9]{0,17}")
-# The store's refusal of an unknown regeneration, or of a dismissal before it
-# finished; its other failures are the store being unavailable.
-_REGENERATION_DISMISSAL_INVALID = "regeneration notice dismissal is invalid"
 # A library's preparation is running in these states: the `active` the
 # preparation read reports to Library and background activity.
 _PREPARATION_RUNNING = frozenset({"queued", "discovering", "processing"})
@@ -2308,10 +2306,10 @@ class ReviewApplication:
                     int(regeneration_id), self._clock()
                 )
             )
-        except MetadataReportError as error:
-            if str(error) == _REGENERATION_DISMISSAL_INVALID:
-                raise ReviewApplicationError("stale") from error
-            raise
+        except RegenerationNoticeDismissalInvalid as error:
+            # Any other store failure is a plain MetadataReportError: the
+            # store is unavailable.
+            raise ReviewApplicationError("stale") from error
 
     def acknowledge_first_boot_preparation(self) -> PreparationView:
         if self._acknowledge_first_boot is None:

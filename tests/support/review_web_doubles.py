@@ -41,6 +41,7 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.owner_search import OwnerSearchRefused
 from mechanical_librarian.application.regeneration_notice import (
     RegenerationNotice,
+    RegenerationNoticeDismissalInvalid,
     RegenerationNoticeStore,
 )
 from mechanical_librarian.application.review_covers import (
@@ -342,7 +343,7 @@ class FakeReviewRepository:
             or notice.regeneration_id != regeneration_id
             or dismissed_at < notice.finished_at
         ):
-            raise MetadataReportError("regeneration notice dismissal is invalid")
+            raise RegenerationNoticeDismissalInvalid
         if notice.dismissed:
             return False
         self.dismissed_regenerations.append(regeneration_id)
