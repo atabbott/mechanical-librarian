@@ -19,6 +19,8 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
 from mechanical_librarian.domain.activity_records import (
+    _pinned_report,
+    _reported_value,
     author_label,
     report_work_labels,
 )
@@ -100,18 +102,31 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
         else:
             assert authors is None
         checked["activity_field_effect_" + origin] += 1
-    # Activity: a no-change row reads its own report.
+    # Activity: a no-change row reads its own report, and Automatic's the
+    # value it kept from it.
     for row in _arm(repository, field_effect_activity._field_effect_no_change_arm):
-        (title, authors) = connection.execute(
-            "SELECT display_title,display_authors FROM field_effect_no_changes "
-            "WHERE event_id=?",
+        (title, authors, kept, fingerprint) = connection.execute(
+            "SELECT display_title,display_authors,kept_value_document,"
+            "target_fingerprint FROM field_effect_no_changes WHERE event_id=?",
             (row[0],),
         ).fetchone()
         assert (title, authors) == (row[11], row[21])
         if row[5] == "human":
             assert _authors(repository, row[6], authors)
+            assert kept is None
         else:
             assert authors is None
+            (document,) = connection.execute(
+                "SELECT document FROM metadata_reports WHERE report_id=?", (row[6],)
+            ).fetchone()
+            shown = _reported_value(
+                _pinned_report(
+                    {"target_fingerprint": fingerprint},
+                    MetadataReport.from_json(document),
+                ),
+                row[2],
+            )
+            assert json.loads(cast(str, kept)) == shown
         checked["activity_no_change_" + row[5]] += 1
     # Activity: an owner's authored description reads its work from its
     # case's report and its candidate from the candidate row.

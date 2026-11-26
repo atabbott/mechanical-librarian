@@ -484,6 +484,11 @@ _OWNER_DISPLAY_AUTHORS = (
     "typeof(display_authors)='text' AND json_valid(display_authors) AND "
     "json_type(display_authors)='array'))"
 )
+_AUTOMATIC_KEPT_VALUE = (
+    "kept_value_document TEXT CHECK(kept_value_document IS NULL OR "
+    "(origin='automatic_policy' AND typeof(kept_value_document)='text' AND "
+    "json_valid(kept_value_document)))"
+)
 
 
 def _undone(current: str, *steps: tuple[str, str]) -> str:
@@ -524,7 +529,13 @@ PRE_2038_FIELD_EFFECT_NO_CHANGES_SQL = _undone(
         + "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), ",
     ),
     (
-        ", " + _DISPLAY_TITLE + ", " + _OWNER_DISPLAY_AUTHORS + ") WITHOUT ROWID",
+        ", "
+        + _DISPLAY_TITLE
+        + ", "
+        + _OWNER_DISPLAY_AUTHORS
+        + ", "
+        + _AUTOMATIC_KEPT_VALUE
+        + ") WITHOUT ROWID",
         ") WITHOUT ROWID",
     ),
 )

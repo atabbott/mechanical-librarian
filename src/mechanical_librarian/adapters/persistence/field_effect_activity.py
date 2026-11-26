@@ -4142,10 +4142,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 raise FieldEffectError("persistence")
             # The row's event id binds the report and connection it stored,
             # which its row names only while that report is there (ADR-0108).
-            report_id, connection, target_fingerprint, target_version = (
+            report_id, connection, target_fingerprint, target_version, kept = (
                 self._connection.execute(
                     "SELECT report_id,connection_name,target_fingerprint,"
-                    "target_version FROM field_effect_no_changes WHERE decision_id=?",
+                    "target_version,kept_value_document FROM field_effect_no_changes "
+                    "WHERE decision_id=?",
                     (row.source_identity,),
                 ).fetchone()
             )
@@ -4208,6 +4209,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
             if advised is not None and advised[1] is not None:
                 durable["kept_form"] = advised[1]
+        elif row.report_id is None and kept is not None:
+            # Automatic kept the value its report showed; once a regeneration
+            # took the report, the row's copy names it (ADR-0108).
+            durable["kept_value"] = json.loads(kept)
         return _finished_activity_event(row, durable)
 
     def _project_description_preparation(

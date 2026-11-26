@@ -686,8 +686,9 @@ mutation. Admission does not rely on SQLite alone:
   ([ADR-0108](decisions/0108-ledger-and-derived-state.md)). While the derived
   rows exist, an owner decision's work, fingerprint, title, authors and target
   field must match its case, an authored description's work, title and authors
-  its case, a plan's or no-change row's title, and an owner row's authors, its
-  report, a cover choice's copies its comparison, and a policy transition's
+  its case, a plan's or no-change row's title, an owner row's authors and an
+  automatic no-change row's kept value, its report, a cover choice's copies
+  its comparison, and a policy transition's
   size and counts its items. Once a
   regeneration removes them, nothing checks a copy against its source, nor
   any case, proposal, comparison, selection or report a ledger row names; a

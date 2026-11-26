@@ -109,7 +109,7 @@ Rules for every ledger row:
   cover's digests, target and observed identity, and for write plans and
   no-change rows the display title and connection label. The owner's rows
   also keep the work's authors, for Activity's author label; Automatic's
-  keep none.
+  keep none, though its no-change rows keep the value they kept.
 - **Validation by partition.** Open validates terminal ledger history by its
   shape, its own copies and its ledger references; whether its derived
   provenance is current is a read-time question. Live rows (non-terminal
