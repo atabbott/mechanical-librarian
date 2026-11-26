@@ -546,7 +546,9 @@ Activity is always in the masthead, with no badge. While a change waits for
 you, such as a description to restore in Audiobookshelf, the page never says
 no action is needed. Pausing writes and removing a library's write
 permission are in a section you open. An upgrade notice here and in Attention
-counts answers kept and asked again until dismissed.
+counts answers kept and asked again until dismissed. While some answers are
+not yet checked and nothing is preparing, it gives no total. Attention shows
+only its first sentence, beside Dismiss.
 
 ### Write permission
 

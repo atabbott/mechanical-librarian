@@ -1357,6 +1357,11 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .cm-library-handoff.cm-upgrade-notice { display:flex; flex-wrap:wrap; justify-content:space-between; }
 .cm-upgrade-notice > div:first-child { flex:1 1 min(100%,18rem); min-width:0; }
 .cm-upgrade-notice > [role='alert'] { flex-basis:100%; }
+/* In the Attention rail it is one sentence that keeps Dismiss beside it,
+   with less inset, so the field rows below move as little as they can. */
+.cm-library-handoff.cm-upgrade-notice-brief { gap:.4rem .6rem; padding:.5rem .6rem; }
+.cm-upgrade-notice-brief > div:first-child { flex:1 1 0; }
+.cm-upgrade-notice-brief p { margin:0; }
 @media (max-width:760px) {
   .cm-write-consent-summary { gap:.75rem; }
   .cm-write-consent-summary dl { gap:.3rem 0; }
@@ -1368,6 +1373,9 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
   .cm-library-handoff-action > a.button-primary { padding-inline:.4rem; }
   .cm-library-handoff-action button { width:100%; }
   .cm-upgrade-notice > .cm-library-handoff-action { flex-basis:100%; }
+  .cm-upgrade-notice-brief { align-items:center; }
+  .cm-upgrade-notice-brief > .cm-library-handoff-action { flex-basis:auto; }
+  .cm-upgrade-notice-brief .cm-library-handoff-action button { width:auto; }
 }
 @media (prefers-reduced-motion:reduce) { .live-state i { animation:none!important; } }
 

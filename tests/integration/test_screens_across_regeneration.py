@@ -363,6 +363,7 @@ def test_the_screens_read_the_same_answers_across_a_regeneration(
                 "preparing": False,
                 "kept": 0,
                 "asked_again": 0,
+                "not_yet_checked": 6,
             }
 
             new_cases = {
@@ -383,6 +384,7 @@ def test_the_screens_read_the_same_answers_across_a_regeneration(
                 "preparing": False,
                 "kept": 3,
                 "asked_again": 3,
+                "not_yet_checked": 0,
             }
 
             # Resume asked after the run, over A's carried title (one open

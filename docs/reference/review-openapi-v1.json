@@ -15463,6 +15463,11 @@
             "title": "Kept",
             "type": "integer"
           },
+          "not_yet_checked": {
+            "minimum": 0.0,
+            "title": "Not Yet Checked",
+            "type": "integer"
+          },
           "preparing": {
             "title": "Preparing",
             "type": "boolean"
@@ -15478,7 +15483,8 @@
           "regeneration_id",
           "preparing",
           "kept",
-          "asked_again"
+          "asked_again",
+          "not_yet_checked"
         ],
         "title": "_UpgradeNotice",
         "type": "object"

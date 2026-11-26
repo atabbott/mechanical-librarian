@@ -22,13 +22,16 @@ class UpgradeNotice:
 
     `regeneration_id` is the ledger's regeneration id in decimal, as the
     dismissal's path names it; `preparing` says review preparation is running
-    now, so the counts are so far.
+    now, so the counts are so far. `not_yet_checked` counts the answers no
+    new case has checked yet, so an idle notice that still has some says
+    no total.
     """
 
     regeneration_id: str
     preparing: bool
     kept: int
     asked_again: int
+    not_yet_checked: int
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -36,4 +39,5 @@ class UpgradeNotice:
             "preparing": self.preparing,
             "kept": self.kept,
             "asked_again": self.asked_again,
+            "not_yet_checked": self.not_yet_checked,
         }
