@@ -43,6 +43,7 @@ from mechanical_librarian.adapters.persistence.owner_field_answers import (
     next_ordinal,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _CASE_AUTHORS_SQL,
     _CASE_TITLE_SQL,
     _episode_decision_sql,
     _pin_record_sql,
@@ -221,25 +222,31 @@ def _write_marker(
 
 
 # Every owner decision is inserted with its work and copies (ADR-0108): its
-# ordinal from the owner-answer counter, the decision's own columns, then its item key, its case's display title (bound to
-# the case) and target field, an accepted description's chosen copy, the root
-# original a carried row copies, and the question halves it was given against.
+# ordinal from the owner-answer counter, the decision's own columns, then its
+# item key, its case's display title and authors (each bound to the case) and
+# target field, an accepted description's chosen copy, the root original a
+# carried row copies, and the question halves it was given against.
 HUMAN_DECISION_INSERT_SQL = (
     "INSERT INTO human_decisions(ordinal,"
     "decision_id,review_case_id,proposal_id,target_fingerprint,"
     "destination,actor,outcome,selected_value_document,"
     "idempotency_digest,request_digest,occurred_at,document,"
-    "connection_name,library_name,item_id,display_title,"
+    "connection_name,library_name,item_id,display_title,display_authors,"
     "target_field_document,selected_form,carried_from,offer_digest,"
     "seen_target_digest) "
-    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?," + _CASE_TITLE_SQL + ",?,?,?,?,?)"
+    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
+    + _CASE_TITLE_SQL
+    + ","
+    + _CASE_AUTHORS_SQL
+    + ",?,?,?,?,?)"
 )
 
 
 def decision_copies(case: ReviewCase, destination: str) -> tuple[str, ...]:
-    """A decision's item key, its case bound for the display title, and the
-    case's target field for its destination as read ('null' where it read
-    none), in `HUMAN_DECISION_INSERT_SQL`'s order (ADR-0108)."""
+    """A decision's item key, its case bound for the display title and again
+    for the authors, and the case's target field for its destination as read
+    ('null' where it read none), in `HUMAN_DECISION_INSERT_SQL`'s order
+    (ADR-0108)."""
     target = case.target
     fields = target.get("fields")
     field = next(
@@ -254,6 +261,7 @@ def decision_copies(case: ReviewCase, destination: str) -> tuple[str, ...]:
         str(target["connection"]),
         str(target["library"]),
         str(target["item"]),
+        case.review_case_id,
         case.review_case_id,
         _canonical_json(field),
     )

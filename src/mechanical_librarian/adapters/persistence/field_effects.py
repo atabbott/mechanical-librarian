@@ -75,7 +75,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
     _ATTENTION_FACTS_JOIN_SQL,
     _CURRENT_REVIEW_FROM_SQL,
+    _PLAN_AUTHORS_SQL,
     _PLAN_TITLE_SQL,
+    _REPORT_AUTHORS_SQL,
+    _REPORT_KEPT_SQL,
     _REPORT_TITLE_SQL,
     _active_generation_automatic_sql,
 )
@@ -242,8 +245,14 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 else "automatic_policy",
             )
             inserted = self._connection.execute(
-                "INSERT OR IGNORE INTO field_effect_no_changes(decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id,display_title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,"
+                # The owner's row keeps its authors too, Automatic's the
+                # value it kept (ADR-0108).
+                "INSERT OR IGNORE INTO field_effect_no_changes(decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id,display_title,display_authors,kept_value_document) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,"
                 + _REPORT_TITLE_SQL
+                + ",CASE WHEN ?='human' THEN "
+                + _REPORT_AUTHORS_SQL
+                + " END,"
+                + _REPORT_KEPT_SQL
                 + ")",
                 (
                     record.decision_id,
@@ -258,6 +267,11 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     record.origin,
                     record.occurred_at,
                     record.event_id,
+                    record.report_id,
+                    record.origin,
+                    record.report_id,
+                    record.origin,
+                    record.destination,
                     record.report_id,
                 ),
             ).rowcount
@@ -1221,9 +1235,14 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 return persisted
             self._record_plan_authorities(operation)
             self._connection.execute(
-                # The title Activity shows for the plan (ADR-0108).
-                "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,work_id,destination,state,attempt,updated_at,document,display_title) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?," + _PLAN_TITLE_SQL + ")",
+                # The title Activity shows for the plan, and an owner
+                # plan's authors (ADR-0108).
+                "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,work_id,destination,state,attempt,updated_at,document,display_title,display_authors) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,"
+                + _PLAN_TITLE_SQL
+                + ","
+                + _PLAN_AUTHORS_SQL
+                + ")",
                 (
                     operation.plan.plan_id,
                     operation.plan.authority.decision_id,
@@ -1235,6 +1254,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     operation.attempt,
                     operation.updated_at,
                     document,
+                    operation.plan.authority.decision_id,
                     operation.plan.authority.decision_id,
                 ),
             )

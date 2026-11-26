@@ -308,8 +308,10 @@ def test_an_answer_is_written_by_a_verified_plan_or_no_change_of_its_chain(
     other = _decision(ledger, "other", case=_CASE, episode=5)
     assert not _written(ledger, other)
     ledger.execute(
-        "INSERT INTO field_effect_no_changes VALUES(?,?,?,?,?,?,'genres',"
-        "'fingerprint','version','human',1,?,NULL)",
+        "INSERT INTO field_effect_no_changes(decision_id,review_case_id,report_id,"
+        "connection_name,library_name,work_id,destination,target_fingerprint,"
+        "target_version,origin,occurred_at,event_id) VALUES(?,?,?,?,?,?,'genres',"
+        "'fingerprint','version','human',1,?)",
         (other, _CASE, "report_" + "1" * 64, *_KEY, "event-other"),
     )
     assert _written(ledger, other)

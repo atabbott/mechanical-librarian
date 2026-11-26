@@ -23,10 +23,22 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.review_preparation import (
     request_matching_check,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _REPORT_KEPT_VALUE_SQL,
+)
+from mechanical_librarian.domain.activity_records import _reported_value
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+    TargetSeries,
+)
 from tests.support.activity_seed import seed_activity
 from tests.support.cover_taste import record_owner_cover_decisions
-from tests.support.description_advice import _prepared
+from tests.support.description_advice import _prepared, qualify_description_advice
 from tests.support.genre_reports import (
     OFFERED_DESCRIPTION_COPY,
     formatted_description_report,
@@ -379,6 +391,7 @@ def test_an_owner_authored_description_is_a_ledger_row_with_its_copies(
         ),
         ("item_id='another-book'", True),
         ("display_title='Another title'", True),
+        ("display_authors='[\"Another author\"]'", True),
     ],
 )
 def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
@@ -393,7 +406,7 @@ def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
     finally:
         repository.close()
     rewrite(path, f"UPDATE owner_authored_descriptions SET {assignment}")
-    if not assignment.startswith("candidate_document"):
+    if not assignment.startswith(("candidate_document", "display_authors")):
         # The record of the owner's answers copies the work and the title
         # too, so an edit that stands once regenerated moves both (ADR-0108).
         rewrite(path, f"UPDATE owner_field_answers SET {assignment}")
@@ -455,6 +468,10 @@ _CASE_AND_ITEM_COPIES = {
     ),
     "display_title": (
         f"UPDATE human_decisions SET display_title='Another title' "
+        f"WHERE decision_id={_UNWRITTEN}",
+    ),
+    "display_authors": (
+        f"UPDATE human_decisions SET display_authors='[\"Another author\"]' "
         f"WHERE decision_id={_UNWRITTEN}",
     ),
     "target_field_document": (
@@ -559,17 +576,162 @@ def _owner_genres(root: Path) -> Path:
 
 
 @pytest.mark.parametrize("table", ["field_effects", "field_effect_no_changes"])
+@pytest.mark.parametrize(
+    "assignment",
+    ["display_title='Another title'", "display_authors='[\"Another author\"]'"],
+)
 def test_a_plan_and_a_no_change_title_agree_with_their_report(
-    tmp_path: Path, table: str
+    tmp_path: Path, table: str, assignment: str
 ) -> None:
     """A write plan and a no-change row show the title of the report their
-    decision was made over; reports never change, so while it is there the
-    copy equals it, and once a regeneration took it the copy stands."""
+    decision was made over, and the owner's its authors; reports never change,
+    so while it is there the copy equals it, and once a regeneration took it
+    the copy stands."""
     path = _owner_genres(tmp_path / "genres")
-    rewrite(path, f"UPDATE {table} SET display_title='Another title'")
+    assert rewrite(path, f"UPDATE {table} SET {assignment}") > 0
     assert not opens(path)
     regenerate(path)
     assert opens(path)
+
+
+def test_automatic_rows_copy_no_authors(tmp_path: Path) -> None:
+    """Only the owner's rows keep their authors (ADR-0108): an automatic
+    write keeps none, a copy on one is refused while its report is there, and
+    an automatic no-change row cannot hold one."""
+    held = genre_report(current=("Drama",), genres=("Fantasy",))
+    (tmp_path / "store").mkdir(mode=0o700)
+    store = OwnerStore(tmp_path / "store", None)
+    try:
+        store.automatic("genres", "replace", held.target.library)
+        store.publish(held)
+        store.write(
+            next(
+                AutomaticDecision.from_json(raw)
+                for raw in store.repository.get_review_case_decisions(
+                    store.case.review_case_id
+                )
+                if json.loads(raw)["schema_version"] == "automatic-decision-v1"
+                and json.loads(raw)["destination"] == "genres"
+            )
+        )
+        connection = store.repository._connection
+        assert connection.execute(
+            "SELECT DISTINCT display_authors FROM field_effects"
+        ).fetchall() == [(None,)]
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            connection.execute(
+                "INSERT INTO field_effect_no_changes(decision_id,review_case_id,"
+                "report_id,connection_name,library_name,work_id,destination,"
+                "target_fingerprint,target_version,origin,occurred_at,event_id,"
+                "display_authors) VALUES('d',?,?,'c','l','w','genres','f','v',"
+                "'automatic_policy',0,'e','[]')",
+                (store.case.review_case_id, store.case.report_id),
+            )
+        path = copied_store(store.repository, tmp_path / "changed")
+    finally:
+        store.close()
+    rewrite(path, "UPDATE field_effects SET display_authors='[\"Another author\"]'")
+    assert not opens(path)
+    regenerate(path)
+    assert opens(path)
+
+
+def _automatic_no_change(root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A copy of a store holding Automatic's no-change row: its advised
+    description is the text the report already shows."""
+    qualify_description_advice(monkeypatch)
+    root.mkdir(mode=0o700)
+    repository, store, binding, candidate, _ = _prepared(root, same_current=True)
+    try:
+        decision = store.admit(
+            candidate.candidate_id, binding, "automatic_policy", "c" * 64, 11
+        )
+        assert repository.record_current_field_effect_no_change(decision, 12)
+        assert (
+            assert_ledger_copies(repository)["activity_no_change_automatic_policy"] == 1
+        )
+        return copied_store(repository, root / "copy")
+    finally:
+        repository.close()
+
+
+def test_an_automatic_no_change_keeps_the_value_it_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Automatic's no-change row keeps the value its report shows, which
+    Activity reads once a regeneration takes the report (ADR-0108); while the
+    report is there the copy equals it. The owner's row keeps none."""
+    path = _automatic_no_change(tmp_path / "automatic", monkeypatch)
+    connection = sqlite3.connect(path)
+    try:
+        assert connection.execute(
+            "SELECT kept_value_document FROM field_effect_no_changes"
+        ).fetchall() == [('"Existing description."',)]
+    finally:
+        connection.close()
+    assert (
+        rewrite(path, "UPDATE field_effect_no_changes SET kept_value_document='null'")
+        == 1
+    )
+    assert not opens(path)
+    regenerate(path)
+    assert opens(path)
+    owner = _owner_genres(tmp_path / "genres")
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        rewrite(owner, "UPDATE field_effect_no_changes SET kept_value_document='null'")
+
+
+def _with_fields(*fields: TargetField) -> MetadataReport:
+    base = genre_report(current=("Drama",))
+    given = {field.destination: field for field in fields}
+    return MetadataReport.create(
+        target=TargetFacts(
+            base.target.connection,
+            base.target.library,
+            base.target.item,
+            tuple(given.get(field.destination, field) for field in base.target.fields),
+        ),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+    )
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        genre_report(),
+        # A published year read as the published date, a series and a flag.
+        _with_fields(
+            TargetField(
+                TargetDestination.PUBLISHED_YEAR, TargetFieldState.VALUE, "1999"
+            ),
+            TargetField(
+                TargetDestination.SERIES,
+                TargetFieldState.VALUE,
+                (TargetSeries("Saga", "2"),),
+            ),
+            TargetField(TargetDestination.EXPLICIT, TargetFieldState.VALUE, True),
+        ),
+    ],
+)
+def test_the_kept_value_copy_reads_its_report_as_activity_does(
+    report: MetadataReport,
+) -> None:
+    """The copy an automatic no-change row keeps is, for every destination,
+    the value Activity reads from its report (ADR-0108)."""
+    connection = sqlite3.connect(":memory:")
+    try:
+        for destination in TargetDestination:
+            (kept,) = connection.execute(
+                f"SELECT {_REPORT_KEPT_VALUE_SQL} FROM (SELECT ? AS document) "
+                "report, (SELECT ? AS destination) named",
+                (report.to_json(), destination.value),
+            ).fetchone()
+            assert json.loads(kept) == _reported_value(report, destination.value)
+    finally:
+        connection.close()
 
 
 # What open validation cannot check once the derived rows a ledger value was
@@ -585,6 +747,11 @@ ACCEPTED_GAPS = (
     "authored_description_display_title",
     "plan_display_title",
     "no_change_display_title",
+    "display_authors",
+    "authored_description_display_authors",
+    "plan_display_authors",
+    "no_change_display_authors",
+    "no_change_kept_value",
     # An owner cover choice's copies of its comparison.
     "preview_digest",
     "original_digest",
@@ -770,6 +937,7 @@ def test_an_owner_no_change_agrees_with_its_case_while_it_is_there(
     finally:
         store.close()
     assert decoded["field_effect_no_changes.display_title"] == 1
+    assert decoded["field_effect_no_changes.display_authors"] == 1
     rewrite_no_change(path, "report_id", "report_" + _OTHER_DIGEST)
     assert not opens(path)
     regenerate(path)
@@ -878,10 +1046,15 @@ def _no_change(column: str, value: str) -> Callable[[Path], None]:
     return lambda path: rewrite_no_change(path, column, value)
 
 
-def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) -> None:
+def test_accepted_gaps_are_the_listed_ones(
+    owner_cover: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Each listed gap is a ledger value that, its derived rows gone, open
     cannot check; this test edits each and the store still opens."""
     stores = _gap_stores(tmp_path / "stores", owner_cover)
+    stores["automatic_no_change"] = _automatic_no_change(
+        tmp_path / "automatic_no_change", monkeypatch
+    )
     selection = "UPDATE owner_cover_selections SET "
     case = "review_case_" + _OTHER_DIGEST
     # Every edit to an owner answer the record holds moves the record too, as
@@ -914,6 +1087,27 @@ def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) ->
         "no_change_display_title": (
             "genres",
             "UPDATE field_effect_no_changes SET display_title='Another title'",
+        ),
+        "display_authors": (
+            "activity",
+            "UPDATE human_decisions SET display_authors='[\"Another author\"]'",
+        ),
+        "authored_description_display_authors": (
+            "advice",
+            "UPDATE owner_authored_descriptions "
+            "SET display_authors='[\"Another author\"]'",
+        ),
+        "plan_display_authors": (
+            "genres",
+            "UPDATE field_effects SET display_authors='[\"Another author\"]'",
+        ),
+        "no_change_display_authors": (
+            "genres",
+            "UPDATE field_effect_no_changes SET display_authors='[\"Another author\"]'",
+        ),
+        "no_change_kept_value": (
+            "automatic_no_change",
+            "UPDATE field_effect_no_changes SET kept_value_document='\"Another\"'",
         ),
         "preview_digest": (
             "cover",

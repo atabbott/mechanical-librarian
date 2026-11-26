@@ -87,7 +87,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
     _OWNER_SELECTION_COPIES,
     _OWNER_SELECTION_COPY_JOIN_SQL,
+    _PLAN_OWNER_SQL,
     _PLAN_REPORT_JOIN_SQL,
+    _REPORT_AUTHORS_VALUE_SQL,
+    _REPORT_KEPT_VALUE_SQL,
     _REPORT_TITLE_VALUE_SQL,
 )
 from mechanical_librarian.application.cover_consideration import (
@@ -971,10 +974,12 @@ _HUMAN_DECISIONS_SQL = (
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536), "
     # A ledger row keeps its work and what its readers show when the case is
-    # gone (ADR-0108): the case's display title, its target field as read
-    # ('null' where it read none) and an accepted description's chosen copy.
+    # gone (ADR-0108): the case's display title and authors, its target field
+    # as read ('null' where it read none) and an accepted description's chosen
+    # copy.
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'), "
+    "display_authors TEXT CHECK(display_authors IS NULL OR (typeof(display_authors)='text' AND json_valid(display_authors) AND json_type(display_authors)='array')), "
     "target_field_document TEXT NOT NULL CHECK(typeof(target_field_document)='text' AND json_valid(target_field_document) AND json_type(target_field_document) IN ('object','null')), "
     "selected_form TEXT CHECK(selected_form IS NULL OR (typeof(selected_form)='text' AND destination='description' AND outcome='accept')), "
     # C4' question check (#2040): a carried row names its root original, as
@@ -1378,7 +1383,9 @@ _FIELD_EFFECTS_SQL = (
     "('planned','claimed','applying','reconciling','retryable','verified','stale','superseded','abandoned')), "
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072), "
-    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'))"
+    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'), "
+    # An owner plan's authors, for its author label; Automatic's keep none.
+    "display_authors TEXT CHECK(display_authors IS NULL OR (typeof(display_authors)='text' AND json_valid(display_authors) AND json_type(display_authors)='array')))"
 )
 # Pending, revocation, replacement, history and override reads ask which effects
 # name a decision as their own authority or as their subtitle companion's;
@@ -1572,7 +1579,13 @@ _FIELD_EFFECT_NO_CHANGES_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, work_id TEXT NOT NULL, destination TEXT NOT NULL, "
     "target_fingerprint TEXT NOT NULL, target_version TEXT NOT NULL, origin TEXT NOT NULL CHECK(origin IN ('human','automatic_policy')), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), event_id TEXT NOT NULL UNIQUE, "
-    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text')) WITHOUT ROWID"
+    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'), "
+    # The owner's row keeps its authors for its author label; Automatic's
+    # keeps none.
+    "display_authors TEXT CHECK(display_authors IS NULL OR (origin='human' AND typeof(display_authors)='text' AND json_valid(display_authors) AND json_type(display_authors)='array')), "
+    # Automatic's row keeps the value it kept, as JSON; the owner's keeps
+    # none, as its decision holds it.
+    "kept_value_document TEXT CHECK(kept_value_document IS NULL OR (origin='automatic_policy' AND typeof(kept_value_document)='text' AND json_valid(kept_value_document)))) WITHOUT ROWID"
 )
 _FIELD_EFFECT_ACTIONS_SQL = (
     "CREATE TABLE field_effect_actions ("
@@ -1817,7 +1830,7 @@ _DESCRIPTION_ADVICE_TABLES = {
     # The owner's choices of advised text are ledger (ADR-0108): they keep
     # the case and candidate ids as plain provenance, their work, and the
     # chosen candidate verbatim. Automatic's are derived.
-    "owner_authored_descriptions": "CREATE TABLE owner_authored_descriptions (decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), candidate_id TEXT NOT NULL CHECK(candidate_id GLOB 'description_candidate_[0-9a-f]*' AND length(candidate_id)=86), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384), connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, candidate_document TEXT NOT NULL CHECK(length(CAST(candidate_document AS BLOB)) BETWEEN 2 AND 131072), ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal)='integer' AND ordinal>0), episode INTEGER NOT NULL CHECK(typeof(episode)='integer' AND episode>=0 AND episode<ordinal), display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'))",
+    "owner_authored_descriptions": "CREATE TABLE owner_authored_descriptions (decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), candidate_id TEXT NOT NULL CHECK(candidate_id GLOB 'description_candidate_[0-9a-f]*' AND length(candidate_id)=86), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384), connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, candidate_document TEXT NOT NULL CHECK(length(CAST(candidate_document AS BLOB)) BETWEEN 2 AND 131072), ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal)='integer' AND ordinal>0), episode INTEGER NOT NULL CHECK(typeof(episode)='integer' AND episode>=0 AND episode<ordinal), display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'), display_authors TEXT CHECK(display_authors IS NULL OR (typeof(display_authors)='text' AND json_valid(display_authors) AND json_type(display_authors)='array')))",
     "automatic_description_decisions": "CREATE TABLE automatic_description_decisions (decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'automatic_decision_[0-9a-f]*' AND length(decision_id)=83), review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), candidate_id TEXT NOT NULL REFERENCES description_advice_candidates(candidate_id), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384))",
     # The case's chosen advice, from either half; a trigger below requires
     # the decision in exactly one.
@@ -3524,9 +3537,11 @@ _OWNER_ITEM_KEY_DISAGREES_SQL = (
 # A ledger copy that disagrees with the derived row it was copied from while
 # that row is there (ADR-0108). Cases, reports and decisions never change, so
 # each copy equals them for as long as they exist: an owner decision's work,
-# fingerprint, title and target field are its case's; an authored
-# description's title its case's; a plan's and a no-change row's title the
-# report they name; and a transition's size and settled counts its items'.
+# fingerprint, title, authors and target field are its case's; an authored
+# description's title and authors its case's; a plan's and a no-change row's
+# title the report they name, and the owner's their authors too (Automatic's
+# keep none); Automatic's no-change row's kept value that report's; and a
+# transition's size and settled counts its items'.
 # Items or not, an owner decision's event names the decision's case and a
 # transition's state is the one its counts give.
 _CASE_FACT_SQL = "json_extract(review.document,'$.{}')"
@@ -3543,6 +3558,8 @@ _LEDGER_COPY_DISAGREES_SQL = (
     + _CASE_FACT_SQL.format("target_fingerprint")
     + " OR decision.display_title IS NOT "
     + _REPORT_TITLE_VALUE_SQL
+    + " OR decision.display_authors IS NOT "
+    + _REPORT_AUTHORS_VALUE_SQL
     # The target's field for the destination, the first that names it, as
     # `decision_copies` reads it; json() renders both texts alike.
     + " OR json(decision.target_field_document) IS NOT COALESCE((SELECT "
@@ -3554,14 +3571,26 @@ _LEDGER_COPY_DISAGREES_SQL = (
     "JOIN metadata_reports report ON report.report_id=review.report_id "
     "WHERE authored.display_title IS NOT "
     + _REPORT_TITLE_VALUE_SQL
+    + " OR authored.display_authors IS NOT "
+    + _REPORT_AUTHORS_VALUE_SQL
     + " UNION ALL SELECT 1 FROM field_effect_no_changes named "
     "JOIN metadata_reports report ON report.report_id=named.report_id "
     "WHERE named.display_title IS NOT "
     + _REPORT_TITLE_VALUE_SQL
-    + " UNION ALL SELECT 1 FROM field_effects effect"
+    + " OR named.display_authors IS NOT CASE WHEN named.origin='human' THEN "
+    + _REPORT_AUTHORS_VALUE_SQL
+    + " END OR json(named.kept_value_document) IS NOT CASE WHEN "
+    "named.origin='automatic_policy' THEN "
+    + _REPORT_KEPT_VALUE_SQL
+    + " END UNION ALL SELECT 1 FROM field_effects effect"
     + _PLAN_REPORT_JOIN_SQL
-    + " WHERE report.report_id IS NOT NULL AND effect.display_title IS NOT "
+    + " WHERE report.report_id IS NOT NULL AND (effect.display_title IS NOT "
     + _REPORT_TITLE_VALUE_SQL
+    + " OR effect.display_authors IS NOT CASE WHEN "
+    + _PLAN_OWNER_SQL
+    + " THEN "
+    + _REPORT_AUTHORS_VALUE_SQL
+    + " END)"
     + " UNION ALL SELECT 1 FROM metadata_policy_transitions transition "
     "JOIN (SELECT transition_id,count(*) AS total,sum(state='complete') AS completed,"
     "sum(state='failed') AS failed FROM metadata_policy_transition_items "

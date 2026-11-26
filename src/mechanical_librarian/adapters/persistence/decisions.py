@@ -62,6 +62,7 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _AUTOMATIC_SAFETY_ROW_SQL,
+    _REPORT_AUTHORS_SQL,
     _REPORT_TITLE_SQL,
     _SHADOW_OUTCOME_HISTORY_SQL,
     _active_generation_automatic_sql,
@@ -835,7 +836,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
             "INSERT INTO field_effect_no_changes(decision_id,review_case_id,"
             "report_id,connection_name,library_name,work_id,destination,"
             "target_fingerprint,target_version,origin,occurred_at,event_id,"
-            "display_title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?," + _REPORT_TITLE_SQL + ")",
+            "display_title,display_authors) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,"
+            + _REPORT_TITLE_SQL
+            + ","
+            + _REPORT_AUTHORS_SQL
+            + ")",
             (
                 record.decision_id,
                 record.review_case_id,
@@ -849,6 +854,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 record.origin,
                 record.occurred_at,
                 record.event_id,
+                record.report_id,
                 record.report_id,
             ),
         )

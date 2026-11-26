@@ -36,10 +36,19 @@ from mechanical_librarian.domain.human_decision import (
 )
 
 _COPIES = {
-    "human_decisions": ("display_title", "target_field_document", "selected_form"),
-    "field_effects": ("display_title",),
-    "field_effect_no_changes": ("display_title",),
-    "owner_authored_descriptions": ("candidate_document",),
+    "human_decisions": (
+        "display_title",
+        "display_authors",
+        "target_field_document",
+        "selected_form",
+    ),
+    "field_effects": ("display_title", "display_authors"),
+    "field_effect_no_changes": (
+        "display_title",
+        "display_authors",
+        "kept_value_document",
+    ),
+    "owner_authored_descriptions": ("candidate_document", "display_authors"),
     "owner_cover_selections": (
         "transport_sha256",
         "width",

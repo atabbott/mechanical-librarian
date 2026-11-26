@@ -1368,7 +1368,7 @@ def test_description_decision_history_breaks_tied_times_by_decision_id(
         )
         if decision.origin == "human":
             repository._connection.execute(
-                "INSERT INTO owner_authored_descriptions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO owner_authored_descriptions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
                 (
                     *values,
                     "primary",

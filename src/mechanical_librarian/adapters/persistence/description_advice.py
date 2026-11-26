@@ -21,6 +21,7 @@ from mechanical_librarian.adapters.persistence.owner_field_answers import (
 from mechanical_librarian.adapters.persistence.owner_links import owner_link_bound
 from mechanical_librarian.adapters.persistence.review_sql import (
     _AUTOMATIC_SAFETY_ROW_SQL,
+    _CASE_AUTHORS_SQL,
     _CASE_TITLE_SQL,
     _authored_description_sql,
 )
@@ -432,13 +433,16 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 if work is None:
                     raise ValueError("description advice is stale")
                 # It is an owner answer: its ordinal is the counter's and
-                # its episode and title are its case's now (ADR-0108).
+                # its episode, title and authors are its case's now
+                # (ADR-0108).
                 self._connection.execute(
                     "INSERT INTO owner_authored_descriptions(decision_id,review_case_id,"
                     "candidate_id,idempotency_digest,document,connection_name,"
                     "library_name,item_id,candidate_document,ordinal,episode,"
-                    "display_title) VALUES(?,?,?,?,?,?,?,?,?,?,?,"
+                    "display_title,display_authors) VALUES(?,?,?,?,?,?,?,?,?,?,?,"
                     + _CASE_TITLE_SQL
+                    + ","
+                    + _CASE_AUTHORS_SQL
                     + ")",
                     (
                         *row_values,
@@ -446,6 +450,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                         candidate_document,
                         next_ordinal(self._connection),
                         case_episode(self._connection, case_id),
+                        case_id,
                         case_id,
                     ),
                 )
