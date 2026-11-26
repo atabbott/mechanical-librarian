@@ -258,8 +258,9 @@ Some refusals affect one store only. Fix only that store.
 
 ## What is refused
 
-At startup the application database is refused, without being changed, with
-one line on standard error and exit status 1, in file and store mode alike:
+Startup refuses the application database in these cases with one line on
+standard error and exit status 1, in file and store mode alike, and changes
+nothing:
 
 | Startup says | Cause | What to do |
 | --- | --- | --- |
@@ -273,8 +274,8 @@ upgrade-specific cases:
 - Editing rows, pointers, schema or artifact files to force a store open is
   refused at the next open, or produces state the runtime will not trust.
 - Restore only into a build whose schemas match the backup; see
-  [Backups and recovery](backups-and-recovery.md). Otherwise do a clean
-  rebuild.
+  [Backups and recovery](backups-and-recovery.md). Otherwise follow what
+  startup says: a regeneration or a clean rebuild.
 
 `scripts/qualification_state_bridge.py` is a maintainer tool for private test
 state, not an upgrade path. It accepts only one exact retained test schema and
