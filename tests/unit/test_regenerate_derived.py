@@ -419,17 +419,42 @@ def test_the_free_space_refusal_names_an_earlier_restore_point(
     assert lines[0].endswith(" " + cli.NO_SPACE_HELD)
 
 
+# Steps admission's dry run calls first, on its private copy, before the
+# transaction calls them again (ADR-0108 step 1).
+_DRY_RUN_TOO = frozenset({"_recreate_derived", "migrate_ledger"})
+
+
+def _fails_in_the_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    error: BaseException,
+    *,
+    after_the_step: bool = True,
+) -> None:
+    """The transaction's call of ``phase`` raises ``error``, after doing its
+    work unless ``after_the_step`` is false; the dry run's call, if any,
+    runs as it is."""
+    real = getattr(regeneration, phase)
+    calls: list[None] = []
+
+    def failing(*arguments: Any) -> Any:
+        calls.append(None)
+        if phase in _DRY_RUN_TOO and len(calls) == 1:
+            return real(*arguments)
+        if after_the_step:
+            real(*arguments)
+        raise error
+
+    monkeypatch.setattr(regeneration, phase, failing)
+
+
 def _held_after_a_stopped_run(path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A run that took its restore point and then stopped inside the
     transaction, leaving the database as it was and `epoch-0` held: the
     state recovery leaves after a run killed there."""
-    real = regeneration._recreate_derived
-
-    def failing(*arguments: Any) -> Any:
-        real(*arguments)
-        raise sqlite3.OperationalError("disk I/O error")
-
-    monkeypatch.setattr(regeneration, "_recreate_derived", failing)
+    _fails_in_the_transaction(
+        monkeypatch, "_recreate_derived", sqlite3.OperationalError("disk I/O error")
+    )
     assert _run(path)[2].refusal is regeneration.Refusal.ROLLED_BACK
     monkeypatch.undo()
     held = path.parent / "regeneration-backup" / "epoch-0.sqlite3"
@@ -649,14 +674,16 @@ def _scratch_entries(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 def _scratch_meets_a_full_volume(monkeypatch: pytest.MonkeyPatch) -> None:
     """Admission's scratch copy cannot grow: SQLite's own SQLITE_FULL, met on
-    the copy's first write, as on a volume with no room left."""
-    real = regeneration._create_schema
+    the copy's first write, as on a volume with no room left. The scratch
+    file is the one connection the run opens on an empty file."""
+    real = regeneration._prepare
 
-    def create(connection: sqlite3.Connection) -> None:
-        connection.execute("PRAGMA max_page_count=1")
+    def prepare(connection: sqlite3.Connection) -> None:
         real(connection)
+        if connection.execute("PRAGMA page_count").fetchone() == (0,):
+            connection.execute("PRAGMA max_page_count=1")
 
-    monkeypatch.setattr(regeneration, "_create_schema", create)
+    monkeypatch.setattr(regeneration, "_prepare", prepare)
 
 
 def _no_space_line(outcome: Outcome) -> str:
@@ -737,7 +764,9 @@ def _full_at_backup_sync(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _full_in_the_transaction(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(regeneration, "_recreate_derived", _fails_with(_sqlite_full()))
+    _fails_in_the_transaction(
+        monkeypatch, "_recreate_derived", _sqlite_full(), after_the_step=False
+    )
 
 
 @pytest.mark.parametrize(
@@ -1032,13 +1061,9 @@ def test_a_failure_in_the_transaction_rolls_it_back(
 ) -> None:
     path = _fresh(tmp_path / "data")
     _another_build(path)
-    real = getattr(regeneration, phase)
-
-    def failing(*arguments: Any) -> Any:
-        real(*arguments)
-        raise sqlite3.OperationalError("disk I/O error")
-
-    monkeypatch.setattr(regeneration, phase, failing)
+    _fails_in_the_transaction(
+        monkeypatch, phase, sqlite3.OperationalError("disk I/O error")
+    )
     before = _sha(path)
     status, lines, _ = _run(path)
     assert (status, lines) == (1, [cli.REFUSALS[regeneration.Refusal.ROLLED_BACK]])

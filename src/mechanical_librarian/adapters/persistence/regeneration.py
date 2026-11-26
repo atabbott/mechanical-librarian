@@ -50,6 +50,11 @@ from mechanical_librarian.adapters.persistence.field_effect_activity import (
 from mechanical_librarian.adapters.persistence.field_effects import (
     SQLiteFieldEffectRepository,
 )
+from mechanical_librarian.adapters.persistence.ledger_migrations import (
+    LedgerObject,
+    ledger_objects_at,
+    migrate_ledger,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_existing_database,
 )
@@ -68,8 +73,8 @@ from mechanical_librarian.adapters.persistence.schema import (
     LEDGER_FORMAT_VERSION,
     BuildPartition,
     _check_constraint_violation,
-    _create_schema,
     _expected_schema_objects,
+    _missing_ledger_object,
     _register_casefold,
     _validate_ledger_meta,
     _validate_schema,
@@ -79,6 +84,7 @@ from mechanical_librarian.adapters.persistence.schema import (
 )
 from mechanical_librarian.application.metadata_report import (
     DerivedRegenerationRequired,
+    LedgerMigrationRequired,
     MetadataReportError,
     PersistedStateRefusal,
 )
@@ -183,15 +189,37 @@ def _prepare(connection: sqlite3.Connection) -> None:
 # --- Admission -----------------------------------------------------------
 
 
-def _validate_ledger_structure(connection: sqlite3.Connection) -> None:
-    """The ledger record, every ledger object exactly, the whole file's
-    integrity, each ledger table's foreign keys and CHECKs.
+def _ledger_format(connection: sqlite3.Connection) -> int:
+    """The ledger format the admitted database's record names."""
+    (version,) = connection.execute(
+        "SELECT ledger_format_version FROM ledger_meta WHERE singleton=1"
+    ).fetchone()
+    return int(version)
 
-    Startup's own precedence applies; another build's derived partition is
-    what this command is for, so only that refusal is let through.
+
+def _ledger_objects(connection: sqlite3.Connection) -> tuple[LedgerObject, ...]:
+    """The ledger objects of the format the admitted database is in."""
+    return ledger_objects_at(
+        _ledger_format(connection),
+        LEDGER_FORMAT_VERSION,
+        build_partition().ledger_objects,
+    )
+
+
+def _validate_ledger_structure(connection: sqlite3.Connection) -> None:
+    """The ledger record, every ledger object of its format exactly, the
+    whole file's integrity, each ledger table's foreign keys and CHECKs.
+
+    Startup's own precedence applies; another build's derived partition, or
+    an earlier ledger this build migrates, is what this command is for, so
+    only that refusal is let through. An earlier ledger is checked against
+    its own format's objects, which startup never compares.
     """
     try:
         _validate_ledger_meta(connection)
+    except LedgerMigrationRequired:
+        if _missing_ledger_object(connection, _ledger_objects(connection)):
+            raise RegenerationRefusal(Refusal.LEDGER_ALTERED) from None
     except DerivedRegenerationRequired:
         pass
     except PersistedStateRefusal:
@@ -200,9 +228,7 @@ def _validate_ledger_structure(connection: sqlite3.Connection) -> None:
         raise RegenerationRefusal(Refusal.LEDGER_ALTERED) from error
     if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise RegenerationRefusal(Refusal.INTEGRITY)
-    ledger = [
-        (kind, name, sql) for kind, name, _, sql in build_partition().ledger_objects
-    ]
+    ledger = [(kind, name, sql) for kind, name, _, sql in _ledger_objects(connection)]
     for kind, name, _ in ledger:
         if (
             kind == "table"
@@ -287,38 +313,40 @@ def _ledger_select(name: str, sql: str | None) -> str:
 def _validate_ledger_content(
     connection: sqlite3.Connection, binding: _LinuxDatabaseBinding
 ) -> None:
-    """Validation point 3: copy every ledger row into a fresh schema of this
-    build, whose derived partition holds only its seed rows, and run the
-    open's content validation there, offline. Triggers are set aside for the
-    copy, as a regeneration leaves no derived row behind them."""
-    tables = [
-        (name, sql)
-        for kind, name, _, sql in build_partition().ledger_objects
-        if kind == "table"
-    ]
+    """Validation point 3, a dry run of the transaction's ledger half on a
+    private copy: the ledger's objects at its own format, every ledger row
+    copied before its triggers exist, then, with foreign keys enforced, the
+    pending migrations and this build's derived objects and seed rows, and
+    the open's content validation, offline. The copy is rolled back and
+    removed; the database is never written."""
+    version = _ledger_format(connection)
+    build = build_partition()
+    objects = ledger_objects_at(version, LEDGER_FORMAT_VERSION, build.ledger_objects)
     with _scratch(binding) as (_, path):
         scratch = sqlite3.connect(path, isolation_level=None)
         try:
             _prepare(scratch)
-            _create_schema(scratch)
-            triggers = scratch.execute(
-                "SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY rowid"
-            ).fetchall()
             scratch.execute("BEGIN")
-            for name, _ in triggers:
-                scratch.execute(f"DROP TRIGGER {_quoted(name)}")
-            for name, sql in tables:
-                scratch.execute(f"DELETE FROM {_quoted(name)}")
+            for kind, _, _, sql in objects:
+                if kind != "trigger" and sql is not None:
+                    scratch.execute(sql)
+            for kind, name, _, sql in objects:
+                if kind != "table":
+                    continue
                 rows = connection.execute(_ledger_select(name, sql))
                 width = len(rows.description)
                 scratch.executemany(
                     f"INSERT INTO {_quoted(name)} VALUES({','.join('?' * width)})",
                     rows,
                 )
-            for _, sql in triggers:
-                scratch.execute(sql)
+            for kind, _, _, sql in objects:
+                if kind == "trigger" and sql is not None:
+                    scratch.execute(sql)
             scratch.execute("COMMIT")
+            scratch.execute("PRAGMA foreign_keys=ON")
             scratch.execute("BEGIN")
+            migrate_ledger(scratch, version, LEDGER_FORMAT_VERSION)
+            _recreate_derived(scratch, build)
             _validate_schema_contents(scratch, offline=True)
             scratch.execute("ROLLBACK")
         finally:
