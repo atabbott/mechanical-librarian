@@ -81,6 +81,26 @@ _CASE_TITLE_SQL = (
     "FROM review_cases review JOIN metadata_reports report "
     "ON report.report_id=review.report_id WHERE review.review_case_id=?)"
 )
+# The authors an owner's ledger row copies from the same report, for the
+# author label Activity shows: the first authors field's value as JSON where it
+# is a list, as `report_work_labels` reads it (ADR-0108). Automatic rows keep
+# none.
+_REPORT_AUTHORS_VALUE_SQL = (
+    "(SELECT CASE WHEN json_type(field.value,'$.value')='array' "
+    "THEN json(json_extract(field.value,'$.value')) END "
+    "FROM json_each(report.document,'$.target.fields') field "
+    "WHERE json_extract(field.value,'$.destination')='authors' "
+    "ORDER BY field.key LIMIT 1)"
+)
+_REPORT_AUTHORS_SQL = (
+    "(SELECT " + _REPORT_AUTHORS_VALUE_SQL + " "
+    "FROM metadata_reports report WHERE report_id=?)"
+)
+_CASE_AUTHORS_SQL = (
+    "(SELECT " + _REPORT_AUTHORS_VALUE_SQL + " "
+    "FROM review_cases review JOIN metadata_reports report "
+    "ON report.report_id=review.report_id WHERE review.review_case_id=?)"
+)
 # The report of the case a write plan's decision names, by whichever decision
 # table holds it: Activity's join for a plan's rows. Joins `effect.decision_id`.
 _PLAN_REPORT_JOIN_SQL = (
@@ -99,6 +119,19 @@ _PLAN_REPORT_JOIN_SQL = (
 # The title Activity shows for a plan's rows, binding its decision id.
 _PLAN_TITLE_SQL = (
     "(SELECT " + _REPORT_TITLE_VALUE_SQL + " "
+    "FROM (SELECT ? AS decision_id) effect" + _PLAN_REPORT_JOIN_SQL + ")"
+)
+# The authors an owner's plan copies, binding its decision id: a plan of an
+# owner decision or authored description, never Automatic's.
+_PLAN_OWNER_SQL = (
+    "(human.decision_id IS NOT NULL OR owner_description.decision_id IS NOT NULL)"
+)
+_PLAN_AUTHORS_SQL = (
+    "(SELECT CASE WHEN "
+    + _PLAN_OWNER_SQL
+    + " THEN "
+    + _REPORT_AUTHORS_VALUE_SQL
+    + " END "
     "FROM (SELECT ? AS decision_id) effect" + _PLAN_REPORT_JOIN_SQL + ")"
 )
 # When the work was last written: its latest verified effect, of any origin

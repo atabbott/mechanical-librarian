@@ -193,7 +193,9 @@ def project_readable_activity_event(
     connection = event.pop("connection", None)
     report_id = event.pop("report_id", None)
     event["work_label"] = event.get("work_label", "Recorded work")
-    event["author_label"] = "Author details are not recorded"
+    # An owner row whose report is gone reads its copy's author label
+    # (ADR-0108); a report, when there, names its own.
+    event["author_label"] = event.get("author_label", "Author details are not recorded")
     if connection is None and report_id is None:
         readable_activity_event(event, None)
         return
@@ -213,7 +215,6 @@ def project_readable_activity_event(
 
 def report_work_labels(report: MetadataReport) -> tuple[str, str]:
     """Name a work and its authors as its exact report records them."""
-    author_label = "Author details are not recorded"
     authors = next(
         (
             field.value
@@ -222,12 +223,20 @@ def report_work_labels(report: MetadataReport) -> tuple[str, str]:
         ),
         (),
     )
+    return report.target.current_title or "Untitled", author_label(authors)
+
+
+def author_label(authors: object) -> str:
+    """Name a work's authors from its report's authors value, or from a ledger
+    row's copy of it (ADR-0108)."""
+    if isinstance(authors, list):
+        authors = tuple(authors)
     if type(authors) is tuple and all(type(author) is str for author in authors):
         joined = ", ".join(cast("tuple[str, ...]", authors))
-        author_label = (
+        return (
             joined if len(joined) <= 512 else joined[:511].rstrip() + "…"
-        ) or author_label
-    return report.target.current_title or "Untitled", author_label
+        ) or "Author details are not recorded"
+    return "Author details are not recorded"
 
 
 def activity_result_label(state: str, failure: object = None) -> ActivityResult:
