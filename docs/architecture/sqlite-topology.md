@@ -34,8 +34,10 @@ tables stay separate is recorded in
   reads it instead. Nothing is migrated, imported or repaired
   ([ADR-0013](decisions/0013-pre-release-clean-schema.md)). What open-time
   admission checks is stated once in
-  [Schema admission](security.md#schema-admission); recovery from a refusal
-  is a clean rebuild, described in [Upgrades](../operations/upgrades.md).
+  [Schema admission](security.md#schema-admission). Recovery from a refusal
+  is `regenerate-derived` when only the application database's derived state
+  is from another build, and otherwise a clean rebuild; both are in
+  [Upgrades](../operations/upgrades.md).
 - **Owner-only files.** The application, session, provider-response and
   catalogue databases are created `0600` and must be owned by the runtime
   user. The application and catalogue databases refuse a parent directory
@@ -224,8 +226,9 @@ canonical documents, not a cache and not an alternate authority.
 
 `browse_fact_identity` records the Unicode version the facts were folded
 under and the Looks wrong rule list the flags were derived by. Open refuses
-any other version of either, so a Python upgrade that changes Unicode data,
-or a build with a different rule list, needs a clean rebuild.
+any other version of either. A Python upgrade that changes Unicode data needs
+a clean rebuild; a build with a different rule list has a new derived
+version, so startup names `regenerate-derived`.
 
 Open compares every derived relation with its canonical documents. A partial
 write, manual edit or interrupted projection refuses the database rather than
@@ -432,6 +435,10 @@ lock:
 4. Only then does it let SQLite roll back the real file through the retained
    alias, and removes the scratch directory and stale aliases.
 
+Under `regenerate-derived` step 3 validates the ledger alone, so a journal a
+killed server left is rolled back even though the derived state is from
+another build. Recovery ignores the command's `regeneration-backup` folder.
+
 Scratch copies left by an interrupted recovery are cleaned up first.
 Anything unknown or malformed refuses with
 "database recovery state is unsupported"; it is never repaired.
@@ -550,7 +557,9 @@ and a distinct authority, key, lifecycle or restart rule
 proposal to merge or remove tables must name the tables removed, the single
 transaction that keeps results equal, and how rollback, restart, stale
 currentness, idempotency, audit retention and exact-schema rejection still
-hold. Any schema change is a clean rebuild under ADR-0013.
+hold. A schema change to derived state only is a derived regeneration; any
+other is a clean rebuild until ledger migrations exist
+([ADR-0108](decisions/0108-ledger-and-derived-state.md)).
 
 To see which tables a bounded set of public tests writes, run:
 
@@ -563,8 +572,9 @@ cannot see update-only changes or rolled-back work.
 
 ### Ledger and derived state
 
-Partly built ([ADR-0108](decisions/0108-ledger-and-derived-state.md),
-proposed). Until regeneration lands, every schema change stays a clean rebuild.
+[ADR-0108](decisions/0108-ledger-and-derived-state.md), proposed, records
+this split. Ledger migrations are not built yet, so a ledger change is still a
+clean rebuild.
 
 - The application database keeps one file in two partitions. The **ledger**
   holds owner authority and its audit, safety budgets and paid artefacts
@@ -584,12 +594,26 @@ proposed). Until regeneration lands, every schema change stays a clean rebuild.
   (`owner_field_answers`, ordered by `owner_answer_ordinal`, with the
   append-only `owner_field_events` for Resume). It decides every automatic
   path and Resume, and open recomputes it from the owner's decisions and
-  refuses a store whose record differs.
-- Planned: `ledger_meta` records the ledger format version, the derived
-  version and schema digest, and the derived epoch, which proposal identity
-  binds so no case id recurs across a regeneration. `derived_regenerations`
-  is the append-only audit of each run.
-- Planned: startup refuses derived state from another build and names the offline
-  `regenerate-derived` command, which keeps a verified backup, drops and
-  recreates derived state in one transaction, and keeps the ledger. Ledger
-  changes become code-defined migrations inside that command before 1.0.
+  refuses a store whose record differs. `carry_outcomes` keeps one row per
+  answer, case and episode for the question check, which carries the answer
+  to a later case asking the same question or leaves the field to be asked
+  again.
+- `ledger_meta` records the ledger format version (`LEDGER_FORMAT_VERSION`),
+  the derived version (`DERIVED_VERSION`) and schema digest, and the derived
+  epoch, which proposal identity binds so no case id recurs across a
+  regeneration. `derived_regenerations` is the append-only audit of each run,
+  and `regeneration_notice_dismissals` records one dismissal of each run's
+  notice.
+- Startup reads `ledger_meta` first. Derived state from another build refuses
+  and names the offline `regenerate-derived` command; a missing record or
+  another ledger format refuses as needing a clean rebuild; an extra or
+  altered object refuses as before. Startup never drops or regenerates.
+- `regenerate-derived` opens the file through the server's binding, so it
+  refuses while a server holds it, and validates the ledger alone. It keeps a
+  verified copy in `regeneration-backup/`, then in one `BEGIN EXCLUSIVE`
+  transaction drops every object outside the ledger, revokes every current
+  authority, repoints owner cover pointers, advances the epoch, recreates the
+  derived objects and their seed rows, appends its audit row and runs the
+  open's full validation over the result. Ledger migrations will run inside
+  it, after the copy. The owner's steps are in
+  [Upgrades](../operations/upgrades.md#upgrading-with-a-regeneration).

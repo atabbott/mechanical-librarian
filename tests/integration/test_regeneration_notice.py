@@ -21,10 +21,10 @@ from mechanical_librarian.adapters.persistence.regeneration import (
     SQLiteRegenerationStore,
 )
 from mechanical_librarian.application.configuration import ApplicationConfiguration
-from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.regenerate_derived import regenerate_derived
 from mechanical_librarian.application.regeneration_notice import (
     RegenerationNotice,
+    RegenerationNoticeDismissalInvalid,
     RegenerationNoticeStore,
 )
 from mechanical_librarian.domain.metadata_policy import (
@@ -117,7 +117,7 @@ def test_no_regeneration_yet_reads_no_notice_and_dismisses_nothing(
         store.publish(report)
         store.decide("keep_current")
         assert _notices(store).read_regeneration_notice() is None
-        with pytest.raises(MetadataReportError, match="dismissal is invalid"):
+        with pytest.raises(RegenerationNoticeDismissalInvalid):
             _notices(store).dismiss_regeneration_notice(1, _FIRST_FINISHED)
         assert store.repository._connection.execute(
             "SELECT count(*) FROM regeneration_notice_dismissals"
@@ -169,9 +169,9 @@ def test_the_notice_counts_its_first_new_cases_and_a_second_regeneration_superse
         assert _notices(store).read_regeneration_notice() == first
 
         # One dismissal, never before the regeneration finished.
-        with pytest.raises(MetadataReportError, match="dismissal is invalid"):
+        with pytest.raises(RegenerationNoticeDismissalInvalid):
             _notices(store).dismiss_regeneration_notice(1, _FIRST_FINISHED - 1)
-        with pytest.raises(MetadataReportError, match="dismissal is invalid"):
+        with pytest.raises(RegenerationNoticeDismissalInvalid):
             _notices(store).dismiss_regeneration_notice(2, _FIRST_FINISHED)
         assert _notices(store).dismiss_regeneration_notice(1, _FIRST_FINISHED + 5)
         assert not _notices(store).dismiss_regeneration_notice(1, _FIRST_FINISHED + 9)

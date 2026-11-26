@@ -11,6 +11,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from mechanical_librarian.application.metadata_report import MetadataReportError
+
+
+class RegenerationNoticeDismissalInvalid(MetadataReportError):
+    """The dismissal names no finished regeneration, or has bad arguments;
+    a storage failure stays a plain `MetadataReportError`."""
+
+    def __init__(self) -> None:
+        super().__init__("regeneration notice dismissal is invalid")
+
 
 @dataclass(frozen=True, slots=True)
 class RegenerationNotice:
@@ -45,8 +55,12 @@ class RegenerationNoticeStore(Protocol):
     ) -> bool:
         """Dismiss that regeneration's notice, once; True when this call did.
         A regeneration that is unknown, or not finished at `dismissed_at`, is
-        refused."""
+        refused with `RegenerationNoticeDismissalInvalid`."""
         ...
 
 
-__all__ = ["RegenerationNotice", "RegenerationNoticeStore"]
+__all__ = [
+    "RegenerationNotice",
+    "RegenerationNoticeDismissalInvalid",
+    "RegenerationNoticeStore",
+]

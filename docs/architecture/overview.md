@@ -72,7 +72,11 @@ production deployment
 `mechanical-librarian-container` checks the `/data` volume, selects the
 first-boot mode (guided setup, resumed setup, store mode or file mode;
 [ADR-0058](decisions/0058-settings-authority-and-first-boot.md)), creates the
-private reviewer directories and starts the review server on port 8443.
+private reviewer directories and starts the review server on port 8443. It
+accepts exactly three argument vectors: none (the server), `regenerate-derived`
+and `regenerate-derived --retire-pending`, which run the offline regeneration
+of [ADR-0108](decisions/0108-ledger-and-derived-state.md) and exit. Anything
+else exits 2 before anything is opened.
 
 The review server is one Uvicorn listener. Until setup completes it serves
 only the setup flow. After that each request runs against one runtime

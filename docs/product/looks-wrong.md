@@ -42,5 +42,5 @@ A title that a source in the same report states with exactly the same spelling
 is not listed as the author's name or as all lower case: a self-titled work
 and a title published in lower case are real. The findings are worked out when
 a report is recorded and kept with it; a build with a different rule list
-needs a clean rebuild
-([Compatibility](../reference/compatibility.md)).
+needs `regenerate-derived`
+([Upgrades](../operations/upgrades.md#upgrading-with-a-regeneration)).

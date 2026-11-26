@@ -5,7 +5,9 @@ with your deploy-side files. The application database and the cover artifact
 store are a pair: always back up and restore them together.
 
 There is no import, selective restore, per-record purge, repair or migration
-command. To recover, you restore a matching backup or start clean. Never edit
+command. To recover, you restore a matching backup, run
+[`regenerate-derived`](upgrades.md#upgrading-with-a-regeneration) when startup
+names it, or start clean. Never edit
 database rows, pointers or artifact files to force a store open.
 
 ## What to keep
@@ -18,6 +20,7 @@ database rows, pointers or artifact files to force a store open.
 | Provider-response database | `/data/private/provider-responses.sqlite` | Optional. Losing it means providers are asked again. Holds provider answers that name your books, so keep it as private as the rest. It may be [carried across a clean rebuild](upgrades.md#keeping-provider-answers). |
 | Session database | `/data/private/review-sessions.sqlite` | Optional. Losing it costs one sign-in. Holds only token and client digests. |
 | Catalogue database | `/data/catalogue.sqlite3` | Optional; regenerable. |
+| Regeneration restore point | `/data/regeneration-backup/` | Present after `regenerate-derived` until you delete it: a verified copy of the application database from before the run, secrets included in store mode. While it holds anything, cover files are not removed. See [the restore point](upgrades.md#the-restore-point). |
 | Codex sign-in | `/data/reviewer/auth/` | Present only if you use the contained Codex reviewer. A credential. |
 | Deploy-side files | outside `/data` | Store mode: `review-bootstrap.json` and its TLS files. File mode: `/data/config.json` and every secret, password-hash and TLS file it names. |
 
@@ -73,14 +76,17 @@ of them is a way to export credentials.
 2. Restore the application database and artifact store from the same backup.
    Never pair a database with another backup's or another install's
    artifacts: on start the runtime deletes artifacts the database does not
-   reference.
+   reference, unless a regeneration restore point is kept.
 3. Restore the matching deploy-side files. They must pass the same validation
    as at any start.
 4. Start the container.
 
 Restore only into a build whose schemas match the backup. Otherwise startup
-refuses the stores without changing them, and you need a clean rebuild; see
-[upgrades](upgrades.md). Remove any `/data/config.json` left over from earlier
+refuses the stores without changing them. When only what preparation makes
+differs, startup names `regenerate-derived`; otherwise you need a clean
+rebuild. Both are in [upgrades](upgrades.md). To go back to the build before
+a regeneration, restore its
+[restore point](upgrades.md#the-restore-point) instead. Remove any `/data/config.json` left over from earlier
 use before you restore a store-mode backup. If that file is present, even if it
 is invalid, the container runs in file mode and ignores the restored settings.
 
