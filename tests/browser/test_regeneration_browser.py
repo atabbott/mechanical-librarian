@@ -71,6 +71,7 @@ from tests.integration.test_screens_across_regeneration import (
 from tests.support.ledger_partition import regenerate
 from tests.support.owner_field_record import request_resume
 from tests.support.ports import ReservedPort
+from tests.support.review_web_doubles import idle_preparation
 from tests.unit.review_app_fixture import create_transport_test_app
 from tests.unit.test_metadata_policy_activation import _draft
 from tests.unit.test_review_pipeline import _report as _policy_report
@@ -92,9 +93,13 @@ def _verified_playwright_browser() -> None:
 
 
 @contextmanager
-def _served(root: Path, *, policy: bool = False) -> Iterator[str]:
+def _served(
+    root: Path, *, policy: bool = False, prepared: bool = False
+) -> Iterator[str]:
     """Serve the store at ``root/owner.sqlite`` as `_server` serves its own,
-    at the time after the regeneration, and yield the origin."""
+    at the time after the regeneration, and yield the origin. With
+    ``prepared``, an idle preparation lane reads the store's library, so the
+    upgrade notice counts its answers not yet checked as the server does."""
     database = root / "owner.sqlite"
     hash_path = root / "owner.hash"
     if not hash_path.exists():
@@ -146,6 +151,7 @@ def _served(root: Path, *, policy: bool = False) -> Iterator[str]:
         owner_search=_owner_search(repository),
         policy_libraries=(("ebooks", None),) if policy else (),
         activity_projection=activity,
+        review_preparation=idle_preparation("primary", "ebooks") if prepared else None,
         react_asset_loader=ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
         settings=OwnerSettingsOperations(repository.owner_settings_store()),
     )
@@ -358,7 +364,7 @@ def test_an_idle_notice_with_answers_not_yet_checked_says_no_total(
             )
         finally:
             store.close()
-        with _served(root) as origin, _page(width) as page:
+        with _served(root, prepared=True) as origin, _page(width) as page:
             _login(page, origin)
             page.goto(f"{origin}/library?lens=all&attention=open")
             rail = page.get_by_label("Attention queue", exact=True)
