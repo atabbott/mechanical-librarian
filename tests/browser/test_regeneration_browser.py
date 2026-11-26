@@ -322,12 +322,15 @@ def test_the_upgrade_notice_shows_on_activity_and_in_attention_until_dismissed()
             ).click()
             expect(heading).to_be_visible()
             expect(page.locator(".cm-upgrade-notice")).to_have_count(0)
-            # Read again from the server: the dismissal stands.
-            with page.expect_response("**/api/v1/upgrade-notice") as answer:
-                page.reload()
-            assert answer.value.json()["notice"] is None
+            # Read again from the server, with the page's session: the
+            # dismissal stands. (The body of the page's own read after a
+            # reload was not always still available to the test in CI.)
+            page.reload()
             expect(heading).to_be_visible()
             expect(page.locator(".cm-upgrade-notice")).to_have_count(0)
+            answer = page.request.get(f"{origin}/api/v1/upgrade-notice")
+            assert answer.ok
+            assert answer.json()["notice"] is None
         with closing(sqlite3.connect(root / "owner.sqlite")) as connection:
             assert connection.execute(
                 "SELECT count(*) FROM regeneration_notice_dismissals"
