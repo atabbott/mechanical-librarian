@@ -10,9 +10,10 @@ own definitions through `tests/support/ledger_documents.py`.
 A ledger change (any change to a ledger table or document, or to one of those
 vocabularies) moves the digest, so this test fails until the change takes a
 new `LEDGER_FORMAT_VERSION`, a new `PINNED` entry and its CHANGELOG marker:
-**Clean rebuild required** until C6 builds ledger migrations, then **Ledger
-migration**. The frozen fixture of the old version stays as it is; C6
-migrates from it.
+**Ledger migration** with its step from the previous format in
+`ledger_migrations.LEDGER_MIGRATIONS`, or **Clean rebuild required** without
+one. The frozen fixture of the old version stays as it is; the step migrates
+from it.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from mechanical_librarian.adapters.persistence import schema
+from mechanical_librarian.adapters.persistence import ledger_migrations, schema
 from tests.support import ledger_documents
 
 ROOT = Path(__file__).parents[2]
@@ -132,13 +133,75 @@ def test_the_pin_moves_with_each_part_of_the_ledger(
     assert ledger_digest() != before
 
 
-def test_each_pinned_ledger_format_is_declared_in_the_changelog() -> None:
-    """The cutover's format declares **Clean rebuild required**; a later one
-    declares that or, from C6, **Ledger migration**."""
-    for version, (_, issue) in PINNED.items():
-        markers = (
-            ("Clean rebuild required",)
-            if version == 1
-            else ("Clean rebuild required", "Ledger migration")
+def chain_faults(sources: list[int], current: int, pinned: set[int]) -> list[str]:
+    """What keeps a chain from being exact-predecessor steps over pinned
+    formats: each step's source once, in order, below this build's format,
+    with both its formats pinned."""
+    faults = []
+    if sources != sorted(set(sources)):
+        faults.append("sources are not unique and ascending")
+    for source in sources:
+        if not 1 <= source < current:
+            faults.append(f"step {source} is not below the current format")
+        if not {source, source + 1} <= pinned:
+            faults.append(f"step {source} migrates between unpinned formats")
+    return faults
+
+
+def test_the_chain_is_exact_predecessor_steps() -> None:
+    assert (
+        chain_faults(
+            [step.source for step in ledger_migrations.LEDGER_MIGRATIONS],
+            schema.LEDGER_FORMAT_VERSION,
+            set(PINNED),
         )
-        assert any(declares(marker, issue) for marker in markers), (version, issue)
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("sources", "current", "pinned"),
+    [
+        ([1, 1], 3, {1, 2, 3}),
+        ([2, 1], 3, {1, 2, 3}),
+        ([1], 1, {1, 2}),
+        ([0], 2, {0, 1, 2}),
+        ([1], 2, {1}),
+    ],
+    ids=["duplicate", "descending", "at_current", "below_one", "unpinned"],
+)
+def test_a_chain_that_is_not_exact_predecessor_steps_is_found(
+    sources: list[int], current: int, pinned: set[int]
+) -> None:
+    """Negative control: each fault the chain test names."""
+    assert chain_faults(sources, current, pinned) != []
+
+
+def undeclared() -> list[tuple[int, str, int]]:
+    """Each pinned format whose CHANGELOG marker is missing: a format the
+    chain migrates to declares **Ledger migration**; any other, the
+    cutover's included, declares **Clean rebuild required**."""
+    targets = {step.source + 1 for step in ledger_migrations.LEDGER_MIGRATIONS}
+    missing = []
+    for version, (_, issue) in PINNED.items():
+        marker = "Ledger migration" if version in targets else "Clean rebuild required"
+        if not declares(marker, issue):
+            missing.append((version, marker, issue))
+    return missing
+
+
+def test_each_pinned_ledger_format_is_declared_in_the_changelog() -> None:
+    assert undeclared() == []
+
+
+def test_a_migrated_format_needs_the_ledger_migration_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negative control: were the cutover's format reached by a step, its
+    **Clean rebuild required** entry would not declare it."""
+    monkeypatch.setattr(
+        ledger_migrations,
+        "LEDGER_MIGRATIONS",
+        (ledger_migrations.LedgerMigration(0, lambda _connection: None),),
+    )
+    assert undeclared() == [(1, "Ledger migration", 2040)]
