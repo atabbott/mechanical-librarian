@@ -1500,6 +1500,27 @@ describe('ReviewApiClient', () => {
       })
   })
 
+  it('maps an answer the question check carried as an owner row (ADR-0108)', async () => {
+    // Until C3 words it, a carried answer reads as the owner's own row, and a
+    // settled one states no reason of its own.
+    const carried = historyDecisionItem({
+      application: 'settled',
+      kind: 'human_decision_carried',
+      outcome: 'keep_current',
+    })
+    const [item] = (await readHistory(caseHistory({ items: [carried] }))).items
+    expect(item).toMatchObject({
+      category: 'owner',
+      applicationReason: null,
+      outcome: 'keep_current',
+    })
+    for (const invalid of [
+      { ...carried, kind: 'human_decision_settled' },
+      { ...carried, application: 'carried' },
+    ])
+      await expect(readHistory(caseHistory({ items: [invalid] }))).rejects.toThrow(ApiError)
+  })
+
   it('maps history without exposing retained identities and rejects malformed values', async () => {
     const items = [
       historyDecisionItem({

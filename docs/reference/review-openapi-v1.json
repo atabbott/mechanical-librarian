@@ -3998,7 +3998,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v16",
+            "const": "review-case-detail-v17",
             "title": "Schema Version",
             "type": "string"
           },
@@ -6318,7 +6318,8 @@
           "application": {
             "enum": [
               "apply",
-              "recorded_only"
+              "recorded_only",
+              "settled"
             ],
             "title": "Application",
             "type": "string"
@@ -7511,7 +7512,8 @@
               {
                 "enum": [
                   "apply",
-                  "recorded_only"
+                  "recorded_only",
+                  "settled"
                 ],
                 "type": "string"
               },
@@ -7577,7 +7579,10 @@
             "title": "Kept From"
           },
           "kind": {
-            "const": "human_decision_recorded",
+            "enum": [
+              "human_decision_recorded",
+              "human_decision_carried"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -8101,7 +8106,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v9",
+            "const": "review-case-history-v10",
             "title": "Schema Version",
             "type": "string"
           }

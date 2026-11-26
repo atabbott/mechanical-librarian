@@ -103,6 +103,9 @@ from mechanical_librarian.adapters.persistence.question_check_runner import (
 from mechanical_librarian.adapters.persistence.recovery_outbox import (
     SQLiteRecoveryOutboxRepository,
 )
+from mechanical_librarian.adapters.persistence.regeneration_notice import (
+    SQLiteRegenerationNoticeStore,
+)
 from mechanical_librarian.adapters.persistence.reports import (
     SQLiteReportRepository,
 )
@@ -396,6 +399,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._reviewer_access = ReviewerAccessStore(
             connection, self._setup_serialization_lock
         )
+        self._regeneration_notice = SQLiteRegenerationNoticeStore(connection)
         self._description_advice = SQLiteDescriptionAdviceRepository(
             connection,
             lambda decision_id, at: self._revoke_field_effect_authority_in_transaction(
@@ -702,6 +706,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             self._metadata_policy,
             self._owner_settings,
             self._reviewer_access,
+            self._regeneration_notice,
             self._description_advice,
             self._review_scans,
             self._cover_taste,
@@ -3214,6 +3219,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def reviewer_access_store(self) -> ReviewerAccessStore:
         return self._reviewer_access
+
+    def regeneration_notice_store(self) -> SQLiteRegenerationNoticeStore:
+        """The upgrade notice's state for C3 (#2039; contract S14)."""
+        return self._regeneration_notice
 
     def setup_state_store(self) -> SetupStateStore:
         """The setup-only composition is the sole caller of this incomplete-state port."""

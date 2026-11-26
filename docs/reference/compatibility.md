@@ -147,8 +147,8 @@ exact schemas of their own and no separate version string.
 
 The owner API is served under `/api/v1`, and each response names its version
 in `schema_version`. The main ones are `review-session-v1`,
-`review-library-v13`, `review-preparation-v3`, `review-case-detail-v16`,
-`review-case-evidence-v6`, `review-report-detail-v7`, `review-case-history-v9`,
+`review-library-v13`, `review-preparation-v3`, `review-case-detail-v17`,
+`review-case-evidence-v6`, `review-report-detail-v7`, `review-case-history-v10`,
 `review-attention-v2` and `continuous-field-activity-v6`. The generated
 [OpenAPI document](review-openapi-v1.json) pins each of them except
 `review-session-v1`, which the server sets.
