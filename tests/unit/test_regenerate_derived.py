@@ -52,8 +52,8 @@ from tests.support.ledger_partition import (
     copied_store,
     opens,
     rewrite,
+    strip_derived_rows,
 )
-from tests.support.ledger_partition import regenerate as strip_derived_rows
 from tests.support.owner_field_record import assert_record_recomputes
 from tests.support.owner_values import OwnerStore
 from tests.unit.test_field_effects import audiobook_pair  # noqa: F401  # reason: a fixture, used by name.

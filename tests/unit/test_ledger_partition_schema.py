@@ -52,6 +52,7 @@ from tests.support.ledger_partition import (
     reopen_without_derived_rows,
     rewrite,
     rewrite_no_change,
+    run_regeneration,
 )
 from tests.support.owner_field_record import resume
 from tests.support.owner_values import OwnerStore
@@ -372,7 +373,9 @@ def test_an_owner_authored_description_is_a_ledger_row_with_its_copies(
                 ("automatic_decision_" + "0" * 64,),
             )
         checked = assert_ledger_copies(repository)
-        decoded = reopen_without_derived_rows(repository, tmp_path / "regen")
+        decoded = reopen_without_derived_rows(
+            repository, tmp_path / "regen", retire_pending=True
+        )
     finally:
         repository.close()
     assert checked["activity_owner_description"] == 1
@@ -411,7 +414,10 @@ def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
         # too, so an edit that stands once regenerated moves both (ADR-0108).
         rewrite(path, f"UPDATE owner_field_answers SET {assignment}")
     assert not opens(path)
-    regenerate(path)
+    # A copy that cannot stand alone is refused by the command's ledger-only
+    # admission, so the file stays as it was (ADR-0108 "The offline command").
+    outcome = run_regeneration(path, retire_pending=True)
+    assert outcome.kind == ("regenerated" if regenerated_opens else "failed")
     assert opens(path) is regenerated_opens
 
 
@@ -443,7 +449,7 @@ def test_a_case_chosen_description_names_a_decision_of_one_half(
     for sql in edits:
         rewrite(path, sql)
     assert not opens(path)
-    regenerate(path)
+    regenerate(path, retire_pending=True)
     assert opens(path)
 
 
@@ -532,7 +538,7 @@ def test_a_ledger_copy_agrees_with_its_derived_row_while_it_is_there(
     for sql in _CASE_AND_ITEM_COPIES[copy]:
         rewrite(activity, sql)
     assert not opens(activity)
-    regenerate(activity)
+    regenerate(activity, retire_pending=True)
     assert opens(activity)
 
 
@@ -543,7 +549,7 @@ def test_an_event_and_a_transition_state_agree_with_the_ledger_always(
     for sql in _LEDGER_DISAGREEMENTS[disagreement]:
         rewrite(activity, sql)
     assert not opens(activity)
-    regenerate(activity)
+    assert run_regeneration(activity, retire_pending=True).kind == "failed"
     assert not opens(activity)
 
 
@@ -814,7 +820,9 @@ def test_a_regenerated_store_opens_and_every_ledger_row_decodes(
     origins and their events, and the policy (ADR-0108)."""
     seeded = seed_activity(tmp_path)
     try:
-        decoded = reopen_without_derived_rows(seeded.repository, tmp_path / "regen")
+        decoded = reopen_without_derived_rows(
+            seeded.repository, tmp_path / "regen", retire_pending=True
+        )
     finally:
         seeded.repository.close()
     for table in (
@@ -838,7 +846,7 @@ def test_an_owner_cover_choice_stands_without_its_comparison(
     owner_cover: Path, tmp_path: Path
 ) -> None:
     regenerated = _regenerated(owner_cover, tmp_path / "regen")
-    regenerate(regenerated)
+    regenerate(regenerated, retire_pending=True)
     assert opens(owner_cover)
     assert opens(regenerated)
     connection = sqlite3.connect(regenerated)
@@ -873,7 +881,7 @@ def test_an_owner_cover_copy_agrees_with_its_comparison_while_it_is_there(
     agree with it; once a regeneration took them, the copy stands."""
     rewrite(owner_cover, f"UPDATE owner_cover_selections SET {assignment}")
     assert not opens(owner_cover)
-    regenerate(owner_cover)
+    regenerate(owner_cover, retire_pending=True)
     assert opens(owner_cover)
 
 
@@ -902,7 +910,7 @@ def test_an_owner_cover_choice_agrees_with_its_decision_always(
 ) -> None:
     rewrite(owner_cover, f"UPDATE owner_cover_selections SET {assignment}")
     assert not opens(owner_cover)
-    regenerate(owner_cover)
+    assert run_regeneration(owner_cover, retire_pending=True).kind == "failed"
     assert not opens(owner_cover)
 
 
@@ -914,7 +922,7 @@ def test_an_owner_cover_choice_names_a_present_predecessor_while_compared(
     comparison is there, the selection it superseded is there too."""
     rewrite(owner_cover, _SUPERSEDES_ABSENT)
     assert not opens(owner_cover)
-    regenerate(owner_cover)
+    regenerate(owner_cover, retire_pending=True)
     assert opens(owner_cover)
 
 
@@ -977,7 +985,7 @@ def test_every_ledger_row_naming_an_owner_decision_names_its_work(
                 (decision_id,),
             )
         assert not opens(path)
-        regenerate(path)
+        assert run_regeneration(path).kind == "failed"
         assert not opens(path)
 
 
@@ -986,7 +994,7 @@ def test_an_owner_cover_choice_names_its_decisions_work(
 ) -> None:
     for table in ("human_decisions", "human_decision_events"):
         rewrite(owner_cover, f"UPDATE {table} SET item_id='item-9'")
-    regenerate(owner_cover)
+    assert run_regeneration(owner_cover, retire_pending=True).kind == "failed"
     assert not opens(owner_cover)
 
 
@@ -1210,7 +1218,7 @@ def test_accepted_gaps_are_the_listed_ones(
     assert tuple(gaps) == ACCEPTED_GAPS
     for name, (store, *edits) in gaps.items():
         changed = _regenerated(stores[store], tmp_path / name)
-        regenerate(changed)
+        regenerate(changed, retire_pending=True)
         for edit in edits:
             if isinstance(edit, str):
                 assert rewrite(changed, edit) > 0, (name, edit)

@@ -58,6 +58,7 @@ from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
 )
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
+from mechanical_librarian.application.regenerate_derived import Reason
 from mechanical_librarian.application.write_plan import inline_row, plan_reason
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.activity_records import readable_activity_event
@@ -141,7 +142,11 @@ from tests.support.field_effects import (
 from tests.support.field_effects import (
     effects as effects,
 )
-from tests.support.ledger_partition import reopen_without_derived_rows
+from tests.support.ledger_partition import (
+    copied_store,
+    reopen_without_derived_rows,
+    run_regeneration,
+)
 from tests.support.owner_field_record import (
     complete_resume,
     hold_context,
@@ -6046,9 +6051,9 @@ def test_audiobook_pair_happy_pair_scheduler_reopen_and_activity(audiobook_pair)
 def test_audiobook_pair_live_plan_keeps_its_decisions_through_a_regeneration(
     audiobook_pair, tmp_path
 ):
-    """A pair still to write is refused without the decisions it was planned
-    from, since a regeneration revokes it first; once verified, the pair
-    stands without them (ADR-0108)."""
+    """A pair still to write stops `regenerate-derived` at its gate, so no
+    regeneration takes the decisions it was planned from; once verified, the
+    pair stands without them (ADR-0108)."""
     lane = ContinuousGuardedApplication(
         audiobook_pair.repo,
         {("primary", "audio"): audiobook_pair.service},
@@ -6062,8 +6067,9 @@ def test_audiobook_pair_live_plan_keeps_its_decisions_through_a_regeneration(
     (plan_id,) = audiobook_pair.repo._connection.execute(
         "SELECT plan_id FROM field_effects"
     ).fetchone()
-    with pytest.raises(MetadataReportError):
-        reopen_without_derived_rows(audiobook_pair.repo, tmp_path / "planned")
+    outcome = run_regeneration(copied_store(audiobook_pair.repo, tmp_path / "planned"))
+    assert outcome.kind == "gate"
+    assert [item.reason for item in outcome.items] == [Reason.WAITING]
     assert audiobook_pair.service.apply(plan_id).state == "verified"
     decoded = reopen_without_derived_rows(audiobook_pair.repo, tmp_path / "verified")
     assert decoded["field_effects"] == 1
