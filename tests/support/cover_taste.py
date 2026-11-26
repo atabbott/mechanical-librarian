@@ -69,13 +69,14 @@ def record_owner_cover_decisions(
     *,
     start: int = 0,
     before_decision: Callable[[str], None] | None = None,
+    keep: bool = False,
 ) -> None:
     """Record `count` owner cover choices through the real decision command.
 
     Each item's consideration offers its current cover and one larger
-    candidate of another art; the owner chooses the candidate.
-    `before_decision`, when given, runs with each case id just before its
-    decision is recorded.
+    candidate of another art; the owner chooses the candidate, or keeps the
+    current cover when `keep`. `before_decision`, when given, runs with each
+    case id just before its decision is recorded.
     """
     base, _ = _qualified_cover_report(root, candidate_size=(1200, 1800))
     artifacts = CoverArtifactStore(root / "artifacts")
@@ -133,13 +134,15 @@ def record_owner_cover_decisions(
             target_fingerprint=case.target_fingerprint,
             destination="cover",
             actor="owner",
-            outcome="accept",
-            selected_value={"kind": "cover", "value": chosen["artifact_id"]},
+            outcome="keep_current" if keep else "accept",
+            selected_value=None
+            if keep
+            else {"kind": "cover", "value": chosen["artifact_id"]},
             idempotency_key=f"synthetic-taste-owner-{index:04d}",
             consideration_id=str(consideration["consideration_id"]),
             cover_confirmation={
                 "expected_selection_id": None,
-                "confirm_unverified_match": True,
+                "confirm_unverified_match": not keep,
             },
         )
 

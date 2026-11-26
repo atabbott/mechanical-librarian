@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from mechanical_librarian.adapters.operational_evidence import SupportBundle
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.cover_taste import _ELIGIBLE
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -47,11 +48,16 @@ from mechanical_librarian.application.reviewer_contracts import (
     ReviewerProvisioningStatus,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+from mechanical_librarian.domain.cover_taste import TASTE_MIN_ARTS
 from mechanical_librarian.interfaces.web.app import REVIEW_TASTE_PROFILE_SCHEMA
 from tests.support.cover_selections import ALL_COVER_SELECTIONS
 from tests.support.cover_taste import record_owner_cover_decisions
 from tests.support.ledger_copies import assert_ledger_copies
-from tests.support.ledger_partition import reopen_without_derived_rows
+from tests.support.ledger_partition import (
+    copied_store,
+    regenerate_as_the_command,
+    reopen_without_derived_rows,
+)
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
@@ -590,3 +596,67 @@ def _client(built: _Built) -> Iterator[tuple[TestClient, dict[str, str]]]:
                 "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
             },
         )
+
+
+def _taste_reading(path: Path, watermark: int) -> tuple[object, ...]:
+    """Which choices count, the count shown, those since `watermark`, and
+    whether a cadence build is then due."""
+    repository = open_repository(path, create=False)
+    try:
+        store = repository.cover_taste_store()
+        eligible = [
+            row[0]
+            for row in repository._connection.execute(
+                f"SELECT selection.selection_id {_ELIGIBLE} ORDER BY selection.rowid",
+                (TASTE_MIN_ARTS,),
+            )
+        ]
+        new = repository._connection.execute(
+            f"SELECT count(*) {_ELIGIBLE} AND selection.rowid>?",
+            (TASTE_MIN_ARTS, watermark),
+        ).fetchone()[0]
+        return (
+            eligible,
+            store.eligible_count(),
+            store.read()["eligible"],
+            new,
+            store.schedule(NOW + 86_400, True, 8),
+        )
+    finally:
+        repository.close()
+
+
+def test_earlier_choices_keep_counting_after_a_regeneration(tmp_path) -> None:
+    """ADR-0108: profile eligibility reads the owner selection's copies, so
+    the count shown and the 25 and 10 thresholds read the same choices
+    after the real `regenerate-derived` as before it."""
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path, cross_thread=True)
+    try:
+        store = repository.cover_taste_store()
+
+        def first_build(_case_id: str) -> None:
+            # After 25 choices the first build is due; it fails, so the next
+            # one is due 10 choices later.
+            if store.eligible_count() == 25 and not store.read()["versions"]:
+                assert store.schedule(NOW, True, 8)
+                (build_id,) = repository._connection.execute(
+                    "SELECT build_id FROM cover_taste_builds"
+                ).fetchone()
+                store.fail(build_id, NOW, "unavailable")
+
+        # Keeps: a regeneration keeps the owner's pointer to a keep, but
+        # repoints or clears one to a choice never written.
+        record_owner_cover_decisions(
+            tmp_path, repository, 35, keep=True, before_decision=first_build
+        )
+        (watermark,) = repository._connection.execute(
+            "SELECT selection_watermark FROM cover_taste_builds"
+        ).fetchone()
+        regenerated = copied_store(repository, tmp_path / "regenerated")
+    finally:
+        repository.close()
+    regenerate_as_the_command(regenerated)
+    before = _taste_reading(path, watermark)
+    assert before[1:] == (35, 35, 10, True)
+    assert _taste_reading(regenerated, watermark) == before

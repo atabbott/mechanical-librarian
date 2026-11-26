@@ -19,6 +19,9 @@ from mechanical_librarian.adapters.persistence.cover_taste_judge import (
     taste_judge_facts,
     taste_preview_walk,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _OWNER_SELECTION_COPY_JOIN_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -60,26 +63,20 @@ VERSIONS_SHOWN = 50
 # chosen cover must be one the build sends (a previewed `candidate`, never a
 # larger copy) and the report must name a file format, so the count shown and
 # the 25/10 thresholds read exactly the decisions `_decision_source` keeps.
+# Eligibility reads the selection's own copies of those facts, which open
+# holds equal to the comparison and report while they are there, so earlier
+# choices keep counting after a regeneration (ADR-0108); the comparison and
+# report stay joined for the build's decisions.
 _ELIGIBLE = (
     "FROM owner_cover_pointers current "
     "JOIN owner_cover_selections selection "
     "ON selection.selection_id=current.selection_id "
-    "JOIN cover_considerations consideration "
-    "ON consideration.consideration_id=selection.consideration_id "
-    "JOIN metadata_report_browse_facts facts "
-    "ON facts.report_id=consideration.report_id "
-    "WHERE json_extract(selection.document,'$.preview_sha256') IS NOT NULL "
+    + _OWNER_SELECTION_COPY_JOIN_SQL
+    + " WHERE json_extract(selection.document,'$.preview_sha256') IS NOT NULL "
     "AND json_extract(selection.document,'$.candidate_kind') IS NOT 'retained' "
-    "AND json_extract(consideration.currentness_document,'$.cover_stage.arts')>=? "
-    "AND typeof(facts.format)='text' "
-    "AND EXISTS (SELECT 1 FROM json_each(consideration.document,'$.candidates') "
-    "offered WHERE json_extract(offered.value,'$.reference')="
-    "json_extract(selection.document,'$.candidate_reference') "
-    "AND json_extract(offered.value,'$.candidate_kind')='candidate' "
-    "AND json_type(offered.value,'$.preview_sha256')='text' "
-    "AND json_type(offered.value,'$.transport_sha256')='text' "
-    "AND json_type(offered.value,'$.width')='integer' "
-    "AND json_type(offered.value,'$.height')='integer')"
+    "AND selection.offered_arts>=? AND selection.report_format IS NOT NULL "
+    "AND selection.transport_sha256 IS NOT NULL "
+    "AND selection.width IS NOT NULL AND selection.height IS NOT NULL"
 )
 _RECORD_KEYS = frozenset(
     {
@@ -568,7 +565,8 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
         corrected the suggestion in force when it was made (J9)."""
         rows = self._connection.execute(
             "SELECT selection.selection_id,selection.document,consideration.document,"
-            f"facts.format,{VERDICT_IN_FORCE_SQL} {_ELIGIBLE} ORDER BY selection.rowid",
+            f"selection.report_format,{VERDICT_IN_FORCE_SQL} {_ELIGIBLE} "
+            "ORDER BY selection.rowid",
             (TASTE_MIN_ARTS,),
         ).fetchall()
         sources = (_decision_source(*row) for row in rows)
@@ -654,11 +652,14 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
 def _decision_source(
     selection_id: str,
     selection_document: str,
-    consideration_document: str,
+    consideration_document: str | None,
     file_format: object,
     verdict_document: str | None,
 ) -> TasteDecisionSource | None:
-    """One recorded decision's previewed covers and stage facts, or None to skip."""
+    """One recorded decision's previewed covers and stage facts, or None to
+    skip: a regeneration took the comparison it was made over."""
+    if consideration_document is None:
+        return None
     try:
         selection = json.loads(selection_document)
         consideration = json.loads(consideration_document)
