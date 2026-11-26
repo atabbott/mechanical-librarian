@@ -132,7 +132,7 @@ _LIMITING_STATUSES = frozenset(
     }
 )
 _AttentionRow = tuple[
-    str, str, str, int, str | None, ReviewFieldCause | None, bool, bool
+    str, str, str, int, str | None, ReviewFieldCause | None, bool, bool, str | None
 ]
 
 
@@ -685,6 +685,7 @@ class FakeReviewRepository:
                 "destination": decision.destination,
                 "event_id": event_id,
                 "kind": "human_decision_recorded",
+                "kept_from": None,
                 "occurred_at": decision.occurred_at,
                 "outcome": decision.outcome,
                 "previous_value": None
@@ -1071,6 +1072,7 @@ class FakeReviewRepository:
                 self.attention_causes.get(cast(str, proposal["destination"])),
                 proposal["destination"] in self.policy_attention_destinations,
                 False,
+                None,
             )
             for case, report, proposal in rows[offset : offset + limit]
         ]

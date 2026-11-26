@@ -397,7 +397,7 @@
     "total": 0
   },
   "provider_recovery": [],
-  "schema_version": "continuous-field-activity-v5",
+  "schema_version": "continuous-field-activity-v6",
   "suspensions": [],
   "waiting": {
     "applying": 0,

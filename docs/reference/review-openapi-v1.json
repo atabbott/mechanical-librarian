@@ -2366,8 +2366,13 @@
               {
                 "enum": [
                   "asked_again",
+                  "asked_again_choices",
                   "asked_again_matching",
                   "asked_again_matching_written",
+                  "asked_again_resume",
+                  "asked_again_retired",
+                  "asked_again_value",
+                  "asked_again_withdrawn",
                   "held",
                   "held_back",
                   "waiting_for_check"
@@ -2821,7 +2826,7 @@
             "type": "array"
           },
           "schema_version": {
-            "const": "continuous-field-activity-v5",
+            "const": "continuous-field-activity-v6",
             "title": "Schema Version",
             "type": "string"
           },
@@ -3249,9 +3254,89 @@
         "title": "_AsinQualification",
         "type": "object"
       },
+      "_AskedAgain": {
+        "additionalProperties": false,
+        "description": "Why the record's earlier answer is asked again (contract #2039 3.1).",
+        "properties": {
+          "earlier": {
+            "$ref": "#/components/schemas/_AskedAgainEarlier"
+          },
+          "reason": {
+            "enum": [
+              "question_changed",
+              "target_changed",
+              "withdrawn",
+              "resume_failed",
+              "retired",
+              "matching_changed",
+              "other"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "earlier"
+        ],
+        "title": "_AskedAgain",
+        "type": "object"
+      },
+      "_AskedAgainEarlier": {
+        "additionalProperties": false,
+        "description": "The record's earlier answer a field is asked again over: what the\nowner did, the value (a keep's is the one its case showed; a decline has\nnone) and the day, its root original's for a carried answer.",
+        "properties": {
+          "occurred_at": {
+            "minimum": 0.0,
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "outcome": {
+            "enum": [
+              "accept",
+              "keep_current",
+              "reject",
+              "owner_entered"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_EmptyValue"
+              },
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "outcome",
+          "value",
+          "occurred_at"
+        ],
+        "title": "_AskedAgainEarlier",
+        "type": "object"
+      },
       "_AttentionItem": {
         "additionalProperties": false,
         "properties": {
+          "asked_again": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_AskedAgain"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "authors": {
             "items": {
               "type": "string"
@@ -3350,6 +3435,7 @@
           }
         },
         "required": [
+          "asked_again",
           "authors",
           "classification_reason",
           "destination",
@@ -3399,7 +3485,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-attention-v1",
+            "const": "review-attention-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -7477,6 +7563,19 @@
             "title": "Event Id",
             "type": "string"
           },
+          "kept_from": {
+            "anyOf": [
+              {
+                "maximum": 8640000000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kept From"
+          },
           "kind": {
             "const": "human_decision_recorded",
             "title": "Kind",
@@ -7566,6 +7665,7 @@
           "destination",
           "event_id",
           "kind",
+          "kept_from",
           "occurred_at",
           "outcome",
           "previous_value",
@@ -8001,7 +8101,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v8",
+            "const": "review-case-history-v9",
             "title": "Schema Version",
             "type": "string"
           }
@@ -13283,6 +13383,16 @@
       "_ReviewField": {
         "additionalProperties": false,
         "properties": {
+          "asked_again": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_AskedAgain"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "automatic_decision": {
             "anyOf": [
               {
@@ -13369,7 +13479,8 @@
               "nothing_to_decide",
               "pinned",
               "pin_changed",
-              "held_in_preview"
+              "held_in_preview",
+              "asked_again"
             ],
             "title": "Classification Cause",
             "type": "string"
@@ -13699,6 +13810,7 @@
           "manual_return_requested",
           "manual_return_failed",
           "resume_failed",
+          "asked_again",
           "manual_required",
           "needs_attention",
           "navigation_role",

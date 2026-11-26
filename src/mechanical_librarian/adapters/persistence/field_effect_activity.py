@@ -97,6 +97,8 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _active_generation_automatic_sql,
     _authored_description_sql,
     _episode_decision_sql,
+    asked_again_reason_sql,
+    asked_again_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _AUTOMATIC_POSTURE_SQL,
@@ -646,6 +648,17 @@ def _unwritten_choice_sql(decision: str) -> str:
 # table. Leaving Automatic always starts a new generation, so an
 # active-generation choice means Automatic is on. Bound by the page's
 # automatic event ids as JSON, twice.
+# The Activity note on the record's answer a work's current case asks again,
+# by why (`asked_again_reason_sql`; contract #2039 3.3).
+_ASKED_AGAIN_NOTES: Final = {
+    "question_changed": "asked_again_choices",
+    "target_changed": "asked_again_value",
+    "withdrawn": "asked_again_withdrawn",
+    "resume_failed": "asked_again_resume",
+    "retired": "asked_again_retired",
+    "matching_changed": "asked_again_matching",
+    "other": "asked_again",
+}
 _HELD_AUTOMATIC_NOTE_SQL = (
     "SELECT automatic.decision_id FROM automatic_decisions automatic "
     "JOIN current_review_packages current "
@@ -1154,7 +1167,8 @@ def _field_effect_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
 
 
 def _human_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
-    """Every recorded owner decision.
+    """Every recorded owner decision but a carried one: the question check
+    carried an earlier answer, which already has its row (ADR-0108, Q1).
 
     Once a regeneration took its case and report, the row reads its work and
     title from the decision's copies and names no connection or report, as an
@@ -1168,7 +1182,8 @@ def _human_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str
               FROM human_decision_events event
               JOIN human_decisions decision ON decision.decision_id=event.decision_id
          LEFT JOIN review_cases review ON review.review_case_id=event.review_case_id
-         LEFT JOIN metadata_reports report ON report.report_id=review.report_id{scope("human_decision", "event.event_id", "WHERE")}"""
+         LEFT JOIN metadata_reports report ON report.report_id=review.report_id
+             WHERE event.kind<>'human_decision_carried'{scope("human_decision", "event.event_id", "AND")}"""
 
 
 def _automatic_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
@@ -5129,27 +5144,44 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 )
                 for row in rows
             )
+            # The record's answer the work's current case asks again (or its
+            # root, where it was carried) says why, as Attention and the case
+            # page do; it wins over Book matching's note above (contract
+            # #2039 3.3). A carried row has no row of its own (Q1).
             rows = self._connection.execute(
-                "SELECT event.event_id FROM human_decision_events event "
+                "SELECT event.event_id,"
+                + asked_again_reason_sql("asked", "current.review_case_id")
+                + " FROM human_decision_events event "
                 "JOIN human_decisions decision ON decision.decision_id=event.decision_id "
-                "JOIN review_case_episodes episode "
-                "ON episode.review_case_id=decision.review_case_id "
+                "JOIN owner_field_answers asked "
+                "ON asked.connection_name=decision.connection_name "
+                "AND asked.library_name=decision.library_name "
+                "AND asked.item_id=decision.item_id "
+                "AND asked.destination=decision.destination "
                 "JOIN current_review_packages current "
-                "ON current.review_case_id=decision.review_case_id "
-                "WHERE decision.ordinal<=episode.decision_floor "
-                # An answer the question check carried into the case's
-                # current episode was not asked again (ADR-0108).
-                "AND NOT EXISTS (SELECT 1 FROM human_decisions carried "
-                "WHERE carried.carried_from=COALESCE(decision.carried_from,"
-                "decision.decision_id) "
-                "AND carried.review_case_id=decision.review_case_id "
-                "AND json_extract(carried.document,'$.episode')="
-                "episode.decision_floor) AND event.event_id IN ("
+                "ON current.connection_name=asked.connection_name "
+                "AND current.library_name=asked.library_name "
+                "AND current.item_id=asked.item_id "
+                "JOIN review_case_field_facts asked_field "
+                "ON asked_field.review_case_id=current.review_case_id "
+                "AND asked_field.destination=asked.destination "
+                "AND asked_field.has_owner_decision_actions=1 "
+                "WHERE event.event_id IN ("
                 + ",".join("?" for _ in decisions)
-                + ")",
+                + ") AND asked.destination<>'cover' AND decision.decision_id="
+                "COALESCE((SELECT asked_decision.carried_from FROM human_decisions "
+                "asked_decision WHERE asked_decision.decision_id=asked.answer_id),"
+                "asked.answer_id) AND "
+                + asked_again_sql(
+                    "asked", "current.review_case_id", "asked.destination"
+                ),
                 decisions,
             ).fetchall()
-            notes.update((row[0], "asked_again") for row in rows)
+            notes.update(
+                (row[0], _ASKED_AGAIN_NOTES[row[1]])
+                for row in rows
+                if row[1] in _ASKED_AGAIN_NOTES
+            )
         if planned:
             posture = self._connection.execute(
                 "SELECT posture FROM metadata_policy_state WHERE singleton=1"

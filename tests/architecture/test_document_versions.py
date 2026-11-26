@@ -131,7 +131,12 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_HISTORY_SCHEMA",
-        "review-case-history-v8",
+        "review-case-history-v9",
+    ),
+    (
+        "mechanical_librarian.application.review_web",
+        "REVIEW_ATTENTION_SCHEMA",
+        "review-attention-v2",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -191,7 +196,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.continuous_field_effects",
         "CONTINUOUS_FIELD_ACTIVITY_SCHEMA",
-        "continuous-field-activity-v5",
+        "continuous-field-activity-v6",
     ),
     (
         "mechanical_librarian.domain.reviewer_access",

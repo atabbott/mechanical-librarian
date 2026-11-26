@@ -125,6 +125,23 @@ def _decide(environment: _EffectEnvironment, case: ReviewCase, key: str) -> str:
     return decision.decision_id
 
 
+def _withdraw(environment: _EffectEnvironment, case: ReviewCase, key: str) -> str:
+    proposal = _title_proposal(case)
+    decision = HumanDecision.create(
+        case,
+        proposal_id=proposal["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination=proposal["destination"],
+        actor="owner",
+        outcome="withdraw",
+        selected_value=None,
+        idempotency_key=key,
+        occurred_at=1_600,
+    )
+    environment.repository.record_human_decision(decision)
+    return decision.decision_id
+
+
 def _owner_notes(environment: _EffectEnvironment) -> dict[str, str | None]:
     return {
         str(event["event_id"]): cast("str | None", event["note"])
@@ -160,20 +177,35 @@ def test_a_choice_under_a_new_episode_reads_as_asked_again(
     assert set(_owner_notes(effects).values()) == {None}
 
     # The work returns to the first content: the same case, a new episode.
+    # Until the question check reaches the answer, nothing asks again.
     returned = _admit(effects, "Old title", "1")
     assert returned.review_case_id == first.review_case_id
-    assert _owner_notes(effects) == {current[0]: "asked_again"}
+    assert _owner_notes(effects) == {current[0]: None}
 
-    # Search never reads the note, even while a row carries it.
-    assert _events(effects, search="asked again") == []
-    assert _events(effects, search="asked_again") == []
+    # The episode asks the same question, so the check carries the answer:
+    # the field is not asked again, and the carried row has no row of its
+    # own (#2039 V24, V26).
+    assert effects.repository.retry_question_checks(None, 1_500) == 1
+    assert effects.repository._connection.execute(
+        "SELECT outcome FROM carry_outcomes"
+    ).fetchall() == [("carried",)]
+    assert _owner_notes(effects) == {current[0]: None}
 
-    # A choice made in the new episode counts again, and has no note.
+    # Withdrawing the carried answer restores the first choice, no longer
+    # carried, so the field asks again: its row says why, and search never
+    # reads the note (#2039 3.3).
+    _withdraw(effects, returned, "notes-owner-withdraw")
+    notes = _owner_notes(effects)
+    assert notes[current[0]] == "asked_again_withdrawn"
+    assert set(notes.values()) == {"asked_again_withdrawn", None}
+    for words in ("asked again", "asked_again", "asked_again_withdrawn"):
+        assert _events(effects, search=words) == []
+
+    # A choice made in the new episode counts, and no row has a note.
     _decide(effects, returned, "notes-owner-0002")
     notes = _owner_notes(effects)
-    assert notes[current[0]] == "asked_again"
-    assert list(notes.values()).count(None) == 1
-    assert len(notes) == 2
+    assert set(notes.values()) == {None}
+    assert len(notes) == 3
 
 
 def _automatic_plan(effects: _EffectEnvironment) -> str:  # noqa: F811
@@ -292,6 +324,10 @@ def test_only_the_returned_case_s_choice_is_asked_again(
     _admit(effects, "Other title", "2")
     returned = _admit(effects, "Old title", "1")
     assert returned.review_case_id == first.review_case_id
+    assert effects.repository.retry_question_checks(None, 1_500) == 1
+    # Withdrawing the carried answer asks the returned case's field again.
+    _withdraw(effects, returned, "notes-owner-withdraw")
     notes = sorted(_owner_notes(effects).values(), key=lambda value: value or "")
-    # The other work's choice still counts; only the returned case asks again.
-    assert notes == [None, "asked_again"]
+    # The other work's choice still counts; only the returned case asks
+    # again, and the withdrawal itself has no note.
+    assert notes == [None, None, "asked_again_withdrawn"]

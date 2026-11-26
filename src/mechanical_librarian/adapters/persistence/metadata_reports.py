@@ -1971,7 +1971,17 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         offset: int,
         library_labels: LibraryLabels = (),
     ) -> tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool, bool],
+        tuple[
+            str,
+            str,
+            str,
+            int,
+            str | None,
+            ReviewFieldCause | None,
+            bool,
+            bool,
+            str | None,
+        ],
         ...,
     ]:
         with self.browse_observation():

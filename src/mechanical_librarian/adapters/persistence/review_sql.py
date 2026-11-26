@@ -682,6 +682,90 @@ def carry_waiting_sql(answer: str, case: str) -> str:
     )
 
 
+# Why the record row `answer` stopped carrying, when it no longer does: the
+# latest clearing row in ledger order (an owner row at its ordinal before an
+# event at the same counter value, events in the order written). The owner's
+# withdrawal above the answer restored it; Book matching's `matching_changed`
+# row asked it again; `retired` named it; a `resume_superseded` naming it
+# closed a request that had failed (ADR-0108, step 0).
+def _cleared_reason_sql(answer: str) -> str:
+    return (
+        "(SELECT cleared.reason FROM (SELECT cleared_row.ordinal AS at,0 AS arm,"
+        "0 AS written,CASE WHEN json_extract(cleared_row.document,'$.cause')="
+        "'matching_changed' THEN 'matching_changed' ELSE 'withdrawn' END AS reason "
+        "FROM human_decisions cleared_row WHERE "
+        + _record_key_sql("cleared_row", answer, f"{answer}.destination")
+        + f" AND cleared_row.outcome='withdraw' AND cleared_row.ordinal>{answer}.ordinal "
+        "UNION ALL SELECT cleared_event.over_ordinal,1,cleared_event.rowid,"
+        "CASE cleared_event.kind WHEN 'retired' THEN 'retired' "
+        "ELSE 'resume_failed' END FROM owner_field_events cleared_event WHERE "
+        + _record_key_sql("cleared_event", answer, f"{answer}.destination")
+        + f" AND cleared_event.answer_id={answer}.answer_id AND "
+        "(cleared_event.kind='retired' OR (cleared_event.kind='resume_superseded' "
+        "AND EXISTS (SELECT 1 FROM owner_field_events cleared_failed "
+        "WHERE cleared_failed.request_id=cleared_event.request_id "
+        "AND cleared_failed.kind='resume_failed')))) cleared "
+        "ORDER BY cleared.at DESC,cleared.arm DESC,cleared.written DESC LIMIT 1)"
+    )
+
+
+def asked_again_reason_sql(answer: str, case: str) -> str:
+    """Why case `case` asks again over the record row `answer`, which
+    `asked_again_sql` asks (contract #2039 section 3.2): no longer carried,
+    `withdrawn`, `matching_changed`, `retired` or `resume_failed` by its
+    latest clearing row (`_cleared_reason_sql`); otherwise the question
+    check's outcome for it on the case's current episode, `question_changed`
+    or `target_changed`, and `other` for an answer it asked again or whose
+    carry it refused, or anything else that asks."""
+    return (
+        f"CASE WHEN {answer}.carry_eligible=0 THEN COALESCE("
+        + _cleared_reason_sql(answer)
+        + ",'other') WHEN "
+        + _carry_outcome_sql(answer, case, "'question_changed'")
+        + " THEN 'question_changed' WHEN "
+        + _carry_outcome_sql(answer, case, "'target_changed'")
+        + " THEN 'target_changed' ELSE 'other' END"
+    )
+
+
+def asked_again_document_sql(answer: str, case: str, destination: str) -> str:
+    """The record row `answer` asked again on case `case` as one JSON
+    document, or NULL where `asked_again_sql` does not ask: the reason
+    (`asked_again_reason_sql`), the answer's outcome, its chosen value
+    document and the target field its case showed (for a keep), and the day
+    it was given, its root original's for a carried answer (U11)."""
+    return (
+        "CASE WHEN "
+        + asked_again_sql(answer, case, destination)
+        + " THEN (SELECT json_object('reason',"
+        + asked_again_reason_sql(answer, case)
+        + f",'source',{answer}.source,'outcome',{answer}.outcome,"
+        f"'value',json({answer}.value_document),'target',json(COALESCE("
+        "asked_root.target_field_document,asked_decision.target_field_document,"
+        "'null')),'occurred_at',COALESCE(asked_root.occurred_at,"
+        f"{answer}.recorded_at)) FROM (SELECT 1) LEFT JOIN human_decisions "
+        f"asked_decision ON asked_decision.decision_id={answer}.answer_id "
+        "LEFT JOIN human_decisions asked_root "
+        "ON asked_root.decision_id=asked_decision.carried_from) END"
+    )
+
+
+def record_asked_again_sql(item: str, case: str, destination: str) -> str:
+    """The record's answer for the field `destination` of the book row
+    `item` names, asked again on case `case`, as `asked_again_document_sql`
+    gives it, or NULL. A cover's answer is the book's own pointer, never
+    asked again. Attention and Activity read this; the case page reads the
+    same document per record row (`review_projections`)."""
+    return (
+        "(SELECT "
+        + asked_again_document_sql("asked", case, destination)
+        + " FROM owner_field_answers asked WHERE "
+        + f"{destination}<>'cover' AND "
+        + _record_key_sql("asked", item, destination)
+        + ")"
+    )
+
+
 # The record's answer from an earlier case or episode that the question check
 # asks again asks its field only where the case offers the owner a decision
 # on it; with none, the answer settles the field (C2b-15, C2b-18, S16;
@@ -1134,6 +1218,9 @@ __all__ = [
     "_withdrawn_automatic_sql",
     "_own_answer_sql",
     "asked_again_sql",
+    "asked_again_document_sql",
+    "asked_again_reason_sql",
+    "record_asked_again_sql",
     "carry_waiting_sql",
     "_read_as_own_sql",
 ]

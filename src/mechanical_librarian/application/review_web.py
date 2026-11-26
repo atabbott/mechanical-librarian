@@ -12,7 +12,7 @@ import sys
 import threading
 import unicodedata
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
@@ -159,7 +159,8 @@ from mechanical_librarian.domain.value_flags import value_flags
 # copies (#1995).
 # v15: a field an earlier decision holds in Preview says so (ADR-0085).
 # v16: a field says whether the record's open Resume for it failed, whether
-# or not it offers Resume (ADR-0108).
+# or not it offers Resume (ADR-0108), and why the record's earlier answer is
+# asked again, with classification cause `asked_again` (#2039).
 ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v16"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
     "review-case-detail-v16"
@@ -175,14 +176,16 @@ HumanDecisionAckSchemaVersion = Literal["human-decision-ack-v2"]
 HUMAN_DECISION_ACK_SCHEMA: Final[HumanDecisionAckSchemaVersion] = (
     "human-decision-ack-v2"
 )
-ReviewAttentionSchemaVersion = Literal["review-attention-v1"]
-REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v1"
+# v2: an item asked again over the record's earlier answer says why (#2039).
+ReviewAttentionSchemaVersion = Literal["review-attention-v2"]
+REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v2"
 # v5: a keep says which write it went back on (#1523); v6: the book link's
 # history events (#1477); v7: a link named by an identifiers file (#1478);
-# v8: a description value's formatted copy, and advice as it is written (#2003).
-ReviewCaseHistorySchemaVersion = Literal["review-case-history-v8"]
+# v8: a description value's formatted copy, and advice as it is written (#2003);
+# v9: a carried owner answer names the day of the choice it kept (#2039).
+ReviewCaseHistorySchemaVersion = Literal["review-case-history-v9"]
 REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
-    "review-case-history-v8"
+    "review-case-history-v9"
 )
 
 # One book link History event; v2: a file link's identifier, source and
@@ -407,6 +410,10 @@ class CurrentReviewCaseSnapshot:
     # longer carried, or its carry was refused): asked where the case offers
     # a decision (ADR-0108, Attention).
     asked_again_destinations: tuple[str, ...] = ()
+    # Each of them as one JSON document: its destination, why it is asked
+    # again, and the earlier answer's source, outcome, value, the target
+    # field its case showed and the day it was given (contract #2039 3.2).
+    asked_again_answers: tuple[str, ...] = ()
     # Held destinations the question check left waiting on this case for a
     # plan in flight or an open Resume: settled meanwhile (ADR-0108).
     carry_waiting_destinations: tuple[str, ...] = ()
@@ -496,7 +503,17 @@ class ReviewLibrarySnapshot:
 @dataclass(frozen=True, slots=True)
 class ReviewAttentionSnapshot:
     rows: tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool, bool],
+        tuple[
+            str,
+            str,
+            str,
+            int,
+            str | None,
+            ReviewFieldCause | None,
+            bool,
+            bool,
+            str | None,
+        ],
         ...,
     ]
     total: int
@@ -1500,32 +1517,13 @@ def _classify_field(
         result["outcome"] == "propose_change"
         and destination in snapshot.policy_kept_destinations
     )
-    # A human decision other than the case's own answer from the record.
-    other_human = (
-        decision is not None
-        # With nothing to choose, an answer from elsewhere settles its field
-        # unless Automatic's decision does, under an open Resume (C2b-18).
-        or (
-            _record_answered_elsewhere(snapshot, destination)
-            and not actions
-            and automatic_decision is None
-        )
-        # A field the question check left waiting reads as the owner's
-        # where Automatic does not settle it (ADR-0108, Attention).
-        or (
-            destination in snapshot.carry_waiting_destinations
-            and not _automatic_settles(snapshot, destination)
-        )
-        or (
-            destination == "cover"
-            and cover_is_current
-            and snapshot.current_cover_selection is not None
-            and snapshot.current_cover_selection[1] == "owner"
-        )
-        or (
-            type(authored_selection) is dict
-            and authored_selection.get("origin") == "human"
-        )
+    other_human = _other_human(
+        context,
+        destination,
+        decision=decision,
+        automatic_decision=automatic_decision,
+        authored_selection=authored_selection,
+        actions=actions,
     )
     own_answer = (
         destination != "cover" and destination in snapshot.own_answer_destinations
@@ -1593,41 +1591,16 @@ def _classify_field(
         ),
         current_value=target_fields[destination]["value"],
         proposed_values=tuple(alternative["value"] for alternative in alternatives),
-        # A recording's undecided fill, a kept readable cover, and a
-        # choice the policy's options settle (a populated subjective
-        # value a fill-only option keeps, or tags while they are off,
-        # including a single proposed list for empty Tags) stay the
-        # owner's to choose in their case without joining the queue
-        # (#1249, #1310, #1661), and so does a value only one
-        # uncorroborated source proposes (#1310). A kept cover with no
-        # current comparison is still choosable: the owner can prepare one.
         owner_choosable=automatic_decision is None
         and (
             repeated
-            or (
-                cover_admits
-                and (
-                    context.case.media_kind == "audiobook"
-                    or policy_settled
-                    or single_source
-                    # An ebook field set to Ask me that the queue does not ask
-                    # about is the owner's optional choice too (#1707).
-                    or destination in context.ask_destinations
-                    # A suggested switch is the owner's optional choice (S9),
-                    # as is a cover kept with no fault (#1362).
-                    or cover_optional
-                )
-                and bool(actions)
-            )
-            or (
-                _kept_cover(proposal)
-                and (
-                    (cover_admits and bool(actions))
-                    or (
-                        cover_preparation_available
-                        and result["outcome"] == "unresolved_choice"
-                    )
-                )
+            or _owner_choosable(
+                context,
+                proposal,
+                actions,
+                cover_admits=cover_admits,
+                cover_preparation_available=cover_preparation_available,
+                optional=policy_settled or single_source or cover_optional,
             )
         ),
         changeable=bool(actions) or owner_entry,
@@ -1641,6 +1614,12 @@ def _classify_field(
         single_source=single_source,
         pin=pin,
         repeated_description=repeated,
+        # The record's earlier answer holds the field against Automatic and
+        # asks it again here, ahead of Automatic's abstention or decision
+        # (ADR-0108, Attention; contract #2039 3.2).
+        asked_again=destination in snapshot.asked_again_destinations
+        and bool(actions)
+        and not _automatic_settles(snapshot, destination),
     )
     decided = classify(has_human_decision=other_human or own_answer)
     # The case's own answer with no decision of the case to show, or an
@@ -1660,6 +1639,132 @@ def _classify_field(
     ):
         return decided
     return classify(has_human_decision=False, held_in_preview=snapshot.preview)
+
+
+def asked_again_projection(
+    documents: Iterable[str | None], destination: str
+) -> dict[str, object] | None:
+    """The wire's `asked_again` for the field `destination` from the record's
+    asked-again documents (`asked_again_document_sql`): why, and the earlier
+    answer's outcome, value and day. A keep's value is the one its case
+    showed; a decline has none. An authored description's text is not on the
+    record, so it has no document and the field reads its server reason."""
+    for document in documents:
+        if document is None:
+            continue
+        value = json.loads(document)
+        if (
+            type(value) is not dict
+            or value.get("destination", destination) != destination
+        ):
+            continue
+        if value.get("source") != "human":
+            return None
+        outcome = value["outcome"]
+        target = value.get("target")
+        earlier = (
+            value.get("value")
+            if outcome in {"accept", "owner_entered"}
+            else {"kind": decision_value_kind(destination), "value": target["value"]}
+            if outcome == "keep_current"
+            and type(target) is dict
+            and target.get("state") == "value"
+            else None
+        )
+        return {
+            "reason": value["reason"],
+            "earlier": {
+                "outcome": outcome,
+                "value": earlier,
+                "occurred_at": value["occurred_at"],
+            },
+        }
+    return None
+
+
+def _owner_choosable(
+    context: _ReviewCaseReadContext,
+    proposal: dict[str, object],
+    actions: tuple[HumanDecisionAction, ...],
+    *,
+    cover_admits: bool,
+    cover_preparation_available: bool,
+    optional: bool,
+) -> bool:
+    """Whether an undecided field is the owner's optional choice.
+
+    A recording's undecided fill, a kept readable cover, and a choice the
+    policy's options settle (a populated subjective value a fill-only option
+    keeps, or tags while they are off, including a single proposed list for
+    empty Tags) stay the owner's to choose in their case without joining the
+    queue (#1249, #1310, #1661), and so does a value only one uncorroborated
+    source proposes (#1310); `optional` holds those, a suggested switch (S9)
+    and a cover kept with no fault (#1362). An ebook field set to Ask me that
+    the queue does not ask about is the owner's optional choice too (#1707).
+    A kept cover with no current comparison is still choosable: the owner can
+    prepare one. Kept apart so `_classify_field` stays under the code-size
+    guide.
+    """
+    result = proposal["result"]
+    assert type(result) is dict
+    return (
+        cover_admits
+        and (
+            context.case.media_kind == "audiobook"
+            or optional
+            or proposal["destination"] in context.ask_destinations
+        )
+        and bool(actions)
+    ) or (
+        _kept_cover(proposal)
+        and (
+            (cover_admits and bool(actions))
+            or (
+                cover_preparation_available and result["outcome"] == "unresolved_choice"
+            )
+        )
+    )
+
+
+def _other_human(
+    context: _ReviewCaseReadContext,
+    destination: str,
+    *,
+    decision: HumanDecision | None,
+    automatic_decision: dict[str, object] | None,
+    authored_selection: object,
+    actions: tuple[HumanDecisionAction, ...],
+) -> bool:
+    """Whether a human decision other than the case's own answer from the
+    record decides the field. Kept apart so `_classify_field` stays under the
+    code-size guide."""
+    snapshot = context.snapshot
+    return (
+        decision is not None
+        # With nothing to choose, an answer from elsewhere settles its field
+        # unless Automatic's decision does, under an open Resume (C2b-18).
+        or (
+            _record_answered_elsewhere(snapshot, destination)
+            and not actions
+            and automatic_decision is None
+        )
+        # A field the question check left waiting reads as the owner's
+        # where Automatic does not settle it (ADR-0108, Attention).
+        or (
+            destination in snapshot.carry_waiting_destinations
+            and not _automatic_settles(snapshot, destination)
+        )
+        or (
+            destination == "cover"
+            and context.cover_is_current
+            and snapshot.current_cover_selection is not None
+            and snapshot.current_cover_selection[1] == "owner"
+        )
+        or (
+            type(authored_selection) is dict
+            and authored_selection.get("origin") == "human"
+        )
+    )
 
 
 def _automatic_settles(snapshot: CurrentReviewCaseSnapshot, destination: str) -> bool:
@@ -2278,6 +2383,13 @@ class InspectCurrentReviewCase:
             # outside the offer the field says so with no control (C2b-21).
             # A new request, a completion or a supersession closes it.
             "resume_failed": destination in snapshot.return_failed_destinations,
+            # Why the record's earlier answer is asked again, and that answer,
+            # on a field asked for that reason (contract #2039 3.2).
+            "asked_again": asked_again_projection(
+                snapshot.asked_again_answers, destination
+            )
+            if classification.cause == "asked_again"
+            else None,
             "classification": classification.state,
             "classification_cause": classification.cause,
             "classification_reason": classification.reason,
@@ -3253,6 +3365,7 @@ class BrowseReviewLibrary:
                         cause,
                         policy_attention,
                         pin_changed,
+                        asked_again,
                     ) = row
                     if (
                         parsed is None
@@ -3276,6 +3389,7 @@ class BrowseReviewLibrary:
                         cause=cause,
                         policy_attention=policy_attention,
                         pin_changed=pin_changed,
+                        asked_again=asked_again,
                     )
                     if len(items) < bounded_limit:
                         consumed += 1
@@ -5498,6 +5612,7 @@ def _attention_item(
     cause: ReviewFieldCause | None = None,
     policy_attention: bool = False,
     pin_changed: bool = False,
+    asked_again: str | None = None,
 ) -> dict[str, object] | None:
     if _omitted_for_epub(destination, report.file.format):
         return None
@@ -5540,6 +5655,7 @@ def _attention_item(
     result = proposal["result"]
     assert type(result) is dict
     return {
+        "asked_again": asked_again_projection((asked_again,), destination),
         "authors": _report_authors(report.target),
         "classification_reason": classification.reason,
         "destination": destination,

@@ -40,6 +40,7 @@ from mechanical_librarian.application.review_pipeline import (
     pipeline_scan_id,
 )
 from mechanical_librarian.application.review_web import (
+    REVIEW_ATTENTION_SCHEMA,
     REVIEW_CASE_DETAIL_SCHEMA,
     REVIEW_LIBRARY_SCHEMA,
     ReviewWebError,
@@ -158,7 +159,7 @@ def test_named_browse_operations_return_bounded_views(
 
     assert library.schema_version == REVIEW_LIBRARY_SCHEMA
     assert library.counts["all"] == 1
-    assert attention.schema_version == "review-attention-v1"
+    assert attention.schema_version == REVIEW_ATTENTION_SCHEMA
     assert attention.total == 1
 
 

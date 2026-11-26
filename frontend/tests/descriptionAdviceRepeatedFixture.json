@@ -6,6 +6,7 @@
   "current": true,
   "fields": [
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -109,6 +110,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -215,6 +217,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -320,6 +323,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -427,6 +431,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -494,6 +499,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -602,6 +608,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -669,6 +676,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -736,6 +744,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -875,6 +884,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -942,6 +952,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -1009,6 +1020,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -1098,6 +1110,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,

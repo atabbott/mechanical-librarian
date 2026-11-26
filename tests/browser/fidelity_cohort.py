@@ -28,6 +28,7 @@ from mechanical_librarian.application.review_application import (
 )
 from mechanical_librarian.application.review_web import (
     OWNER_LINK_VIEW_SCHEMA,
+    REVIEW_ATTENTION_SCHEMA,
     REVIEW_CASE_DETAIL_SCHEMA,
     REVIEW_CASE_EVIDENCE_SCHEMA,
     REVIEW_CASE_HISTORY_SCHEMA,
@@ -582,6 +583,7 @@ def _field(
         "manual_return_requested": manual_return_requested,
         "manual_return_failed": manual_return_failed,
         "resume_failed": resume_failed,
+        "asked_again": None,
         "manual_required": needs_attention,
         "navigation_role": navigation_role
         or ("attention" if needs_attention else "inspect"),
@@ -1427,6 +1429,7 @@ def _attention() -> dict[str, object]:
                     "media_kind": work["media_kind"],
                     "item": work["item"],
                     "detail_url": f"/review/{work['review_case_id']}?field={destination}",
+                    "asked_again": None,
                     "classification_reason": "This field needs your review.",
                     "notices": ["Conflicting retained evidence"],
                     "provenance": [
@@ -1437,7 +1440,7 @@ def _attention() -> dict[str, object]:
                 }
             )
     return {
-        "schema_version": "review-attention-v1",
+        "schema_version": REVIEW_ATTENTION_SCHEMA,
         "query": None,
         "next_cursor": None,
         "total": len(items),
@@ -2661,6 +2664,7 @@ def _rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     "destination": "title",
                     "event_id": "event-owner-internal",
                     "kind": "human_decision_recorded",
+                    "kept_from": None,
                     "occurred_at": 1_754_858_100,
                     "outcome": "accept",
                     "previous_value": {"kind": "text", "value": "Current title"},

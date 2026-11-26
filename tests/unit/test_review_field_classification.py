@@ -405,7 +405,7 @@ def test_the_code_list_holds_every_input_cause() -> None:
     assert set(get_args(ReviewFieldCause)) <= set(
         get_args(ReviewFieldClassificationCause)
     )
-    assert len(set(get_args(ReviewFieldClassificationCause))) == 14
+    assert len(set(get_args(ReviewFieldClassificationCause))) == 15
 
 
 _HELD = (
@@ -648,7 +648,16 @@ def test_attention_continues_after_two_contradictory_batches(
             del library_labels  # These fixtures isolate pagination and read failure.
             self.offsets.append(offset)
             rows = tuple(
-                (*attention_documents, f"invalid-{index}", 1, None, None, False, False)
+                (
+                    *attention_documents,
+                    f"invalid-{index}",
+                    1,
+                    None,
+                    None,
+                    False,
+                    False,
+                    None,
+                )
                 for index in range(offset, offset + limit)
             )
             return ReviewAttentionSnapshot(rows, 99)
@@ -685,9 +694,9 @@ def test_attention_backfills_a_valid_successor_and_ends_honestly(
     attention_documents,
 ) -> None:
     rows = (
-        (*attention_documents, "invalid", 1, None, None, False, False),
-        (*attention_documents, "also-invalid", 1, None, None, False, False),
-        (*attention_documents, "valid", 1, None, None, False, False),
+        (*attention_documents, "invalid", 1, None, None, False, False, None),
+        (*attention_documents, "also-invalid", 1, None, None, False, False, None),
+        (*attention_documents, "valid", 1, None, None, False, False, None),
     )
 
     class Repository:
@@ -711,8 +720,8 @@ def test_attention_last_valid_raw_row_has_no_cursor_and_stable_raw_total(
     attention_documents,
 ) -> None:
     rows = (
-        (*attention_documents, "stale", 1, None, None, False, False),
-        (*attention_documents, "valid", 1, None, None, False, False),
+        (*attention_documents, "stale", 1, None, None, False, False, None),
+        (*attention_documents, "valid", 1, None, None, False, False, None),
     )
 
     class Repository:
@@ -738,10 +747,10 @@ def test_attention_exact_boundary_all_contradictory_rows_proves_exhaustion(
     attention_documents,
 ) -> None:
     rows = (
-        (*attention_documents, "stale-1", 1, None, None, False, False),
-        (*attention_documents, "stale-2", 1, None, None, False, False),
-        (*attention_documents, "stale-3", 1, None, None, False, False),
-        (*attention_documents, "stale-4", 1, None, None, False, False),
+        (*attention_documents, "stale-1", 1, None, None, False, False, None),
+        (*attention_documents, "stale-2", 1, None, None, False, False, None),
+        (*attention_documents, "stale-3", 1, None, None, False, False, None),
+        (*attention_documents, "stale-4", 1, None, None, False, False, None),
     )
 
     class Repository:
@@ -770,8 +779,8 @@ def test_attention_terminal_contradictory_lookahead_has_no_empty_successor(
     attention_documents,
 ) -> None:
     rows = (
-        (*attention_documents, "valid", 1, None, None, False, False),
-        (*attention_documents, "invalid", 1, None, None, False, False),
+        (*attention_documents, "valid", 1, None, None, False, False, None),
+        (*attention_documents, "invalid", 1, None, None, False, False, None),
     )
 
     class Repository:
@@ -797,9 +806,9 @@ def test_attention_visible_successor_remains_at_next_cursor(
     attention_documents,
 ) -> None:
     rows = (
-        (*attention_documents, "valid-1", 1, None, None, False, False),
-        (*attention_documents, "invalid", 1, None, None, False, False),
-        (*attention_documents, "valid-2", 1, None, None, False, False),
+        (*attention_documents, "valid-1", 1, None, None, False, False, None),
+        (*attention_documents, "invalid", 1, None, None, False, False, None),
+        (*attention_documents, "valid-2", 1, None, None, False, False, None),
     )
 
     class Repository:

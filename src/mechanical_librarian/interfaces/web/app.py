@@ -1107,6 +1107,31 @@ class _PinControl(_ClosedModel):
     unpin: StrictBool
 
 
+class _AskedAgainEarlier(_ClosedModel):
+    """The record's earlier answer a field is asked again over: what the
+    owner did, the value (a keep's is the one its case showed; a decline has
+    none) and the day, its root original's for a carried answer."""
+
+    outcome: Literal["accept", "keep_current", "reject", "owner_entered"]
+    value: _OwnerValue | None
+    occurred_at: StrictInt = Field(ge=0)
+
+
+class _AskedAgain(_ClosedModel):
+    """Why the record's earlier answer is asked again (contract #2039 3.1)."""
+
+    reason: Literal[
+        "question_changed",
+        "target_changed",
+        "withdrawn",
+        "resume_failed",
+        "retired",
+        "matching_changed",
+        "other",
+    ]
+    earlier: _AskedAgainEarlier
+
+
 class _ReviewField(_ClosedModel):
     classification: ReviewFieldState
     classification_cause: ReviewFieldClassificationCause
@@ -1146,6 +1171,9 @@ class _ReviewField(_ClosedModel):
     manual_return_failed: bool
     # The record's open Resume for the field failed, offered or not (ADR-0108).
     resume_failed: bool
+    # Why the record's earlier answer is asked again, on a field asked for
+    # that reason (ADR-0108; v16).
+    asked_again: _AskedAgain | None
     manual_required: bool
     needs_attention: bool
     navigation_role: Literal["attention", "inspect"]
@@ -1414,6 +1442,8 @@ class _HistoryDecisionItem(_ClosedModel):
     destination: _TargetDestination
     event_id: str
     kind: Literal["human_decision_recorded"]
+    # A carried answer's root original's day: the choice it kept (v9).
+    kept_from: _Instant | None
     occurred_at: _Instant
     outcome: _HumanDecisionOutcome
     previous_value: _ProposedValue | None
@@ -2377,6 +2407,9 @@ class _LibraryProgressResponse(_ClosedModel):
 
 
 class _AttentionItem(_ClosedModel):
+    # Why the record's earlier answer asks the field again, as the case
+    # page says it (review-attention v2).
+    asked_again: _AskedAgain | None
     authors: list[str]
     classification_reason: str
     destination: _TargetDestination
@@ -2489,12 +2522,20 @@ class _ActivityEvent(_ClosedModel):
     # matching asked again that was already written and verified reads
     # `asked_again_matching_written`, since Audiobookshelf keeps its value.
     # An automatic choice an owner hold keeps unwritten until Resume reads
-    # `held` (ADR-0085).
+    # `held` (ADR-0085). The record's answer the work's current case asks
+    # again says why (#2039): the choices or the value changed, a later
+    # choice was withdrawn, Resume did not finish, the plan was retired, or
+    # Book matching changed it; `asked_again` is any other reason.
     note: (
         Literal[
             "asked_again",
+            "asked_again_choices",
             "asked_again_matching",
             "asked_again_matching_written",
+            "asked_again_resume",
+            "asked_again_retired",
+            "asked_again_value",
+            "asked_again_withdrawn",
             "held",
             "held_back",
             "waiting_for_check",

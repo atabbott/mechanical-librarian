@@ -70,9 +70,10 @@ from mechanical_librarian.domain.provider_recovery import RECOVERY_FAILURES
 
 # v4: a description fact's formatted copy (#2003).
 # v5: an automatic choice an owner hold keeps unwritten reads `held` (ADR-0085).
-ContinuousFieldActivitySchemaVersion = Literal["continuous-field-activity-v5"]
+# v6: the record's answer asked again says why in its note (#2039).
+ContinuousFieldActivitySchemaVersion = Literal["continuous-field-activity-v6"]
 CONTINUOUS_FIELD_ACTIVITY_SCHEMA: Final[ContinuousFieldActivitySchemaVersion] = (
-    "continuous-field-activity-v5"
+    "continuous-field-activity-v6"
 )
 
 
@@ -1719,8 +1720,13 @@ class ContinuousGuardedApplication:
             or value
             not in {
                 "asked_again",
+                "asked_again_choices",
                 "asked_again_matching",
                 "asked_again_matching_written",
+                "asked_again_resume",
+                "asked_again_retired",
+                "asked_again_value",
+                "asked_again_withdrawn",
                 "held",
                 "held_back",
                 "waiting_for_check",

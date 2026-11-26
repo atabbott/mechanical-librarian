@@ -6,6 +6,7 @@
   "current": true,
   "fields": [
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -109,6 +110,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -215,6 +217,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -320,6 +323,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -427,6 +431,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -494,6 +499,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -602,6 +608,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -669,6 +676,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -736,6 +744,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": {
         "candidate_id": null,
         "decision_id": "automatic_decision_a165d6b909f7f930645a7022a379d88436362fffa961a9c6605c1e99f1bc16e7",
@@ -884,6 +893,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -951,6 +961,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -1018,6 +1029,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,
@@ -1107,6 +1119,7 @@
       "written_by_case": false
     },
     {
+      "asked_again": null,
       "automatic_decision": null,
       "automatic_selection_sources": [],
       "automatic_withheld_condition": null,

@@ -73,7 +73,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _read_as_own_sql,
     _resumed_decision_sql,
     _withdrawn_automatic_sql,
-    asked_again_sql,
+    asked_again_document_sql,
     carry_waiting_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -514,7 +514,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         (C2b-15), a pin taken back only where Automatic decided it (C2b-27,
         C2b-28); each the owner withdrew beside Automatic's decision on the
         case, which then settles nothing (`_withdrawn_automatic_sql`); each
-        the question check asks again here (`asked_again_sql`), or left
+        the question check asks again here (`asked_again_sql`), with why and
+        the earlier answer (`asked_again_document_sql`), or left
         waiting for a plan or a Resume (`carry_waiting_sql`, ADR-0108); and
         the case's owner decisions a completed Resume took back, which no
         longer decide their field (D3). Kept apart so `read_current_review_case`
@@ -526,6 +527,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "resume_offer_destinations": [],
             "own_answer_destinations": [],
             "asked_again_destinations": [],
+            "asked_again_answers": [],
             "carry_waiting_destinations": [],
         }
         for (
@@ -548,7 +550,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             + " END,"
             + _read_as_own_sql("held", ":case", "held.destination")
             + ","
-            + asked_again_sql("held", ":case", "held.destination")
+            + asked_again_document_sql("held", ":case", "held.destination")
             + ","
             + carry_waiting_sql("held", ":case")
             + " FROM "
@@ -567,8 +569,14 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 states["resume_offer_destinations"].append(destination)
             if own:
                 states["own_answer_destinations"].append(destination)
-            if asked_again and destination != "cover":
+            if asked_again is not None and destination != "cover":
                 states["asked_again_destinations"].append(destination)
+                states["asked_again_answers"].append(
+                    json.dumps(
+                        {"destination": destination, **json.loads(asked_again)},
+                        sort_keys=True,
+                    )
+                )
             if waiting and destination != "cover":
                 states["carry_waiting_destinations"].append(destination)
         return {

@@ -778,6 +778,9 @@ def _resume_control_reaches_the_offer(library: Library) -> None:
 
 _DECIDED = ("human_recorded", "human_decided")
 _ASKED = ("needs_attention", "review_needed")
+# The record's earlier answer asked again on a later case or episode says
+# so (#2039): its cause is its own, ahead of Automatic's.
+_ASKED_AGAIN = ("needs_attention", "asked_again")
 _NOTHING = ("unsupported", "nothing_to_decide")
 
 
@@ -943,7 +946,7 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
         # A later case: the answer is the earlier case's, and nothing carried.
         _read_back(library, ("Someone Else",), 16)
         assert library.case_id() != first
-        assert reads() == {"authors": (*_ASKED, automatic)}
+        assert reads() == {"authors": (*_ASKED_AGAIN, automatic)}
         # The case page and Attention ask it alike.
         page, attention = _asked(library)
         assert "authors" in page and "authors" in attention
@@ -954,7 +957,9 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
         # answer is no longer carried (step 0).
         _read_back(library, original, 18)
         assert library.case_id() == first
-        assert reads() == {"authors": (*(_ASKED if automatic else _DECIDED), automatic)}
+        assert reads() == {
+            "authors": (*(_ASKED_AGAIN if automatic else _DECIDED), automatic)
+        }
 
         # The other posture, with the record unchanged. Preview leaves the
         # failed Resume with nothing to ask again, which the store would
@@ -965,7 +970,7 @@ def test_no_field_the_record_holds_reads_nothing_to_decide(
         else:
             _confirm_automatic(library, 40)
         assert reads() == {
-            "authors": (*(_ASKED if automatic else _DECIDED), not automatic)
+            "authors": (*(_ASKED_AGAIN if automatic else _DECIDED), not automatic)
         }
         assert all(
             cause != "nothing_to_decide"
@@ -1237,7 +1242,7 @@ def test_withdrawing_a_later_cases_answer_restores_the_earlier_one(
 
         assert _record_of(root) == (a.decision_id, first, 0, None)
         field = _fields(library)["authors"]
-        assert (field["classification"], field["classification_cause"]) == _ASKED
+        assert (field["classification"], field["classification_cause"]) == _ASKED_AGAIN
         assert field["manual_hold"] is automatic
         page, attention = _asked(library)
         assert "authors" in page and "authors" in attention
@@ -1275,7 +1280,7 @@ def _withdrawn_on_y(library: Library) -> tuple[str, str]:
 
 def _assert_asked(library: Library) -> None:
     field = _fields(library)["authors"]
-    assert (field["classification"], field["classification_cause"]) == _ASKED
+    assert (field["classification"], field["classification_cause"]) == _ASKED_AGAIN
     page, attention = _asked(library)
     assert "authors" in page and "authors" in attention
     assert _authors_fact(library) is True
@@ -1452,7 +1457,7 @@ def test_a_new_case_after_an_answer_asks_the_field(
         )
         _read_back(library, ("Someone Else",), 12)
         field = _fields(library)["authors"]
-        assert (field["classification"], field["classification_cause"]) == _ASKED
+        assert (field["classification"], field["classification_cause"]) == _ASKED_AGAIN
         assert field["manual_hold"] is automatic
         page, attention = _asked(library)
         assert "authors" in page and "authors" in attention
@@ -1490,7 +1495,7 @@ def test_a_failed_resume_asks_the_field(tmp_path: Path, posture: str) -> None:
         if posture == "preview":
             library.leave_automatic()
         field = _fields(library)["authors"]
-        assert (field["classification"], field["classification_cause"]) == _ASKED
+        assert (field["classification"], field["classification_cause"]) == _ASKED_AGAIN
         offered = posture == "automatic"
         assert (field["manual_hold"], field["manual_return_failed"]) == (
             offered,
@@ -1749,7 +1754,10 @@ def test_a_later_description_case_asks_and_a_failed_resume_keeps_asking(
 
         def asked() -> None:
             value = field()
-            assert (value["classification"], value["classification_cause"]) == _ASKED
+            assert (
+                value["classification"],
+                value["classification_cause"],
+            ) == _ASKED_AGAIN
             assert value["needs_attention"] is True
             assert repository._connection.execute(
                 "SELECT count(*) FROM review_attention_facts "
