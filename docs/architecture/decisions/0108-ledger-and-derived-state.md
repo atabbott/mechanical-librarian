@@ -582,7 +582,7 @@ a provider, and is composed with no network client.
    instead. It names, per blocking item,
    the reasons it can compute offline (writes paused, a destination or
    connection suspended, preparation paused, the library no longer
-   configured), and otherwise says to start the previous image and read
+   configured), and otherwise says to start the previous build and read
    Activity.
 3. **The report**, per library, naming items only by item key and
    destination, never a title, author, path or value: (1) unwritten answers,
