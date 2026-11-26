@@ -55,7 +55,15 @@ REFUSALS = {
         "Regeneration stopped and was rolled back, so nothing was changed. "
         "Run regenerate-derived again."
     ),
+    # Startup's own line for an altered ledger object, on purpose: the command
+    # refuses it exactly as the server does (S1 precedence).
+    Refusal.LEDGER_ALTERED: "database is unavailable or incompatible",
 }
+# Any other stop with nothing changed; nothing internal is ever printed.
+FAILED = (
+    "Regeneration could not continue, so nothing was changed. Run "
+    "regenerate-derived again; if this repeats, restore your backup of /data."
+)
 NO_SPACE = (
     "The /data volume has {free} free and regenerate-derived needs {needed}. "
     "Free some space and run it again."
@@ -204,8 +212,11 @@ def render(outcome: Outcome, write: Callable[[str], object]) -> int:
     if outcome.kind == "refused":
         assert outcome.refusal is not None
         lines = [REFUSALS[outcome.refusal]]
+    elif outcome.kind == "startup":
+        assert outcome.message is not None
+        lines = [outcome.message]
     elif outcome.kind == "failed":
-        lines = [str(outcome.message)]
+        lines = [FAILED]
     elif outcome.kind == "nothing_to_do":
         lines = [NOTHING_TO_DO]
     elif outcome.kind == "no_space":

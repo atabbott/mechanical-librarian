@@ -9,6 +9,7 @@ the derived partition is the frozen earlier one in
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import io
 import json
@@ -266,10 +267,16 @@ def test_another_ledger_needs_a_clean_rebuild(
 
 
 def test_an_altered_ledger_object_refuses_as_today(tmp_path: Path) -> None:
+    """Startup's own line, on purpose (S1 precedence): the one refusal that
+    prints no command copy."""
     path = _fresh(tmp_path / "data")
     rewrite(path, "ALTER TABLE owner_links ADD COLUMN planted TEXT")
-    _, lines, _ = _refuses_unchanged(path)
-    assert lines == ["database is unavailable or incompatible"]
+    with pytest.raises(MetadataReportError) as startup:
+        open_repository(path, create=False)
+    _, lines, outcome = _refuses_unchanged(path)
+    assert outcome.refusal is regeneration.Refusal.LEDGER_ALTERED
+    assert lines == [str(startup.value)]
+    assert lines == [cli.REFUSALS[regeneration.Refusal.LEDGER_ALTERED]]
 
 
 def test_a_ledger_row_its_check_refuses_is_not_admitted(tmp_path: Path) -> None:
@@ -282,11 +289,10 @@ def test_a_ledger_row_its_check_refuses_is_not_admitted(tmp_path: Path) -> None:
         connection.commit()
     finally:
         connection.close()
-    _, lines, _ = _refuses_unchanged(path)
-    assert lines == [
-        "database is unavailable or incompatible: CHECK constraint failed in "
-        "field_effect_control"
-    ]
+    _, lines, outcome = _refuses_unchanged(path)
+    # Any failure the command names no other way prints R9, never its own text.
+    assert (outcome.kind, outcome.message) == ("failed", None)
+    assert lines == [cli.FAILED]
 
 
 def test_a_database_that_fails_the_integrity_check_refuses(tmp_path: Path) -> None:
@@ -337,6 +343,207 @@ def test_the_free_space_refusal_names_an_earlier_restore_point(
     )
     _, lines, _ = _refuses_unchanged(path)
     assert lines[0].endswith(" " + cli.NO_SPACE_HELD)
+
+
+def _scratch_meets_a_full_volume(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Admission's scratch copy cannot grow: SQLite's own SQLITE_FULL, met on
+    the copy's first write, as on a volume with no room left."""
+    real = regeneration._create_schema
+
+    def create(connection: sqlite3.Connection) -> None:
+        connection.execute("PRAGMA max_page_count=1")
+        real(connection)
+
+    monkeypatch.setattr(regeneration, "_create_schema", create)
+
+
+def _no_space_line(outcome: Outcome) -> str:
+    line = cli.NO_SPACE.format(
+        free=cli._size(outcome.free), needed=cli._size(outcome.needed)
+    )
+    return line + (" " + cli.NO_SPACE_HELD if outcome.backup_held else "")
+
+
+def _no_scratch_left(path: Path) -> bool:
+    return not [n for n in os.listdir(path.parent) if n.startswith(".metadata")]
+
+
+def _fails_with(error: BaseException) -> Callable[..., Any]:
+    def failing(*_arguments: Any, **_keywords: Any) -> Any:
+        raise error
+
+    return failing
+
+
+def _sqlite_full() -> sqlite3.OperationalError:
+    error = sqlite3.OperationalError("database or disk is full")
+    error.sqlite_errorcode = sqlite3.SQLITE_FULL
+    return error
+
+
+def _enospc() -> OSError:
+    return OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+
+def _full_at_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        regeneration, "recover_private_bindings", _fails_with(_enospc())
+    )
+
+
+def _full_at_admission_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    _scratch_meets_a_full_volume(monkeypatch)
+
+
+def _full_at_backup_folder(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = os.mkdir
+
+    def mkdir(name: Any, *arguments: Any, **keywords: Any) -> None:
+        if name == regeneration.BACKUP_DIRECTORY:
+            raise _enospc()
+        real(name, *arguments, **keywords)
+
+    monkeypatch.setattr(regeneration.os, "mkdir", mkdir)
+
+
+def _full_at_backup_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(regeneration.os, "fsync", _fails_with(_enospc()))
+
+
+def _full_in_the_transaction(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(regeneration, "_recreate_derived", _fails_with(_sqlite_full()))
+
+
+@pytest.mark.parametrize(
+    "full",
+    [
+        _full_at_recovery,
+        _full_at_admission_copy,
+        _full_at_backup_folder,
+        _full_at_backup_sync,
+        _full_in_the_transaction,
+    ],
+    ids=[
+        "recovery",
+        "admission_copy",
+        "backup_folder",
+        "backup_sync",
+        "transaction",
+    ],
+)
+def test_a_volume_that_fills_during_the_run_refuses_with_the_free_space_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    full: Callable[[pytest.MonkeyPatch], None],
+) -> None:
+    """A write that meets a full volume after the free-space check passed
+    (another writer filled it) is the free-space refusal, measured then;
+    the database is unchanged and no scratch copy is left."""
+    path = _fresh(tmp_path / "data")
+    _another_build(path)
+    before = _sha(path)
+    full(monkeypatch)
+    status, lines, outcome = _run(path)
+    assert (status, outcome.kind) == (1, "no_space")
+    assert lines == [_no_space_line(outcome)]
+    assert _sha(path) == before
+    assert _no_scratch_left(path)
+    backups = path.parent / "regeneration-backup"
+    # Only the transaction runs after a retained copy; it keeps it (step 5).
+    held = sorted(os.listdir(backups)) if backups.exists() else []
+    assert held == (["epoch-0.sqlite3"] if full is _full_in_the_transaction else [])
+    assert outcome.backup_held is bool(held)
+    monkeypatch.undo()
+    assert _run(path)[0] == 0
+
+
+def _check_violation(path: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        connection.execute("UPDATE field_effect_control SET paused=7")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _authority_changed(_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        regeneration._LinuxDatabaseBinding,
+        "require_current",
+        _fails_with(MetadataReportError("database authority changed")),
+    )
+
+
+def _recovery_fails(_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        regeneration,
+        "recover_private_bindings",
+        _fails_with(sqlite3.OperationalError("disk I/O error")),
+    )
+
+
+def _inspection_fails(_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        regeneration.SQLiteRegenerationSession,
+        "_inspect",
+        _fails_with(sqlite3.OperationalError("disk I/O error")),
+    )
+
+
+def _backup_fails(_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        regeneration.os, "fsync", _fails_with(OSError(errno.EIO, "I/O error"))
+    )
+
+
+def _no_verified_backup(_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        regeneration.SQLiteRegenerationSession, "back_up", lambda _self: None
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        _check_violation,
+        _authority_changed,
+        _recovery_fails,
+        _inspection_fails,
+        _backup_fails,
+        _no_verified_backup,
+    ],
+    ids=[
+        "ledger_check",
+        "authority_changed",
+        "recovery",
+        "inspection",
+        "backup",
+        "no_verified_backup",
+    ],
+)
+def test_a_failure_the_command_does_not_name_prints_only_its_one_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: Callable[[Path, pytest.MonkeyPatch], None],
+) -> None:
+    """Through the container: R9 on stdout, nothing on stderr, no traceback
+    and no internal text, exit 1, the database unchanged (review round 1,
+    findings 4 and 5)."""
+    path = _fresh(tmp_path / "data")
+    _another_build(path)
+    failure(path, monkeypatch)
+    before = _sha(path)
+    monkeypatch.setattr(container, "DATA", path.parent)
+    monkeypatch.setattr(container, "DATABASE", path)
+    monkeypatch.setattr(container, "CONFIG", path.parent / "config.json")
+    with pytest.raises(SystemExit) as exited:
+        container.main(["regenerate-derived"])
+    assert exited.value.code == 1
+    assert capsys.readouterr() == (cli.FAILED + "\n", "")
+    assert _sha(path) == before
+    assert _no_scratch_left(path)
 
 
 # --- The regeneration ------------------------------------------------------------
