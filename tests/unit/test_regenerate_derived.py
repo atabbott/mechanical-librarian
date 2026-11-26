@@ -9,6 +9,7 @@ the derived partition is the frozen earlier one in
 
 from __future__ import annotations
 
+import dataclasses
 import errno
 import hashlib
 import io
@@ -36,7 +37,10 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
 )
 from mechanical_librarian.application.regenerate_derived import (
+    BlockingItem,
     Cause,
+    Inspection,
+    LibraryReport,
     Outcome,
     Reason,
     regenerate_derived,
@@ -335,17 +339,18 @@ def test_another_ledger_needs_a_clean_rebuild(
     assert lines == [str(refusal())]
 
 
-def test_an_altered_ledger_object_refuses_as_today(tmp_path: Path) -> None:
-    """Startup's own line, on purpose (S1 precedence): the one refusal that
-    prints no command copy."""
+def test_an_altered_ledger_object_refuses_with_its_own_line(tmp_path: Path) -> None:
+    """Refused before anything else, as startup refuses it (S1 precedence),
+    but in the command's own words (copy R10), never startup's internal
+    text."""
     path = _fresh(tmp_path / "data")
     rewrite(path, "ALTER TABLE owner_links ADD COLUMN planted TEXT")
     with pytest.raises(MetadataReportError) as startup:
         open_repository(path, create=False)
     _, lines, outcome = _refuses_unchanged(path)
     assert outcome.refusal is regeneration.Refusal.LEDGER_ALTERED
-    assert lines == [str(startup.value)]
     assert lines == [cli.REFUSALS[regeneration.Refusal.LEDGER_ALTERED]]
+    assert str(startup.value) not in lines[0]
 
 
 def test_a_ledger_row_its_check_refuses_is_not_admitted(tmp_path: Path) -> None:
@@ -677,7 +682,9 @@ def test_the_regeneration_recreates_derived_state_and_keeps_the_ledger(
     connection.close()
     status, lines, _ = _run(path)
     assert status == 0
-    assert lines[-1] == cli.REGENERATED
+    # A report was printed (one answer already written), so the result says
+    # the answers are kept as listed (copy OK2).
+    assert lines[-1] == cli.REGENERATED_AS_LISTED
     assert opens(path)
     assert _ledger(path, but=_WRITTEN_BY_THE_RUN) == ledger
     assert _derived(path) == _derived_setup()
@@ -972,35 +979,42 @@ def _counts(path: Path) -> dict[str, int]:
 def test_a_waiting_write_blocks_until_it_is_retired(
     owner: OwnerStore, state: str
 ) -> None:
-    """Without the flag the waiting write refuses; with it the write closes
-    superseded through the revocation (a claimed one first goes back to
-    retryable, not sent), and the answer it would have written stays the
-    record's, retired and no longer carried."""
+    """Without the flag the waiting write stops the run after the report
+    says what the flag retires (ADR-0108 step 4: confirmation after reading
+    the report); with it the write closes superseded through the revocation
+    (a claimed one first goes back to retryable, not sent), the same report
+    prints as done, and the answer it would have written stays the record's,
+    retired and no longer carried."""
     decision = owner.decide("accept", GENRES, destination="genres")
     operation = owner.plan(decision)
     _stage(owner, operation.plan.plan_id, state)
     target = owner.case.target
     path = _closed(owner)
     _, lines, outcome = _refuses_unchanged(path)
+    assert outcome.kind == "report"
     (item,) = outcome.items
     assert (item.reason, item.destination) == (Reason.WAITING, "genres")
+    library = f"{target['connection']}/{target['library']}"
     assert lines == [
-        cli.GATE_HEADING,
-        f"  {item.connection}/{item.library}, work {item.item_id}, Genres: "
-        f"{cli.REASONS[Reason.WAITING]} {cli.NO_CAUSE}",
+        cli.STILL_WAITING,
+        f"{cli.REASONS[Reason.WAITING]} {cli.READ_ACTIVITY}",
+        f"  {library}, work {target['item']}, Genres",
+        library,
+        "  " + cli.RETIRES.format(n=1),
+        f"    work {target['item']}, Genres",
+        cli.UPPER_LIMITS,
+        cli.GO_AHEAD,
     ]
     before = _ledger(path)
     status, lines, _ = _run(path, retire_pending=True)
     assert (status, lines) == (
         0,
         [
-            f"{target['connection']}/{target['library']}",
-            "  " + cli.UNWRITTEN.format(n=0),
+            library,
             "  " + cli.RETIRED.format(n=1),
             f"    work {target['item']}, Genres",
-            "  " + cli.WRITTEN.format(n=0),
             cli.UPPER_LIMITS,
-            cli.REGENERATED,
+            cli.REGENERATED_AS_LISTED,
         ],
     )
     assert opens(path)
@@ -1073,13 +1087,18 @@ def test_a_write_that_reached_audiobookshelf_blocks_even_with_the_flag(
         assert owner.service.apply(operation.plan.plan_id).state == "retryable"
     else:
         _stage(owner, operation.plan.plan_id, state)
+    target = owner.case.target
     path = _closed(owner)
     for flag in (False, True):
         _, lines, outcome = _refuses_unchanged(path, retire_pending=flag)
+        assert outcome.kind == "gate"
         assert [item.reason for item in outcome.items] == [Reason.MAY_HAVE_RECEIVED]
-        assert lines[1].endswith(
-            f"Genres: {cli.REASONS[Reason.MAY_HAVE_RECEIVED]} {cli.NO_CAUSE}"
-        )
+        assert lines == [
+            cli.MUST_FINISH,
+            f"{cli.REASONS[Reason.MAY_HAVE_RECEIVED]} {cli.FINISH_REACHABLE}",
+            f"  {target['connection']}/{target['library']}, work {target['item']}, "
+            "Genres",
+        ]
 
 
 def test_the_gate_names_what_it_can_see_offline(owner: OwnerStore) -> None:
@@ -1095,13 +1114,17 @@ def test_the_gate_names_what_it_can_see_offline(owner: OwnerStore) -> None:
         Cause.PREPARATION_PAUSED,
         Cause.LIBRARY_NOT_CONFIGURED,
     )
-    assert lines[1].endswith(
-        "Writes are paused. Preparation is paused. "
-        "This library is no longer in the settings."
+    # The causes follow the reason; a library no longer configured can never
+    # finish, so the line ends by asking for it back.
+    assert lines[1] == (
+        "A write is waiting to be sent. Writes are paused. Preparation is "
+        "paused. This library is no longer in the settings. Add the library "
+        "back in Settings on the previous build."
     )
     # In store mode, a store with no settings names no library reason.
-    _, _, stored = _refuses_unchanged(path)
+    _, lines, stored = _refuses_unchanged(path)
     assert stored.items[0].causes == (Cause.WRITES_PAUSED, Cause.PREPARATION_PAUSED)
+    assert lines[1].endswith("Preparation is paused. " + cli.READ_ACTIVITY)
 
 
 def test_open_resume_and_processing_policy_predicates() -> None:
@@ -1141,29 +1164,137 @@ def test_open_resume_and_processing_policy_predicates() -> None:
     assert connection.execute(regeneration._POLICY_PROCESSING_SQL).fetchone() == (0,)
 
 
-def test_a_resume_and_a_policy_check_render_as_the_gate_names_them() -> None:
+def test_the_waiting_items_render_grouped_with_their_action_last() -> None:
+    """One line per reason and causes, its action last, then the works it
+    names (copy v2): repeated items do not repeat the sentence, and a policy
+    check names no work."""
+    waiting = regeneration.BlockingItem(
+        Reason.WAITING, (), "home", "Books", "item-1", "title"
+    )
     lines: list[str] = []
     cli.render(
         Outcome(
-            "gate",
+            "report",
             items=(
+                waiting,
                 regeneration.BlockingItem(
                     Reason.RESUME, (), "home", "Books", "item-1", "description"
                 ),
+                dataclasses.replace(waiting, item_id="item-2", destination="series"),
                 regeneration.BlockingItem(Reason.POLICY, (Cause.PREPARATION_PAUSED,)),
             ),
         ),
         lines.append,
     )
-    assert lines == [
-        cli.GATE_HEADING + "\n",
-        "  home/Books, work item-1, Description: "
-        f"{cli.REASONS[Reason.RESUME]} {cli.NO_CAUSE}\n",
-        f"  {cli.REASONS[Reason.POLICY]} Preparation is paused.\n",
+    assert [line.rstrip("\n") for line in lines] == [
+        cli.STILL_WAITING,
+        "A write is waiting to be sent. Start the previous build and read Activity.",
+        "  home/Books, work item-1, Title",
+        "  home/Books, work item-2, Series",
+        "Resume automatic handling is waiting for its scan. Start the previous "
+        "build and read Activity.",
+        "  home/Books, work item-1, Description",
+        "A policy change is still checking works. Preparation is paused. Start "
+        "the previous build and read Activity.",
+        cli.GO_AHEAD,
     ]
 
 
 # --- The report and the decision rule ------------------------------------------------
+
+
+class _Session:
+    """A session that admits a database of another build and records what
+    the run wrote."""
+
+    def __init__(self, inspection: Inspection) -> None:
+        self.inspection = inspection
+        self.written: list[str] = []
+
+    def derived_is_current(self) -> bool:
+        return False
+
+    def free_space(self) -> tuple[int, int]:
+        return 1, 0
+
+    def store_libraries(self) -> None:
+        return None
+
+    def inspect(self, _configured: object) -> Inspection:
+        return self.inspection
+
+    def back_up(self) -> None:
+        self.written.append("backup")
+
+    def regenerate(self, *, retire_pending: bool, inspection: Inspection) -> None:
+        assert inspection is self.inspection
+        self.written.append(f"regenerate retire_pending={retire_pending}")
+
+    def close(self) -> None:
+        pass
+
+
+class _Store:
+    def __init__(self, session: _Session) -> None:
+        self.session = session
+
+    def admit(self) -> _Session:
+        return self.session
+
+
+_SENT = BlockingItem(Reason.MAY_HAVE_RECEIVED, (), "home", "Books", "item-1", "title")
+_WAITING = BlockingItem(Reason.WAITING, (), "home", "Books", "item-2", "genres")
+_AUTHORED = LibraryReport(
+    "home", "Books", authored=(regeneration.WorkField("item-3", "description"),)
+)
+_ONLY_LIST_1 = LibraryReport(
+    "home", "Books", unwritten=(regeneration.WorkField("item-4", "series"),)
+)
+
+
+@pytest.mark.parametrize(
+    ("blocking", "retirable", "report", "flag", "kind", "items"),
+    [
+        ((_SENT,), (_WAITING,), _AUTHORED, False, "gate", (_SENT,)),
+        ((_SENT,), (_WAITING,), _AUTHORED, True, "gate", (_SENT,)),
+        ((), (_WAITING,), _ONLY_LIST_1, False, "report", (_WAITING,)),
+        ((), (), _AUTHORED, False, "report", ()),
+        ((), (_WAITING,), _AUTHORED, True, "regenerated", ()),
+        ((), (), _ONLY_LIST_1, False, "regenerated", ()),
+    ],
+    ids=[
+        "sent_write_stops_without_the_flag",
+        "sent_write_stops_with_the_flag",
+        "waiting_write_stops_for_the_report",
+        "list_3_stops_for_the_report",
+        "flag_confirms_the_report",
+        "nothing_to_confirm_goes_ahead",
+    ],
+)
+def test_the_decision_rule(
+    blocking: tuple[BlockingItem, ...],
+    retirable: tuple[BlockingItem, ...],
+    report: LibraryReport,
+    flag: bool,
+    kind: str,
+    items: tuple[BlockingItem, ...],
+) -> None:
+    """ADR-0108 step 4: a write that may have reached Audiobookshelf stops
+    the run, flag or not, and only it is named; without the flag, anything
+    the flag would retire, and lists 3 to 5, stop the run with the report, so
+    the flag only confirms what was printed; nothing is written unless the
+    run goes ahead."""
+    session = _Session(Inspection(blocking, retirable, (report,), False))
+    outcome = regenerate_derived(
+        _Store(session), retire_pending=flag, configuration=_store_mode
+    )
+    assert (outcome.kind, outcome.items) == (kind, items)
+    if kind == "regenerated":
+        assert session.written == ["backup", f"regenerate retire_pending={flag}"]
+    else:
+        assert session.written == []
+    if kind == "report":
+        assert outcome.reports == (report,)
 
 
 def test_an_unwritten_answer_is_reported_and_the_run_goes_ahead(
@@ -1174,13 +1305,12 @@ def test_an_unwritten_answer_is_reported_and_the_run_goes_ahead(
     path = _closed(owner)
     status, lines, _ = _run(path)
     assert status == 0
+    # A count of 0 is left out, and list 1 is a count (copy v2 section 7).
     assert lines == [
         f"{target['connection']}/{target['library']}",
         "  " + cli.UNWRITTEN.format(n=1),
-        f"    work {target['item']}, Genres",
-        "  " + cli.WRITTEN.format(n=0),
         cli.UPPER_LIMITS,
-        cli.REGENERATED,
+        cli.REGENERATED_AS_LISTED,
     ]
 
 
@@ -1199,7 +1329,8 @@ def test_a_stopped_write_needs_the_flag(owner: OwnerStore) -> None:
         cli.GO_AHEAD,
     ]
     status, lines, _ = _run(path, retire_pending=True)
-    assert (status, lines[-1]) == (0, cli.REGENERATED)
+    assert (status, lines[-1]) == (0, cli.REGENERATED_AS_LISTED)
+    assert "  " + cli.STOPPED.format(n=1) in lines
     assert opens(path)
 
 
@@ -1247,23 +1378,92 @@ def test_the_report_renders_covers_and_authored_descriptions() -> None:
         covers=(
             regeneration.CoverPointer("item-3", True),
             regeneration.CoverPointer("item-4", False),
+            regeneration.CoverPointer("item-5", True),
         ),
     )
     assert report.stops_without_flag
     cli.render(Outcome("report", reports=(report,), backup_held=True), lines.append)
+    # No waiting item, so no gate heading; covers are grouped by what each
+    # keeps, each group's sentence once.
     assert [line.rstrip("\n") for line in lines] == [
         "home/Books",
-        "  " + cli.UNWRITTEN.format(n=0),
-        "  " + cli.WRITTEN.format(n=0),
         "  " + cli.AUTHORED.format(n=1),
         "    work item-2, Description",
-        "  " + cli.COVERS.format(n=2),
-        "    " + cli.COVER_KEPT.format(item_id="item-3"),
-        "    " + cli.COVER_NONE.format(item_id="item-4"),
+        "  " + cli.COVERS.format(n=3),
+        "    " + cli.COVER_KEPT,
+        "      work item-3",
+        "      work item-5",
+        "    " + cli.COVER_NONE,
+        "      work item-4",
         cli.UPPER_LIMITS,
-        cli.REPLACED,
+        cli.REPLACES,
         cli.GO_AHEAD,
     ]
+
+
+@pytest.mark.parametrize(
+    ("retire_pending", "unwritten_line"),
+    [(True, None), (False, "  " + cli.UNWRITTEN.format(n=2))],
+    ids=["with_the_flag", "without_the_flag"],
+)
+def test_a_run_that_went_ahead_prints_the_report_done(
+    retire_pending: bool, unwritten_line: str | None
+) -> None:
+    """After the run the report says what was done: retired, not retires;
+    the earlier restore point was replaced; and the result says the answers
+    are kept as listed (copy L1-flag-done, F2-done, OK2). Without the flag
+    nothing was retired, so list 1 counts every unwritten answer."""
+    entry = regeneration.WorkField("item-1", "title")
+    report = regeneration.LibraryReport(
+        "home",
+        "Books",
+        unwritten=(entry, regeneration.WorkField("item-2", "series")),
+        retired=(entry,),
+    )
+    lines: list[str] = []
+    status = cli.render(
+        Outcome(
+            "regenerated",
+            reports=(report,),
+            backup_held=True,
+            retire_pending=retire_pending,
+        ),
+        lines.append,
+    )
+    middle = (
+        [unwritten_line]
+        if unwritten_line
+        else [
+            "  " + cli.UNWRITTEN.format(n=1),
+            "  " + cli.RETIRED.format(n=1),
+            "    work item-1, Title",
+        ]
+    )
+    assert (status, [line.rstrip("\n") for line in lines]) == (
+        0,
+        [
+            "home/Books",
+            *middle,
+            cli.UPPER_LIMITS,
+            cli.REPLACED,
+            cli.REGENERATED_AS_LISTED,
+        ],
+    )
+
+
+def test_a_run_with_no_report_says_every_answer_is_kept() -> None:
+    """OK1 only when no report was printed: a library with nothing to list
+    prints nothing, and the replaced restore point is still said."""
+    lines: list[str] = []
+    cli.render(
+        Outcome(
+            "regenerated",
+            reports=(regeneration.LibraryReport("home", "Books"),),
+            backup_held=True,
+        ),
+        lines.append,
+    )
+    assert lines == [cli.REPLACED + "\n", cli.REGENERATED + "\n"]
 
 
 # --- After a regeneration ------------------------------------------------------------
@@ -1329,9 +1529,13 @@ def test_a_policy_change_still_checking_settles_with_the_flag(tmp_path: Path) ->
     _another_build(path)
     _, lines, outcome = _refuses_unchanged(path)
     assert [item.reason for item in outcome.items] == [Reason.POLICY]
-    assert lines == [cli.GATE_HEADING, f"  {cli.REASONS[Reason.POLICY]} {cli.NO_CAUSE}"]
+    assert lines == [
+        cli.STILL_WAITING,
+        f"{cli.REASONS[Reason.POLICY]} {cli.READ_ACTIVITY}",
+        cli.GO_AHEAD,
+    ]
     status, lines, _ = _run(path, retire_pending=True)
-    assert (status, lines[-1]) == (0, cli.REGENERATED)
+    assert (status, lines) == (0, [cli.REGENERATED])
     reopened = open_repository(path, create=False)
     try:
         settled = reopened.metadata_policy_transition()
@@ -1494,9 +1698,11 @@ def test_an_unwritten_cover_choice_needs_the_flag_and_its_pointer_goes(
     connection.close()
     assert items == ["item-0", "item-1"]
     _, lines, _ = _refuses_unchanged(path)
-    assert lines[3:6] == [
+    start = lines.index("  " + cli.COVERS.format(n=2))
+    assert lines[start : start + 4] == [
         "  " + cli.COVERS.format(n=2),
-        *("    " + cli.COVER_NONE.format(item_id=item) for item in items),
+        "    " + cli.COVER_NONE,
+        *(f"      work {item}" for item in items),
     ]
     assert lines[-1] == cli.GO_AHEAD
     status, _, _ = _run(path, retire_pending=True)

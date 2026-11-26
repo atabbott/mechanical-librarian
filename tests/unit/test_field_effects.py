@@ -6051,9 +6051,10 @@ def test_audiobook_pair_happy_pair_scheduler_reopen_and_activity(audiobook_pair)
 def test_audiobook_pair_live_plan_keeps_its_decisions_through_a_regeneration(
     audiobook_pair, tmp_path
 ):
-    """A pair still to write stops `regenerate-derived` at its gate, so no
-    regeneration takes the decisions it was planned from; once verified, the
-    pair stands without them (ADR-0108)."""
+    """A pair still to write stops `regenerate-derived` without its flag
+    (waiting, listed before the report), so no regeneration takes the
+    decisions it was planned from; once verified, the pair stands without
+    them (ADR-0108)."""
     lane = ContinuousGuardedApplication(
         audiobook_pair.repo,
         {("primary", "audio"): audiobook_pair.service},
@@ -6068,7 +6069,7 @@ def test_audiobook_pair_live_plan_keeps_its_decisions_through_a_regeneration(
         "SELECT plan_id FROM field_effects"
     ).fetchone()
     outcome = run_regeneration(copied_store(audiobook_pair.repo, tmp_path / "planned"))
-    assert outcome.kind == "gate"
+    assert outcome.kind == "report"
     assert [item.reason for item in outcome.items] == [Reason.WAITING]
     assert audiobook_pair.service.apply(plan_id).state == "verified"
     decoded = reopen_without_derived_rows(audiobook_pair.repo, tmp_path / "verified")

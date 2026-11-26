@@ -44,20 +44,21 @@ REFUSALS = {
         "Restore your backup of /data."
     ),
     Refusal.BACKUP_UNSAFE: (
-        "/data/regeneration-backup is not a private folder this container made. "
-        "Move it out of /data, then run regenerate-derived again."
+        "/data/regeneration-backup is not a private folder Mechanical Librarian "
+        "made. Move it out of /data, then run regenerate-derived again."
     ),
     Refusal.BACKUP_MISMATCH: (
         "The restore point did not match the database, so nothing was changed. "
         "Run regenerate-derived again."
     ),
     Refusal.ROLLED_BACK: (
-        "Regeneration stopped and was rolled back, so nothing was changed. "
+        "Regeneration stopped and was rolled back, so the database is unchanged. "
         "Run regenerate-derived again."
     ),
-    # Startup's own line for an altered ledger object, on purpose: the command
-    # refuses it exactly as the server does (S1 precedence).
-    Refusal.LEDGER_ALTERED: "database is unavailable or incompatible",
+    Refusal.LEDGER_ALTERED: (
+        "The database's records do not match this build, so nothing was "
+        "changed. Start the build that made it, or restore your backup of /data."
+    ),
 }
 # Any other stop with nothing changed; nothing internal is ever printed.
 FAILED = (
@@ -71,12 +72,16 @@ NO_SPACE = (
 NO_SPACE_HELD = "Deleting /data/regeneration-backup frees the earlier restore point."
 NOTHING_TO_DO = "Nothing to regenerate: this database already matches this build."
 
-GATE_HEADING = "Nothing was changed. These need to finish on the previous image first:"
+# The gate. H1 names what must finish first, even with the flag; H2 names,
+# without the flag, what `--retire-pending` would retire, before the report.
+MUST_FINISH = "Nothing was changed. These need to finish on the previous build first:"
+STILL_WAITING = (
+    "Nothing was changed. These are still waiting. Let them finish on the "
+    "previous build, or retire them with regenerate-derived --retire-pending "
+    "after reading the report below:"
+)
 REASONS = {
-    Reason.MAY_HAVE_RECEIVED: (
-        "Audiobookshelf may have received this write. Start the previous image "
-        "with the connection reachable and let it finish."
-    ),
+    Reason.MAY_HAVE_RECEIVED: "Audiobookshelf may have received this write.",
     Reason.WAITING: "A write is waiting to be sent.",
     Reason.RESUME: "Resume automatic handling is waiting for its scan.",
     Reason.POLICY: "A policy change is still checking works.",
@@ -88,35 +93,58 @@ CAUSES = {
     Cause.PREPARATION_PAUSED: "Preparation is paused.",
     Cause.LIBRARY_NOT_CONFIGURED: "This library is no longer in the settings.",
 }
-NO_CAUSE = "Start the previous image and read Activity."
+# The one thing to do ends every group line.
+FINISH_REACHABLE = (
+    "Start the previous build with the connection reachable and let it finish."
+)
+ADD_LIBRARY_BACK = "Add the library back in Settings on the previous build."
+READ_ACTIVITY = "Start the previous build and read Activity."
 
+# The report; a list whose count is 0 is left out.
 UNWRITTEN = (
     "Answers not yet written: {n}. Each is kept if a new reading asks the same "
     "question, and asked again otherwise."
 )
+RETIRES = (
+    "Answers whose waiting write --retire-pending retires: {n}. Each is asked "
+    "again, and Automatic stays off the field."
+)
 RETIRED = (
-    "Answers whose waiting write will be retired: {n}. Each is asked again, "
-    "and Automatic stays off the field."
+    "Answers whose waiting write was retired: {n}. Each is asked again, and "
+    "Automatic stays off the field."
 )
 WRITTEN = "Answers already written: {n}."
-AUTHORED = "Descriptions you wrote that are not yet in Audiobookshelf: {n}."
-COVERS = "Cover choices not yet written: {n}."
-COVER_KEPT = "work {item_id}: keeps your last written cover"
-COVER_NONE = (
-    "work {item_id}: no cover choice remains, and Automatic still leaves this "
-    "cover alone."
+AUTHORED = (
+    "Descriptions you wrote that are not yet in Audiobookshelf: {n}. Each is "
+    "asked again, and Automatic stays off the description."
 )
-STOPPED = "Writes stopped for your decision, which leave Activity: {n}."
+COVERS = "Cover choices not yet written: {n}."
+COVER_KEPT = "Keeps your last written cover:"
+COVER_NONE = "No cover choice remains, and Automatic still leaves the cover alone:"
+STOPPED = (
+    "Writes stopped for your decision: {n}. Activity no longer counts them as "
+    "needing you."
+)
 UPPER_LIMITS = (
     "Counts can include answers from earlier readings, so they are upper limits."
 )
-REPLACED = "The restore point already in /data/regeneration-backup will be replaced."
+REPLACES = "The restore point already in /data/regeneration-backup will be replaced."
+REPLACED = "The earlier restore point in /data/regeneration-backup was replaced."
 GO_AHEAD = "Nothing was changed. To go ahead, run regenerate-derived --retire-pending."
+# Success, option A of each draft (the owner's choice is one constant each):
+# with no report printed, and after a printed report, whose lists say which
+# answers are kept.
 REGENERATED = (
     "Regenerated. Start the server and preparation reads every library again. "
     "Your answers, settings and write history are kept. A restore point is in "
     "/data/regeneration-backup. Delete it once you are satisfied; until then "
     "unused cover files are kept."
+)
+REGENERATED_AS_LISTED = (
+    "Regenerated. Start the server and preparation reads every library again. "
+    "Your settings and write history are kept, and your answers as listed "
+    "above. A restore point is in /data/regeneration-backup. Delete it once "
+    "you are satisfied; until then unused cover files are kept."
 )
 
 
@@ -150,59 +178,82 @@ def _work(entry: WorkField) -> str:
     return f"    work {entry.item_id}, {destination_label(entry.destination)}"
 
 
-def _gate_line(item: BlockingItem) -> str:
-    causes = " ".join(CAUSES[cause] for cause in item.causes) or NO_CAUSE
-    if item.connection is None:
-        return f"  {REASONS[item.reason]} {causes}"
-    assert item.destination is not None
-    return (
-        f"  {item.connection}/{item.library}, work {item.item_id}, "
-        f"{destination_label(item.destination)}: {REASONS[item.reason]} {causes}"
-    )
+def _action(reason: Reason, causes: tuple[Cause, ...]) -> str:
+    """The one thing to do: a library no longer configured can never finish
+    until it is added back, whatever the item waits for."""
+    if Cause.LIBRARY_NOT_CONFIGURED in causes:
+        return ADD_LIBRARY_BACK
+    if reason is Reason.MAY_HAVE_RECEIVED:
+        return FINISH_REACHABLE
+    return READ_ACTIVITY
 
 
-def _report_lines(report: LibraryReport, retire_pending: bool) -> list[str]:
-    """One library's lists. With `--retire-pending`, list 1's answers whose
-    waiting write is retired are listed apart (copy-draft L1-flag)."""
-    retired = report.retired if retire_pending else ()
+def _gate_lines(items: tuple[BlockingItem, ...]) -> list[str]:
+    """One line per reason and its causes, ending with what to do, then the
+    items it names, in the order they were found."""
+    groups: dict[tuple[Reason, tuple[Cause, ...]], list[BlockingItem]] = {}
+    for item in items:
+        groups.setdefault((item.reason, item.causes), []).append(item)
+    lines: list[str] = []
+    for (reason, causes), grouped in groups.items():
+        sentences = [REASONS[reason], *(CAUSES[cause] for cause in causes)]
+        lines.append(" ".join([*sentences, _action(reason, causes)]))
+        for item in grouped:
+            if item.connection is None:
+                continue
+            assert item.destination is not None
+            lines.append(
+                f"  {item.connection}/{item.library}, work {item.item_id}, "
+                f"{destination_label(item.destination)}"
+            )
+    return lines
+
+
+def _report_lines(report: LibraryReport, retired_line: str | None) -> list[str]:
+    """One library's lists, each left out at 0. Given `retired_line`, list
+    1's answers whose waiting write the flag retires are listed apart."""
+    retired = report.retired if retired_line is not None else ()
     kept = [entry for entry in report.unwritten if entry not in retired]
     lines = [f"{report.connection}/{report.library}"]
-    lines.append("  " + UNWRITTEN.format(n=len(kept)))
-    lines.extend(_work(e) for e in kept)
-    if retired:
-        lines.append("  " + RETIRED.format(n=len(retired)))
+    if kept:
+        lines.append("  " + UNWRITTEN.format(n=len(kept)))
+    if retired_line is not None and retired:
+        lines.append("  " + retired_line.format(n=len(retired)))
         lines.extend(_work(e) for e in retired)
-    lines.append("  " + WRITTEN.format(n=report.written))
+    if report.written:
+        lines.append("  " + WRITTEN.format(n=report.written))
     if report.authored:
         lines.append("  " + AUTHORED.format(n=len(report.authored)))
         lines.extend(_work(e) for e in report.authored)
     if report.covers:
         lines.append("  " + COVERS.format(n=len(report.covers)))
-        lines.extend(
-            "    "
-            + (COVER_KEPT if pointer.keeps_written else COVER_NONE).format(
-                item_id=pointer.item_id
-            )
-            for pointer in report.covers
-        )
+        for heading, keeps in ((COVER_KEPT, True), (COVER_NONE, False)):
+            items = [p.item_id for p in report.covers if p.keeps_written is keeps]
+            if items:
+                lines.append("    " + heading)
+                lines.extend(f"      work {item}" for item in items)
     if report.stopped:
         lines.append("  " + STOPPED.format(n=len(report.stopped)))
         lines.extend(_work(e) for e in report.stopped)
     return lines
 
 
-def _reports(outcome: Outcome) -> list[str]:
+def _reports(outcome: Outcome, *, done: bool) -> list[str]:
+    """The report, before the run (`done` false) or after it."""
+    retired_line = RETIRED if outcome.retire_pending else (None if done else RETIRES)
     reports = [report for report in outcome.reports if not report.empty]
-    lines = [
-        line
-        for report in reports
-        for line in _report_lines(report, outcome.retire_pending)
-    ]
+    lines = [line for report in reports for line in _report_lines(report, retired_line)]
     if reports:
         lines.append(UPPER_LIMITS)
     if outcome.backup_held:
-        lines.append(REPLACED)
+        lines.append(REPLACED if done else REPLACES)
     return lines
+
+
+def _regenerated(outcome: Outcome) -> list[str]:
+    lines = _reports(outcome, done=True)
+    printed = any(not report.empty for report in outcome.reports)
+    return [*lines, REGENERATED_AS_LISTED if printed else REGENERATED]
 
 
 def render(outcome: Outcome, write: Callable[[str], object]) -> int:
@@ -225,11 +276,12 @@ def render(outcome: Outcome, write: Callable[[str], object]) -> int:
         )
         lines = [message + (" " + NO_SPACE_HELD if outcome.backup_held else "")]
     elif outcome.kind == "gate":
-        lines = [GATE_HEADING, *(_gate_line(item) for item in outcome.items)]
+        lines = [MUST_FINISH, *_gate_lines(outcome.items)]
     elif outcome.kind == "report":
-        lines = [*_reports(outcome), GO_AHEAD]
+        waiting = [STILL_WAITING, *_gate_lines(outcome.items)] if outcome.items else []
+        lines = [*waiting, *_reports(outcome, done=False), GO_AHEAD]
     else:
-        lines = [*_reports(outcome), REGENERATED]
+        lines = _regenerated(outcome)
     for line in lines:
         write(line + "\n")
     return 0 if outcome.kind in {"regenerated", "nothing_to_do"} else 1

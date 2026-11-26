@@ -11,6 +11,7 @@ import dataclasses
 import hashlib
 import io
 import json
+import os
 import shutil
 import sqlite3
 from pathlib import Path
@@ -57,6 +58,7 @@ from tests.integration.test_cover_rules_activation import (
 )
 from tests.integration.test_cover_taste_automatic import _republished
 from tests.integration.test_owner_field_record import _write_all, _writes
+from tests.support import ledger_fixture
 from tests.support.field_effects import CAPABILITY, Clock
 from tests.support.ledger_partition import opens, rewrite
 from tests.support.owner_field_record import (
@@ -106,6 +108,72 @@ def _rows(path: Path, sql: str) -> list[tuple[Any, ...]]:
         connection.close()
 
 
+# --- The report the flag confirms (ADR-0108 step 4) ----------------------------
+
+
+class _BeforeTheRun(Exception):
+    """Stops the ledger fixture's generator where it would regenerate."""
+
+
+def test_the_flag_confirms_the_report_the_owner_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ledger fixture's store as the server leaves it, with a waiting
+    title write and unwritten cover choices. Without the flag the run lists
+    what is waiting and prints the whole report, including what the flag
+    retires, and changes nothing, however often it is run; with the flag the
+    same report prints as done, and the result keeps the answers only as
+    listed. A later run says the restore point it replaced."""
+    captured: dict[str, Path] = {}
+
+    def before_the_run(database: Path, **_arguments: object) -> None:
+        captured["database"] = database
+        raise _BeforeTheRun
+
+    monkeypatch.setattr(ledger_fixture, "regenerate", before_the_run)
+    root = tmp_path / "store"
+    root.mkdir(mode=0o700)
+    with pytest.raises(_BeforeTheRun):
+        ledger_fixture.generate(root)
+    path = captured["database"]
+    _another_build(path)
+    volume = (path.read_bytes(), sorted(os.listdir(path.parent)))
+    status, stopped, outcome = _run(path)
+    assert (status, outcome.kind) == (1, "report")
+    assert (path.read_bytes(), sorted(os.listdir(path.parent))) == volume
+    assert _run(path)[1] == stopped
+    heading = stopped.index("primary/ebooks")
+    waiting, report = stopped[1:heading], stopped[heading:-1]
+    assert (stopped[0], stopped[-1]) == (cli.STILL_WAITING, cli.GO_AHEAD)
+    # One sentence for every waiting write, its action last, then each work.
+    assert waiting[0] == f"{cli.REASONS[Reason.WAITING]} {cli.READ_ACTIVITY}"
+    assert waiting[1:] == [
+        f"  primary/ebooks, work {item.item_id}, "
+        + ("Cover" if item.destination == "cover" else "Title")
+        for item in outcome.items
+    ]
+    assert len(outcome.items) == 25
+    retires = "  " + cli.RETIRES.format(n=1)
+    assert report[report.index(retires) + 1] == "    work item-1, Title"
+    assert "  " + cli.COVERS.format(n=24) in report
+    assert report[-1] == cli.UPPER_LIMITS
+
+    status, done, _ = _run(path, retire_pending=True)
+    assert status == 0
+    assert done == [
+        *(
+            "  " + cli.RETIRED.format(n=1) if line == retires else line
+            for line in report
+        ),
+        cli.REGENERATED_AS_LISTED,
+    ]
+    assert opens(path)
+
+    _another_build(path)
+    status, later, _ = _run(path)
+    assert (status, later[-2:]) == (0, [cli.REPLACED, cli.REGENERATED_AS_LISTED])
+
+
 # --- Resume, through the page's own request -----------------------------------
 
 
@@ -130,15 +198,19 @@ def test_an_open_resume_refuses_until_the_flag_closes_it_over_its_answer(
         status, lines, outcome = _run(path)
         assert status == 1
         assert [item.reason for item in outcome.items] == [Reason.RESUME]
-        assert lines == [
-            cli.GATE_HEADING,
-            f"  {target['connection']}/{target['library']}, work {target['item']}, "
-            f"Authors: {cli.REASONS[Reason.RESUME]} {cli.NO_CAUSE}",
+        # Without the flag the open Resume stops the run with the report, so
+        # the flag confirms what was printed (ADR-0108 step 4).
+        library_name = f"{target['connection']}/{target['library']}"
+        assert lines[:3] == [
+            cli.STILL_WAITING,
+            f"{cli.REASONS[Reason.RESUME]} {cli.READ_ACTIVITY}",
+            f"  {library_name}, work {target['item']}, Authors",
         ]
+        assert lines[-1] == cli.GO_AHEAD
         assert path.read_bytes() == before
         assert not (tmp_path / "regeneration-backup").exists()
         status, lines, _ = _run(path, retire_pending=True)
-        assert (status, lines[-1]) == (0, cli.REGENERATED), lines
+        assert (status, lines[-1]) == (0, cli.REGENERATED_AS_LISTED), lines
         assert opens(path)
         assert _rows(
             path,
@@ -378,10 +450,11 @@ def test_a_written_then_released_cover_keeps_its_bytes_and_the_unwritten_choice_
     before = path.read_bytes()
     status, lines, _ = _run(path)
     assert status == 1
-    assert "    " + cli.COVER_KEPT.format(item_id=target["item"]) in lines, lines
+    kept_at = lines.index("    " + cli.COVER_KEPT)
+    assert lines[kept_at + 1] == f"      work {target['item']}", lines
     assert path.read_bytes() == before
     status, lines, _ = _run(path, retire_pending=True)
-    assert (status, lines[-1]) == (0, cli.REGENERATED), lines
+    assert (status, lines[-1]) == (0, cli.REGENERATED_AS_LISTED), lines
     assert _rows(path, "SELECT selection_id FROM owner_cover_pointers") == [
         (written["selection_id"],)
     ]

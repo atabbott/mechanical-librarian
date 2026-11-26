@@ -3,8 +3,11 @@
 The store side lives in `adapters/persistence/regeneration.py` and the words
 in `interfaces/cli/regenerate.py`. This module holds the order of the steps
 and the decision rule: admission, nothing to do, the free-space reserve, the
-gate, the report, the rule that only `--retire-pending` lets lists 3, 4 and 5
-go ahead, the retained backup and the one transaction. Admission's scratch
+gate, the report, the retained backup and the one transaction. A write that
+may have reached Audiobookshelf stops the run even with `--retire-pending`.
+Without the flag, anything the flag would retire and lists 3, 4 and 5 stop
+the run after the report is printed, so the flag only ever confirms a report
+the owner has read (ADR-0108 step 4). Admission's scratch
 copy of the ledger is the run's first write, so the store checks the same
 reserve before it, and a write that meets a full volume later is the same
 refusal. It returns what happened; the caller prints it and turns it into the
@@ -39,7 +42,7 @@ class Refusal(StrEnum):
     BACKUP_UNSAFE = "backup_unsafe"
     BACKUP_MISMATCH = "backup_mismatch"
     ROLLED_BACK = "rolled_back"
-    # An altered ledger object refuses with startup's own line (S1 precedence).
+    # An altered ledger object: refused before anything else (S1 precedence).
     LEDGER_ALTERED = "ledger_altered"
 
 
@@ -180,7 +183,9 @@ class Outcome:
     """What the run did. `kind` decides the words and the exit status.
 
     `startup` carries a startup refusal's own guidance as `message`; a
-    `failed` run carries no text, as nothing internal is shown.
+    `failed` run carries no text, as nothing internal is shown. `gate` names
+    what must finish first; `report` stops for the owner to read the report,
+    with `items` the waiting things the flag would retire.
     """
 
     kind: Literal[
@@ -268,13 +273,15 @@ def _run(
         return Outcome(
             "no_space", free=free, needed=needed, backup_held=inspection.backup_held
         )
-    blocking = inspection.blocking + (() if retire_pending else inspection.retirable)
-    if blocking:
-        return Outcome("gate", items=blocking)
-    stops = any(report.stops_without_flag for report in inspection.reports)
+    if inspection.blocking:
+        return Outcome("gate", items=inspection.blocking)
+    stops = inspection.retirable or any(
+        report.stops_without_flag for report in inspection.reports
+    )
     if stops and not retire_pending:
         return Outcome(
             "report",
+            items=inspection.retirable,
             reports=inspection.reports,
             backup_held=inspection.backup_held,
         )
