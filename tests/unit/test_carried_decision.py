@@ -17,6 +17,8 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
     admitted_applications,
+    case_question,
+    decision_actions,
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -267,6 +269,39 @@ def test_settled_is_admitted_on_both_media_and_only_on_a_carried_row() -> None:
     ordinary["application"] = "settled"
     with pytest.raises(HumanDecisionError, match="invalid"):
         HumanDecision.from_json(json.dumps(ordinary))
+
+
+def test_a_settled_carry_validates_on_an_audiobook_case() -> None:
+    report = admitted_audiobook_report()
+    case = ReviewCase.create(evaluate_report(report), report)
+    proposal = next(value for value in case.proposals if decision_actions(value))
+    destination = str(proposal["destination"])
+    original = HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination=destination,
+        actor="owner",
+        outcome="keep_current",
+        selected_value=None,
+        idempotency_key="carried-audiobook-0001",
+        occurred_at=1_000,
+    )
+    question = case_question(case, case.proposals, destination)
+    assert question is not None
+
+    carried = HumanDecision.carried(
+        case,
+        original,
+        offer=case.proposals,
+        expected=question,
+        written=False,
+        episode=2,
+        occurred_at=2_000,
+    )
+
+    assert carried.application == "settled"
+    carried.validate_for(case)
 
 
 def test_a_new_command_never_names_a_root() -> None:

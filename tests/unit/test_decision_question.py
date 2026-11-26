@@ -166,6 +166,22 @@ def test_consensus_decoration_tidy_is_asked_again_after_the_write() -> None:
     assert _question(before, "title").offer_part != _question(after, "title").offer_part
 
 
+def test_an_answer_on_the_tidied_case_asks_the_same_question_again() -> None:
+    """Amendment 1, R3: the answer given on the post-write case of the
+    decoration tidy is asked once. A later reading of the same book offers
+    the same question even under new proposal ids, as after a regeneration."""
+    report = _title_report("Plain Work", _DECORATED, ("Plain Work", "Plain Work"))
+    first, later = _case(report), _case(report)
+    renamed = copy.deepcopy(later.proposals)
+    for index, proposal in enumerate(renamed):
+        proposal["proposal_id"] = "review_proposal_" + f"{index + 7:064x}"
+
+    assert offer_digest(renamed, "title") != offer_digest(first.proposals, "title")
+    assert decision_question(
+        renamed, _target_field(later, "title"), "title"
+    ) == _question(first, "title")
+
+
 def test_offer_part_names_no_proposal_id() -> None:
     case = _case(
         _title_report("Current Title", "Current Title", ("Plain Work", "Other Work"))

@@ -128,6 +128,25 @@ from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeSet,
 )
 
+
+def _question_halves(
+    decision: HumanDecision, case: ReviewCase, offer: tuple[dict[str, object], ...]
+) -> tuple[str | None, str | None]:
+    """The question an owner answer is given against, for the question check
+    at the book's next case or episode (ADR-0108): its offer part and target
+    part. A cover, a pin, an unpin and a withdrawal have none."""
+    question = (
+        case_question(case, offer, decision.destination)
+        if decision.outcome in CARRIED_OUTCOMES and decision.destination != "cover"
+        else None
+    )
+    return (
+        (None, None)
+        if question is None
+        else (question.offer_part, question.target_part)
+    )
+
+
 _REPLACEMENT_BLOCKING_EFFECT_SQL = (
     "(state IN ('claimed','applying','reconciling') OR (state='verified' AND ?))"
 )
@@ -957,15 +976,6 @@ class SQLiteDecisionRepository(ConnectionScoped):
             )
             selected = _canonical_json(decision.selected_value)
             copies = decision_copies(case, decision.destination)
-            # The question the answer is given against, for the question
-            # check at the book's next case or episode (ADR-0108); a cover,
-            # a pin, an unpin and a withdrawal have none.
-            question = (
-                case_question(case, offer, decision.destination)
-                if decision.outcome in CARRIED_OUTCOMES
-                and decision.destination != "cover"
-                else None
-            )
             self._connection.execute(
                 HUMAN_DECISION_INSERT_SQL,
                 (
@@ -990,8 +1000,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     and decision.outcome == "accept"
                     else None,
                     None,
-                    None if question is None else question.offer_part,
-                    None if question is None else question.target_part,
+                    *_question_halves(decision, case, offer),
                 ),
             )
             self._record_cover_decision_outcome(
