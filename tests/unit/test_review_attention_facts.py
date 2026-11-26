@@ -796,6 +796,29 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
             (earlier, *held[:3]),
         ),
     )
+    # The question check leaves the earlier answer waiting for its plan,
+    # which settles the field, then for a Resume that is not open, which
+    # does not (ADR-0108, Attention; #2040). Both stay provisional, so the
+    # rows can still be rewritten in place below.
+    yield (
+        "the question check leaves the answer waiting",
+        (("carry_outcomes", "insert"),),
+        lambda: run(
+            "INSERT INTO carry_outcomes(answer_id,review_case_id,episode,"
+            "connection_name,library_name,item_id,destination,outcome,"
+            "carried_decision_id,checked_at,derived_epoch) "
+            "VALUES(?,?,0,?,?,?,'title','deferred',NULL,1,0)",
+            (f"human_decision_{_hex('held')}", held[3], *held[:3]),
+        ),
+    )
+    yield (
+        "the question check waits on a Resume no longer open",
+        (("carry_outcomes", "update"),),
+        lambda: run(
+            "UPDATE carry_outcomes SET outcome='resume_pending' WHERE review_case_id=?",
+            (held[3],),
+        ),
+    )
     requested = f"owner_field_event_{_hex('requested')}"
     yield (
         "a Resume opens over it",

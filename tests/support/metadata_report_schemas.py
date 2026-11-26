@@ -738,7 +738,7 @@ _RECORD_ANSWER_STEPS = (
     ),
     (
         "AND NOT ("
-        + review_sql._record_case_answer_sql(own=True)
+        + review_sql._record_case_answer_sql()
         + " AND "
         + review_sql._AUTOMATIC_DECIDED_SQL
         + ") ",
@@ -747,6 +747,8 @@ _RECORD_ANSWER_STEPS = (
 )
 _RECORD_ATTENTION_STEPS = (
     *_RECORD_ANSWER_STEPS,
+    # Nor did a question check leave a field waiting, settled (#2040).
+    (review_sql._CARRY_WAITING_CLEAR_SQL, ""),
     (
         " AND NOT " + review_sql._resumed_decision_sql("c") + " ORDER BY",
         " ORDER BY",

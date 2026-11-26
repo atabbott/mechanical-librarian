@@ -73,6 +73,8 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _read_as_own_sql,
     _resumed_decision_sql,
     _withdrawn_automatic_sql,
+    asked_again_sql,
+    carry_waiting_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
@@ -511,9 +513,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         reads as its own (`_read_as_own_sql`), which decides the field here
         (C2b-15), a pin taken back only where Automatic decided it (C2b-27,
         C2b-28); each the owner withdrew beside Automatic's decision on the
-        case, which then settles nothing (`_withdrawn_automatic_sql`); and the
-        case's owner decisions a completed Resume took back, which no longer
-        decide their field (D3). Kept apart so `read_current_review_case`
+        case, which then settles nothing (`_withdrawn_automatic_sql`); each
+        the question check asks again here (`asked_again_sql`), or left
+        waiting for a plan or a Resume (`carry_waiting_sql`, ADR-0108); and
+        the case's owner decisions a completed Resume took back, which no
+        longer decide their field (D3). Kept apart so `read_current_review_case`
         stays under the code-size guide."""
         states: dict[str, list[str]] = {
             "held_destinations": [],
@@ -521,8 +525,18 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "return_failed_destinations": [],
             "resume_offer_destinations": [],
             "own_answer_destinations": [],
+            "asked_again_destinations": [],
+            "carry_waiting_destinations": [],
         }
-        for destination, opened, failed, offered, own in self._connection.execute(
+        for (
+            destination,
+            opened,
+            failed,
+            offered,
+            own,
+            asked_again,
+            waiting,
+        ) in self._connection.execute(
             "SELECT held.destination,held.open_resume_id IS NOT NULL,"
             "EXISTS (SELECT 1 FROM owner_field_events failed "
             "WHERE failed.request_id=held.open_resume_id "
@@ -533,6 +547,10 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             + _resume_offer_sql(":case", "held.destination")
             + " END,"
             + _read_as_own_sql("held", ":case", "held.destination")
+            + ","
+            + asked_again_sql("held", ":case", "held.destination")
+            + ","
+            + carry_waiting_sql("held", ":case")
             + " FROM "
             + _CASE_RECORD_ROWS_SQL.format(alias="held")
             + " ORDER BY held.destination",
@@ -549,6 +567,10 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 states["resume_offer_destinations"].append(destination)
             if own:
                 states["own_answer_destinations"].append(destination)
+            if asked_again and destination != "cover":
+                states["asked_again_destinations"].append(destination)
+            if waiting and destination != "cover":
+                states["carry_waiting_destinations"].append(destination)
         return {
             **{name: tuple(values) for name, values in states.items()},
             "withdrawn_destinations": tuple(

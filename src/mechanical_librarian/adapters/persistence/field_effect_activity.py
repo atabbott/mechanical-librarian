@@ -4995,7 +4995,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON episode.review_case_id=decision.review_case_id "
                 "JOIN current_review_packages current "
                 "ON current.review_case_id=decision.review_case_id "
-                "WHERE decision.ordinal<=episode.decision_floor AND event.event_id IN ("
+                "WHERE decision.ordinal<=episode.decision_floor "
+                # An answer the question check carried into the case's
+                # current episode was not asked again (ADR-0108).
+                "AND NOT EXISTS (SELECT 1 FROM human_decisions carried "
+                "WHERE carried.carried_from=COALESCE(decision.carried_from,"
+                "decision.decision_id) "
+                "AND carried.review_case_id=decision.review_case_id "
+                "AND json_extract(carried.document,'$.episode')="
+                "episode.decision_floor) AND event.event_id IN ("
                 + ",".join("?" for _ in decisions)
                 + ")",
                 decisions,
