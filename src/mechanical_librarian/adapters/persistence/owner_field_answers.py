@@ -550,16 +550,28 @@ def answer_written_sql(answer: str) -> str:
     """Whether owner answer `answer` (an SQL expression naming a decision id)
     is written: a verified plan or a no-change row of it or of its carry
     chain, its root and every row carried from that root. Ledger rows only,
-    so it reads the same with or without derived rows (ADR-0108, step 3)."""
+    so it reads the same with or without derived rows (ADR-0108, step 3).
+
+    A title plan writes its subtitle companion's answer too, and an authored
+    description, which has no `human_decisions` row and is never carried, is
+    written by its own plan or no-change row (regenerate-derived, #2040).
+    `answer` appears once, so one positional parameter can name it."""
+    owners = (
+        "(SELECT decision_id,carried_from FROM human_decisions UNION ALL "
+        "SELECT decision_id,NULL FROM owner_authored_descriptions)"
+    )
     return (
-        "EXISTS (SELECT 1 FROM human_decisions written_answer JOIN human_decisions "
+        f"EXISTS (SELECT 1 FROM {owners} written_answer JOIN {owners} "
         "written_chain ON written_chain.decision_id=COALESCE("
         "written_answer.carried_from,written_answer.decision_id) "
         "OR written_chain.carried_from=COALESCE(written_answer.carried_from,"
         f"written_answer.decision_id) WHERE written_answer.decision_id={answer} "
         "AND (EXISTS (SELECT 1 FROM field_effects written_plan "
         "WHERE written_plan.decision_id=written_chain.decision_id "
-        "AND written_plan.state='verified') OR EXISTS (SELECT 1 FROM "
+        "AND written_plan.state='verified') OR EXISTS (SELECT 1 FROM field_effects "
+        "WHERE state='verified' AND CAST(json_extract(document,"
+        "'$.plan.subtitle_companion.authority.decision_id') AS TEXT)"
+        "=written_chain.decision_id) OR EXISTS (SELECT 1 FROM "
         "field_effect_no_changes written_nothing "
         "WHERE written_nothing.decision_id=written_chain.decision_id)))"
     )

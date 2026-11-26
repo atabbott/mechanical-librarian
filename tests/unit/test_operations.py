@@ -108,7 +108,7 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
                 side_effect=interrupt_before_kickoff,
             ) as serve,
         ):
-            container.main()
+            container.main([])
             serve.assert_called_once_with(
                 root / "config.json",
                 root / "application.sqlite3",
@@ -129,7 +129,7 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
                 assert value.stat().st_mode & 0o777 == 0o700
                 assert not value.is_symlink()
             serve.reset_mock(side_effect=True)
-            container.main()
+            container.main([])
             serve.assert_called_once_with(
                 root / "config.json",
                 root / "application.sqlite3",
@@ -174,7 +174,7 @@ def test_container_store_mode_prints_one_refusal_line_and_exits_1(
         patch.object(container, "run_review_server") as serve,
         pytest.raises(SystemExit) as raised,
     ):
-        container.main()
+        container.main([])
     serve.assert_not_called()
     # `SystemExit` with a message prints it as one line on stderr and exits 1.
     assert raised.value.code == str(DerivedRegenerationRequired())
@@ -195,7 +195,7 @@ def test_container_file_mode_prints_one_refusal_line_and_exits_1(
         ),
         pytest.raises(SystemExit) as raised,
     ):
-        container.main()
+        container.main([])
     assert raised.value.code == str(LedgerRebuildRequired())
 
 
@@ -213,7 +213,7 @@ def test_container_lets_any_other_failure_propagate(tmp_path: Path) -> None:
         ),
         pytest.raises(MetadataReportError),
     ):
-        container.main()
+        container.main([])
 
 
 def test_container_stop_handler_exits_successfully() -> None:
@@ -850,11 +850,11 @@ def test_container_entrypoint_preserves_retained_reviewer_authority(
                 )
 
                 with pytest.raises(FirstBootError):
-                    container.main()
+                    container.main([])
                 serve.assert_not_called()
                 assert not (auth.parent / "jobs").exists()
             else:
-                container.main()
+                container.main([])
                 assert serve.call_args.kwargs["first_boot_mode"] is (
                     FirstBootMode.RESUME_SETUP
                     if resumable

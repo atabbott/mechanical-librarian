@@ -3408,9 +3408,15 @@ def _validate_schema_against(
 
 
 def _validate_schema_contents(
-    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
+    connection: sqlite3.Connection,
+    documents: ActivityDocuments | None = None,
+    *,
+    offline: bool = False,
 ) -> None:
-    _validate_schema_contents_without_attention_facts(connection, documents)
+    """`offline` is regenerate-derived's ledger-only admission (ADR-0108)."""
+    _validate_schema_contents_without_attention_facts(
+        connection, documents, offline=offline
+    )
     _require_equal_facts(
         connection,
         (
@@ -3425,7 +3431,10 @@ def _validate_schema_contents(
 
 
 def _validate_schema_contents_without_attention_facts(
-    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
+    connection: sqlite3.Connection,
+    documents: ActivityDocuments | None = None,
+    *,
+    offline: bool = False,
 ) -> None:
     """Validate every content rule #1232's exact predecessor also enforced.
 
@@ -3433,7 +3442,7 @@ def _validate_schema_contents_without_attention_facts(
     root's ``documents``, what validates is kept there by its exact bytes for
     the Activity reader (#1231).
     """
-    _validate_schema_contents_without_review_field_facts(connection)
+    _validate_schema_contents_without_review_field_facts(connection, offline=offline)
     _validate_review_field_facts(connection)
     parse = (
         lru_cache(maxsize=1)(MetadataReport.from_json)
@@ -3449,7 +3458,7 @@ def _validate_schema_contents_without_attention_facts(
 
 
 def _validate_schema_contents_without_review_field_facts(
-    connection: sqlite3.Connection,
+    connection: sqlite3.Connection, *, offline: bool = False
 ) -> None:
     if connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute(
         "PRAGMA integrity_check"
@@ -3463,7 +3472,7 @@ def _validate_schema_contents_without_review_field_facts(
         raise MetadataReportError("database is unavailable or incompatible") from error
     _validate_metadata_policy_documents(connection)
     _validate_cover_selection_authorities(connection)
-    _validate_field_effect_state(connection)
+    _validate_field_effect_state(connection, offline=offline)
     if (
         connection.execute(_OWNER_ITEM_KEY_DISAGREES_SQL).fetchone()
         or connection.execute(_LEDGER_COPY_DISAGREES_SQL).fetchone()
