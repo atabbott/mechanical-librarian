@@ -6,11 +6,15 @@ before it. Each such answer's first final `carry_outcomes` row of that epoch
 is its book's first new case: carried is kept, the other final outcomes are
 asked again where the field has decision actions there. A record answer from
 before with no final row of that epoch is not yet checked while a new case
-can still come for it: its library is configured, and has not completed a
-scan in which its work did not appear. The scan tables are derived, so every
-scan they hold ran after the latest regeneration; a completed scan whose
-discovery succeeded leaves exactly the works it listed. The one dismissal per
-regeneration is `regeneration_notice_dismissals`.
+can still come for it: its library is configured, and either has not
+completed a scan, or its work is still preparing, or reached a case whose
+check is still provisional. The scan tables are derived, so every scan they
+hold ran after the latest regeneration; a completed scan whose discovery
+succeeded leaves exactly the works it listed. A work it left out, or one
+that ended without a case (nothing to decide, only evidence, or a failure it
+does not retry), has no new case to check, so the answer stops counting; a
+later scan that makes a case runs the check then, and its outcome is final.
+The one dismissal per regeneration is `regeneration_notice_dismissals`.
 """
 
 from __future__ import annotations
@@ -60,7 +64,9 @@ _FIRST_CASES_SQL = (
 )
 # The record's answers from before the regeneration that the check runs on
 # and no new case has settled yet, while one can still come: the library is
-# configured, and no completed scan of it left the work out.
+# configured, and has no completed scan (a library's one scan row leaves
+# `completed` when its next scan is requested), or the work is still
+# preparing, or its row reached a case.
 _NOT_YET_CHECKED_SQL = (
     "SELECT COUNT(*) FROM owner_field_answers record WHERE record.ordinal<=:hwm "
     "AND record.destination<>'cover' AND record.pin_fingerprint IS NULL "
@@ -70,14 +76,15 @@ _NOT_YET_CHECKED_SQL = (
     "AND EXISTS (SELECT 1 FROM json_each(:configured) configured "
     "WHERE json_extract(configured.value,'$[0]')=record.connection_name "
     "AND json_extract(configured.value,'$[1]')=record.library_name) "
-    "AND NOT (EXISTS (SELECT 1 FROM review_preparation_scans scan "
+    "AND (NOT EXISTS (SELECT 1 FROM review_preparation_scans scan "
     "WHERE scan.connection_name=record.connection_name "
     "AND scan.library_name=record.library_name "
     "AND scan.state IN ('completed','completed_with_failures') "
     "AND scan.discovery_failure IS NULL) "
-    "AND NOT EXISTS (SELECT 1 FROM review_preparation_work work "
+    "OR EXISTS (SELECT 1 FROM review_preparation_work work "
     "WHERE work.connection_name=record.connection_name "
-    "AND work.library_name=record.library_name AND work.item_id=record.item_id))"
+    "AND work.library_name=record.library_name AND work.item_id=record.item_id "
+    "AND (work.state IN ('queued','delayed','running') OR work.outcome='case')))"
 )
 
 

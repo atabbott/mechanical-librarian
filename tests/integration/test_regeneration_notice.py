@@ -11,12 +11,15 @@ answers given before it, and the one dismissal per regeneration.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from mechanical_librarian.adapters.persistence import question_check_runner
 from mechanical_librarian.adapters.persistence.ledger_meta import derived_epoch
 from mechanical_librarian.adapters.persistence.regeneration import (
     SQLiteRegenerationStore,
@@ -33,10 +36,24 @@ from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
     human_review_destinations,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.question_check import PROVISIONAL_CARRY_OUTCOMES
+from mechanical_librarian.domain.review_case import KEPT_CASE_SECONDS
+from tests.integration.test_owner_field_record import _write_all, _writes
 from tests.support.ledger_partition import opens, rewrite
 from tests.support.owner_values import OwnerStore, rewritten
+from tests.support.prepared_library import (
+    PRODUCER,
+    Library,
+    accept,
+    applier,
+    prepared,
+    regenerate,
+)
 from tests.unit.test_owner_answer_holds import _store
 
 _FIRST_FINISHED = 1_700_000_000
@@ -313,11 +330,12 @@ def test_an_answer_whose_work_a_completed_scan_left_out_stops_counting(
     assert opens(path)
 
 
-def test_an_answer_whose_work_appeared_still_counts_until_its_case_comes(
+def test_an_answer_whose_listed_work_cannot_be_read_stops_counting(
     tmp_path: Path,
 ) -> None:
-    """Negative control: a completed scan that lists the work, whose
-    preparation could not finish, leaves the answer not yet checked."""
+    """A completed scan that lists the work but cannot give it fails the
+    work for good: no new case comes from it, so the answer stops counting
+    (review round 2, M1). It counts until that scan completes."""
     root = tmp_path / "data"
     root.mkdir(mode=0o700)
     path = root / "owner.sqlite"
@@ -331,6 +349,9 @@ def test_an_answer_whose_work_appeared_still_counts_until_its_case_comes(
     store = _reopened(root, resolved)
     try:
         action = _discovery(store, _FIRST_FINISHED + 20)
+        assert _notices(store).read_regeneration_notice(
+            _CONFIGURED
+        ) == RegenerationNotice(1, 1, _FIRST_FINISHED, 0, 0, 1, False)
         store.repository.complete_review_discovery(
             action, 1, "a" * 64, (_unread(report.target.item),), _FIRST_FINISHED + 22
         )
@@ -339,14 +360,200 @@ def test_an_answer_whose_work_appeared_still_counts_until_its_case_comes(
         )
         assert _scans(store) == [("completed", None)]
         assert store.repository._connection.execute(
-            "SELECT state FROM review_preparation_work WHERE item_id=?",
+            "SELECT state,failure_code FROM review_preparation_work WHERE item_id=?",
             (report.target.item,),
-        ).fetchall() == [("failed",)]
+        ).fetchall() == [("failed", "item_no_media")]
         assert _notices(store).read_regeneration_notice(
             _CONFIGURED
-        ) == RegenerationNotice(1, 1, _FIRST_FINISHED, 0, 0, 1, False)
+        ) == RegenerationNotice(1, 1, _FIRST_FINISHED, 0, 0, 0, False)
     finally:
         store.close()
+    assert opens(path)
+
+
+# --- A work the first scan since the regeneration prepares -------------------
+
+# After the regeneration: more than 30 days after the answer was written.
+_LATER = KEPT_CASE_SECONDS + 100
+
+
+def _written_answer(library: Library, tmp_path: Path) -> str:
+    """The owner's authors answer, written to the library and verified."""
+    owner = accept(library.case(), "authors", "owner-answers-authors", 11)
+    library.root.record_human_decision(owner)
+    library.root.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 12)
+    scheduler, service, target = applier(library, tmp_path)
+    writes = _writes(target)
+    _write_all(library, scheduler, service, target, 13)
+    assert writes == [owner.decision_id]
+    selected = owner.selected_value
+    assert type(selected) is dict and type(selected["value"]) is list
+    held = library.held
+    assert held is not None
+    held.write(TargetDestination.AUTHORS, tuple(map(str, selected["value"])))
+    return owner.decision_id
+
+
+def _nothing_left_to_decide(library: Library) -> None:
+    """The library now holds what the work's own evidence offers, and the
+    providers name nothing: the next read of the work has nothing to ask."""
+    held = library.held
+    assert held is not None
+    held.write(TargetDestination.TITLE, "Fixture Registry Title")
+    held.write(TargetDestination.LANGUAGE, "English")
+    held.providers = ()
+
+
+def _library_notice(library: Library) -> RegenerationNotice | None:
+    return library.root.regeneration_notice_store().read_regeneration_notice(
+        _CONFIGURED
+    )
+
+
+def _work(library: Library) -> tuple[str, str | None, str | None]:
+    (row,) = library.root._connection.execute(
+        "SELECT state,outcome,failure_code FROM review_preparation_work"
+    ).fetchall()
+    return (str(row[0]), row[1], row[2])
+
+
+def _scan_again(library: Library, at: int) -> None:
+    library.root.request_review_scan("primary", "ebooks", "lib-1", PRODUCER, at)
+    library.now[0] = at + 1
+    library.drain()
+
+
+@pytest.mark.parametrize(
+    "ending",
+    ["no_case_written_over_30_days", "failed_for_good"],
+    ids=["no_case_written_over_30_days", "failed_for_good"],
+)
+def test_an_answer_whose_work_ends_without_a_case_stops_counting(
+    tmp_path: Path, ending: str
+) -> None:
+    """The first scan since the regeneration completes with the work ended
+    without a case: nothing left to decide and its write more than 30 days
+    old (#1523), or a failure preparation does not retry. No case is made,
+    so the question check never runs on it, and the answer stops counting
+    (review round 2, M1)."""
+    with prepared(
+        tmp_path,
+        automatic=True,
+        library_model="publication",
+        keeps_recent_writes=True,
+    ) as library:
+        answer = _written_answer(library, tmp_path)
+        regenerate(library, _LATER, read_again=False)
+        counting = _library_notice(library)
+        assert counting is not None and counting.not_yet_checked == 1
+        held = library.held
+        assert held is not None
+        if ending == "failed_for_good":
+            held.failures.append("item_unreadable")
+        else:
+            _nothing_left_to_decide(library)
+
+        _scan_again(library, _LATER)
+
+        assert library.root._connection.execute(
+            "SELECT state,discovery_failure FROM review_preparation_scans"
+        ).fetchall() == [
+            ("completed", None)
+            if ending != "failed_for_good"
+            else ("completed_with_failures", None)
+        ]
+        assert _work(library) == (
+            ("complete", "no_case", None)
+            if ending != "failed_for_good"
+            else ("failed", None, "item_unreadable")
+        )
+        if ending != "failed_for_good":
+            assert library.admissions[-1] == ("no_case", None)
+        assert library.root._connection.execute(
+            "SELECT count(*) FROM carry_outcomes WHERE answer_id=?", (answer,)
+        ).fetchone() == (0,)
+        stopped = dataclasses.replace(counting, not_yet_checked=0)
+        assert _library_notice(library) == stopped
+
+        # The next scan can make a case: the answer counts again while it
+        # discovers, and stops again once it ends the same way.
+        library.root.request_review_scan(
+            "primary", "ebooks", "lib-1", PRODUCER, _LATER + 10
+        )
+        assert _library_notice(library) == counting
+        if ending == "failed_for_good":
+            held.failures.append("item_unreadable")
+        _scan_again(library, _LATER + 10)
+        assert _library_notice(library) == stopped
+
+
+def test_an_answer_whose_work_is_still_preparing_counts_until_its_case_comes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Control: a work whose extraction will be tried again is still
+    preparing, so the answer counts, even where its scan stands completed
+    over it. The retry makes a case, and while the check there still owes
+    the answer its outcome (a store refusal, which the retry takes), the
+    answer counts too; the final outcome ends the count."""
+    with prepared(
+        tmp_path,
+        automatic=True,
+        library_model="publication",
+        keeps_recent_writes=True,
+    ) as library:
+        answer = _written_answer(library, tmp_path)
+        regenerate(library, _LATER, read_again=False)
+        counting = _library_notice(library)
+        assert counting is not None and counting.not_yet_checked == 1
+        held = library.held
+        assert held is not None
+        held.failures.append("transient")
+
+        _scan_again(library, _LATER)
+
+        assert _work(library) == ("delayed", None, "transient")
+        assert _library_notice(library) == counting
+        # A scan can stand closed over delayed work of its own until the next
+        # claim pass reopens it (`recover_stranded_preparation_work`): the
+        # work is still preparing, so the answer still counts.
+        connection = library.root._connection
+        connection.execute("UPDATE review_preparation_scans SET state='completed'")
+        connection.commit()
+        assert _library_notice(library) == counting
+
+        (retry_at,) = connection.execute(
+            "SELECT retry_not_before FROM review_preparation_work"
+        ).fetchone()
+        library.now[0] = int(retry_at) + 1
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                question_check_runner,
+                "record_carry_outcome",
+                _refused_by_the_store,
+            )
+            library.drain()
+
+        assert _work(library) == ("complete", "case", None)
+        assert connection.execute(
+            "SELECT state,discovery_failure FROM review_preparation_scans"
+        ).fetchall() == [("completed", None)]
+        assert connection.execute(
+            "SELECT count(*) FROM carry_outcomes WHERE answer_id=?", (answer,)
+        ).fetchone() == (0,)
+        assert _library_notice(library) == counting
+
+        library.root.retry_question_checks(None, library.now[0])
+        ((outcome,),) = connection.execute(
+            "SELECT outcome FROM carry_outcomes WHERE answer_id=?", (answer,)
+        ).fetchall()
+        assert outcome not in PROVISIONAL_CARRY_OUTCOMES
+        assert _library_notice(library) == dataclasses.replace(
+            counting, kept=int(outcome == "carried"), not_yet_checked=0
+        )
+
+
+def _refused_by_the_store(*_args: object, **_kwargs: object) -> None:
+    raise sqlite3.OperationalError("refused")
 
 
 def test_an_answer_whose_library_is_no_longer_configured_stops_counting(
