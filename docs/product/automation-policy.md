@@ -56,9 +56,11 @@ handling and its checks finish. The field offers Resume while Automatic is on
 and the field is set to Automatic; the description offers it while
 **Automatically apply ready description advice** is on
 ([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
-Amendment 1). A later read that gives the work a new case asks you again a
-field you made a choice on, where that case offers a choice for it, even where
-Automatic decided it there; with no choice to make, the field reads as decided. Withdrawing a decision gives the
+Amendment 1). A later read that gives the work a new case keeps your answer
+on a field when that case asks the same question, and writes a choice not yet
+written once. It asks you again when the choices or the value in
+Audiobookshelf changed, even where Automatic decided the field there; with no
+choice to make, the field reads as decided. Withdrawing a decision gives the
 field back to your answer from an earlier read of the work, if there is one,
 and Automatic stays off it; otherwise Automatic decides the field from the
 work's next read. After you choose Resume automatic handling, Automatic's

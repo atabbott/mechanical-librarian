@@ -8,13 +8,22 @@ supports and the exact versions it accepts. Support terms are in
 
 Every database, report, configuration and internal document accepts only two
 states: absent, or its exact current version. This build has no migration,
-import, conversion, adoption or downgrade. When a build changes a persisted
-shape, the owner does a clean rebuild, and
-[Upgrades](../operations/upgrades.md) says how.
-[ADR-0013](../architecture/decisions/0013-pre-release-clean-schema.md) records
-the rationale, and lets a future schema change ship one exact-predecessor
-adoption of reconstructible derived data instead. Startup never runs it; the
-owner runs it offline, and the changelog says when one ships.
+import, conversion, adoption or downgrade.
+
+The application database has two parts. The **ledger** holds the owner's
+answers, settings, consents, cover choices, write plans and their history.
+**Derived state** is everything preparation rebuilds from the library, its
+providers and the ledger. A build that changes only derived state is marked
+**Derived regeneration required**: startup refuses the database and names the
+offline `regenerate-derived` command, which keeps the ledger and drops derived
+state for preparation to rebuild. A build that changes the ledger is marked
+**Clean rebuild required**; the other stores and documents keep the rule
+above.
+[Upgrades](../operations/upgrades.md) says how to do each.
+[ADR-0108](../architecture/decisions/0108-ledger-and-derived-state.md) records
+the two parts and the command, and
+[ADR-0013](../architecture/decisions/0013-pre-release-clean-schema.md) the
+rule for everything else.
 
 - **Absent or exact.** Each store opens only when it is absent or at its
   exact current schema. An absent store is created fresh; in store mode the
@@ -45,8 +54,9 @@ owner runs it offline, and the changelog says when one ships.
   data is refused and needs a clean rebuild. An owner script reading a copy
   names both Unicode versions and the Python to run it with instead.
 - **Looks wrong flags are part of the schema.** Each report's flags are stored
-  with the rule list that derived them (`value-flag-rules-v1`). A database
-  derived under a different rule list is refused and needs a clean rebuild.
+  with the rule list that derived them (`value-flag-rules-v1`). They are
+  derived state, so a build with a different rule list is a derived
+  regeneration.
 - **Consent is bound to the write destinations.** A build that changes the
   destination set lapses every existing consent; see
   [Upgrades](../operations/upgrades.md#changes-that-need-owner-action-without-a-rebuild).
