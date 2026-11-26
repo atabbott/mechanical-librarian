@@ -1,8 +1,7 @@
 # ADR-0108: Keep owner state in a ledger, regenerate derived state offline, and keep one record of the owner's answer per field
 
-- Status: proposed. Only the owner's own answer makes this record accepted.
-  Until then ADR-0013, ADR-0085 and ADR-0096 stay the accepted record, and
-  nothing here is built.
+- Status: accepted (2026-11-26, the owner's own answer), with its amendments
+  to the records under "Amends", ADR-0071's among them.
 - Date: 2026-11-24
 - Owners: project maintainers
 - Issues: #2037 (this record); built by #2036 (C0, merged), #2038 (C2),
@@ -361,7 +360,10 @@ subtitle where the answer's plan writes it as a companion, or, for an answer
 not yet planned, where the planner's bundle rule would write it at the
 check). Because the title,
 subtitle and series group is one question, a title answer is asked again when
-only the series offer changed.
+only the series offer changed. A provider-consensus title election that runs
+only while the target holds the book's own EPUB title is an expected non-carry
+too: after the owner's own write the offer gains the EPUB's decorated title,
+so that answer is asked again once, and the answer given then carries.
 
 **Steps**, for each text field and the description with a record row:
 
@@ -579,7 +581,7 @@ a provider, and is composed with no network client.
    instead. It names, per blocking item,
    the reasons it can compute offline (writes paused, a destination or
    connection suspended, preparation paused, the library no longer
-   configured), and otherwise says to start the previous image and read
+   configured), and otherwise says to start the previous build and read
    Activity.
 3. **The report**, per library, naming items only by item key and
    destination, never a title, author, path or value: (1) unwritten answers,
@@ -604,8 +606,14 @@ a provider, and is composed with no network client.
    private scratch copy with `VACUUM INTO`, syncs it, verifies it with
    `integrity_check` and a digest of every table against the source, and renames
    it to `/data/regeneration-backup/epoch-<n>.sqlite3` (directory `0700`, file
-   `0600`, an unsafe existing entry refused), replacing any earlier copy. Crash
-   recovery and first-boot detection ignore that directory. The artifact sweep
+   `0600`, an unsafe existing entry refused), replacing any earlier copy. When
+   the volume is short only because it holds the copy of this same epoch (a
+   killed or failed earlier run), and that copy's ledger digest equals the
+   database's, its size counts as free and it is removed immediately before
+   the new copy is taken; otherwise the free-space refusal stands. Crash
+   recovery ignores that directory, and first-boot detection ignores it when it
+   is a private (`0700`) directory of the runtime user, failing closed on any
+   other entry under that name. The artifact sweep
    does nothing, and retained-cover removals wait, while it holds a copy, for
    every caller, so the copy and the artifacts stay a pair. The owner restores it with the previous release,
    setting the provider-recovery store aside (the provider-response store
@@ -624,8 +632,10 @@ a provider, and is composed with no network client.
       none, deleted (the record still keeps Automatic from switching that
       cover); `ledger_meta` gets the next epoch and the build's derived version
       and schema digest;
-   3. recreate every derived object from the build's DDL, seed the derived
-      singletons, and ask every configured library to scan;
+   3. recreate every derived object from the build's DDL and seed the derived
+      singletons; the scan table is left empty, so the server's next start
+      asks every configured library to scan (a kept preparation pause still
+      holds);
    4. `foreign_key_check` empty and `integrity_check` passing (it also checks
       index contents, which `quick_check` does not), or roll back;
    5. one append-only `derived_regenerations` row: epochs and versions before
@@ -749,7 +759,8 @@ ADR-0077 is not amended: no read admission or currentness-fact rule changes.
 
 ### Left to the owner
 
-These change only with the owner's own answer and are not made here:
+These change only with the owner's own answer and are not made here. The
+owner accepted this record and the `AGENTS.md` exception on 2026-11-26:
 
 - `AGENTS.md` "Change requirements" and its ADR-0013 bullet: from the cutover,
   the owner-run offline `regenerate-derived` command is the one exception to

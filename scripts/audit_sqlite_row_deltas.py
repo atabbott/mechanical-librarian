@@ -15,6 +15,9 @@ from mechanical_librarian.adapters.persistence.schema import (
     _register_casefold,
     _validate_schema,
 )
+from mechanical_librarian.application.metadata_report import (
+    DerivedRegenerationRequired,
+)
 
 TEST_NODES = (
     "tests/unit/test_review_pipeline.py::test_one_work_progresses_through_every_persisted_stage[False]",
@@ -37,7 +40,7 @@ def _baseline() -> dict[str, int]:
             name: connection.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
             for (name,) in connection.execute(
                 "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                "WHERE type='table' AND name NOT GLOB 'sqlite_*'"
             )
         }
     finally:
@@ -60,13 +63,23 @@ def run() -> int:
                     row[0]
                     for row in self.execute(
                         "SELECT name FROM sqlite_master "
-                        "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                        "WHERE type='table' AND name NOT GLOB 'sqlite_*'"
                     )
                 }
-                if set(baseline).issubset(tables):
+                name = self.execute("PRAGMA database_list").fetchone()[2]
+                # Only a store on disk is a state; the in-memory schema the
+                # build's partition is derived from is not (#2040).
+                if name and set(baseline).issubset(tables):
                     _register_casefold(self)
-                    _validate_schema(self)
-                    name = self.execute("PRAGMA database_list").fetchone()[2]
+                    try:
+                        _validate_schema(self)
+                    except DerivedRegenerationRequired:
+                        # A store sent to regenerate-derived names another
+                        # derived version; what it held before is no longer
+                        # its final state, and the command's own connections
+                        # are not this audit's to count.
+                        states.pop((current, name), None)
+                        return
                     states[current, name] = {
                         table: self.execute(
                             f'SELECT count(*) FROM "{table}"'

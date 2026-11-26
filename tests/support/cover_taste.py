@@ -32,7 +32,7 @@ from mechanical_librarian.application.cover_taste_judge_contract import (
 from mechanical_librarian.application.review_web import RecordHumanDecision
 from mechanical_librarian.domain.cover_taste import TasteProfile
 from mechanical_librarian.domain.metadata_report import MetadataReport
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.cover_producers import _qualified_cover_report
 
@@ -69,13 +69,15 @@ def record_owner_cover_decisions(
     *,
     start: int = 0,
     before_decision: Callable[[str], None] | None = None,
+    propose: Callable[[MetadataReport], ProposalSet] = evaluate_report,
 ) -> None:
     """Record `count` owner cover choices through the real decision command.
 
     Each item's consideration offers its current cover and one larger
     candidate of another art; the owner chooses the candidate.
     `before_decision`, when given, runs with each case id just before its
-    decision is recorded.
+    decision is recorded. `propose` evaluates each report; a store with an
+    active policy needs it evaluated under that policy.
     """
     base, _ = _qualified_cover_report(root, candidate_size=(1200, 1800))
     artifacts = CoverArtifactStore(root / "artifacts")
@@ -109,7 +111,7 @@ def record_owner_cover_decisions(
             cover_sources=base.cover_sources,
         )
         repository.publish(report, lambda: True)
-        proposal_set = evaluate_report(report)
+        proposal_set = propose(report)
         repository.publish_proposal(proposal_set)
         case_id = json.loads(repository.admit_review_case(proposal_set))[
             "review_case_id"

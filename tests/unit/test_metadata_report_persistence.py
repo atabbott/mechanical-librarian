@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.persistence.activity_documents import (
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import (
+    LedgerRebuildRequired,
     MetadataReportError,
 )
 from mechanical_librarian.domain.cover_automatic_decision import (
@@ -624,7 +625,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
 
         connection = sqlite3.connect(path)
         tables = connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*' ORDER BY name"
         ).fetchall()
         schema_version = connection.execute(
             "SELECT schema_version FROM metadata_reports"
@@ -643,6 +644,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("automatic_description_decisions",),
             ("automatic_safety_state",),
             ("browse_fact_identity",),
+            ("carry_outcomes",),
             ("cover_automatic_held",),
             ("cover_consideration_events",),
             ("cover_considerations",),
@@ -657,6 +659,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("current_metadata_reports",),
             ("current_review_case_lineages",),
             ("current_review_packages",),
+            ("derived_regenerations",),
             ("description_advice_attempts",),
             ("description_advice_candidates",),
             ("description_preparation_pending",),
@@ -673,6 +676,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("human_decisions",),
             ("identifier_import_events",),
             ("identifier_imports",),
+            ("ledger_meta",),
             ("level_decision_notes",),
             ("level_proposal_sets",),
             ("library_visit",),
@@ -698,6 +702,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("proposal_set_browse_facts",),
             ("proposal_sets",),
             ("provider_recovery_outbox",),
+            ("regeneration_notice_dismissals",),
             ("retained_cover_bindings",),
             ("retained_cover_listings",),
             ("retained_cover_removals",),
@@ -1034,7 +1039,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
             )
             rows = repository._connection.execute(
-                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name"
             ).fetchall()
             assert len(rows) == 104
             assert (
@@ -1143,7 +1148,7 @@ def test_existing_schema_rejects_unexpected_objects_without_mutation(
         connection.execute(statement)
         connection.commit()
         expected_objects = connection.execute(
-            "SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+            "SELECT type,name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name"
         ).fetchall()
         expected_counts = connection.execute(
             "SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)"
@@ -1156,7 +1161,7 @@ def test_existing_schema_rejects_unexpected_objects_without_mutation(
         connection = sqlite3.connect(path)
         assert (
             connection.execute(
-                "SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+                "SELECT type,name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name"
             ).fetchall()
             == expected_objects
         )
@@ -2623,7 +2628,8 @@ def test_owner_cover_predecessor_refuses_without_mutation(tmp_path, name):
         connection.executescript(raw.decode())
     database.chmod(0o600)
     before = database.read_bytes()
-    with pytest.raises(MetadataReportError, match="incompatible"):
+    # It has no ledger record, so startup asks for a clean rebuild (ADR-0108).
+    with pytest.raises(LedgerRebuildRequired):
         open_repository(database)
     assert database.read_bytes() == before
 
@@ -2880,7 +2886,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "ON metadata_policy_resolutions(library_name,resolved_policy_id,generation);"
                 )
             rows = repository._connection.execute(
-                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name"
             ).fetchall()
             assert (
                 hashlib.sha256(

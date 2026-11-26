@@ -116,7 +116,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_DETAIL_SCHEMA",
-        "review-case-detail-v15",
+        "review-case-detail-v16",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -131,7 +131,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_HISTORY_SCHEMA",
-        "review-case-history-v8",
+        "review-case-history-v9",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -212,7 +212,17 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.human_decision",
         "HUMAN_DECISION_SCHEMA",
-        "human-decision-v8",
+        "human-decision-v9",
+    ),
+    (
+        "mechanical_librarian.domain.human_decision",
+        "HUMAN_DECISION_EVENT_SCHEMA",
+        "human-decision-event-v2",
+    ),
+    (
+        "mechanical_librarian.domain.decision_question",
+        "DECISION_QUESTION_SCHEMA",
+        "decision-question-v1",
     ),
     (
         "mechanical_librarian.adapters.persistence.field_effect_validation",

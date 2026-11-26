@@ -28,8 +28,9 @@ history or network archive while it runs. Each record is there for the check
 that compares it with the digest in the code.
 
 Mechanical Librarian rejects a stored decision that carries any digest other
-than the current one. Upgrading across a change to a record's digest needs a
-clean rebuild ([upgrades](../operations/upgrades.md)).
+than the current one. Automatic decisions are rebuilt by preparation, so
+upgrading across a change to a record's digest needs `regenerate-derived`
+([upgrades](../operations/upgrades.md#upgrading-with-a-regeneration)).
 
 ### Ebook rich-metadata results
 

@@ -39,7 +39,9 @@ The exact commands run and their outcomes:
 - [ ] Every closed issue is satisfied in full.
 - [ ] Documentation this change made stale is updated in place, and the
       changelog has an entry for any user-visible behaviour.
-- [ ] Persisted-state changes declare a clean rebuild or ship an adoption
-      (ADR-0013); durable decisions add or supersede an ADR.
+- [ ] Persisted-state changes declare **Derived regeneration required**
+      (derived only, new `DERIVED_VERSION`) or **Clean rebuild required**
+      (ledger, new `LEDGER_FORMAT_VERSION`); durable decisions add or
+      supersede an ADR.
 - [ ] No credentials, private URLs, personal paths, copyrighted media or
       production data.

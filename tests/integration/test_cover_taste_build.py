@@ -201,9 +201,11 @@ def test_a_profile_is_written_from_owner_choices_and_shown(tmp_path) -> None:
         checked = assert_ledger_copies(built.repository)
         assert checked["taste_decision"] > 0
         assert checked["taste_eligible"] > 0
-        assert reopen_without_derived_rows(built.repository, tmp_path / "regenerated")[
-            "owner_cover_selections.transport_sha256"
-        ]
+        # Cover choices not yet written need the owner's go-ahead (ADR-0108
+        # step 4); the choices themselves stand.
+        assert reopen_without_derived_rows(
+            built.repository, tmp_path / "regenerated", retire_pending=True
+        )["owner_cover_selections.transport_sha256"]
         built.service.wake(NOW)
         [client] = built.openrouter
         [request] = client.requests

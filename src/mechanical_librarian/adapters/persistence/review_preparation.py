@@ -59,6 +59,7 @@ from contextlib import AbstractContextManager, contextmanager
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+from mechanical_librarian.adapters.persistence.ledger_meta import derived_epoch
 from mechanical_librarian.adapters.persistence.level_sql import _reconciled_level_sql
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     record_preparation_names,
@@ -2479,6 +2480,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 report,
                 None if policy is None else policy.resolved_id,
                 None if policy is None else human_review_destinations(policy),
+                derived_epoch=derived_epoch(self._connection),
             )
         except Exception:
             # As the proposal stage does, any failure to read the policy or

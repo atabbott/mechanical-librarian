@@ -4,7 +4,9 @@ The harness drives a real SQLite repository and the real
 ``ReviewPreparationPipeline`` with stages that call the real report, proposal,
 admission and projection seams. `prepared` yields a `Library` over it;
 `applier` builds the guarded application and its scheduler over the same
-store, and `planned` reads the write plans it recorded. Moved here from
+store, and `planned` reads the write plans it recorded. `Library.close` and
+`Library.reopen` stop and start the store over the same file, as an upgrade
+with `regenerate-derived` between them does. Moved here from
 `tests/integration/test_leaving_automatic_posture.py` so the record's
 integration proofs share it (ADR-0108).
 """
@@ -36,11 +38,15 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.regeneration import (
+    SQLiteRegenerationStore,
+)
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.regenerate_derived import regenerate_derived
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     ReviewPipelineError,
@@ -70,7 +76,9 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase
+from mechanical_librarian.interfaces.cli import regenerate as cli
 from tests.support.author_evidence import author_report
+from tests.support.ledger_partition import rewrite
 
 PRODUCER = "f" * 64
 LINEAGE = "connection_name='primary' AND library_name='ebooks' AND item_id='item-1'"
@@ -86,13 +94,21 @@ class Held:
     """
 
     target: TargetFacts
+    # What the providers say at the next reads, where it is no longer what
+    # they said when the work was prepared.
+    providers: tuple[ProviderObservation, ...] | None = None
+    # A change to the item discovery sees beyond its title and authors (its
+    # source fingerprint), where a test makes one; 0 is none.
+    revision: int = 0
     # Every extraction claimed after preparation, and every report proposed.
     extractions: list[PipelineAction] = field(default_factory=list)
     proposed: list[str] = field(default_factory=list)
     # Failure codes the next extractions raise, in order.
     failures: list[str] = field(default_factory=list)
 
-    def write(self, destination: TargetDestination, value: tuple[str, ...]) -> None:
+    def write(
+        self, destination: TargetDestination, value: str | tuple[str, ...]
+    ) -> None:
         """Record a value the library now holds, as a verified write leaves it."""
         self.target = TargetFacts(
             self.target.connection,
@@ -133,6 +149,26 @@ class Library:
     # production, by stage, once the harness has prepared its work.
     external: list[str] = field(default_factory=list)
     held: Held | None = None
+    database: Path | None = None
+    # The pipeline over a store opened again on the same file.
+    rebuild: (
+        Callable[[SQLiteMetadataReportRepository], ReviewPreparationPipeline] | None
+    ) = None
+    closed: bool = False
+
+    def close(self) -> None:
+        """Close the store, as stopping the server does."""
+        if not self.closed:
+            self.closed = True
+            self.root.close()
+
+    def reopen(self) -> None:
+        """Open the store again on the same file, as the next start does,
+        with a pipeline whose stages read the same library."""
+        assert self.closed and self.database is not None and self.rebuild is not None
+        self.root = open_repository(self.database, cross_thread=True)
+        self.closed = False
+        self.pipeline = self.rebuild(self.root)
 
     def drain(self) -> None:
         for _ in range(32):
@@ -217,6 +253,44 @@ def _resolved(
     return ResolvedMetadataPolicy.from_data(json.loads(document))
 
 
+def current_proposal(
+    repository: SQLiteMetadataReportRepository, report: MetadataReport
+) -> ProposalSet:
+    """The report's proposal set under its library's active policy, over the
+    ledger's derived epoch, as `CreateProposalSet` reads them."""
+    policy = _resolved(repository, report.target.library)
+    return evaluate_report(
+        report,
+        policy.resolved_id,
+        human_review_destinations(policy),
+        derived_epoch=repository.derived_epoch(),
+    )
+
+
+def _entry(report: MetadataReport, held: Held | None) -> CatalogueEntry:
+    """The work as discovery lists it: as prepared, or as the library holds
+    it now."""
+    return CatalogueEntry(
+        "primary",
+        "ebooks",
+        "lib-1",
+        "item-1",
+        1,
+        "Synthetic work",
+        ("Ada Example",) if held is None else held.authors,
+        True,
+        False,
+        "singular-supported",
+        report.file.identity,
+        "/book.epub",
+        "epub",
+        "books",
+        source_fingerprint=(
+            None if held is None or not held.revision else f"{held.revision:064x}"
+        ),
+    )
+
+
 @contextmanager
 def prepared(
     tmp_path: Path,
@@ -227,6 +301,7 @@ def prepared(
     before_projection: Callable[[ReviewPipelineRepository, Any], None] | None = None,
     cover_order: str | None = None,
     library_model: Literal["publication", "advance"] | None = None,
+    keeps_recent_writes: bool = False,
 ) -> Iterator[Library]:
     """One work prepared under a qualified Automatic contributor-names policy.
 
@@ -242,6 +317,10 @@ def prepared(
     and admission check currentness as production does. Extraction completes
     through `complete_review_extraction_publication`, as production does,
     with "publication", and through the pipeline's advance with "advance".
+
+    `keeps_recent_writes` admits at the pipeline's clock, as production
+    does, so a work written in the last 30 days keeps its case though
+    nothing is left to decide (#1523); without it the window never applies.
     """
     database = tmp_path / "application.sqlite3"
     report = author_report(tmp_path / "media", "supported")
@@ -280,24 +359,6 @@ def prepared(
         root.activate_qualified_automatic(3)
     held = None if library_model is None else Held(report.target)
 
-    def entry(authors: tuple[str, ...]) -> CatalogueEntry:
-        return CatalogueEntry(
-            "primary",
-            "ebooks",
-            "lib-1",
-            "item-1",
-            1,
-            "Synthetic work",
-            authors,
-            True,
-            False,
-            "singular-supported",
-            report.file.identity,
-            "/book.epub",
-            "epub",
-            "books",
-        )
-
     root.request_review_scan("primary", "ebooks", "lib-1", PRODUCER, 4)
     discovery = root.claim_review_pipeline_action(5)
     assert discovery is not None
@@ -305,7 +366,7 @@ def prepared(
         discovery,
         1,
         "a" * 64,
-        (entry(("Ada Example",) if held is None else held.authors),),
+        (_entry(report, held),),
         6,
     )
     now = [10]
@@ -345,7 +406,7 @@ def prepared(
             raise AssertionError()
         external.append("discovery")
         discoveries[0] += 1
-        return discoveries[0], f"{discoveries[0]:064x}", (entry(held.authors),)
+        return discoveries[0], f"{discoveries[0]:064x}", (_entry(report, held),)
 
     def propose(repository: ReviewPipelineRepository, report_id: str) -> str:
         concrete = cast(SQLiteMetadataReportRepository, repository)
@@ -353,10 +414,7 @@ def prepared(
         if held is not None:
             held.proposed.append(report_id)
             held.require_current(value)
-        policy = _resolved(concrete, value.target.library)
-        proposal = evaluate_report(
-            value, policy.resolved_id, human_review_destinations(policy)
-        )
+        proposal = current_proposal(concrete, value)
         concrete.publish_proposal(proposal)
         evaluations.append(proposal.proposal_set_id)
         return proposal.proposal_set_id
@@ -370,7 +428,11 @@ def prepared(
             held.require_current(
                 MetadataReport.from_json(concrete.get(proposal.report_id))
             )
-        result = ReviewAdmissionResult.from_json(concrete.admit_review_case(proposal))
+        result = ReviewAdmissionResult.from_json(
+            concrete.admit_review_case(
+                proposal, now=now[0] if keeps_recent_writes else None
+            )
+        )
         admissions.append((result.status, result.review_case_id))
         return result.status, result.review_case_id
 
@@ -387,22 +449,37 @@ def prepared(
             )
         return "stale" if outcome == "stale" else "complete"
 
-    pipeline = ReviewPreparationPipeline(
-        repository_factory=lambda: open_repository(database, authority=root.authority),
-        libraries=(("primary", "ebooks", "lib-1", PRODUCER),),
-        discover=discover,
-        extract=extract,
-        providers=lambda *_: (),
-        propose=propose,
-        admit=admit,
-        project=project,
-        before_projection=(
-            (lambda *_args: None) if before_projection is None else before_projection
-        ),
-        clock=lambda: now[0],
-    )
+    def build(store: SQLiteMetadataReportRepository) -> ReviewPreparationPipeline:
+        return ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(
+                database, authority=store.authority
+            ),
+            libraries=(("primary", "ebooks", "lib-1", PRODUCER),),
+            discover=discover,
+            extract=extract,
+            providers=lambda *_: (),
+            propose=propose,
+            admit=admit,
+            project=project,
+            before_projection=(
+                (lambda *_args: None)
+                if before_projection is None
+                else before_projection
+            ),
+            clock=lambda: now[0],
+        )
+
     value = Library(
-        root, pipeline, report, admissions, evaluations, now, external, held
+        root,
+        build(root),
+        report,
+        admissions,
+        evaluations,
+        now,
+        external,
+        held,
+        database,
+        build,
     )
     try:
         value.drain()
@@ -416,7 +493,7 @@ def prepared(
             assert root.shadow_posture() == "preview"
         yield value
     finally:
-        root.close()
+        value.close()
 
 
 def _extract_held(
@@ -434,15 +511,16 @@ def _extract_held(
         held.extractions.append(action)
     if held.failures:
         raise ReviewPipelineError(held.failures.pop(0))
+    providers = prepared.providers if held.providers is None else held.providers
     report = (
         prepared
-        if held.target == prepared.target
+        if held.target == prepared.target and providers == prepared.providers
         else MetadataReport.create(
             target=held.target,
             file=prepared.file,
             local_claims=prepared.local_claims,
             local_reasons=prepared.local_reasons,
-            providers=prepared.providers,
+            providers=providers,
             cover_sources=prepared.cover_sources,
         )
     )
@@ -466,6 +544,82 @@ def _extract_held(
         ),
     )
     return report.report_id, publication
+
+
+def decided_after_the_run(library: Library, decision_id: str) -> bool:
+    """Whether the decision was recorded or minted after the latest
+    `regenerate-derived` run: an owner decision above the run's ordinal
+    high-water mark, or an automatic one, which is derived and so minted
+    after it (design 14.5 case 6)."""
+    connection = library.root._connection
+    (hwm,) = connection.execute(
+        "SELECT decision_ordinal_hwm FROM derived_regenerations "
+        "ORDER BY derived_epoch_after DESC LIMIT 1"
+    ).fetchone()
+    human = connection.execute(
+        "SELECT ordinal FROM human_decisions WHERE decision_id=?", (decision_id,)
+    ).fetchone()
+    if human is not None:
+        return int(human[0]) > int(hwm)
+    return (
+        connection.execute(
+            "SELECT 1 FROM automatic_decisions WHERE decision_id=?", (decision_id,)
+        ).fetchone()
+        is not None
+    )
+
+
+def _not_configured() -> Any:
+    raise FileNotFoundError
+
+
+def regenerate(
+    library: Library,
+    at: int,
+    *,
+    retire_pending: bool = False,
+    epoch_never_increments: bool = False,
+    read_again: bool = True,
+) -> list[str]:
+    """Stop the store, run `regenerate-derived` over it as an upgrade leaves it
+    (the ledger names another derived version), start the store again (its
+    recovery retries the question check) and read every configured library
+    again, as the start's scan does (contract S6). Returns the command's
+    output lines; the run must succeed.
+
+    `epoch_never_increments` is the epoch negative control (contract S9): a
+    test-side rewrite puts the ledger's epoch back after the run, so every
+    real reader addresses derived rows as before it.
+
+    With `read_again` false the store starts again and recovers, and no scan
+    is requested: the test reads the libraries itself."""
+    library.close()
+    database = library.database
+    assert database is not None
+    assert rewrite(database, "UPDATE ledger_meta SET derived_version=2") == 1
+    lines: list[str] = []
+    status = cli.render(
+        regenerate_derived(
+            SQLiteRegenerationStore(database, lambda: 1_700_000_000 + at),
+            retire_pending=retire_pending,
+            configuration=_not_configured,
+        ),
+        lines.append,
+    )
+    assert status == 0, lines
+    lines = [line.rstrip("\n") for line in lines]
+    if epoch_never_increments:
+        assert (
+            rewrite(database, "UPDATE ledger_meta SET derived_epoch=derived_epoch-1")
+            == 1
+        )
+    library.reopen()
+    library.pipeline.recover()
+    if read_again:
+        library.root.request_review_scan("primary", "ebooks", "lib-1", PRODUCER, at)
+        library.now[0] = at + 1
+        library.drain()
+    return lines
 
 
 @pytest.fixture

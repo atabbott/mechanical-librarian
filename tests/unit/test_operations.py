@@ -17,6 +17,8 @@ from mechanical_librarian.adapters.operational_evidence import (
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.metadata_report import (
+    DerivedRegenerationRequired,
+    LedgerRebuildRequired,
     MetadataReportError,
     provider_observation,
 )
@@ -38,6 +40,7 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.setup_state import claim_token_digest
 from mechanical_librarian.infrastructure.first_boot import FirstBootMode
+from tests.support.ledger_partition import rewrite
 from tests.unit.test_identity_refused_retention import (
     PROVIDER,
     _candidate,
@@ -105,7 +108,7 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
                 side_effect=interrupt_before_kickoff,
             ) as serve,
         ):
-            container.main()
+            container.main([])
             serve.assert_called_once_with(
                 root / "config.json",
                 root / "application.sqlite3",
@@ -126,7 +129,7 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
                 assert value.stat().st_mode & 0o777 == 0o700
                 assert not value.is_symlink()
             serve.reset_mock(side_effect=True)
-            container.main()
+            container.main([])
             serve.assert_called_once_with(
                 root / "config.json",
                 root / "application.sqlite3",
@@ -143,6 +146,74 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
             )
             assert install_signal.call_count == 2
         assert root.stat().st_mode & 0o777 == 0o700
+
+
+def _patched_volume(root: Path) -> Any:
+    return patch.multiple(
+        container,
+        DATA=root,
+        CONFIG=root / "config.json",
+        DATABASE=root / "application.sqlite3",
+        CATALOGUE=root / "catalogue.sqlite3",
+        ARTIFACTS=root / "artifacts",
+    )
+
+
+def test_container_store_mode_prints_one_refusal_line_and_exits_1(
+    tmp_path: Path,
+) -> None:
+    """Startup's guidance is the whole output, not a traceback (ADR-0108)."""
+    root = tmp_path / "data"
+    root.mkdir(mode=0o700)
+    database = root / "application.sqlite3"
+    open_repository(database).close()
+    rewrite(database, "UPDATE ledger_meta SET derived_version=2")
+    with (
+        _patched_volume(root),
+        patch.object(container.signal, "signal"),
+        patch.object(container, "run_review_server") as serve,
+        pytest.raises(SystemExit) as raised,
+    ):
+        container.main([])
+    serve.assert_not_called()
+    # `SystemExit` with a message prints it as one line on stderr and exits 1.
+    assert raised.value.code == str(DerivedRegenerationRequired())
+    assert "\n" not in str(raised.value.code)
+
+
+def test_container_file_mode_prints_one_refusal_line_and_exits_1(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "data"
+    root.mkdir(mode=0o700)
+    (root / "config.json").write_text("{}", encoding="utf-8")
+    with (
+        _patched_volume(root),
+        patch.object(container.signal, "signal"),
+        patch.object(
+            container, "run_review_server", side_effect=LedgerRebuildRequired()
+        ),
+        pytest.raises(SystemExit) as raised,
+    ):
+        container.main([])
+    assert raised.value.code == str(LedgerRebuildRequired())
+
+
+def test_container_lets_any_other_failure_propagate(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    root.mkdir(mode=0o700)
+    (root / "config.json").write_text("{}", encoding="utf-8")
+    with (
+        _patched_volume(root),
+        patch.object(container.signal, "signal"),
+        patch.object(
+            container,
+            "run_review_server",
+            side_effect=MetadataReportError("database is unavailable or incompatible"),
+        ),
+        pytest.raises(MetadataReportError),
+    ):
+        container.main([])
 
 
 def test_container_stop_handler_exits_successfully() -> None:
@@ -779,11 +850,11 @@ def test_container_entrypoint_preserves_retained_reviewer_authority(
                 )
 
                 with pytest.raises(FirstBootError):
-                    container.main()
+                    container.main([])
                 serve.assert_not_called()
                 assert not (auth.parent / "jobs").exists()
             else:
-                container.main()
+                container.main([])
                 assert serve.call_args.kwargs["first_boot_mode"] is (
                     FirstBootMode.RESUME_SETUP
                     if resumable

@@ -13775,11 +13775,17 @@ def test_keyboard_moves_between_works(width):
 
 def _choose_previous_title(page: Page, origin: str, case_id: str):
     """Open the entry on the case that read the write back, and fill it from
-    the value the write replaced."""
+    the value the write replaced. The question check carried the owner's
+    entered title to that case, the same question asked again with the value
+    written (ADR-0108, #2040), so the field shows it with Change, which opens
+    the entry."""
     page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
     panel = page.get_by_role("region", name="Your value for Title")
     expect(panel.get_by_role("button", name=re.compile("Restore"))).to_have_count(0)
-    panel.get_by_role("button", name="Enter a value", exact=True).click()
+    expect(
+        panel.get_by_text(f"You entered “{OWNER_TITLE}”.", exact=True)
+    ).to_be_visible()
+    panel.get_by_role("button", name="Change", exact=True).click()
     panel.get_by_role(
         "button", name="Use previous value “Real Tigers”", exact=True
     ).click()

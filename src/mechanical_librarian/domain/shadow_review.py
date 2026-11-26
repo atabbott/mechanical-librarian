@@ -724,6 +724,7 @@ class ShadowReviewPacket:
                 source_proposal.resolved_policy_id,
                 policy_destinations,
                 work_identity_level=work_identity_level,
+                derived_epoch=source_proposal.derived_epoch,
             ).to_json()
         ):
             raise ShadowReviewValueError(

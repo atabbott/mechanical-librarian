@@ -99,7 +99,7 @@ def _table_rows(connection: sqlite3.Connection) -> dict[str, int]:
         row[0]
         for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            "AND name NOT GLOB 'sqlite_*' ORDER BY name"
         )
     ]
     counts: dict[str, int] = {}

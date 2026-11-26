@@ -143,7 +143,7 @@ export const caseDetail = (overrides: Overrides = {}) => ({
   recording_admission_basis: null,
   recording_identity_basis: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-detail-v15',
+  schema_version: 'review-case-detail-v16',
   target: targetIdentity(),
   writes_consented: false,
   ...overrides,
@@ -287,7 +287,7 @@ export const historyDecisionItem = (overrides: Overrides = {}) => ({
   outcome: 'accept',
   previous_value: null,
   review_case_id: 'case-1',
-  schema_version: 'human-decision-event-v1',
+  schema_version: 'human-decision-event-v2',
   selected_value: null,
   ...overrides,
 })
@@ -322,7 +322,7 @@ export const caseHistory = (overrides: Overrides = {}) => ({
   items: [],
   next_cursor: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-history-v8',
+  schema_version: 'review-case-history-v9',
   ...overrides,
 })
 

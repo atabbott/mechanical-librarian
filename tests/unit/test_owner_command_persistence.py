@@ -59,6 +59,7 @@ from mechanical_librarian.domain.metadata_report import (
 from tests.support.genre_reports import genre_report, publish_genre_case
 from tests.support.owner_field_record import (
     complete_resume,
+    hold_root,
     hold_token,
     record_recomputes,  # noqa: F401
     resume,
@@ -1052,6 +1053,12 @@ def _hold(store: OwnerStore) -> str | None:
     return hold_token(store.repository, store.case.review_case_id, "genres")
 
 
+def _root(store: OwnerStore) -> str | None:
+    """The answer the record's genres answer was carried from, or itself:
+    a later case asking the same question carries it (ADR-0108, step 4)."""
+    return hold_root(store.repository, store.case.review_case_id, "genres")
+
+
 def test_the_hold_follows_the_work_to_its_successor(
     held: tuple[OwnerStore, str],
 ) -> None:
@@ -1059,20 +1066,27 @@ def test_the_hold_follows_the_work_to_its_successor(
     first = store.case.review_case_id
     store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
     assert store.case.review_case_id != first
-    assert _hold(store) == token
+    assert _root(store) == token
     assert _automatic_genres(store) == []
-    # The successor offers Resume for it, and asks the field by its own
-    # reason: nothing is carried to settle it (V1, V3).
+    # The successor offers Resume for it, and asks the same genres question,
+    # so the question check carries the keep there, settled: the field shows
+    # the owner's answer and is not asked (ADR-0108, step 4; V3 final).
     field = _field(store, "genres")
-    assert (field["manual_hold"], field["human_decision"]) == (True, None)
-    assert field["classification"] == "needs_attention"
+    decision = cast(dict, field["human_decision"])
+    assert field["manual_hold"] is True
+    assert (decision["decision_id"], decision["outcome"], decision["application"]) == (
+        _hold(store),
+        "keep_current",
+        "settled",
+    )
+    assert field["classification"] == "human_recorded"
     store.publish(rewritten(_HELD, publisher="Changed Again"))
-    assert _hold(store) == token
+    assert _root(store) == token
     assert _automatic_genres(store) == []
     # The carried rows pass the store's own validation on reopening.
     store.repository.close()
     store.repository = open_repository(store.root / "owner.sqlite")
-    assert _hold(store) == token
+    assert _root(store) == token
 
 
 def test_a_pending_return_follows_the_work_to_its_successor(
@@ -1114,7 +1128,7 @@ def test_retiring_and_readmitting_the_work_keeps_the_hold(
     assert store.admit(silent) == "retired"
     assert store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
     assert store.case.review_case_id != first
-    assert _hold(store) == token
+    assert _root(store) == token
     assert _automatic_genres(store) == []
 
 
@@ -1209,7 +1223,11 @@ def test_a_requested_return_shows_on_a_successor_and_on_a_case_that_recurs(
     store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
     assert store.case.review_case_id != first
     assert _held_and_requested(store) == (True, False)
-    _request_return(store, token)
+    # The successor carried the keep (ADR-0108, step 4): Resume names the
+    # answer the record holds now, the one the case shows.
+    carried = _hold(store)
+    assert carried is not None and _root(store) == token
+    _request_return(store, carried)
     assert _held_and_requested(store) == (True, True)
     store.publish(_HELD)
     assert store.case.review_case_id == first
@@ -1294,17 +1312,22 @@ def test_a_pending_return_reaches_an_earlier_case_that_recurs(
     store, token = held
     first = store.case.review_case_id
     store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    # The successor carried the keep (ADR-0108, step 4); Resume names it.
+    carried = _hold(store)
+    assert carried is not None and _root(store) == token
     scan = store.repository.request_review_scan(
         "primary", "ebooks", "library-ebooks", "a" * 64, store.clock()
     )
     at = store.clock()
     assert store.repository.request_owner_field_resume(
-        store.case.review_case_id, "genres", token, scan.scan_id, at, at
+        store.case.review_case_id, "genres", carried, scan.scan_id, at, at
     )
     store.publish(_HELD)
     assert store.case.review_case_id == first
     row = _record_row(store)
-    assert row is not None and row[0] == token
+    # The open Resume waits on the recurring case: nothing is carried there
+    # (step 0), so the record keeps the answer the request named.
+    assert row is not None and row[0] == carried
     assert store.repository._connection.execute(
         "SELECT kind,scan_id FROM owner_field_events WHERE event_id=?", (row[1],)
     ).fetchone() == ("resume_requested", scan.scan_id)
@@ -1320,7 +1343,7 @@ def test_an_earlier_case_that_recurs_keeps_a_hold_still_in_force(
     store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
     store.publish(_HELD)
     assert store.case.review_case_id == first
-    assert _hold(store) == token
+    assert _root(store) == token
     assert _automatic_genres(store) == []
 
 
@@ -1361,7 +1384,7 @@ def _recur_after_release(
         # Every owner answer holds the field (ADR-0085, Amendment 1), so
         # this answer is the one the record holds and Resume hands back.
         token = store.decide(before_release, _FANTASY, destination="genres").decision_id
-    assert _hold(store) == token
+    assert _root(store) == token
     assert resume(store.repository, store.case.review_case_id, "genres", store.clock())
     _genres_policy(store, "ask", 2)
     earlier = store.publish(rewritten(_HELD, publisher="Changed Later"))
@@ -1413,7 +1436,9 @@ def test_a_decision_on_a_recurring_case_holds_its_field_on_later_cases(
     _automatic_genres_again(
         store, rewritten(_HELD, publisher="Changed Elsewhere", genres=("Fantasy",))
     )
-    assert _hold(store) == decision.decision_id
+    # The later case asks the same genres question: the accept is carried
+    # there, settled, as it was written (ADR-0108, step 4).
+    assert _root(store) == decision.decision_id
     assert _automatic_genres(store) == []
 
 
@@ -1512,7 +1537,7 @@ def test_resume_is_refused_where_the_hold_holds_no_decision(
     # decision for it to hold, so no Resume control is shown.
     _genres_policy(store, "ask", 2)
     store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
-    assert _hold(store) == token
+    assert _root(store) == token
     assert _field(store, "genres")["manual_hold"] is False
     application, _, scans = _resume_service(store, tmp_path, [0])
     before = _record_row(store)
@@ -1535,7 +1560,8 @@ def test_resume_shown_on_a_successor_requests_a_return_that_completes(
     application.return_to_automatic(store.case.review_case_id, "genres")
     assert scans == [("primary", "ebooks")]
     row = _record_row(store)
-    assert row is not None and row[0] == token and row[1] is not None
+    # The successor carried the keep (ADR-0108, step 4).
+    assert row is not None and _root(store) == token and row[1] is not None
     # The fresh checks complete, and the pending return releases the hold.
     completed[0] = 10**9
     scheduler.schedule()

@@ -24,8 +24,8 @@ status line that says who accepted it and when.
 | [0010](0010-0-4-neutral-evidence-baseline.md) | accepted | Set the clean-state neutral evidence baseline |
 | [0011](0011-isolated-epub-inspector.md) | accepted | Keep EPUB inspection private to an isolated child |
 | [0012](0012-metadata-report-activation.md) | accepted; schema policy superseded by 0013 | Activate the two-table metadata-report runtime |
-| [0013](0013-pre-release-clean-schema.md) | accepted; superseded for the application database from the C-minus cutover by 0108 (proposed) | Require clean schemas until the first production release |
-| [0014](0014-review-case-admission.md) | accepted; amended by 0105 and 0108 (proposed) | Admit immutable review cases atomically |
+| [0013](0013-pre-release-clean-schema.md) | accepted; superseded for the application database from the C-minus cutover by 0108 | Require clean schemas until the first production release |
+| [0014](0014-review-case-admission.md) | accepted; amended by 0105 and 0108 | Admit immutable review cases atomically |
 | [0015](0015-isolated-shadow-reviewer.md) | superseded by 0016 | Isolate one qualification-only shadow reviewer |
 | [0016](0016-freeze-explainable-shadow-reviewer.md) | partly superseded by 0019 and 0026 | Freeze explainable publication-date shadow review |
 | [0017](0017-bounded-failure-diagnostics.md) | accepted | Bound provider and reviewer failure diagnostics |
@@ -44,12 +44,12 @@ status line that says who accepted it and when.
 | [0031](0031-persisted-review-preparation.md) | accepted; partly superseded by 0032; amended by 0105 (proposed) | Persist progressive review preparation |
 | [0032](0032-continuous-review-reconciliation.md) | accepted | Reconcile reviews continuously |
 | [0033](0033-versioned-policy-draft-preview.md) | accepted | Persist immutable policy drafts before activation |
-| [0034](0034-atomic-policy-generation-cutover.md) | accepted; amendment 1 proposed; amended by 0108 (proposed) | Cut over metadata policy in one atomic generation |
+| [0034](0034-atomic-policy-generation-cutover.md) | accepted; amendment 1 proposed; amended by 0108 | Cut over metadata policy in one atomic generation |
 | [0035](0035-persist-non-authoritative-policy-preview-outcomes.md) | accepted | Persist non-authoritative policy Preview outcomes |
 | [0036](0036-qualified-decision-only-automatic-policy.md) | accepted | Qualify decision-only automatic policy defaults |
 | [0037](0037-origin-neutral-guarded-field-effects.md) | accepted | Use one guarded field-effect boundary for every origin |
 | [0038](0038-bounded-single-container-operations.md) | accepted | Bound operational evidence inside the container |
-| [0039](0039-continuous-guarded-application.md) | accepted; amended by 0108 (proposed) | Apply guarded changes continuously without target CAS |
+| [0039](0039-continuous-guarded-application.md) | accepted; amended by 0108 | Apply guarded changes continuously without target CAS |
 | [0040](0040-source-only-contributor-workbench.md) | accepted; partly superseded by 0050 | Separate the runtime launcher from the contributor workbench |
 | [0041](0041-contract-contained-reviewer-kernel.md) | accepted; partly superseded by 0045 and 0050 | Contract the contained-reviewer kernel |
 | [0042](0042-compose-authenticated-browser-operations.md) | accepted | Compose authenticated browser operations before transport |
@@ -59,7 +59,7 @@ status line that says who accepted it and when.
 | [0046](0046-observe-report-bound-covers.md) | accepted | Observe covers with a small closed vocabulary |
 | [0047](0047-adjudicate-closed-cover-policy.md) | accepted; partly superseded by 0049 | Adjudicate cover policy deterministically |
 | [0048](0048-compile-rich-metadata-policy-preview.md) | accepted | Compile rich-metadata policy previews |
-| [0049](0049-owner-confirmed-cover-considerations.md) | accepted; partly superseded by 0059; amended by 0108 (proposed) | Activate owner-confirmed cover considerations |
+| [0049](0049-owner-confirmed-cover-considerations.md) | accepted; partly superseded by 0059; amended by 0108 | Activate owner-confirmed cover considerations |
 | [0050](0050-bound-installed-owner-assistance.md) | accepted | Bound installed owner-assistance commands |
 | [0051](0051-atomic-current-review-packages.md) | accepted | Publish review packages after projection |
 | [0052](0052-record-automatic-no-change.md) | accepted | Record automatic no-change outcomes |
@@ -67,9 +67,9 @@ status line that says who accepted it and when.
 | [0054](0054-scoped-provider-successors.md) | accepted | Bind retried provider lanes to scoped successor evidence |
 | [0055](0055-connection-scoped-preparation-recovery.md) | accepted | Pause review preparation per target connection |
 | [0056](0056-edition-overflow-work-witness.md) | accepted | Keep a work-only witness when editions overflow |
-| [0057](0057-sustain-explicit-sqlite-aggregate-topology.md) | accepted; amended by 0108 (proposed) | Keep the explicit SQLite aggregate topology |
+| [0057](0057-sustain-explicit-sqlite-aggregate-topology.md) | accepted; amended by 0108 | Keep the explicit SQLite aggregate topology |
 | [0058](0058-settings-authority-and-first-boot.md) | accepted | Make the settings store authoritative after first boot |
-| [0059](0059-deterministic-cover-election.md) | accepted; partly superseded by 0093 and 0094; amended by 0108 (proposed) | Elect covers deterministically, apart from reviewer advice |
+| [0059](0059-deterministic-cover-election.md) | accepted; partly superseded by 0093 and 0094; amended by 0108 | Elect covers deterministically, apart from reviewer advice |
 | [0060](0060-dedicated-review-session-database.md) | accepted | Keep review sessions in a dedicated database |
 | [0061](0061-audiobook-provider-posture.md) | accepted | Admit keyless audiobook providers, Audible catalog first |
 | [0062](0062-owner-managed-reviewer-access.md) | accepted | Keep reviewer access owner-managed and task-scoped |
@@ -81,7 +81,7 @@ status line that says who accepted it and when.
 | [0068](0068-latin-combining-mark-work-identity.md) | accepted | Admit Latin combining-mark work identity |
 | [0069](0069-audiobook-review-cases-and-terminal-outcomes.md) | accepted | Form audiobook review cases and caseless terminals |
 | [0070](0070-isbn-backed-series-identity.md) | accepted | Format source-attested ISBN identity only for automatic series fill |
-| [0071](0071-book-media-guarded-application.md) | accepted; amended by 0108 (proposed) | Extend guarded application to book-media fields and narrators |
+| [0071](0071-book-media-guarded-application.md) | accepted; amended by 0108 | Extend guarded application to book-media fields and narrators |
 | [0072](0072-explicit-local-transport.md) | accepted | Admit explicit local HTTP and browser HTTPS |
 | [0073](0073-audiobook-decision-qualification.md) | accepted; partly superseded by 0087 and 0093 | Qualify each audiobook decision tranche separately |
 | [0074](0074-headers-only-media-health-facts.md) | accepted | State media health from header facts |
@@ -92,12 +92,12 @@ status line that says who accepted it and when.
 | [0079](0079-supported-title-preservation-and-recovery.md) | accepted | Preserve supported titles and requeue explicit recovery |
 | [0080](0080-isbn-evidence-without-image.md) | accepted | Verify ebook ISBNs without image retrieval |
 | [0081](0081-image-owned-reviewer-provisioning.md) | accepted | Ship and validate the contained reviewer profile |
-| [0082](0082-runtime-activity-facts.md) | accepted; amended by 0108 (proposed) | Reuse Activity facts with exact source witnesses |
+| [0082](0082-runtime-activity-facts.md) | accepted; amended by 0108 | Reuse Activity facts with exact source witnesses |
 | [0083](0083-validated-browse-document-reuse.md) | accepted | Reuse validated browse documents by exact bytes |
-| [0084](0084-persisted-attention-facts.md) | accepted; amended by 0108 (proposed) | Persist which fields need the owner |
-| [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted; Amendments 1 to 6 proposed; amended by 0105 and 0108 (proposed) | Admit owner-entered values, withdrawal and reselection |
+| [0084](0084-persisted-attention-facts.md) | accepted; amended by 0108 | Persist which fields need the owner |
+| [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted; Amendments 1 to 6 proposed; amended by 0105 and 0108 | Admit owner-entered values, withdrawal and reselection |
 | [0086](0086-deployment-held-setup-claim-token.md) | accepted | Require a deployment-held claim token for the first owner |
-| [0087](0087-operation-bound-qualification-authority.md) | accepted; amended by 0108 (proposed) | Bind qualification authority to permitted operations |
+| [0087](0087-operation-bound-qualification-authority.md) | accepted; amended by 0108 | Bind qualification authority to permitted operations |
 | [0088](0088-carried-recording-admission.md) | accepted; amended by 0104 (proposed) | Carry an admitted audiobook edition into the next preparation |
 | [0089](0089-unmatched-audiobook-research.md) | accepted; amended by 0102 (proposed) | Search an unmatched audiobook again |
 | [0090](0090-hardcover-audio-edition-witness.md) | accepted | Hardcover audio editions witness which recording an audiobook is |
@@ -105,8 +105,8 @@ status line that says who accepted it and when.
 | [0092](0092-keep-the-automatic-decision-abstention-gate.md) | accepted | Keep the automatic-decision abstention gate and define the would-admit note |
 | [0093](0093-measured-cover-rules-and-current-cover-protection.md) | accepted | Choose covers by measured rules, protect fault-free current covers, and keep replaced covers for revert |
 | [0094](0094-unconfirmed-current-covers-take-part.md) | accepted | Let an unconfirmed current cover take part in cover election |
-| [0095](0095-learned-cover-taste-profile.md) | proposed; amended by 0108 (proposed) | Learn the owner's cover taste as a readable profile and let a closed judge verdict choose covers |
-| [0096](0096-owner-chosen-work-identity-strictness.md) | accepted; amended by 0108 (proposed) | Let the owner choose how strictly title and creator agreement establishes work identity |
+| [0095](0095-learned-cover-taste-profile.md) | proposed; amended by 0108 | Learn the owner's cover taste as a readable profile and let a closed judge verdict choose covers |
+| [0096](0096-owner-chosen-work-identity-strictness.md) | accepted; amended by 0108 | Let the owner choose how strictly title and creator agreement establishes work identity |
 | [0097](0097-keep-the-bibliographic-combination-gate.md) | accepted | Keep the bibliographic combination gate and extend the would-admit note to rich-preview fields |
 | [0098](0098-revised-cover-observation-vocabulary.md) | proposed | Revise the cover observation vocabulary and keep observations advisory |
 | [0099](0099-qualify-automatic-description-advice.md) | proposed | Qualify automatic description advice on the owner's decisions before it writes without asking |
@@ -115,7 +115,7 @@ status line that says who accepted it and when.
 | [0102](0102-search-every-finished-book-again.md) | proposed | Search every finished book again every 90 days |
 | [0103](0103-keep-the-library-visit-on-the-server.md) | proposed | Keep the owner's Library visit on the server and read New from it |
 | [0104](0104-owner-identity-links.md) | proposed | Link a work to the record that is its book, and read it through that link |
-| [0105](0105-going-back-after-a-write.md) | proposed; amended by 0107 and 0108 (proposed) | Go back after a write: clear a field, enter names, and keep a written work's case for 30 days |
+| [0105](0105-going-back-after-a-write.md) | proposed; amended by 0107 and 0108 | Go back after a write: clear a field, enter names, and keep a written work's case for 30 days |
 | [0106](0106-show-description-formatting.md) | proposed; amended by 0107 (proposed) | Show a description's formatting from a closed set of tags |
 | [0107](0107-write-description-formatting.md) | proposed | Write a description's formatting from a closed set of tags |
-| [0108](0108-ledger-and-derived-state.md) | proposed | Keep owner state in a ledger, regenerate derived state offline, and keep one record of the owner's answer per field |
+| [0108](0108-ledger-and-derived-state.md) | accepted | Keep owner state in a ledger, regenerate derived state offline, and keep one record of the owner's answer per field |

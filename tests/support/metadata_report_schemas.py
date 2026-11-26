@@ -499,8 +499,26 @@ def _undone(current: str, *steps: tuple[str, str]) -> str:
     return current
 
 
+# Nor did any producer before #2040 keep a carried row's root or an answer's
+# question halves on its owner decisions (ADR-0108).
+_QUESTION_COLUMNS = (
+    "carried_from TEXT CHECK(carried_from IS NULL OR (carried_from GLOB "
+    "'human_decision_[0-9a-f]*' AND length(carried_from)=79 AND "
+    "carried_from<>decision_id)), offer_digest TEXT CHECK(offer_digest IS NULL OR "
+    "(length(offer_digest)=64 AND offer_digest NOT GLOB '*[^0-9a-f]*')), "
+    "seen_target_digest TEXT CHECK(seen_target_digest IS NULL OR "
+    "(length(seen_target_digest)=64 AND seen_target_digest NOT GLOB '*[^0-9a-f]*')), "
+)
+_QUESTION_CHECKS = (
+    ", CHECK((offer_digest IS NULL)=(seen_target_digest IS NULL)), "
+    "CHECK(carried_from IS NULL OR offer_digest IS NOT NULL), "
+    "CHECK(json_valid(document)=0 OR json_extract(document,'$.carried_from') "
+    "IS carried_from))"
+)
 PRE_2038_HUMAN_DECISIONS_SQL = _undone(
     persistence_schema._HUMAN_DECISIONS_SQL,
+    (_QUESTION_COLUMNS, ""),
+    (_QUESTION_CHECKS, ")"),
     (_CASE_SHAPE, _CASE_REFERENCE),
     (
         _ITEM_KEY
@@ -517,6 +535,11 @@ PRE_2038_HUMAN_DECISIONS_SQL = _undone(
 )
 PRE_2038_HUMAN_DECISION_EVENTS_SQL = _undone(
     persistence_schema._HUMAN_DECISION_EVENTS_SQL,
+    (
+        "kind TEXT NOT NULL CHECK(kind IN "
+        "('human_decision_recorded','human_decision_carried'))",
+        "kind TEXT NOT NULL CHECK(kind='human_decision_recorded')",
+    ),
     (_CASE_SHAPE, _CASE_REFERENCE),
     (", " + _ITEM_KEY + ")", ")"),
 )
@@ -578,6 +601,21 @@ def set_pre_2038_schema(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(persistence_schema, name, "SELECT 1 WHERE 0")
     monkeypatch.setattr(
         persistence_schema, "validate_owner_field_answers", lambda connection: None
+    )
+    # Nor had it the ledger's record, which startup reads first (#2040).
+    monkeypatch.setattr(
+        persistence_schema, "_create_ledger_state", lambda connection: None
+    )
+    monkeypatch.setattr(
+        persistence_schema, "_validate_ledger_meta", lambda connection: None
+    )
+    monkeypatch.setattr(persistence_schema, "_ledger_state_objects", lambda: ())
+    monkeypatch.setattr(
+        persistence_schema, "_DISMISSAL_BEFORE_ITS_REGENERATION_SQL", "SELECT 1 WHERE 0"
+    )
+    # Nor any question check outcomes (#2040).
+    monkeypatch.setattr(
+        persistence_schema, "validate_carry_outcomes", lambda connection: None
     )
 
 
@@ -726,7 +764,7 @@ _RECORD_ANSWER_STEPS = (
     ),
     (
         "AND NOT ("
-        + review_sql._record_case_answer_sql(own=True)
+        + review_sql._record_case_answer_sql()
         + " AND "
         + review_sql._AUTOMATIC_DECIDED_SQL
         + ") ",
@@ -735,6 +773,8 @@ _RECORD_ANSWER_STEPS = (
 )
 _RECORD_ATTENTION_STEPS = (
     *_RECORD_ANSWER_STEPS,
+    # Nor did a question check leave a field waiting, settled (#2040).
+    (review_sql._CARRY_WAITING_CLEAR_SQL, ""),
     (
         " AND NOT " + review_sql._resumed_decision_sql("c") + " ORDER BY",
         " ORDER BY",
@@ -791,8 +831,13 @@ assert any(
 _PRE_2038_ATTENTION_CLEAR_SQL = pre_2038_record_attention_sql(
     review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL
 )
-# Nor did any attention object watch the record.
-_RECORD_ATTENTION_OBJECTS = ("owner_field_answers_", "owner_field_events_")
+# Nor did any attention object watch the record, or the question check's
+# outcomes, which had no table (#2040).
+_RECORD_ATTENTION_OBJECTS = (
+    "owner_field_answers_",
+    "owner_field_events_",
+    "carry_outcomes_",
+)
 
 
 # Nor did it keep the owner's cover choices apart from Automatic's: one table
@@ -1015,8 +1060,8 @@ def undo_2038_tables(
     """Undo #2038's table splits as every producer before it kept them:
     the two preparation control rows merged back into one row, and the
     description decisions and cover selections each back in one table,
-    keeping their values, and no record of the owner's answers, its counter
-    or its events, but the manual holds again, empty, with the refresh
+    keeping their values, and no record of the owner's answers, its counter,
+    its events or the question check's outcomes (#2040), but the manual holds again, empty, with the refresh
     triggers the record's took over where the store has those. A producer's
     own cover selection table, when it kept an older one, is
     `cover_selections_sql`."""
@@ -1026,7 +1071,7 @@ def undo_2038_tables(
     ).fetchone()
     connection.executescript(
         "DROP TABLE owner_field_answers;DROP TABLE owner_field_events;"
-        "DROP TABLE owner_answer_ordinal;"
+        "DROP TABLE owner_answer_ordinal;DROP TABLE carry_outcomes;"
         + PRE_2038_MANUAL_HOLDS_SQL
         + ";"
         + "".join(

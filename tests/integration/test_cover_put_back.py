@@ -459,6 +459,41 @@ def test_a_put_back_releases_its_copy_only_when_its_write_verifies(
         )
 
 
+def test_a_released_copy_waits_while_a_regeneration_restore_point_is_kept(
+    effects: _EffectEnvironment,
+) -> None:
+    """A verified Put back releases the switch's copy, but its removal waits
+    while `regeneration-backup` beside the database holds a copy, so the
+    restore point and the retained originals stay a pair (ADR-0108); once
+    the owner deletes the folder the removal runs."""
+    application = _application(effects, [])
+    switch = _switch(effects, application)
+    assert application.apply(switch.plan.plan_id).state == "verified"
+    put_back = _plan(
+        effects, "cover", pre=SWITCHED, desired="cover_" + ORIGINAL_DIGEST, suffix="7"
+    )
+    _owner_put_back(effects, put_back.plan.authority.decision_id, switch.plan.plan_id)
+    assert application.apply(put_back.plan.plan_id).state == "verified"
+    assert _removals(effects) == [(switch.plan.plan_id, "released")]
+    retention = CoverRetention(
+        RetainedCoverStore(_root(effects)),
+        effects.repository,
+        lambda _: None,
+        effects.clock,
+    )
+    backup = effects.database_path.parent / "regeneration-backup"
+    backup.mkdir(mode=0o700)
+    (backup / "epoch-0.sqlite3").write_bytes(b"restore point")
+    assert effects.repository.pending_retained_cover_removals(10) == ()
+    assert retention.run_removals() == 0
+    assert RetainedCoverStore(_root(effects)).read(ORIGINAL_DIGEST) == ORIGINAL
+    (backup / "epoch-0.sqlite3").unlink()
+    backup.rmdir()
+    assert retention.run_removals() == 1
+    with pytest.raises(ValueError):
+        RetainedCoverStore(_root(effects)).read(ORIGINAL_DIGEST)
+
+
 # Signature-valid bytes the constrained decoder refuses.
 UNDECODABLE = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 UNDECODABLE_DIGEST = hashlib.sha256(UNDECODABLE).hexdigest()

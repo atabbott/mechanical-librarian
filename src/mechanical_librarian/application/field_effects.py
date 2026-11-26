@@ -307,9 +307,10 @@ def authority_from_decision(
             else None,
         )
     if type(decision) is HumanDecision:
-        if decision.application == "recorded_only":
+        if decision.application != "apply":
             # A decision retained from before audiobook writes existed is
-            # history, never work. The scheduler and the pending-write SQL both
+            # history, never work, and a carried `settled` row plans nothing
+            # (ADR-0108). The scheduler and the pending-write SQL both
             # filter these out before it gets here, so reaching this point is a
             # defect rather than ordinary traffic, and it refuses by name
             # instead of returning the same `None` an unaccepted decision

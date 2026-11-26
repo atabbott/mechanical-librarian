@@ -16,10 +16,13 @@ back to confirm it.
 ## Status
 
 Mechanical Librarian is pre-release. It has no published image yet. You can
-build and run it from source. An upgrade that changes stored state needs a
-clean rebuild, and the [changelog](CHANGELOG.md) marks each change that needs
-one. A clean rebuild empties Mechanical Librarian's database and leaves
-Audiobookshelf as it is.
+build and run it from source. An upgrade that changes only what preparation
+rebuilds needs the offline `regenerate-derived` command, which keeps your
+settings, consents and write history, and each answer and cover choice as its
+report lists. An upgrade that changes anything else
+stored needs a clean rebuild, which empties Mechanical Librarian's database
+and leaves Audiobookshelf as it is. The [changelog](CHANGELOG.md) marks each
+change that needs either.
 
 What works today:
 

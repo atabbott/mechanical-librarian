@@ -833,6 +833,17 @@ def test_only_the_exact_seeded_schema_is_an_initialization_predecessor() -> None
     assert not store.is_exact_schema_only()
 
 
+def test_rows_in_a_table_named_like_sqlites_own_are_not_the_seeded_schema() -> None:
+    """Only the exact `sqlite_` prefix is SQLite's own; `LIKE 'sqlite_%'`
+    would read `_` as any character and skip this table's row."""
+    connection, store = _real_store()
+    connection.execute("CREATE TABLE sqlitex(a)")
+    assert store.is_exact_schema_only()
+    connection.execute("INSERT INTO sqlitex VALUES(1)")
+
+    assert not store.is_exact_schema_only()
+
+
 def test_a_changed_browse_fact_identity_is_not_the_seeded_schema() -> None:
     connection, store = _real_store()
     connection.execute("UPDATE browse_fact_identity SET unicode_version='0.0.0'")

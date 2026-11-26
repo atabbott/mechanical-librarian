@@ -8,13 +8,22 @@ supports and the exact versions it accepts. Support terms are in
 
 Every database, report, configuration and internal document accepts only two
 states: absent, or its exact current version. This build has no migration,
-import, conversion, adoption or downgrade. When a build changes a persisted
-shape, the owner does a clean rebuild, and
-[Upgrades](../operations/upgrades.md) says how.
-[ADR-0013](../architecture/decisions/0013-pre-release-clean-schema.md) records
-the rationale, and lets a future schema change ship one exact-predecessor
-adoption of reconstructible derived data instead. Startup never runs it; the
-owner runs it offline, and the changelog says when one ships.
+import, conversion, adoption or downgrade.
+
+The application database has two parts. The **ledger** holds the owner's
+answers, settings, consents, cover choices, write plans and their history.
+**Derived state** is everything preparation rebuilds from the library, its
+providers and the ledger. A build that changes only derived state is marked
+**Derived regeneration required**: startup refuses the database and names the
+offline `regenerate-derived` command, which keeps the ledger and drops derived
+state for preparation to rebuild. A build that changes the ledger is marked
+**Clean rebuild required**; the other stores and documents keep the rule
+above.
+[Upgrades](../operations/upgrades.md) says how to do each.
+[ADR-0108](../architecture/decisions/0108-ledger-and-derived-state.md) records
+the two parts and the command, and
+[ADR-0013](../architecture/decisions/0013-pre-release-clean-schema.md) the
+rule for everything else.
 
 - **Absent or exact.** Each store opens only when it is absent or at its
   exact current schema. An absent store is created fresh; in store mode the
@@ -41,12 +50,14 @@ owner runs it offline, and the changelog says when one ships.
   not reference. Back up and restore them together; see
   [Backups and recovery](../operations/backups-and-recovery.md).
 - **Unicode is part of the schema.** Browse facts record the Unicode version
-  they were folded under. A database opened by a Python with different Unicode
-  data is refused and needs a clean rebuild. An owner script reading a copy
-  names both Unicode versions and the Python to run it with instead.
+  they were folded under. They are derived state, so a database opened by a
+  Python with different Unicode data is a derived regeneration. An owner
+  script reading a copy names both Unicode versions and the Python to run it
+  with instead.
 - **Looks wrong flags are part of the schema.** Each report's flags are stored
-  with the rule list that derived them (`value-flag-rules-v1`). A database
-  derived under a different rule list is refused and needs a clean rebuild.
+  with the rule list that derived them (`value-flag-rules-v1`). They are
+  derived state, so a build with a different rule list is a derived
+  regeneration.
 - **Consent is bound to the write destinations.** A build that changes the
   destination set lapses every existing consent; see
   [Upgrades](../operations/upgrades.md#changes-that-need-owner-action-without-a-rebuild).
@@ -110,8 +121,9 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `human-decision-v8` | An owner decision, including `owner_entered`, `withdraw`, `pin` and `unpin` outcomes; it binds the digest of the field offer it was made in (`offered_alternatives_digest`), may name a closed `cause` (`matching_changed`) for the valueless row Book matching writes, and names the decision of the write it follows in its episode (`follows`), which a keep goes back on, and records that episode (`episode`) |
-| `human-decision-event-v1`, `human-decision-ack-v2` | The decision event and its acknowledgement |
+| `human-decision-v9` | An owner decision, including `owner_entered`, `withdraw`, `pin` and `unpin` outcomes; it binds the digest of the field offer it was made in (`offered_alternatives_digest`), may name a closed `cause` (`matching_changed`) for the valueless row Book matching writes, and names the decision of the write it follows in its episode (`follows`), which a keep goes back on, records that episode (`episode`), and names the root original an answer the question check carried copies (`carried_from`), whose `settled` application plans nothing |
+| `decision-question-v1` | The two halves of the question an owner answer was given against: the offered values and lineage rules, without proposal ids, and the Audiobookshelf state and value of the answered field |
+| `human-decision-event-v2`, `human-decision-ack-v2` | The decision event, an owner's or one the question check carried, and its acknowledgement |
 | `cover-consideration-v11` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back, even one the decoder refused, which has no size or preview, and a larger copy of the current cover's own picture can replace it; it stores the would-admit note, which nothing shows, and how many distinct pictures the stage kept |
 | `cover-identity-report-v4` | Cover identity classification under one Book matching level, with the title-and-author outcome and level reasons |
 | `cover-policy-v2` | The cover policy, including when a current cover may be replaced and whether an edition's cover is preferred |
@@ -146,8 +158,8 @@ exact schemas of their own and no separate version string.
 
 The owner API is served under `/api/v1`, and each response names its version
 in `schema_version`. The main ones are `review-session-v1`,
-`review-library-v13`, `review-preparation-v3`, `review-case-detail-v15`,
-`review-case-evidence-v6`, `review-report-detail-v7`, `review-case-history-v8`,
+`review-library-v13`, `review-preparation-v3`, `review-case-detail-v16`,
+`review-case-evidence-v6`, `review-report-detail-v7`, `review-case-history-v9`,
 `review-attention-v1` and `continuous-field-activity-v5`. The generated
 [OpenAPI document](review-openapi-v1.json) pins each of them except
 `review-session-v1`, which the server sets.

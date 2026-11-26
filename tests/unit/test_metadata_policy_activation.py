@@ -63,6 +63,7 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.ledger_partition import copied_store, opens, regenerate
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report, _report_entry
 
 
@@ -3261,3 +3262,53 @@ def test_activation_binds_captured_generation_and_exact_retry(tmp_path):
                 )
     finally:
         repository.close()
+
+
+def _header(path: Path) -> list[tuple[object, ...]]:
+    connection = sqlite3.connect(path)
+    try:
+        return connection.execute(
+            "SELECT * FROM metadata_policy_transitions ORDER BY transition_id"
+        ).fetchall()
+    finally:
+        connection.close()
+
+
+def test_retry_refuses_a_transition_a_regeneration_left_without_items(
+    state_directory: Path,
+) -> None:
+    """A regeneration drops the item rows and keeps the settled header, so
+    Retry refuses as stale and writes nothing, and the store still opens
+    (ADR-0108, C2 S7). Recounting no items would settle the header as
+    completed over a non-zero total, which open refuses."""
+    repository, _, _, _, _, failed, _ = _partly_failed_activation(
+        state_directory / "partly.sqlite", "provider"
+    )
+    try:
+        path = copied_store(repository, state_directory / "regenerated")
+    finally:
+        repository.close()
+    regenerate(path)
+    header = _header(path)
+    reopened = open_repository(path, create=False)
+    try:
+        with pytest.raises(PolicyContentionError) as refused:
+            reopened.retry_metadata_policy_transition(failed.transition_id, 30)
+        assert refused.value.condition == "stale"
+    finally:
+        reopened.close()
+    assert _header(path) == header
+    assert opens(path)
+    # Negative control: the recount Retry would otherwise commit leaves a
+    # header the next open refuses.
+    reopened = open_repository(path, create=False)
+    try:
+        policy = reopened._metadata_policy
+        transaction = policy._transaction("negative_control")
+        transaction.begin()
+        policy._refresh_metadata_policy_transition(failed.transition_id, 30)
+        transaction.commit()
+    finally:
+        reopened.close()
+    assert _header(path) != header
+    assert not opens(path)

@@ -7,7 +7,10 @@ start at the first release, 1.0.0 (#1349, #94).
 
 An entry marked **Clean rebuild required** changes persisted state, so an
 existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
-says how. Sections marked "in progress" are still open. The numbers in
+says how. An entry marked **Derived regeneration required** changes only what
+preparation rebuilds: stop the container and run `regenerate-derived` before
+starting the new build, as [Upgrades](docs/operations/upgrades.md) says.
+Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
@@ -16,9 +19,16 @@ brackets are GitHub issues.
   decisions, choices, controls and write plans apart from what preparation
   rebuilds. One record of each field's latest answer keeps Automatic off it on
   every later read until Resume automatic handling, which a field set to
-  Automatic offers while Automatic is on; a new read asks again a field you
-  made a choice on, where it offers a choice. Withdraw works beside
-  Automatic's decision (#2038).
+  Automatic offers while Automatic is on. Withdraw works beside Automatic's
+  decision (#2038).
+- **Clean rebuild required.** After this rebuild, an upgrade that changes only
+  what preparation rebuilds keeps your settings, consents and write history,
+  and each answer and cover choice as its report lists. Startup says when one
+  is needed: stop the container and run
+  `docker compose run --rm mechanical-librarian regenerate-derived` (#2040).
+- A later read, an upgrade included, keeps your answer when it asks the same
+  question and writes a choice not yet written once; it asks again when the
+  choices or the value in Audiobookshelf changed (#2038, #2040).
 - A library whose write was stopped while SQLite was still writing its journal
   now starts again, and a partly written store is rolled back. Before, it
   refused with "database recovery state is unsupported" (#2052).

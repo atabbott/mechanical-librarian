@@ -38,6 +38,7 @@ from mechanical_librarian.application.field_effects import (
     AuthoritySnapshot,
     GuardedFieldApplication,
 )
+from mechanical_librarian.application.regenerate_derived import Reason
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
@@ -88,9 +89,8 @@ from tests.support.ledger_copies import assert_ledger_copies
 from tests.support.ledger_partition import (
     copied_store,
     opens,
-    regenerate,
-    reopen_without_derived_rows,
     rewrite_no_change,
+    run_regeneration,
 )
 from tests.support.owner_values import OwnerStore
 from tests.support.proposal_evidence import (
@@ -426,19 +426,24 @@ def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
         assert_ledger_copies(effects.repository)["activity_no_change_automatic_policy"]
         == 1
     )
-    # Its ledger stands without the derived rows it was made against.
-    assert (
-        reopen_without_derived_rows(
-            effects.repository, effects.database_path.parent / "regenerated"
-        )["field_effect_no_changes"]
-        == 1
+    # The subtitle write Audiobookshelf may have received stops
+    # `regenerate-derived` at its gate, even with its flag, until it finishes
+    # on the previous build (ADR-0108, "The offline command"); so no
+    # regeneration meets this store as it stands.
+    outcome = run_regeneration(
+        copied_store(effects.repository, effects.database_path.parent / "copy"),
+        retire_pending=True,
     )
-    # While Automatic's decision is there the row agrees with it in full.
+    assert outcome.kind == "gate"
+    assert [(item.reason, item.destination) for item in outcome.items] == [
+        (Reason.MAY_HAVE_RECEIVED, "subtitle")
+    ]
+    # While Automatic's decision is there the row agrees with it in full; the
+    # command's ledger-only admission cannot see that, so it reaches the gate.
     path = copied_store(effects.repository, effects.database_path.parent / "changed")
     rewrite_no_change(path, "target_version", "0" * 64)
     assert not opens(path)
-    regenerate(path)
-    assert opens(path)
+    assert run_regeneration(path, retire_pending=True).kind == "gate"
 
 
 def test_one_preparation_gathers_only_its_automatic_checks(

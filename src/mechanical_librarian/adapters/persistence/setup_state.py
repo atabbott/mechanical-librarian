@@ -26,6 +26,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _SETUP_POLICY_TRANSITION_ROW,
     _SETUP_REVIEW_CONTROL_ROW,
     _SETUP_REVIEW_OWNER_CONTROL_ROW,
+    setup_ledger_meta_row,
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError, SettingsView
@@ -52,6 +53,7 @@ _SETUP_ROW_TABLES = frozenset(
         "automatic_safety_state",
         "browse_fact_identity",
         "field_effect_control",
+        "ledger_meta",
         "owner_answer_ordinal",
         "owner_setting_secrets",
         "owner_settings",
@@ -624,7 +626,7 @@ class SetupStateStore(ConnectionScoped):
         tables = {
             name
             for (name,) in self._connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*'"
             )
         }
         for table in tables - _SETUP_ROW_TABLES:
@@ -670,6 +672,11 @@ class SetupStateStore(ConnectionScoped):
             "SELECT singleton,paused,first_boot_acknowledged "
             "FROM review_preparation_owner_control"
         ).fetchall() != [_SETUP_REVIEW_OWNER_CONTROL_ROW]:
+            return False
+        if "ledger_meta" in tables and self._connection.execute(
+            "SELECT singleton,ledger_format_version,derived_epoch,derived_version,"
+            "derived_schema_digest FROM ledger_meta"
+        ).fetchall() != [setup_ledger_meta_row()]:
             return False
         return True
 

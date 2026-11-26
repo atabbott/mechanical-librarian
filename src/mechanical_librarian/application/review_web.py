@@ -67,6 +67,7 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.field_outcomes import language_is_unknown
 from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_EVENT_KINDS,
     OWNER_NAMES_DESTINATIONS,
     OWNER_NAMES_MAXIMUM,
     OWNER_SUBSET_DESTINATION,
@@ -156,10 +157,12 @@ from mechanical_librarian.domain.value_flags import value_flags
 # v13: a field says whether its owner accept needs no write (ADR-0105);
 # v14: a description's current and proposed values carry their formatted
 # copies (#1995).
-# v15: a field an earlier decision holds in Preview says so (ADR-0085).
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v15"]
+# v15: a field an earlier decision holds in Preview says so (ADR-0085);
+# v16: an owner decision the question check carried may be `settled`
+# (ADR-0108).
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v16"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v15"
+    "review-case-detail-v16"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
@@ -176,10 +179,11 @@ ReviewAttentionSchemaVersion = Literal["review-attention-v1"]
 REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v1"
 # v5: a keep says which write it went back on (#1523); v6: the book link's
 # history events (#1477); v7: a link named by an identifiers file (#1478);
-# v8: a description value's formatted copy, and advice as it is written (#2003).
-ReviewCaseHistorySchemaVersion = Literal["review-case-history-v8"]
+# v8: a description value's formatted copy, and advice as it is written (#2003);
+# v9: the question check's carried decision, `settled` or applied (ADR-0108).
+ReviewCaseHistorySchemaVersion = Literal["review-case-history-v9"]
 REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
-    "review-case-history-v8"
+    "review-case-history-v9"
 )
 
 # One book link History event; v2: a file link's identifier, source and
@@ -399,6 +403,14 @@ class CurrentReviewCaseSnapshot:
     # and they are asked where the case offers a decision (ADR-0108,
     # Withdrawal and carry eligibility).
     withdrawn_destinations: tuple[str, ...] = ()
+    # Held destinations whose answer from elsewhere the question check asks
+    # again on this case (the choices or the value changed, the answer is no
+    # longer carried, or its carry was refused): asked where the case offers
+    # a decision (ADR-0108, Attention).
+    asked_again_destinations: tuple[str, ...] = ()
+    # Held destinations the question check left waiting on this case for a
+    # plan in flight or an open Resume: settled meanwhile (ADR-0108).
+    carry_waiting_destinations: tuple[str, ...] = ()
     # This case's owner decisions a completed Resume took back: they no
     # longer decide their field, and keep only a recorded line (D3).
     covered_decision_ids: tuple[str, ...] = ()
@@ -1499,6 +1511,12 @@ def _classify_field(
             and not actions
             and automatic_decision is None
         )
+        # A field the question check left waiting reads as the owner's
+        # where Automatic does not settle it (ADR-0108, Attention).
+        or (
+            destination in snapshot.carry_waiting_destinations
+            and not _automatic_settles(snapshot, destination)
+        )
         or (
             destination == "cover"
             and cover_is_current
@@ -1517,7 +1535,7 @@ def _classify_field(
         classify_review_field,
         attention_candidate=(
             (
-                _record_answered_elsewhere(snapshot, destination)
+                destination in snapshot.asked_again_destinations
                 or destination in snapshot.withdrawn_destinations
             )
             and bool(actions)
@@ -2613,7 +2631,7 @@ class InspectCurrentReviewCase:
         history_items = []
         for raw in snapshot.history:
             item = dict(raw)
-            if item.get("kind") == "human_decision_recorded":
+            if item.get("kind") in HUMAN_DECISION_EVENT_KINDS:
                 decision_id = item.get("decision_id")
                 projected = (
                     decisions.get(decision_id) if type(decision_id) is str else None

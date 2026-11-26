@@ -1220,9 +1220,16 @@ def _validate_companion_decisions(
     operation: FieldEffectOperation,
     companion: FieldEffectPlan,
     bundle_id: str,
+    *,
+    offline: bool = False,
 ) -> None:
     """A title plan with its subtitle companion holds what its two automatic
-    decisions chose from their case, report, proposals and outcome set."""
+    decisions chose from their case, report, proposals and outcome set.
+
+    `offline` is regenerate-derived's ledger-only admission, which reads the
+    ledger beside an empty derived partition: there a live plan's missing
+    decision is expected, and the gate decides what the plan blocks.
+    """
     plan = operation.plan
     # Its decisions are derived. A live plan keeps every check,
     # since a regeneration revokes it first; an ended one is
@@ -1237,7 +1244,7 @@ def _validate_companion_decisions(
             (member.authority.decision_id,),
         ).fetchone()
         if decision_row is None:
-            if live:
+            if live and not offline:
                 raise FieldEffectError("invalid_operation")
             continue
         decision = AutomaticDecision.from_json(decision_row[0])
@@ -1293,8 +1300,14 @@ def _validate_companion_decisions(
             raise FieldEffectError("invalid_operation")
 
 
-def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
-    """Fail closed on any non-canonical field-effect envelope or row mismatch."""
+def _validate_field_effect_state(
+    connection: sqlite3.Connection, *, offline: bool = False
+) -> None:
+    """Fail closed on any non-canonical field-effect envelope or row mismatch.
+
+    `offline` relaxes one live-row check for regenerate-derived's ledger-only
+    admission (see `_validate_companion_decisions`); nothing else changes.
+    """
     try:
         _validate_no_changes(connection)
         control = connection.execute(
@@ -1471,7 +1484,11 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 raise FieldEffectError("invalid_operation")
             if companion is not None and plan.subtitle_companion is not None:
                 _validate_companion_decisions(
-                    connection, operation, companion, plan.subtitle_companion.bundle_id
+                    connection,
+                    operation,
+                    companion,
+                    plan.subtitle_companion.bundle_id,
+                    offline=offline,
                 )
             operations[plan.plan_id] = operation
 

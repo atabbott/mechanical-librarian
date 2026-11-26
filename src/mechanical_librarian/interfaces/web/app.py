@@ -649,9 +649,14 @@ _HumanDecisionOutcome: TypeAlias = Literal[
 ]
 
 
+# What an owner decision may go on to do. `settled` is only ever a carried
+# decision's: it settles the field and plans nothing (ADR-0108).
+_DecisionApplication: TypeAlias = Literal["apply", "recorded_only", "settled"]
+
+
 class _DecisionProjection(_ClosedModel):
     actor: str
-    application: Literal["apply", "recorded_only"]
+    application: _DecisionApplication
     application_reason: str | None = Field(default=None, max_length=256)
     decision_id: str
     destination: str
@@ -1391,12 +1396,13 @@ def _history_formatted(
 
 class _HistoryDecisionItem(_ClosedModel):
     actor: Literal["owner"]
-    application: Literal["apply", "recorded_only"] | None
+    application: _DecisionApplication | None
     application_reason: str | None = Field(default=None, max_length=256)
     decision_id: str
     destination: _TargetDestination
     event_id: str
-    kind: Literal["human_decision_recorded"]
+    # An owner's own request, or the question check's carry (ADR-0108).
+    kind: Literal["human_decision_recorded", "human_decision_carried"]
     occurred_at: _Instant
     outcome: _HumanDecisionOutcome
     previous_value: _ProposedValue | None
@@ -2863,6 +2869,9 @@ class _DecisionRequest(_ClosedModel):
 
 
 class _DecisionAcknowledgement(_DecisionProjection):
+    # An owner's request is never carried, so it is never `settled`, and the
+    # acknowledgement keeps its version (ADR-0108).
+    application: Literal["apply", "recorded_only"]
     confirmation: _DecisionConfirmation
     # The stream positions this decision's own announcements were given, so the
     # tab that recorded it can recognise its echo. Three: the case, its Library

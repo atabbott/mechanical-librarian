@@ -23,7 +23,14 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    answer_written_sql,
+)
+from mechanical_librarian.adapters.persistence.regeneration_backup import (
+    database_backup_held,
+)
 from mechanical_librarian.adapters.persistence.schema import (
+    _FIELD_EFFECT_WAITING_STATES_SQL,
     _report_browse_fact_pairs,
     _require_equal_facts,
     _validate_report_row,
@@ -46,6 +53,38 @@ from mechanical_librarian.domain.metadata_report import (
 )
 
 _ReviewPackage = tuple[str | None, str, str | None, int | None, str]
+
+
+# The owner's covers the ledger keeps, which no regeneration drops (ADR-0108):
+# every owner pointer's selection, each work's latest written owner selection,
+# every cover answer the record holds, by its original and its preview, and
+# every waiting cover plan's desired original.
+_LEDGER_COVER_REFERENCE_SQL = (
+    "SELECT 1 FROM owner_cover_selections selection "
+    "JOIN human_decisions decision ON decision.decision_id=selection.decision_id "
+    "WHERE (json_extract(selection.document,'$.candidate_artifact_id')=:artifact "
+    "OR json_extract(selection.document,'$.original_sha256')=:digest "
+    "OR json_extract(selection.document,'$.preview_sha256')=:digest) AND ("
+    "EXISTS (SELECT 1 FROM owner_cover_pointers pointer "
+    "WHERE pointer.selection_id=selection.selection_id) "
+    "OR EXISTS (SELECT 1 FROM owner_field_answers answer "
+    "WHERE answer.cover_selection_id=selection.selection_id) OR ("
+    + answer_written_sql("selection.decision_id")
+    + " AND NOT EXISTS (SELECT 1 FROM owner_cover_selections later "
+    "JOIN human_decisions later_decision "
+    "ON later_decision.decision_id=later.decision_id "
+    "WHERE later.connection_name=selection.connection_name "
+    "AND later.library_name=selection.library_name "
+    "AND later.item_id=selection.item_id "
+    "AND later_decision.ordinal>decision.ordinal AND "
+    + answer_written_sql("later.decision_id")
+    + "))) UNION ALL SELECT 1 FROM field_effects plan WHERE plan.destination='cover' "
+    "AND (plan.state IN "
+    + _FIELD_EFFECT_WAITING_STATES_SQL
+    + " OR (plan.state='stale' AND json_extract(plan.document,'$.failure')="
+    "'connection')) AND json_extract(plan.document,'$.plan.desired_value')=:artifact "
+    "LIMIT 1"
+)
 
 
 class SQLiteReportRepository(ConnectionScoped):
@@ -378,7 +417,11 @@ class SQLiteReportRepository(ConnectionScoped):
 
     @local_operation
     def artifact_is_referenced(self, digest: str) -> bool:
-        """Check one cleanup candidate without semantically auditing history."""
+        """Check one cleanup candidate without semantically auditing history.
+
+        Every file counts as referenced while a regeneration's restore point
+        is kept, so the copy and the artifacts stay a pair; then the derived
+        references and the ledger's own (ADR-0108)."""
         if (
             type(digest) is not str
             or len(digest) != 64
@@ -386,10 +429,17 @@ class SQLiteReportRepository(ConnectionScoped):
         ):
             raise MetadataReportError("persisted cover references are invalid")
         try:
+            if database_backup_held(self._connection, self._binding):
+                return True
             row = self._connection.execute(
                 "SELECT 1 FROM metadata_report_cover_references WHERE artifact_id=? OR preview_digest=? LIMIT 1",
                 ("cover_" + digest, digest),
             ).fetchone()
+            if row is None:
+                row = self._connection.execute(
+                    _LEDGER_COVER_REFERENCE_SQL,
+                    {"artifact": "cover_" + digest, "digest": digest},
+                ).fetchone()
             if row is not None:
                 return True
             documents = tuple(

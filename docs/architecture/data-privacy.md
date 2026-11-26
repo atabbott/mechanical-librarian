@@ -92,7 +92,9 @@ and closed failure code, and an admitted verdict keeps only the comparison's
 own cover reference, the decision, a confidence, rule numbers and digests of
 what was sent: no rule text or image.
 None keeps prompts, raw model streams, reasoning or unadmitted output. A
-clean rebuild discards the profile with all derived state.
+regeneration keeps the profile, its builds and the daily request count, and
+discards the judgements and verdicts with all derived state; a clean rebuild
+discards everything.
 
 **Settings and access.** In store mode the application database holds owner
 settings and their secrets: the Audiobookshelf token and provider API keys.
