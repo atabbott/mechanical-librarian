@@ -3912,7 +3912,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v15",
+            "const": "review-case-detail-v16",
             "title": "Schema Version",
             "type": "string"
           },
@@ -13660,6 +13660,10 @@
             "title": "Restore Unavailable",
             "type": "boolean"
           },
+          "resume_failed": {
+            "title": "Resume Failed",
+            "type": "boolean"
+          },
           "target_fingerprint": {
             "title": "Target Fingerprint",
             "type": "string"
@@ -13694,6 +13698,7 @@
           "manual_hold",
           "manual_return_requested",
           "manual_return_failed",
+          "resume_failed",
           "manual_required",
           "needs_attention",
           "navigation_role",

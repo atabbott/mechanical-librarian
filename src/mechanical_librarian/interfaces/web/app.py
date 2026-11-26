@@ -1140,6 +1140,8 @@ class _ReviewField(_ClosedModel):
     manual_hold: bool
     manual_return_requested: bool
     manual_return_failed: bool
+    # The record's open Resume for the field failed, offered or not (ADR-0108).
+    resume_failed: bool
     manual_required: bool
     needs_attention: bool
     navigation_role: Literal["attention", "inspect"]

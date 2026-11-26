@@ -789,6 +789,9 @@ export interface ReviewFieldView {
   // The requested checks finished with failures; the hold stays and nothing
   // retries them, so the owner can request them again.
   manualReturnFailed: boolean
+  // The record's open Resume for the field failed, whether or not the field
+  // offers Resume; outside the offer only a status line says so (C2b-21).
+  resumeFailed: boolean
   currentValue: string
   currentRaw: unknown
   // A description's formatted copy, which its card shows in place of the
@@ -3538,6 +3541,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   manualHold: field.manual_hold,
   manualReturnRequested: field.manual_return_requested,
   manualReturnFailed: field.manual_return_failed,
+  resumeFailed: field.resume_failed,
   navigationRole: field.navigation_role,
   // An empty or unreadable current value says which, in Audiobookshelf's
   // name, rather than one word for both (#1286). A cover's value is an

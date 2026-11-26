@@ -1482,9 +1482,72 @@ def test_a_failed_resume_asks_the_field(tmp_path: Path, posture: str) -> None:
             offered,
             offered,
         )
+        # The failure reads either way; outside the offer only its status
+        # line says it (R1, C2b-21).
+        assert field["resume_failed"] is True
         page, attention = _asked(library)
         assert "authors" in page and "authors" in attention
         assert library.pending() == []
+        assert_record_recomputes(root._connection)
+
+
+def _fail(root: Any, request: str, at: int) -> None:
+    """End the request's scan with failures, as preparation settles it."""
+    (scan,) = root._connection.execute(
+        "SELECT scan_id FROM owner_field_events WHERE event_id=?", (request,)
+    ).fetchone()
+    assert root._fail_open_resumes_for_scan(scan, at) == 1
+
+
+@pytest.mark.parametrize(
+    ("state", "failed"),
+    (
+        ("pending", False),
+        ("failed_in_preview", True),
+        ("asked_again", False),
+        ("superseded_in_preview", False),
+        ("completed", False),
+    ),
+)
+def test_resume_failed_reads_only_an_open_request_that_failed(
+    tmp_path: Path, state: str, failed: bool
+) -> None:
+    """R1 (U10): `resume_failed` reads the record's open Resume for the
+    field, whatever the offer: true once its scan ended with failures, false
+    while it waits, once it is asked again (the new request has not failed),
+    once a new answer supersedes it, and once a later run completes it."""
+    with prepared(tmp_path, automatic=True, library_model="publication") as library:
+        root = library.root
+        root.record_human_decision(
+            accept(library.case(), "authors", "owner-answers-authors", 11)
+        )
+        _read_back(library, ("Someone Else",), 12)
+        request = request_resume(root, library.case_id(), "authors", 14)
+        assert request is not None
+        if state != "pending":
+            _fail(root, request, 15)
+        if state == "asked_again":
+            assert request_resume(root, library.case_id(), "authors", 16) is not None
+        if state == "completed":
+            assert complete_resume(root, request, 16)
+            assert _record_row(root, "authors") is None
+        if state in {"failed_in_preview", "superseded_in_preview"}:
+            library.leave_automatic()
+        if state == "superseded_in_preview":
+            root.record_human_decision(
+                _owner_command(library, "keep_current", "owner-keeps-authors", 17)
+            )
+            assert root._connection.execute(
+                "SELECT kind FROM owner_field_events WHERE request_id=? ORDER BY rowid",
+                (request,),
+            ).fetchall() == [("resume_failed",), ("resume_superseded",)]
+        field = _fields(library)["authors"]
+        assert field["resume_failed"] is failed
+        if state == "failed_in_preview":
+            assert (field["manual_hold"], field["manual_return_failed"]) == (
+                False,
+                False,
+            )
         assert_record_recomputes(root._connection)
 
 

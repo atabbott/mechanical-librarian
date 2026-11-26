@@ -155,6 +155,7 @@ export const detail: CaseDetailView = {
       manualHold: false,
       manualReturnRequested: false,
       manualReturnFailed: false,
+      resumeFailed: false,
       currentValue: 'Old title',
       currentRaw: 'Old title',
       proposedValues: [{ kind: 'text', value: 'New title' }],

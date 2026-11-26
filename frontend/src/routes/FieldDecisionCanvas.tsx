@@ -32,7 +32,7 @@ import {
 } from '../fieldReasons'
 import { destinationLabel } from '../labels'
 import type { useReviewDecisionController } from '../reviewDecisionController'
-import { AutomaticHandlingPanel } from './AutomaticHandling'
+import { AutomaticHandlingPanel, ResumeFailedLine } from './AutomaticHandling'
 import { MetadataChoice, RecordedFieldObservations } from './FieldDecisionChoices'
 import { LibraryCoverChoices } from './FieldDecisionCover'
 import {
@@ -639,6 +639,8 @@ export function FieldDecisionCanvas({
       ) : null}
       {selected.manualHold ? (
         <AutomaticHandlingPanel handling={automaticHandling} selected={selected} />
+      ) : selected.resumeFailed ? (
+        <ResumeFailedLine />
       ) : null}
       {selected.pinControl ? (
         <FieldPinFoot

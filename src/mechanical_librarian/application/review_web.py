@@ -157,9 +157,11 @@ from mechanical_librarian.domain.value_flags import value_flags
 # v14: a description's current and proposed values carry their formatted
 # copies (#1995).
 # v15: a field an earlier decision holds in Preview says so (ADR-0085).
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v15"]
+# v16: a field says whether the record's open Resume for it failed, whether
+# or not it offers Resume (ADR-0108).
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v16"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v15"
+    "review-case-detail-v16"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
@@ -2257,6 +2259,10 @@ class InspectCurrentReviewCase:
             and destination in snapshot.return_requested_destinations,
             "manual_return_failed": manual_hold
             and destination in snapshot.return_failed_destinations,
+            # The record's open Resume for the field failed, offered or not:
+            # outside the offer the field says so with no control (C2b-21).
+            # A new request, a completion or a supersession closes it.
+            "resume_failed": destination in snapshot.return_failed_destinations,
             "classification": classification.state,
             "classification_cause": classification.cause,
             "classification_reason": classification.reason,
