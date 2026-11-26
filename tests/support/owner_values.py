@@ -133,7 +133,7 @@ class OwnerStore:
         ).fetchone()
         self.repository.publish(report, lambda: True, current and current[0])
         resolved = self.resolved
-        # Over the ledger's epoch, as preparation evaluates (ADR-0108).
+        # Over the ledger's derived epoch, as `CreateProposalSet` reads it.
         epoch = self.repository.derived_epoch()
         proposal = (
             evaluate_report(report, derived_epoch=epoch)

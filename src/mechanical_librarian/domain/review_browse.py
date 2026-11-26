@@ -64,7 +64,11 @@ from mechanical_librarian.domain.review_case import (
     REVIEW_CASE_SCHEMA,
     proposal_manual_requirements,
 )
-from mechanical_librarian.domain.validation import closed_document, literal
+from mechanical_librarian.domain.validation import (
+    bounded_integer,
+    closed_document,
+    literal,
+)
 from mechanical_librarian.domain.value_flags import report_source_titles
 
 
@@ -100,15 +104,28 @@ _CASE = closed_document(
     "proposal_document",
     schema_version=literal(REVIEW_CASE_SCHEMA),
 )
-_PROPOSAL = closed_document(
+_PROPOSAL_FIELDS = (
     "media_kind",
     "policy_version",
     "relationships",
     "report",
     "resolved_policy_id",
     "results",
-    schema_version=literal(PROPOSAL_SCHEMA),
 )
+# A set addressed over a later derived epoch names it; epoch 0 is omitted and
+# an explicit 0 refused, as the proposal document itself rules (ADR-0108).
+_PROPOSAL_AT_EPOCH_0 = closed_document(
+    *_PROPOSAL_FIELDS, schema_version=literal(PROPOSAL_SCHEMA)
+)
+_PROPOSAL_AT_LATER_EPOCH = closed_document(
+    *_PROPOSAL_FIELDS,
+    schema_version=literal(PROPOSAL_SCHEMA),
+    derived_epoch=bounded_integer(1),
+)
+
+
+def _valid_proposal(value: object) -> bool:
+    return _PROPOSAL_AT_EPOCH_0(value) or _PROPOSAL_AT_LATER_EPOCH(value)
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -535,7 +552,7 @@ def case_browse_facts(case: dict[str, object], review_case_id: str) -> CaseBrows
             raise ValueError
         proposal = _object(cast(str, case["proposal_document"]), MAX_PROPOSAL_BYTES)
         if (
-            not _PROPOSAL(proposal)
+            not _valid_proposal(proposal)
             or case["disposition"] != "undecided"
             or case["proposal_set_id"] != proposal_set_content_address(proposal)
             or proposal["report"]
