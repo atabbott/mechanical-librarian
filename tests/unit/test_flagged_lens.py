@@ -24,7 +24,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    DerivedRegenerationRequired,
+    MetadataReportError,
+)
 from mechanical_librarian.application.review_web import (
     REVIEW_LIBRARY_SCHEMA,
     BrowseReviewLibrary,
@@ -392,11 +395,9 @@ def test_open_refuses_flags_derived_by_another_rule_list(tmp_path: Path) -> None
     connection.commit()
     connection.close()
     before = database.read_bytes()
-    with pytest.raises(
-        MetadataReportError,
-        match="^database value flags were derived under a different rule list; "
-        "a clean rebuild is required$",
-    ):
+    # Value flags are derived: another rule list needs a regeneration
+    # (ADR-0108), refused with startup's own family line.
+    with pytest.raises(DerivedRegenerationRequired):
         open_repository(database, create=False)
     assert database.read_bytes() == before
 

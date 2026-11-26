@@ -250,6 +250,55 @@ def test_nothing_to_do_needs_no_free_space(
     assert _sha(path) == before
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE browse_fact_identity SET unicode_version='15.1.0-other'",
+        "UPDATE browse_fact_identity SET value_flag_rules='value-flag-rules-v0'",
+    ],
+    ids=["another_unicode_version", "another_rule_list"],
+)
+def test_browse_facts_folded_under_another_python_are_regenerated(
+    owner: OwnerStore, statement: str
+) -> None:
+    """Browse facts and value flags are derived (ADR-0108): when they were
+    folded under another Unicode version or rule list, startup names the
+    regeneration and the command regenerates instead of saying the database
+    already matches. The schema and the ledger's derived version are this
+    build's, so only the seed row differs."""
+    owner.decide("accept", GENRES, destination="genres")
+    owner.close()
+    path = owner.root / "owner.sqlite"
+    assert rewrite(path, statement) == 1
+    with pytest.raises(DerivedRegenerationRequired):
+        open_repository(path, create=False)
+    status, lines, outcome = _run(path)
+    assert (status, outcome.kind) == (0, "regenerated"), lines
+    assert opens(path)
+    connection = sqlite3.connect(path)
+    try:
+        assert connection.execute(
+            "SELECT singleton,unicode_version,value_flag_rules FROM browse_fact_identity"
+        ).fetchall() == [schema._SETUP_BROWSE_FACT_IDENTITY_ROW]
+    finally:
+        connection.close()
+    assert _run(path)[:2] == (0, [cli.NOTHING_TO_DO])
+
+
+def test_a_browse_fact_identity_that_is_not_one_row_refuses_as_today(
+    tmp_path: Path,
+) -> None:
+    """The control: an identity table without its one row is an altered
+    derived object, which the full comparison refuses as before; only a row
+    naming another Unicode version or rule list is another build's."""
+    path = _fresh(tmp_path / "data")
+    rewrite(path, "DELETE FROM browse_fact_identity")
+    with pytest.raises(MetadataReportError) as startup:
+        open_repository(path, create=False)
+    assert not isinstance(startup.value, DerivedRegenerationRequired)
+    assert str(startup.value) == "database is unavailable or incompatible"
+
+
 def test_no_database(tmp_path: Path) -> None:
     (tmp_path / "data").mkdir(mode=0o700)
     status, lines, _ = _run(tmp_path / "data" / "application.sqlite3")

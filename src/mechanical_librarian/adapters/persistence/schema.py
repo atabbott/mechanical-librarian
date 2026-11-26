@@ -3247,7 +3247,8 @@ def _validate_ledger_meta(connection: sqlite3.Connection) -> None:
 
     The precedence is frozen (ADR-0108 "Startup"): no ledger record, or
     another ledger format, needs a clean rebuild; an altered ledger object
-    refuses as today; another build's derived partition needs a regeneration;
+    refuses as today; another build's derived partition, or browse facts
+    folded under another Unicode version or rule list, needs a regeneration;
     the full comparison that follows refuses a planted or altered derived
     object as today.
     """
@@ -3273,8 +3274,27 @@ def _validate_ledger_meta(connection: sqlite3.Connection) -> None:
         type(version) is not int
         or version != DERIVED_VERSION
         or digest != build.derived_schema_digest
+        or browse_fact_identity_is_current(connection) is False
     ):
         raise DerivedRegenerationRequired
+
+
+def browse_fact_identity_is_current(connection: sqlite3.Connection) -> bool | None:
+    """Whether the browse facts were folded under this build's Unicode
+    version and value-flag rule list: its one derived seed row that names the
+    Python it ran under, so it can differ while the derived schema is the
+    same. None when it cannot be read as one row; the full comparison refuses
+    that as an altered derived object."""
+    try:
+        rows = connection.execute(
+            "SELECT singleton,unicode_version,value_flag_rules "
+            "FROM browse_fact_identity"
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    if len(rows) != 1:
+        return None
+    return bool(rows[0] == _SETUP_BROWSE_FACT_IDENTITY_ROW)
 
 
 def _ledger_state_objects() -> tuple[tuple[str, str, str | None], ...]:
@@ -3994,21 +4014,10 @@ def _owner_selection_copies(
 
 def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
     """Require every reconstructible browse fact to equal its canonical JSON."""
-    identity = connection.execute(
-        "SELECT unicode_version,value_flag_rules FROM browse_fact_identity"
-    ).fetchall()
-    if len(identity) != 1:
+    # The ledger check already refused facts folded under another Unicode
+    # version or rule list as derived state to regenerate.
+    if browse_fact_identity_is_current(connection) is not True:
         raise MetadataReportError("database is unavailable or incompatible")
-    if identity[0][0] != unicodedata.unidata_version:
-        raise MetadataReportError(
-            "database browse facts were folded under a different Unicode version; "
-            "a clean rebuild is required"
-        )
-    if identity[0][1] != VALUE_FLAG_RULES_VERSION:
-        raise MetadataReportError(
-            "database value flags were derived under a different rule list; "
-            "a clean rebuild is required"
-        )
     review_expected = (
         "SELECT rc.review_case_id,"
         + _review_case_field_fact_values_sql("rc.document", offered=True)
