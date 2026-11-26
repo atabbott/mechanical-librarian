@@ -41,6 +41,7 @@ from mechanical_librarian.domain.owner_settings import (
     OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
 )
+from mechanical_librarian.domain.upgrade_notice import UPGRADE_NOTICE_SCHEMA
 from mechanical_librarian.interfaces.web.app import (
     METADATA_POLICY_NOTEBOOK_SCHEMA,
     METADATA_POLICY_TRANSITION_SCHEMA,
@@ -3003,6 +3004,10 @@ def _rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         }
     if path == "/api/v1/activity":
         return {**_activity(query), "backup_ready": None, "example": None}
+    # Activity and the Attention rail read the upgrade notice; the cohort's
+    # library has had no regeneration, so there is none (#2039).
+    if path == "/api/v1/upgrade-notice":
+        return {"schema_version": UPGRADE_NOTICE_SCHEMA, "notice": None}
     if path.startswith("/api/v1/activity/") and path.endswith("/transitions"):
         after_sequence = int(query.get("after_sequence", ["0"])[0])
         transitions = [

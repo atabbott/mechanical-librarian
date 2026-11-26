@@ -20,11 +20,13 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.upgrade_notice import UPGRADE_NOTICE_SCHEMA
 from mechanical_librarian.domain.value_flags import value_flags
 from mechanical_librarian.interfaces.web.app import (
     _LibraryProgressResponse,
     _LibraryResponse,
     _PreparationResponse,
+    _UpgradeNoticeResponse,
 )
 from mechanical_librarian.interfaces.web.find_this_book import _OwnerLinkView
 from tests.browser import fidelity_cohort
@@ -147,6 +149,14 @@ def test_permission_readiness_agrees_with_each_write_plan(
         assert library["prepared"]["total"] == sum(
             count for (name, _), count in planned.items() if name == library["library"]
         )
+
+
+def test_the_cohort_answers_the_upgrade_notice_with_none() -> None:
+    """Activity and the Attention rail read the notice; the cohort's library
+    has had no regeneration, so the wire answers no notice (#2039)."""
+    notice = rich_payload("/api/v1/upgrade-notice")
+    assert _UpgradeNoticeResponse.model_validate(notice).notice is None
+    assert notice == {"schema_version": UPGRADE_NOTICE_SCHEMA, "notice": None}
 
 
 def test_activity_carries_a_future_origin_and_every_cover_state() -> None:
