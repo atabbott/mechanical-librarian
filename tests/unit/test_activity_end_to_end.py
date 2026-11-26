@@ -16,6 +16,7 @@ from __future__ import annotations
 import copy
 import json
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
@@ -72,6 +73,7 @@ from tests.support.audiobook_reports import (
 )
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
+from tests.support.description_advice import _prepared
 from tests.support.field_effects import (  # noqa: F401
     CAPABILITY,
     DEPENDENCY,
@@ -92,6 +94,7 @@ from tests.support.ledger_partition import (
     reopen_without_derived_rows,
     rewrite_no_change,
 )
+from tests.support.owner_field_record import resume
 from tests.support.owner_values import OwnerStore
 from tests.support.proposal_evidence import (
     _claim,
@@ -439,6 +442,156 @@ def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
     assert not opens(path)
     regenerate(path)
     assert opens(path)
+
+
+# Activity's rows whose source is ledger (ADR-0108), by the identifier each
+# row carries: an owner decision's event, a write plan (its row is the plan's
+# group), a no-change row and an owner's authored description.
+_LEDGER_ROW_IDS = (
+    "SELECT event_id FROM human_decision_events "
+    "UNION ALL SELECT plan_id FROM field_effects "
+    "UNION ALL SELECT event_id FROM field_effect_no_changes "
+    "UNION ALL SELECT decision_id FROM owner_authored_descriptions"
+)
+
+
+def _activity_paths(
+    path: Path, search: str | None = None
+) -> dict[str, dict[str, object]]:
+    """Read Activity from the store at ``path`` on the in-memory fact store and
+    on the canonical union, assert both serve the same page, and return its
+    rows by the ledger identifier each carries."""
+
+    def application(repository):
+        return ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "books"),),
+            lambda: 2_000,
+            lambda *_: None,
+            activity_only=True,
+        )
+
+    canonical = open_repository(path, create=False)
+    reader = open_repository(path, create=False, authority=canonical.authority)
+    try:
+        reader.configure_activity_page_reader()
+        actual = application(reader).activity(search=search, page_size=100)
+        # The fact store served it, rather than falling back.
+        assert reader._field_effect_activity._activity_facts is not None
+        assert actual == application(canonical).activity(search=search, page_size=100)
+    finally:
+        reader.close()
+        canonical.close()
+    _ActivityResponse.model_validate(actual)
+    events = cast(list[dict[str, object]], actual["events"])
+    return {
+        str(event.get("transition_id") or event["change_id"]): event for event in events
+    }
+
+
+def _regenerated_reading(path: Path) -> tuple[dict[str, str], set[str]]:
+    """Read the store's ledger rows on Activity, regenerate its derived
+    partition and read them again: each is listed with the same work, library
+    and work id, found by its title, and an owner's row keeps its author label
+    and value facts byte for byte. Returns the owner rows' author labels and
+    the automatic rows."""
+    connection = sqlite3.connect(path)
+    try:
+        ledger = {row_id for (row_id,) in connection.execute(_LEDGER_ROW_IDS)}
+    finally:
+        connection.close()
+    before = {
+        row_id: event
+        for row_id, event in _activity_paths(path).items()
+        if row_id in ledger
+    }
+    assert set(before) == ledger
+    regenerate(path)
+    assert opens(path)
+    after = _activity_paths(path)
+    assert ledger <= set(after)
+    owner = {row_id for row_id, event in before.items() if event["category"] == "owner"}
+    for row_id, event in before.items():
+        moved = after[row_id]
+        for key in ("work_label", "library", "destination", "category", "state"):
+            assert moved[key] == event[key], (row_id, key)
+        # Automatic's rows keep no copy of their value or authors, a reading
+        # ADR-0108 accepts; the owner's read as they did.
+        if row_id in owner:
+            assert moved["change"] == event["change"], row_id
+            assert moved["author_label"] == event["author_label"], row_id
+            assert json.dumps(moved["evidence"]) == json.dumps(event["evidence"])
+    for row_id, event in before.items():
+        title = str(event["work_label"])
+        assert title != "Recorded work"
+        assert row_id in _activity_paths(path, search=title), row_id
+    return {row_id: str(before[row_id]["author_label"]) for row_id in owner}, set(
+        before
+    ) - set(owner)
+
+
+def test_activity_keeps_every_ledger_row_across_a_regeneration(
+    effects: _EffectEnvironment,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """Owner accepts, a keep, a withdrawal, a write, an owner and an automatic
+    no-change row and an owner's authored description all read as they did
+    once the derived rows they were made against are gone (ADR-0108)."""
+    # The owner's genres: an accept written, a Resume, an accept of the
+    # written value (an owner no-change row), then a keep withdrawn.
+    root = tmp_path / "owner"
+    root.mkdir(mode=0o700)
+    report = genre_report()
+    store = OwnerStore(root, None)
+    try:
+        store.automatic("genres", "replace", report.target.library)
+        store.publish(report)
+        genres = {"kind": "list", "value": ["Fantasy"]}
+        store.write(store.decide("accept", genres, destination="genres"))
+        assert resume(
+            store.repository, store.case.review_case_id, "genres", store.clock()
+        )
+        store.decide("accept", genres, destination="genres")
+        store.decide("keep_current", destination="genres")
+        store.decide("withdraw", destination="genres")
+        owner_path = copied_store(store.repository, tmp_path / "owner-store")
+    finally:
+        store.close()
+    owner, automatic = _regenerated_reading(owner_path)
+    assert len(owner) == 6 and not automatic
+    # Each keeps the report's author label, from its copy.
+    assert set(owner.values()) == {"Ada Example"}
+    # An automatic no-change row of normal scheduling.
+    _qualified_no_change_decision(effects)
+    ContinuousGuardedApplication(
+        effects.repository,
+        {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
+        {("primary", "ebooks"): SimpleNamespace()},
+        PersistedFieldEffectAuthority(effects.repository),
+        (("primary", "ebooks"),),
+        lambda: 10,
+        lambda *_: None,
+    ).schedule()
+    owner, automatic = _regenerated_reading(
+        copied_store(effects.repository, tmp_path / "automatic-store")
+    )
+    assert not owner and len(automatic) == 1
+    # The owner's authored description, settled with no change.
+    (tmp_path / "authored").mkdir(mode=0o700)
+    repository, advice, binding, candidate, _ = _prepared(
+        tmp_path / "authored", same_current=True
+    )
+    try:
+        authored = advice.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
+        assert repository.record_current_field_effect_no_change(authored, 12)
+        authored_path = copied_store(repository, tmp_path / "authored-store")
+    finally:
+        repository.close()
+    owner, automatic = _regenerated_reading(authored_path)
+    assert authored.decision_id in owner and len(owner) == 2
 
 
 def test_one_preparation_gathers_only_its_automatic_checks(
