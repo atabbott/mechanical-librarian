@@ -52,6 +52,7 @@ from tests.support.owner_field_record import (
     request_resume,
 )
 from tests.support.owner_values import OwnerStore, rewritten
+from tests.support.review_web_doubles import idle_preparation
 from tests.unit.review_app_fixture import create_transport_test_app
 from tests.unit.test_level_offer_binding import field_of
 from tests.unit.test_owner_answer_holds import _activate, _profile
@@ -147,6 +148,7 @@ def _client(store: OwnerStore, root: Path) -> Iterator[TestClient]:
             owner_password_hash_file=str(password),
         ),
         clock=lambda: _NOW,
+        review_preparation=idle_preparation("primary", _A.target.library),
         activity_projection=activity,
     )
     with TestClient(app, base_url=_ORIGIN) as client:

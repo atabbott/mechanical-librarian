@@ -29,6 +29,7 @@ from tests.integration.test_owner_field_record import _regenerated
 from tests.integration.test_screens_across_regeneration import _AFTER as _SCREENS_AFTER
 from tests.integration.test_screens_across_regeneration import (
     _B_AGAIN,
+    _CONFIGURED,
     _answer_six_fields,
 )
 from tests.integration.test_screens_across_regeneration import (
@@ -36,6 +37,7 @@ from tests.integration.test_screens_across_regeneration import (
 )
 from tests.integration.test_screens_across_regeneration import _store as _screens_store
 from tests.support.owner_values import OwnerStore, rewritten
+from tests.support.review_web_doubles import idle_preparation
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
@@ -56,6 +58,11 @@ def _owner_client(store: OwnerStore, root: Path) -> Iterator[tuple[TestClient, s
     password = root / "owner.hash"
     password.write_text(PasswordHasher().hash("correct horse"))
     password.chmod(0o600)
+    # The answers' library is configured and preparation is idle, as the
+    # server is between scans.
+    ((connection, library),) = store.repository._connection.execute(
+        "SELECT DISTINCT connection_name, library_name FROM owner_field_answers"
+    ).fetchall()
     app = create_transport_test_app(
         store.repository,
         ReviewWebConfiguration(
@@ -65,6 +72,7 @@ def _owner_client(store: OwnerStore, root: Path) -> Iterator[tuple[TestClient, s
             owner_password_hash_file=str(password),
         ),
         clock=lambda: _AFTER_REGENERATION,
+        review_preparation=idle_preparation(connection, library),
     )
     with TestClient(app, base_url=_ORIGIN) as client:
         login = client.post(
@@ -254,8 +262,8 @@ def test_an_idle_notice_with_answers_not_yet_checked_sends_their_count(
     store.ticks = _SCREENS_AFTER
     try:
         store.publish(_B_AGAIN)
-        partial = (
-            store.repository.regeneration_notice_store().read_regeneration_notice()
+        partial = store.repository.regeneration_notice_store().read_regeneration_notice(
+            _CONFIGURED
         )
         assert partial is not None
         # B's two answers were checked (one kept, one asked again); A's and

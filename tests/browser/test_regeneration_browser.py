@@ -62,6 +62,7 @@ from tests.integration.test_screens_across_regeneration import (
     _B,
     _B_AGAIN,
     _C,
+    _CONFIGURED,
     _NOW,
     _answer_six_fields,
     _proposed_title,
@@ -345,7 +346,9 @@ def test_an_idle_notice_with_answers_not_yet_checked_says_no_total(
         try:
             store.publish(_B_AGAIN)
             notice = (
-                store.repository.regeneration_notice_store().read_regeneration_notice()
+                store.repository.regeneration_notice_store().read_regeneration_notice(
+                    _CONFIGURED
+                )
             )
             assert notice is not None
             assert (notice.kept, notice.asked_again, notice.not_yet_checked) == (

@@ -1682,3 +1682,34 @@ def review_web_context(
     )
     yield context
     context.close()
+
+
+class _IdlePreparation(FakePreparation):
+    """A preparation lane that reads one configured library and runs
+    nothing, and drains and stops as an application lifespan asks."""
+
+    def __init__(self, connection: str, library: str) -> None:
+        super().__init__()
+        self.libraries = ((connection, library, "lib-1"),)
+
+    def progress(self, connection: str, library: str):
+        return None
+
+    def status(self):
+        self.status_calls += 1
+        return ((None,), self.is_paused)
+
+    def begin_drain(self) -> None:
+        return None
+
+    def resume_admission(self) -> None:
+        return None
+
+    def stop(self, deadline: float | None = None) -> None:
+        del deadline
+
+
+def idle_preparation(connection: str, library: str) -> Any:
+    """What the server tells the upgrade notice is configured, while idle:
+    a stand-in for the preparation supervisor."""
+    return _IdlePreparation(connection, library)
