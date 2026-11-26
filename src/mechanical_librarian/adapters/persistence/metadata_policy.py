@@ -870,6 +870,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     "metadata policy automatic intent is unqualified outside preview",
                 )
             generation = state[1] + 1
+            # The id's hash input, not the wire version: the response document
+            # moved to v2 (items_present), but changing this label would change
+            # every stored transition id.
             material = (
                 f"metadata-policy-transition-v1\0{state[0]}\0{policy_id}\0{generation}"
             )
@@ -1125,9 +1128,12 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
     def metadata_policy_transition(self) -> PolicyTransition | None:
         try:
             row = self._connection.execute(
-                "SELECT transition_id,from_policy_id,to_policy_id,generation,state,total,"
-                "acknowledged,completed,failed FROM metadata_policy_transitions "
-                "ORDER BY generation DESC LIMIT 1"
+                "SELECT t.transition_id,t.from_policy_id,t.to_policy_id,t.generation,"
+                "t.state,t.total,t.acknowledged,t.completed,t.failed,"
+                "EXISTS(SELECT 1 FROM metadata_policy_transition_items i "
+                "WHERE i.transition_id=t.transition_id) "
+                "FROM metadata_policy_transitions t "
+                "ORDER BY t.generation DESC LIMIT 1"
             ).fetchone()
             if row is None:
                 return None
@@ -1142,6 +1148,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 row[8],
                 bool(row[6]),
                 "baseline" if row[3] == 1 else "activation",
+                bool(row[9]),
             )
         except sqlite3.Error as error:
             raise MetadataReportError(

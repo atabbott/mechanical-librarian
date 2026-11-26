@@ -154,6 +154,16 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "metadata-policy-notebook-v2",
     ),
     (
+        "mechanical_librarian.interfaces.web.app",
+        "METADATA_POLICY_TRANSITION_SCHEMA",
+        "metadata-policy-transition-v2",
+    ),
+    (
+        "mechanical_librarian.interfaces.web.app",
+        "METADATA_POLICY_ACTIVATION_SCHEMA",
+        "metadata-policy-activation-v2",
+    ),
+    (
         "mechanical_librarian.application.review_web",
         "REVIEW_LIBRARY_SCHEMA",
         "review-library-v13",

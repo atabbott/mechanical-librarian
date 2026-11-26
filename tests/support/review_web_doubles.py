@@ -15,7 +15,7 @@ import shutil
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Generic, NoReturn, TypeVar, cast
 
@@ -433,17 +433,7 @@ class FakeReviewRepository:
 
     def acknowledge_metadata_policy_transition(self, transition_id, acknowledged_at):
         value = cast(PolicyTransition, self.policy_transition)
-        self.policy_transition = PolicyTransition(
-            value.transition_id,
-            value.from_policy_id,
-            value.to_policy_id,
-            value.generation,
-            value.state,
-            value.completed,
-            value.total,
-            value.failed,
-            True,
-        )
+        self.policy_transition = replace(value, acknowledged=True)
         return self.policy_transition
 
     def current_resolved_policy_id(self, library):

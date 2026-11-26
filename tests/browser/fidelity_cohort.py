@@ -39,7 +39,10 @@ from mechanical_librarian.domain.owner_settings import (
     OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
 )
-from mechanical_librarian.interfaces.web.app import METADATA_POLICY_NOTEBOOK_SCHEMA
+from mechanical_librarian.interfaces.web.app import (
+    METADATA_POLICY_NOTEBOOK_SCHEMA,
+    METADATA_POLICY_TRANSITION_SCHEMA,
+)
 
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
@@ -2950,7 +2953,7 @@ def _rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         }
     if path == "/api/v1/metadata-policy/transition":
         return {
-            "schema_version": "metadata-policy-transition-v1",
+            "schema_version": METADATA_POLICY_TRANSITION_SCHEMA,
             "transition_id": "transition-1",
             "from_policy_id": "policy-active-0",
             "to_policy_id": "policy-active-1",
@@ -2961,6 +2964,7 @@ def _rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "failed": 1,
             "acknowledged": False,
             "origin": "activation",
+            "items_present": True,
         }
     if path == "/api/v1/activity/permission-readiness":
         value = _activity(query)

@@ -4975,7 +4975,7 @@ describe('central response decoding (#1685)', () => {
     [
       'GET /api/v1/metadata-policy/transition',
       (client: ReviewApiClient) => client.getPolicyTransition(),
-      { schema_version: 'metadata-policy-transition-v1' },
+      { schema_version: 'metadata-policy-transition-v2' },
       '/acknowledged',
     ],
     [

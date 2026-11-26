@@ -10589,8 +10589,8 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "metadata-policy-activation-v1",
-            "default": "metadata-policy-activation-v1",
+            "const": "metadata-policy-activation-v2",
+            "default": "metadata-policy-activation-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -11071,13 +11071,17 @@
             "title": "Generation",
             "type": "integer"
           },
+          "items_present": {
+            "title": "Items Present",
+            "type": "boolean"
+          },
           "origin": {
             "title": "Origin",
             "type": "string"
           },
           "schema_version": {
-            "const": "metadata-policy-transition-v1",
-            "default": "metadata-policy-transition-v1",
+            "const": "metadata-policy-transition-v2",
+            "default": "metadata-policy-transition-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -11108,7 +11112,8 @@
           "total",
           "failed",
           "acknowledged",
-          "origin"
+          "origin",
+          "items_present"
         ],
         "title": "_PolicyTransitionResponse",
         "type": "object"

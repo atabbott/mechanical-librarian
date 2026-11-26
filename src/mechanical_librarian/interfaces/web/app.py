@@ -399,6 +399,17 @@ MetadataPolicyNotebookSchemaVersion = Literal["metadata-policy-notebook-v2"]
 METADATA_POLICY_NOTEBOOK_SCHEMA: Final[MetadataPolicyNotebookSchemaVersion] = (
     "metadata-policy-notebook-v2"
 )
+# v2: whether any per-work rows are left to retry (`items_present`, #2039).
+# Not the transition id's hash input, which stays at its v1 label.
+MetadataPolicyTransitionSchemaVersion = Literal["metadata-policy-transition-v2"]
+METADATA_POLICY_TRANSITION_SCHEMA: Final[MetadataPolicyTransitionSchemaVersion] = (
+    "metadata-policy-transition-v2"
+)
+# v2: embeds metadata-policy-transition-v2 (#2039).
+MetadataPolicyActivationSchemaVersion = Literal["metadata-policy-activation-v2"]
+METADATA_POLICY_ACTIVATION_SCHEMA: Final[MetadataPolicyActivationSchemaVersion] = (
+    "metadata-policy-activation-v2"
+)
 
 
 class _ClosedModel(BaseModel):
@@ -3253,16 +3264,17 @@ class _PolicyTransitionResponse(_ClosedModel):
     failed: int
     acknowledged: bool
     origin: str
-    schema_version: Literal["metadata-policy-transition-v1"] = (
-        "metadata-policy-transition-v1"
+    items_present: bool
+    schema_version: MetadataPolicyTransitionSchemaVersion = (
+        METADATA_POLICY_TRANSITION_SCHEMA
     )
 
 
 class _PolicyActivationResponse(_ClosedModel):
     policy_id: str
     transition: _PolicyTransitionResponse | None
-    schema_version: Literal["metadata-policy-activation-v1"] = (
-        "metadata-policy-activation-v1"
+    schema_version: MetadataPolicyActivationSchemaVersion = (
+        METADATA_POLICY_ACTIVATION_SCHEMA
     )
 
 
@@ -3423,6 +3435,7 @@ class _PolicyTransitionFields(TypedDict):
     failed: int
     acknowledged: bool
     origin: str
+    items_present: bool
 
 
 def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionResponse:
@@ -3440,6 +3453,7 @@ def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionRes
                 "failed": value.failed,
                 "acknowledged": value.acknowledged,
                 "origin": value.origin,
+                "items_present": value.items_present,
             },
         )
     )

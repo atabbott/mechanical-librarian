@@ -63,6 +63,7 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.ledger_partition import regenerate
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report, _report_entry
 
 
@@ -976,10 +977,13 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
         1,
     )
     assert _stored_counts_are_the_items(repository) == 2
+    assert completed.items_present
     # The header is the transition's own row: it reads the same with its
-    # items gone.
+    # items gone, except that none are left.
     repository._connection.execute("DELETE FROM metadata_policy_transition_items")
-    assert repository.metadata_policy_transition() == completed
+    assert repository.metadata_policy_transition() == replace(
+        completed, items_present=False
+    )
     with pytest.raises(MetadataReportError):
         repository.activate_metadata_policy(
             MetadataPolicyProfile.builtin().policy_id,
@@ -995,6 +999,56 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
             expected_active_generation=1,
         )
     repository.close()
+
+
+def test_failed_works_are_retryable_only_while_their_items_remain(
+    state_path: Path,
+) -> None:
+    """A regeneration removes the derived per-work rows and keeps the header.
+
+    The failed count stays, but nothing is left to retry, so the transition
+    says so and the Policy page hides Retry (#2039).
+    """
+
+    repository = open_repository(state_path)
+    seeded = repository.metadata_policy_transition()
+    assert seeded is not None
+    assert not seeded.items_present
+    report = _report()
+    repository.publish(report, lambda: True)
+    old = evaluate_report(report)
+    repository.publish_proposal(old)
+    repository.admit_review_case(old)
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    resolved = resolve_policy(draft, report.target.library)
+    transition = repository.activate_metadata_policy(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        40,
+        expected_active_generation=1,
+    )
+    assert transition is not None
+    assert (transition.state, transition.failed, transition.items_present) == (
+        "completed_with_failures",
+        1,
+        True,
+    )
+    assert repository.metadata_policy_transition() == transition
+    repository.close()
+
+    regenerate(state_path)
+
+    reopened = open_repository(state_path)
+    try:
+        after = reopened.metadata_policy_transition()
+        assert after == replace(transition, items_present=False)
+        assert reopened._connection.execute(
+            "SELECT COUNT(*) FROM metadata_policy_transition_items"
+        ).fetchone() == (0,)
+    finally:
+        reopened.close()
 
 
 def test_failed_provider_work_restarts_and_retries_at_safe_proposal_stage(

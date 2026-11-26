@@ -132,7 +132,9 @@ from mechanical_librarian.domain.review_browse import ReviewBrowseValueError
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import ReviewFieldState
 from mechanical_librarian.interfaces.web.app import (
+    METADATA_POLICY_ACTIVATION_SCHEMA,
     METADATA_POLICY_NOTEBOOK_SCHEMA,
+    METADATA_POLICY_TRANSITION_SCHEMA,
     AbortedResponseBody,
     _CaseDetailResponse,
     _CoverOmission,
@@ -1729,12 +1731,12 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(
         },
     )
     assert 200 == activated.status_code
-    assert "metadata-policy-activation-v1" == activated.json()["schema_version"]
+    assert METADATA_POLICY_ACTIVATION_SCHEMA == activated.json()["schema_version"]
     assert (
         policy_id == web.client.get("/api/v1/metadata-policy/state").json()["policy_id"]
     )
     transition = web.client.get("/api/v1/metadata-policy/transition")
-    assert "metadata-policy-transition-v1" == transition.json()["schema_version"]
+    assert METADATA_POLICY_TRANSITION_SCHEMA == transition.json()["schema_version"]
     dismissed = web.client.post(
         f"/api/v1/metadata-policy/transitions/{transition.json()['transition_id']}/acknowledge",
         headers=headers,

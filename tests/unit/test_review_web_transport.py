@@ -45,6 +45,7 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
 )
+from mechanical_librarian.application.metadata_policy import PolicyTransition
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.operations import (
     OperationalStatus,
@@ -105,6 +106,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 )
 from mechanical_librarian.interfaces.web.app import (
     _BODY_PATH_LIMITS,
+    METADATA_POLICY_TRANSITION_SCHEMA,
     REVIEW_TASTE_PROFILE_SCHEMA,
     owner_password_binding,
 )
@@ -124,6 +126,40 @@ from tests.unit.review_app_fixture import (
 @pytest.fixture
 def web() -> Iterator[ReviewWebContext[FakeReviewRepository]]:
     yield from review_web_context(FakeReviewRepository)
+
+
+def test_policy_transition_says_whether_failed_works_are_left_to_retry(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """The transition carries `items_present` to the wire (#2039).
+
+    A regeneration keeps the header's failed count and removes the per-work
+    rows, so the browser hides Retry when none are left.
+    """
+
+    web.login()
+    left = PolicyTransition(
+        "policy_transition_" + "b" * 64,
+        "policy_" + "0" * 64,
+        "policy_" + "1" * 64,
+        2,
+        "completed_with_failures",
+        0,
+        1,
+        1,
+        False,
+        items_present=True,
+    )
+    for transition in (left, replace(left, items_present=False)):
+        web.repository.policy_transition = transition
+        response = web.client.get("/api/v1/metadata-policy/transition")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["schema_version"] == METADATA_POLICY_TRANSITION_SCHEMA
+        assert (body["failed"], body["items_present"]) == (
+            1,
+            transition.items_present,
+        )
 
 
 def test_library_cover_serves_only_the_preview_its_current_report_binds(
