@@ -13,8 +13,16 @@ from typing import Any, cast
 
 import pytest
 
+from mechanical_librarian.adapters.field_effect_authority import (
+    PersistedFieldEffectAuthority,
+)
+from mechanical_librarian.adapters.field_effect_fakes import FakeCapabilityObserver
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.domain import cover_qualification_policy
+from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
@@ -34,6 +42,7 @@ from tests.integration.test_cover_rules_activation import (
 )
 from tests.integration.test_cover_taste_automatic import _keep_cover
 from tests.support.audiobook_covers import SYNTHETIC_MEASURED_RECORD
+from tests.support.ledger_partition import regenerate
 from tests.support.owner_field_record import (
     assert_record_recomputes,
     complete_resume,
@@ -41,6 +50,7 @@ from tests.support.owner_field_record import (
     request_resume,
     resume,
 )
+from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
 from tests.support.prepared_library import (
     PRODUCER,
     Library,
@@ -51,6 +61,8 @@ from tests.support.prepared_library import (
 )
 from tests.support.prepared_library import library as library
 from tests.support.prepared_library import preview_library as preview_library
+from tests.unit.test_owner_answer_holds import SOURCES
+from tests.unit.test_owner_answer_holds import _store as _owner_store
 
 
 def _confirm_automatic(library: Library, at: int) -> None:
@@ -1780,3 +1792,121 @@ def test_a_later_description_case_asks_and_a_failed_resume_keeps_asking(
         assert_record_recomputes(repository._connection)
     finally:
         repository.close()
+
+
+def _regenerated(store: OwnerStore) -> OwnerStore:
+    """Close the store, delete its derived rows as `regenerate-derived`
+    does, and reopen it on the same policy (#2039, T-W)."""
+    resolved, ticks = store.resolved, store.ticks
+    store.close()
+    regenerate(store.root / "owner.sqlite")
+    reopened = OwnerStore(store.root, None)
+    reopened.resolved, reopened.ticks = resolved, ticks
+    return reopened
+
+
+def _scheduler(store: OwnerStore) -> ContinuousGuardedApplication:
+    """The write lane over the store's guarded service, with the title
+    consented in the store and in the service's currentness."""
+    key = ("primary", "ebooks")
+    store.repository.grant_field_effect_consents(
+        "primary", ("ebooks",), ("title",), store.clock()
+    )
+    store.consent.allow(connection="primary", library="ebooks", destination="title")
+    return ContinuousGuardedApplication(
+        store.repository,
+        {key: store.service},
+        {key: FakeCapabilityObserver(CAPABILITY)},
+        PersistedFieldEffectAuthority(store.repository),
+        (key,),
+        store.clock,
+        lambda *_: None,
+    )
+
+
+def _pending_reads(store: OwnerStore) -> list[str]:
+    """Every read the write lane makes of what is pending; return the
+    decisions waiting for a plan."""
+    repository = store.repository
+    repository.pending_field_effect_plan_ids(100)
+    repository.pending_field_effect_action_plan_ids(100)
+    repository.pending_field_effect_decision_counts()
+    repository.pending_field_effect_plan_entries(None, 100, ("ebooks",))
+    repository.pending_owner_field_resumes(100)
+    return [
+        json.loads(document)["decision_id"]
+        for document in repository.pending_field_effect_decision_documents(100)
+    ]
+
+
+def _apply_planned(store: OwnerStore) -> None:
+    """Apply every plan the lane left planned to the fake library."""
+    for plan_id, document in store.repository._connection.execute(
+        "SELECT plan_id,document FROM field_effects WHERE state='planned'"
+    ).fetchall():
+        store.target.seed(FieldEffectOperation.from_json(document).plan)
+        store.service.apply(plan_id)
+
+
+@pytest.mark.parametrize("outcome", ("accept", "keep_current"))
+@pytest.mark.parametrize("read", ("same_case", "later_case"))
+def test_the_write_lane_runs_on_a_regenerated_store(
+    tmp_path: Path, outcome: str, read: str
+) -> None:
+    """T-W (#2039): after the derived rows are deleted and the store is
+    reopened, the write lane's schedule and its pending reads run and plan
+    nothing, since no case is current. Re-preparation then reads the work
+    again: read unchanged it is the same case, whose record still holds the
+    answer; read with an unrelated field changed it is a later case asking
+    the same question, to which the question check carries the answer. An
+    unwritten accept is planned once and written once either way; a keep,
+    carried settled, plans nothing."""
+    store, report, _ = _owner_store(tmp_path, posture="preview")
+    store.publish(report)
+    first = store.case.review_case_id
+    answer = (
+        store.decide("accept", {"kind": "text", "value": SOURCES})
+        if outcome == "accept"
+        else store.decide("keep_current")
+    )
+    store = _regenerated(store)
+    try:
+        lane = _scheduler(store)
+        assert _pending_reads(store) == []
+        assert lane.schedule() == 0
+        assert store.repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+
+        later = read == "later_case"
+        store.publish(
+            rewritten(report, publisher="Changed Elsewhere") if later else report
+        )
+        assert (store.case.review_case_id != first) is later
+        carried = store.repository._connection.execute(
+            "SELECT decision_id,carried_from,json_extract(document,"
+            "'$.application') FROM human_decisions WHERE carried_from IS NOT NULL"
+        ).fetchall()
+        if later:
+            ((held, carried_from, application),) = carried
+            assert carried_from == answer.decision_id
+            assert application == ("apply" if outcome == "accept" else "settled")
+        else:
+            assert carried == []
+            held = answer.decision_id
+        for _ in range(3):
+            lane.schedule()
+            _apply_planned(store)
+        plans = store.repository._connection.execute(
+            "SELECT decision_id,state FROM field_effects"
+        ).fetchall()
+        if outcome == "accept":
+            assert plans == [(held, "verified")]
+            assert len(store.patches) == 1
+        else:
+            assert plans == []
+            assert store.patches == []
+        assert _pending_reads(store) == []
+        assert_record_recomputes(store.repository._connection)
+    finally:
+        store.close()
