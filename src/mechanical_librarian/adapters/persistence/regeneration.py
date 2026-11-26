@@ -398,18 +398,36 @@ class SQLiteRegenerationStore:
                 "PRAGMA busy_timeout=5000",
             ):
                 connection.execute(pragma)
-            # The scratch copy is the run's first write: the free-space
-            # refusal comes before it, never a full volume met while copying.
-            free, needed = _space(binding.parent_descriptor, binding.descriptor)
-            if free < needed:
-                raise InsufficientSpace(
-                    free, needed, backup_held(binding.parent_descriptor)
-                )
-            _validate_ledger_content(connection, binding)
+            # A database of this build has nothing to regenerate: the run
+            # writes nothing, so it needs neither the reserve nor the copy.
+            if not _derived_is_current(connection):
+                # The scratch copy is the run's first write: the free-space
+                # refusal comes before it, never a full volume met while copying.
+                free, needed = _space(binding.parent_descriptor, binding.descriptor)
+                if free < needed:
+                    raise InsufficientSpace(
+                        free, needed, backup_held(binding.parent_descriptor)
+                    )
+                _validate_ledger_content(connection, binding)
         except BaseException:
             connection.close()
             raise
         return connection
+
+
+def _derived_is_current(connection: sqlite3.Connection) -> bool:
+    """The ledger names this build's derived partition and the file holds
+    exactly this build's objects."""
+    row = connection.execute(
+        "SELECT derived_version,derived_schema_digest FROM ledger_meta"
+    ).fetchone()
+    objects = connection.execute(
+        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+    ).fetchall()
+    return (
+        row == (DERIVED_VERSION, build_partition().derived_schema_digest)
+        and objects == _expected_schema_objects()
+    )
 
 
 # --- The gate, the report and the cover pointer plan (ledger rows only) ----
@@ -536,19 +554,8 @@ class SQLiteRegenerationSession:
     def derived_is_current(self) -> bool:
         """Nothing to do: the ledger names this build's derived partition and
         the file holds exactly this build's objects."""
-        build = build_partition()
         with self._named_failures():
-            version, digest = self._connection.execute(
-                "SELECT derived_version,derived_schema_digest FROM ledger_meta"
-            ).fetchone()
-            objects = self._connection.execute(
-                "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
-            ).fetchall()
-        return (
-            version == DERIVED_VERSION
-            and digest == build.derived_schema_digest
-            and objects == _expected_schema_objects()
-        )
+            return _derived_is_current(self._connection)
 
     def free_space(self) -> tuple[int, int]:
         with self._named_failures():

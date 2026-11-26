@@ -231,6 +231,25 @@ def test_nothing_to_do_on_a_database_of_this_build(tmp_path: Path) -> None:
     assert os.listdir(path.parent) == ["application.sqlite3"]
 
 
+def test_nothing_to_do_needs_no_free_space(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A database of this build is not copied, so a full volume still says
+    there is nothing to regenerate rather than asking for space."""
+    path = _fresh(tmp_path / "data")
+    before = _sha(path)
+    monkeypatch.setattr(
+        regeneration.os,
+        "fstatvfs",
+        lambda _descriptor: SimpleNamespace(f_bavail=0, f_frsize=1),
+    )
+    entered = _scratch_entries(monkeypatch)
+    status, lines, _ = _run(path)
+    assert (status, lines) == (0, [cli.NOTHING_TO_DO])
+    assert entered == []
+    assert _sha(path) == before
+
+
 def test_no_database(tmp_path: Path) -> None:
     (tmp_path / "data").mkdir(mode=0o700)
     status, lines, _ = _run(tmp_path / "data" / "application.sqlite3")
