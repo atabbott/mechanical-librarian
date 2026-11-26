@@ -2821,15 +2821,14 @@ describe("Covers' picks (#1372 PR 3)", () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Start' })).toHaveFocus())
   })
 
-  it('keeps the count sentence when it stops after an upgrade', async () => {
+  it('says the count started again when it stops after an upgrade', async () => {
     const user = userEvent.setup()
     const http = picksHttp(['case-1', 'case-2'], 3, { since_upgrade: true })
     const { router } = renderRoute(picksRoute, http)
     await screen.findByRole('heading', { level: 3, name: 'First Book' })
     await user.click(screen.getByRole('button', { name: 'Stop' }))
     await waitFor(() => expect(router.state.location.search.tab).toBe('decide'))
-    expect(await screen.findByText('3 of 25 picks saved.')).toBeVisible()
-    expect(screen.queryByText(/since the upgrade/u)).toBeNull()
+    expect(await screen.findByText('3 of 25 picks saved since the upgrade.')).toBeVisible()
   })
 
   it('opens Taste profile, being written, after the 25th pick', async () => {

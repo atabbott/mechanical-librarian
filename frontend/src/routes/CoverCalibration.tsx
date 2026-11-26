@@ -144,13 +144,13 @@ export function CoverCalibration({
   const end = done
     ? ({ kind: 'done' } as const)
     : stopped && counted
-      ? ({ kind: 'notice', text: picksSaved(taste.chosen, required, false) } as const)
+      ? ({ kind: 'notice', text: picksSaved(taste.chosen, required, taste.since_upgrade) } as const)
       : empty
         ? ({ kind: 'notice', text: emptyCopy } as const)
         : ranOut && rereadAt === seen.size && rereadDone === seen.size && counted
           ? ({
               kind: 'notice',
-              text: `${picksSaved(taste.chosen, required, false)} ${ranOutCopy}`,
+              text: `${picksSaved(taste.chosen, required, taste.since_upgrade)} ${ranOutCopy}`,
             } as const)
           : null
   useEffect(() => {
