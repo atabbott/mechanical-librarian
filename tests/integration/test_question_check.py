@@ -264,7 +264,7 @@ def test_a_changed_question_or_target_asks_the_field_again(
     """Steps 3 and 5: the library's value changed elsewhere, or the offered
     choices did, so the later case does not ask the question the owner
     answered: nothing is carried, the record keeps the answer, the field is
-    asked (on the case page and, within the release, in Attention), and
+    asked (on the case page and in Attention, after an upgrade too), and
     neither the answer nor Automatic's new decision plans or writes
     (negative controls: the Attention clause; the automatic arm's record
     clause)."""
@@ -281,10 +281,8 @@ def test_a_changed_question_or_target_asks_the_field_again(
         assert _carried_rows(library) == 0
         assert _record(library) == (owner.decision_id, 1, None)
         assert _fields(library)["authors"]["needs_attention"] is True
-        if across == "reread":
-            # After an upgrade the Attention list refuses every case (the
-            # H2-D report's product defect), so only the page is read there.
-            assert (library.case_id(), "authors") in library.attention()
+        assert (library.case_id(), "authors") in library.attention()
+        assert library.library("all")
         _automatic_waits(library)
         writes: list[str] = []
         _schedule_with_consent(library, tmp_path, 30, writes)
