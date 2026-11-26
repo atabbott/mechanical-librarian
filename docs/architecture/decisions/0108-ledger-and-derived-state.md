@@ -430,7 +430,10 @@ no owner decision" ([security](../security.md#owner-decisions),
   decision, settles a field only when the record holds no answer for the work
   and destination, or holds one with a Resume open. An active-generation
   automatic decision also does not settle while the case episode's latest
-  human row for the field, pins and unpins aside, is a withdrawal. That field
+  human row for the field, pins and unpins aside, is the owner's withdrawal.
+  Book matching's `matching_changed` row is not one: the answer it asks again
+  reads as a pin taken back does, decided only where Automatic decided the
+  field, held in Preview, and otherwise as without the answer. That field
   is asked where the case offers a decision on it, so an emptying withdrawal
   never leaves it reading as decided by Automatic; Automatic decides it again
   from the book's next case or episode ([Withdrawal and carry

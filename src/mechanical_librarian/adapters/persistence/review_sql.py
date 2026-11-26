@@ -437,7 +437,10 @@ def _withdrawn_automatic_sql(
     decision settles nothing on the case (an emptying withdrawal also revoked
     its authority), and the field is asked where the case offers a decision
     on it. A Resume over the withdrawal, completed or open and not failed,
-    hands the field back to Automatic, whose decision then settles it.
+    hands the field back to Automatic, whose decision then settles it. The
+    term also matches Book matching's `matching_changed` row; the answer that
+    row asked again is read as the case's own (`_read_as_own_sql`), and the
+    Attention clear settles it where Automatic decided the field.
     Automatic decides the field from the book's next case or episode
     (ADR-0108, Withdrawal and carry eligibility). The book is `item`'s item
     key, or the case's current lineage's. The case page reads the same term
@@ -678,8 +681,9 @@ _AUTOMATIC_DECIDED_SQL = (
 # completed Resume took back (ADR-0108). The record's answer the case holds as
 # its own settles its field too, but with no decision of the case standing
 # (a pin's answer after its unpin) only where Automatic decided the field, as
-# main's carried hold did (`_AUTOMATIC_DECIDED_SQL`, C2b-27); one the case's
-# latest row withdrew does not (C2b-15). An automatic decision,
+# main's carried hold did (`_AUTOMATIC_DECIDED_SQL`, C2b-27); one the owner's
+# latest row withdrew does not (C2b-15), while one Book matching's row asked
+# again is read as the case's own. An automatic decision,
 # or Automatic's authored description, settles its field only in the active
 # generation and only while the record holds no answer for the field against
 # Automatic: none, or one with a Resume open that has not failed; and never
