@@ -15,7 +15,10 @@ import sqlite3
 
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.regeneration_notice import RegenerationNotice
+from mechanical_librarian.application.regeneration_notice import (
+    RegenerationNotice,
+    RegenerationNoticeDismissalInvalid,
+)
 from mechanical_librarian.domain.question_check import PROVISIONAL_CARRY_OUTCOMES
 
 _PROVISIONAL = ",".join(
@@ -103,7 +106,7 @@ class SQLiteRegenerationNoticeStore(ConnectionScoped):
             or type(dismissed_at) is not int
             or dismissed_at < 0
         ):
-            raise MetadataReportError("regeneration notice dismissal is invalid")
+            raise RegenerationNoticeDismissalInvalid
         transaction = self._transaction("dismiss_regeneration_notice")
         try:
             transaction.begin()
@@ -114,7 +117,7 @@ class SQLiteRegenerationNoticeStore(ConnectionScoped):
             # The ledger's own rule, checked here so the write never leaves a
             # store that would not open (`regeneration_notice_dismissals`).
             if finished is None or dismissed_at < finished[0]:
-                raise MetadataReportError("regeneration notice dismissal is invalid")
+                raise RegenerationNoticeDismissalInvalid
             dismissed = (
                 self._connection.execute(
                     "INSERT INTO regeneration_notice_dismissals(regeneration_id,"
