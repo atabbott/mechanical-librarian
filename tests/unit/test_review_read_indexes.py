@@ -25,6 +25,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 from mechanical_librarian.adapters.persistence.schema import (
     _NO_UPDATE_SQL,
     _create_schema,
+    _pin_fingerprint,
     _review_value_flags,
 )
 from mechanical_librarian.application.cover_consideration import (
@@ -94,6 +95,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
         lambda value: value.casefold() if type(value) is str else value,
     )
     connection.create_function("ml_value_flags", 2, _review_value_flags)
+    connection.create_function("ml_pin_fingerprint", 2, _pin_fingerprint)
     connection.create_function(
         "ml_cover_consideration_current", 2, lambda _document, _replay: 0
     )
@@ -834,9 +836,9 @@ def test_the_new_lens_reads_each_work_by_key_within_the_scale_budget() -> None:
 def test_first_match_and_hold_reads_keep_their_lineage_walk() -> None:
     """The case indexes leave rowid-order lineage walks where order is visible.
 
-    A dependency probe stops at its first match and a pending-return read
-    evaluates json_type on each joined hold, so a covering scan or a hold-first
-    join over #1211's indexes would change which rows those terms reach.
+    A dependency probe stops at its first match, so a covering scan over
+    #1211's indexes would change which rows it reaches. The pending Resume
+    read is keyed by the work in the record and walks no lineage (ADR-0108).
     """
     with tempfile.TemporaryDirectory() as directory:
         connection = _representative_database(
@@ -848,7 +850,7 @@ def test_first_match_and_hold_reads_keep_their_lineage_walk() -> None:
             statements = _traced_selects(
                 connection,
                 lambda: (
-                    activity.pending_field_effect_manual_returns(100),
+                    activity.pending_owner_field_resumes(100),
                     activity.field_effect_dependencies_current(("0" * 64,)),
                 ),
             )
@@ -857,7 +859,7 @@ def test_first_match_and_hold_reads_keep_their_lineage_walk() -> None:
                 for statement in statements
                 if "current_review_case_lineages lineage" in statement
             ]
-            assert len(walks) == 3
+            assert len(walks) == 2
             for plan in walks:
                 assert plan[0] == "SCAN lineage", plan
                 assert not any(
@@ -907,7 +909,28 @@ def test_browse_probes_decision_and_policy_history_by_index() -> None:
                 if "review_attention_facts" in statement
             )
             assert len(membership) >= 6
-            assert not any("human_decisions" in statement for statement in membership)
+            # Membership and counts read no decision history. Only the
+            # Attention page's flag on its own rows, the record's answer
+            # withdrawn on its case or a withdrawal beside Automatic
+            # (`_ASKED_BESIDE_PROPOSAL_SQL`), probes a page row's decisions,
+            # and by index.
+            asking = tuple(
+                statement for statement in membership if "human_decisions" in statement
+            )
+            assert len(asking) == 1 and "AS policy_attention" in asking[0]
+            probes = tuple(
+                step
+                for step in _plan(connection, asking[0], ())
+                if re.match(r"(SEARCH|SCAN) (latest|withdrawn)\b", step)
+            )
+            assert probes and all(
+                re.match(
+                    r"SEARCH (latest|withdrawn) USING (COVERING )?INDEX "
+                    r"human_decisions_case_destination\b",
+                    step,
+                )
+                for step in probes
+            )
             probing = tuple(
                 statement
                 for statement in statements

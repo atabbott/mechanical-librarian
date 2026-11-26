@@ -17330,10 +17330,11 @@ def test_current_covers_saves_never_with_its_own_button() -> None:
     "field_name", ["genres", "language"], ids=["genres", "language"]
 )
 def test_a_pin_taken_back_in_preview_reads_decided_with_its_hold_line(field_name: str):
-    """A pin taken back in Preview keeps its hold, so the real wire carries
-    the held cause: the tab reads Decided and the line says turning on
-    Automatic leaves the field as it is, with no Resume and no claim that no
-    source offered a value (ADR-0085)."""
+    """A pin taken back in Preview leaves its answer in the record, the
+    case's own, so the real wire carries the held cause: the tab reads
+    Decided and the line says turning on Automatic leaves the field as it is,
+    with no Resume and no claim that no source offered a value (ADR-0085,
+    ADR-0108)."""
     fixture: dict[str, Any] = (
         {
             "genre_fixture": ("Fantasy",),
@@ -17423,9 +17424,10 @@ def test_a_pin_taken_back_in_preview_reads_decided_with_its_hold_line(field_name
 def test_a_pin_taken_back_in_preview_shows_the_hold_once_automatic_is_on():
     """A work first prepared in Preview: the owner pins Genres and takes the
     pin back before Automatic decided anything on the case. Once Automatic is
-    on it decides the field under the hold the unpin left, so the field shows
-    that hold and Resume automatic handling on this case (ADR-0085, Amendment
-    6). Before, it read No change with no sentence and no Resume."""
+    on it decides the field under the answer the unpin left in the record, so
+    the field shows that answer holding it and Resume automatic handling on
+    this case (ADR-0085, Amendment 6; ADR-0108). Before, it read No change
+    with no sentence and no Resume."""
     with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
         root = Path(directory)
         root.chmod(0o700)
@@ -17562,6 +17564,7 @@ def test_withdrawing_an_answer_given_before_leaving_automatic():
             page.goto(field)
             expect(canvas.get_by_text("Choose genres", exact=True)).to_be_visible()
             expect(canvas.get_by_text("turning it on decides")).to_have_count(0)
-            # Withdraw deletes the hold, so nothing says one holds the field.
+            # Withdraw empties the record, so nothing says an answer holds the
+            # field.
             expect(canvas.get_by_text("still holds this field")).to_have_count(0)
         browser.close()

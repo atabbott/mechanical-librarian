@@ -392,52 +392,52 @@ class _ActivityPagedRepository(_PagedRepository):
 
 
 class _HoldRepository(_Repository):
+    """The record of the owner's answers for one field, as Resume reads it:
+    `hold` is the work's connection and library while the record holds an
+    answer, `token` that answer, `pending` its open request."""
+
     def __init__(self) -> None:
         super().__init__()
         self.hold: tuple[str, str] | None = ("primary", "alpha")
         self.token = "first-hold"
         self.pending: tuple[object, ...] | None = None
 
-    def field_effect_manual_hold_context(self, review_case_id, destination):
-        return self.hold
+    def owner_field_resume_context(self, review_case_id, destination):
+        return None if self.hold is None else (*self.hold, self.token)
 
-    def field_effect_manual_hold_token(self, review_case_id, destination):
-        return self.token if self.hold is not None else None
-
-    def request_field_effect_manual_return(
+    def request_owner_field_resume(
         self,
         review_case_id,
         destination,
-        token,
+        answer_token,
         scan_id,
         requested_at,
         changed_at,
     ):
-        if self.hold is None or token != self.token:
+        if self.hold is None or answer_token != self.token:
             return False
         self.pending = (
-            review_case_id,
-            destination,
             *self.hold,
-            token,
+            "work",
+            destination,
+            f"resume-{answer_token}",
             scan_id,
             requested_at,
-            changed_at,
         )
         return True
 
-    def pending_field_effect_manual_returns(self, limit, after=None):
+    def pending_owner_field_resumes(self, limit, after=None):
         return () if self.pending is None else (self.pending,)
 
-    def clear_field_effect_manual_hold(
-        self, review_case_id, destination, changed_at, token=None
+    def complete_owner_field_resume(
+        self, connection_name, library_name, item_id, destination, request_id, at
     ):
-        if token != self.token:
-            return None
-        context = self.hold
+        # A later answer closes the request, so it completes nothing.
+        if self.pending is None or request_id != f"resume-{self.token}":
+            return False
         self.hold = None
         self.pending = None
-        return context
+        return True
 
 
 class _Authority:
@@ -1530,14 +1530,13 @@ def test_pending_return_paging_reaches_completed_request_after_first_hundred() -
     repository.pending = None
     rows = tuple(
         (
-            f"review_case_{index:03d}",
-            "title",
             "primary",
             "alpha",
-            f"hold-{index:03d}",
+            f"work-{index:03d}",
+            "title",
+            f"resume-{index:03d}",
             "review_scan",
             10,
-            index,
         )
         for index in range(101)
     )
@@ -1546,13 +1545,13 @@ def test_pending_return_paging_reaches_completed_request_after_first_hundred() -
     def pending(limit, after=None):
         selected = rows
         if after is not None:
-            selected = tuple(row for row in rows if (row[7], row[0], row[1]) > after)
+            selected = tuple(row for row in rows if (row[6], row[4]) > after)
         return selected[:limit]
 
-    repository.pending_field_effect_manual_returns = pending  # type: ignore[method-assign]  # reason: deliberate per-instance stub of the double's method for this case.
-    repository.clear_field_effect_manual_hold = (  # type: ignore[method-assign]  # reason: deliberate per-instance stub of the double's method for this case.
-        lambda review_case_id, destination, changed_at, token=None: (
-            cleared.append(review_case_id) or ("primary", "alpha")  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - the recorded call is the point and `append` returning `None` is what lets the context tuple be the result.
+    repository.pending_owner_field_resumes = pending  # type: ignore[method-assign]  # reason: deliberate per-instance stub of the double's method for this case.
+    repository.complete_owner_field_resume = (  # type: ignore[method-assign]  # reason: deliberate per-instance stub of the double's method for this case.
+        lambda connection, library, item, destination, request_id, at: (
+            cleared.append(item) or True  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - the recorded call is the point and `append` returning `None` is what lets True be the result.
         )
     )
     progress = SimpleNamespace(
@@ -1580,19 +1579,18 @@ def test_pending_return_paging_reaches_completed_request_after_first_hundred() -
     progress.updated_at = 11
     service.schedule()
 
-    assert cleared == ["review_case_100"]
+    assert cleared == ["work-100"]
 
 
 def test_pending_return_for_removed_library_does_not_block_scheduler() -> None:
     repository = _HoldRepository()
     repository.pending = (
-        "review_case",
-        "title",
         "primary",
         "removed",
-        "first-hold",
+        "work",
+        "title",
+        "resume-first-hold",
         "review_scan",
-        10,
         10,
     )
     reads = []

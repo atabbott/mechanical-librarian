@@ -21,6 +21,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from tests.support.owner_field_record import insert_record_row
 from tests.unit.test_pending_field_effect_lookup import (  # noqa: F401
     _companion,
     _digest,
@@ -165,21 +166,27 @@ def test_reader_equals_recomputation_across_pending_changes(
     )
     _effect(writer, "listed", listed, json.dumps({"plan": {}}))
     step()
-    # Holds, a recorded no-change and a new accepted owner decision.
-    hold = (
-        "INSERT INTO field_effect_manual_holds VALUES(?,?,?,1,'{}') "
-        "ON CONFLICT DO UPDATE SET active=excluded.active"
+    # The record holding the field and letting it go, a recorded no-change
+    # and a new accepted owner decision.
+    insert_record_row(
+        writer, held, destination, answer_id="human_decision_" + _digest("held")
     )
-    step((hold, (held, destination, 1)))
-    step((hold, (held, destination, 0)))
+    step()
+    step(
+        (
+            "DELETE FROM owner_field_answers WHERE review_case_id=? AND destination=?",
+            (held, destination),
+        )
+    )
     report = writer.execute("SELECT report_id FROM metadata_reports").fetchone()[0]
     step(
         (
             "INSERT INTO field_effect_no_changes VALUES(?,?,?,'primary','books',"
-            "'work','title','fingerprint','version','human',1,?,NULL)",
+            "'work','title','fingerprint','version','human',1,?,NULL,NULL,NULL)",
             (pending[3], case, report, "event-" + _digest("no-change")),
         )
     )
+    ordinal = next_ordinal(writer)
     step(
         (
             "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,proposal_id,"
@@ -189,7 +196,7 @@ def test_reader_equals_recomputation_across_pending_changes(
             "VALUES(?,?,?,?,?,'genres','owner','accept','null',?,?,1,'{}',"
             "'primary','books','work','null')",
             (
-                next_ordinal(writer),
+                ordinal,
                 "human_decision_" + _digest("new"),
                 case,
                 "review_proposal_" + _digest("new"),
@@ -197,7 +204,15 @@ def test_reader_equals_recomputation_across_pending_changes(
                 _digest("new-idempotency"),
                 _digest("new-request"),
             ),
-        )
+        ),
+        # The record names the answer, as `record_answer` does beside it.
+        (
+            "INSERT INTO owner_field_answers(connection_name,library_name,item_id,"
+            "destination,source,answer_id,ordinal,outcome,value_document,"
+            "recorded_at,review_case_id,episode,carry_eligible) VALUES("
+            "'primary','books','work','genres','human',?,?,'accept','null',1,?,0,1)",
+            ("human_decision_" + _digest("new"), ordinal, case),
+        ),
     )
     # A suspension changes no count; readiness still reports it.
     step(

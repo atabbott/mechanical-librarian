@@ -881,6 +881,7 @@ def _validate_output(path: Path, bridge_data: _BridgeData) -> tuple[int, int]:
         ):
             raise MetadataReportError("qualification-state output is incompatible")
         baseline = sqlite3.connect(":memory:", isolation_level=None)
+        _register_casefold(baseline)
         try:
             _create_schema(baseline)
             tables = tuple(

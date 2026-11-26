@@ -83,6 +83,11 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
     stored_level_offer_documents,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    BUNDLE_ANSWERED_SQL,
+    case_record_sql,
+    owner_row_counts_sql,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _AUTOMATIC_SAFETY_ROW_SQL,
     _LANDED_IN_EPISODE_SQL,
@@ -488,6 +493,40 @@ _ACTIVE_GENERATION_DESCRIPTION_SQL = (
 )
 
 
+# The planning query's record clauses (ADR-0108, "The owner's arm after
+# Resume" and "Readers"): an owner's row, human or authored description,
+# plans only while the record names it; an automatic decision, description
+# or cover plans only while the record holds no answer for the field of its
+# case's book, and a field decision only while no owner decision on its case
+# still keeps Automatic off it (one Resume has not taken back).
+_RECORD_NAMES_HUMAN_SQL = (
+    "EXISTS (SELECT 1 FROM owner_field_answers record WHERE "
+    "record.source='human' AND record.answer_id=human.decision_id)"
+)
+_RECORD_NAMES_AUTHORED_SQL = (
+    "EXISTS (SELECT 1 FROM owner_field_answers record WHERE "
+    "record.source='authored_description' AND record.answer_id=d.decision_id)"
+)
+_AUTOMATIC_UNANSWERED_SQL = (
+    "NOT EXISTS (SELECT 1 FROM human_decisions human WHERE "
+    "human.review_case_id=automatic.review_case_id AND "
+    "human.destination=automatic.destination AND "
+    + owner_row_counts_sql("human")
+    + ") AND NOT EXISTS ("
+    + case_record_sql("automatic.review_case_id", "automatic.destination")
+    + ")"
+)
+_DESCRIPTION_UNANSWERED_SQL = (
+    "NOT EXISTS (" + case_record_sql("d.review_case_id", "'description'") + ")"
+)
+_COVER_UNANSWERED_SQL = (
+    "NOT EXISTS (SELECT 1 FROM owner_field_answers record "
+    "WHERE record.connection_name=lineage.connection_name "
+    "AND record.library_name=lineage.library_name "
+    "AND record.item_id=lineage.item_id AND record.destination='cover')"
+)
+
+
 _PENDING_PREPARED_SQL = (
     "WITH pending AS ("
     "SELECT human.decision_id,human.review_case_id,human.destination,'human' origin "
@@ -502,10 +541,9 @@ _PENDING_PREPARED_SQL = (
     "current.destination=human.destination "
     "AND current.outcome NOT IN ('pin','unpin')) END AND "
     + _episode_decision_sql("human")
-    + " AND NOT EXISTS ("
-    "SELECT 1 FROM field_effect_manual_holds returned WHERE "
-    "returned.review_case_id=human.review_case_id AND "
-    "returned.destination=human.destination AND returned.active=0) UNION ALL "
+    + " AND "
+    + _RECORD_NAMES_HUMAN_SQL
+    + " UNION ALL "
     "SELECT automatic.decision_id,automatic.review_case_id,automatic.destination,'automatic' origin "
     "FROM automatic_decisions automatic WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=automatic.review_case_id AND automatic.destination='description') AND "
     "json_extract(automatic.document,'$.outcome')='candidate' AND "
@@ -514,16 +552,9 @@ _PENDING_PREPARED_SQL = (
     "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
     "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
     "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint)"
-    " AND NOT EXISTS ("
-    "SELECT 1 FROM human_decisions human WHERE "
-    "human.review_case_id=automatic.review_case_id AND "
-    "human.destination=automatic.destination AND NOT EXISTS ("
-    "SELECT 1 FROM field_effect_manual_holds returned WHERE "
-    "returned.review_case_id=automatic.review_case_id AND "
-    "returned.destination=automatic.destination AND returned.active=0)) AND NOT EXISTS ("
-    "SELECT 1 FROM field_effect_manual_holds hold WHERE "
-    "hold.review_case_id=automatic.review_case_id AND "
-    "hold.destination=automatic.destination AND hold.active=1) AND "
+    " AND "
+    + _AUTOMATIC_UNANSWERED_SQL
+    + " AND "
     # Only the active generation's decision is pending (#1573).
     + _active_generation_automatic_sql("automatic")
     + " AND "
@@ -540,34 +571,36 @@ _PENDING_PREPARED_SQL = (
     "JOIN current_review_case_lineages lineage "
     "ON lineage.review_case_id=consideration.review_case_id "
     "WHERE "
+    + _COVER_UNANSWERED_SQL
+    + " AND "
     + _AUTOMATIC_POSTURE_SQL
     + " UNION ALL SELECT d.decision_id,d.review_case_id,'description','human' FROM current_description_decisions p JOIN owner_authored_descriptions d ON d.decision_id=p.decision_id"
-    " UNION ALL SELECT d.decision_id,d.review_case_id,'description','automatic' FROM current_description_decisions p JOIN automatic_description_decisions d ON d.decision_id=p.decision_id"
-    " WHERE NOT EXISTS ("
-    "SELECT 1 FROM field_effect_manual_holds hold WHERE "
-    "hold.review_case_id=d.review_case_id AND "
-    "hold.destination='description' AND hold.active=1) AND "
+    " WHERE "
+    + _RECORD_NAMES_AUTHORED_SQL
+    + " UNION ALL SELECT d.decision_id,d.review_case_id,'description','automatic' FROM current_description_decisions p JOIN automatic_description_decisions d ON d.decision_id=p.decision_id"
+    " WHERE "
+    + _DESCRIPTION_UNANSWERED_SQL
+    + " AND "
     + _AUTOMATIC_POSTURE_SQL
     + _ACTIVE_GENERATION_DESCRIPTION_SQL
     + ") "
 )
 
-# A hold Activity notes against an automatic choice: one the owner can end
-# with Resume. A pinned hold offers Unpin instead, and a requested return is
-# already on its way, unless its checks ended with failures, which keeps the
-# hold and asks for Resume again (#1755). Bound to the hold as `hold`.
-_RESUMABLE_HOLD_SQL = (
-    "hold.active=1 AND COALESCE(json_type(hold.document,'$.pin'),'null')<>'object' "
-    "AND (COALESCE(json_type(hold.document,'$.pending_return'),'null')<>'object' "
-    "OR EXISTS (SELECT 1 FROM review_preparation_scans scan "
-    "WHERE scan.scan_id=json_extract(hold.document,'$.pending_return.scan_id') "
-    "AND scan.state='completed_with_failures'))"
+# The record's answer Activity notes against an automatic choice: one the
+# owner can end with Resume. A pin offers Unpin instead, and a requested
+# Resume is already on its way, unless its checks ended with failures, which
+# keeps the answer and asks for Resume again (#1755, ADR-0108). Bound to the
+# record row as `record`.
+_RESUMABLE_RECORD_SQL = (
+    "record.pin_fingerprint IS NULL AND (record.open_resume_id IS NULL "
+    "OR EXISTS (SELECT 1 FROM owner_field_events failed "
+    "WHERE failed.request_id=record.open_resume_id AND failed.kind='resume_failed'))"
 )
 
 
 def _unwritten_choice_sql(decision: str) -> str:
     """Whether choice `decision` still waits to be written: the pending query
-    would plan it but for a hold. No change it records, no change stopped for
+    would plan it but for the record. No change it records, no change stopped for
     the owner, and no write of it or of the title it travels with has
     started; a planned or retryable write waits like the choice does, and a
     superseded or abandoned one plans the choice again."""
@@ -583,9 +616,9 @@ def _unwritten_choice_sql(decision: str) -> str:
     )
 
 
-# Automatic's choices on the page that an owner hold keeps unwritten until
-# Resume (ADR-0085). A title and subtitle pair is written together, so a hold
-# on either member keeps both. An automatic description is chosen in its own
+# Automatic's choices on the page that the record of the owner's answers
+# keeps unwritten until Resume (ADR-0085, ADR-0108). A title and subtitle pair
+# is written together, so the record's answer for either member keeps both. An automatic description is chosen in its own
 # table. Leaving Automatic always starts a new generation, so an
 # active-generation choice means Automatic is on. Bound by the page's
 # automatic event ids as JSON, twice.
@@ -600,26 +633,26 @@ _HELD_AUTOMATIC_NOTE_SQL = (
     "current_description_decisions authored "
     "WHERE authored.review_case_id=automatic.review_case_id)) "
     "AND EXISTS (SELECT 1 FROM automatic_decisions member "
-    "JOIN field_effect_manual_holds hold ON hold.review_case_id=member.review_case_id "
-    "AND hold.destination=member.destination "
     "WHERE member.review_case_id=automatic.review_case_id "
     "AND (member.decision_id=automatic.decision_id "
     "OR (member.policy_generation=automatic.policy_generation "
     "AND json_extract(member.document,'$.bundle_id')="
-    "json_extract(automatic.document,'$.bundle_id'))) AND "
-    + _RESUMABLE_HOLD_SQL
-    + ") AND "
+    "json_extract(automatic.document,'$.bundle_id'))) AND EXISTS ("
+    + case_record_sql("member.review_case_id", "member.destination")
+    + " AND "
+    + _RESUMABLE_RECORD_SQL
+    + ")) AND "
     + _unwritten_choice_sql("automatic.decision_id")
     + " UNION ALL SELECT d.decision_id FROM current_description_decisions p "
     "JOIN automatic_description_decisions d ON d.decision_id=p.decision_id "
-    "JOIN field_effect_manual_holds hold ON hold.review_case_id=d.review_case_id "
-    "AND hold.destination='description' "
     "WHERE d.decision_id IN (SELECT value FROM json_each(?)) AND "
     + _AUTOMATIC_POSTURE_SQL
     + _ACTIVE_GENERATION_DESCRIPTION_SQL
+    + " AND EXISTS ("
+    + case_record_sql("d.review_case_id", "'description'")
     + " AND "
-    + _RESUMABLE_HOLD_SQL
-    + " AND "
+    + _RESUMABLE_RECORD_SQL
+    + ") AND "
     + _unwritten_choice_sql("d.decision_id")
 )
 
@@ -2149,23 +2182,21 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         stands: the field's latest owner decision in the case's episode, pins
         and unpins aside (ADR-0085, Amendment 2), is the write's own decision
         or an accept of that value recorded with nothing to write, and its
-        own hold still holds the field.
+        the record still names it with no Resume open (ADR-0108).
 
         A later owner decision still unwritten (a keep, an entry, a clear) is
         the field's answer instead, and an accept recorded now replaces it;
-        an automatic write is no owner answer (#1980). An answer whose hold
-        Resume automatic handling released, or asked to release, no longer
+        an automatic write is no owner answer (#1980). An answer Resume
+        automatic handling took back, or was asked to take back, no longer
         holds the field, so choosing its value again holds it anew, as
-        `field_change_waiting_sql` reads the same hold for a pin."""
+        `field_change_waiting_sql` reads the same record for a pin."""
         standing = self._connection.execute(
             "SELECT decision_id,EXISTS(SELECT 1 FROM field_effect_no_changes "
             "no_change WHERE no_change.decision_id=human_decisions.decision_id "
             "AND no_change.origin='human' AND no_change.target_version=?),"
-            "EXISTS(SELECT 1 FROM field_effect_manual_holds hold "
-            "WHERE hold.review_case_id=human_decisions.review_case_id "
-            "AND hold.destination=human_decisions.destination AND hold.active=1 "
-            "AND json_extract(hold.document,'$.pending_return') IS NULL "
-            "AND json_extract(hold.document,'$.decision_id')=human_decisions.decision_id) "
+            "EXISTS(SELECT 1 FROM owner_field_answers record "
+            "WHERE record.answer_id=human_decisions.decision_id "
+            "AND record.open_resume_id IS NULL) "
             "FROM human_decisions WHERE review_case_id=? "
             "AND destination=? AND outcome NOT IN ('pin','unpin') AND "
             + _episode_decision_sql("human_decisions")
@@ -2174,9 +2205,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         ).fetchone()
         return (
             standing is not None
-            # A cover answer often holds nothing (it holds only over an
-            # automatic cover decision), so a cover reads as on #1981.
-            and (standing[2] == 1 or decision.destination == "cover")
+            and standing[2] == 1
             and (
                 standing[1] == 1
                 or standing[0]
@@ -2693,10 +2722,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     self._authority_source(decision)
                 except (ValueError, FieldEffectError):
                     return False
+                # The record's answer for either half holds the bundle.
                 if (
                     self._connection.execute(
-                        "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? AND destination IN ('title','subtitle') AND active=1",
-                        (decision.review_case_id,),
+                        BUNDLE_ANSWERED_SQL, (decision.review_case_id,) * 2
                     ).fetchone()
                     is not None
                 ):
@@ -2714,16 +2743,24 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         ).fetchone()
         if lineage is None:
             return False
+        # The record's answer for the field of the case's book refuses an
+        # automatic write, a cover switch's included (ADR-0108).
         if self._connection.execute(
-            "SELECT 1 FROM field_effect_manual_holds hold "
-            "WHERE hold.review_case_id=? AND hold.destination='cover' "
-            "AND hold.active=1 AND EXISTS(SELECT 1 FROM automatic_cover_selections "
-            "WHERE decision_id=?) "
-            "UNION ALL SELECT 1 FROM automatic_decisions automatic "
-            "JOIN field_effect_manual_holds hold ON hold.review_case_id=automatic.review_case_id "
-            "AND hold.destination=automatic.destination AND hold.active=1 "
-            "WHERE automatic.decision_id=? LIMIT 1",
-            (authority.review_case_id, authority.decision_id, authority.decision_id),
+            case_record_sql("?", "'cover'")
+            + " AND EXISTS(SELECT 1 FROM automatic_cover_selections "
+            "WHERE decision_id=?) UNION ALL "
+            + case_record_sql(
+                "?",
+                "(SELECT automatic.destination FROM automatic_decisions automatic "
+                "WHERE automatic.decision_id=?)",
+            )
+            + " LIMIT 1",
+            (
+                authority.review_case_id,
+                authority.decision_id,
+                authority.review_case_id,
+                authority.decision_id,
+            ),
         ).fetchone() == (1,):
             return False
         try:
@@ -2901,10 +2938,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "AND current.outcome NOT IN ('pin','unpin')) AND "
                 # An earlier episode's decision of a case admitted again is
                 # history, never pending work (#1358).
-                 + _episode_decision_sql("human") + " AND NOT EXISTS ("
-                "SELECT 1 FROM field_effect_manual_holds returned WHERE "
-                "returned.review_case_id=human.review_case_id AND "
-                "returned.destination=human.destination AND returned.active=0) UNION ALL "
+                + _episode_decision_sql("human")
+                + " AND "
+                + _RECORD_NAMES_HUMAN_SQL
+                + " UNION ALL "
                 "SELECT automatic.decision_id,automatic.occurred_at,automatic.document "
                 "FROM automatic_decisions automatic WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=automatic.review_case_id AND automatic.destination='description') AND "
                 "json_extract(automatic.document,'$.outcome') IN ('candidate','keep_current') AND "
@@ -2913,16 +2950,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
                 "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
                 "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint)"
-                " AND NOT EXISTS ("
-                "SELECT 1 FROM human_decisions human WHERE "
-                "human.review_case_id=automatic.review_case_id AND "
-                "human.destination=automatic.destination AND NOT EXISTS ("
-                "SELECT 1 FROM field_effect_manual_holds returned WHERE "
-                "returned.review_case_id=automatic.review_case_id AND "
-                "returned.destination=automatic.destination AND returned.active=0)) AND NOT EXISTS ("
-                "SELECT 1 FROM field_effect_manual_holds hold WHERE "
-                "hold.review_case_id=automatic.review_case_id AND "
-                "hold.destination=automatic.destination AND hold.active=1) AND "
+                " AND "
+                + _AUTOMATIC_UNANSWERED_SQL
+                + " AND "
                 # Only the active generation's decision is pending (#1573).
                 + _active_generation_automatic_sql("automatic")
                 + " AND "
@@ -2939,16 +2969,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=consideration.review_case_id "
                 "WHERE "
+                + _COVER_UNANSWERED_SQL
+                + " AND "
                 + _AUTOMATIC_POSTURE_SQL
-                # An owner's description is the decision its own hold keeps; an
-                # automatic one under a hold waits for Resume (ADR-0085), and
-                # outside the Automatic posture waits for Automatic again.
+                # An owner's description plans while the record names it; an
+                # automatic one under the record's answer waits for Resume
+                # (ADR-0085, ADR-0108), and outside the Automatic posture waits
+                # for Automatic again.
                 + " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN owner_authored_descriptions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
-                " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN automatic_description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
-                " WHERE NOT EXISTS ("
-                "SELECT 1 FROM field_effect_manual_holds hold WHERE "
-                "hold.review_case_id=d.review_case_id AND "
-                "hold.destination='description' AND hold.active=1) AND "
+                " WHERE "
+                + _RECORD_NAMES_AUTHORED_SQL
+                + " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN automatic_description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
+                " WHERE "
+                + _DESCRIPTION_UNANSWERED_SQL
+                + " AND "
                 + _AUTOMATIC_POSTURE_SQL
                 + _ACTIVE_GENERATION_DESCRIPTION_SQL
                 + ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
@@ -3144,11 +3178,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             raise FieldEffectError("persistence") from error
 
     @local_operation
-    def pending_field_effect_manual_returns(
+    def pending_owner_field_resumes(
         self,
         limit: int,
-        after: tuple[int, str, str] | None = None,
-    ) -> tuple[tuple[str, str, str, str, str, str, int, int], ...]:
+        after: tuple[int, str] | None = None,
+    ) -> tuple[tuple[str, str, str, str, str, str, int], ...]:
+        """The open Resume requests, keyed by item, oldest first: each field
+        whose record names an open request, as (connection, library, item,
+        destination, request, scan, requested at) (ADR-0108)."""
         if (
             type(limit) is not int
             or not 1 <= limit <= 100
@@ -3156,10 +3193,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 after is not None
                 and (
                     type(after) is not tuple
-                    or len(after) != 3
+                    or len(after) != 2
                     or type(after[0]) is not int
                     or after[0] < 0
-                    or any(type(value) is not str or not value for value in after[1:])
+                    or type(after[1]) is not str
+                    or not after[1]
                 )
             )
         ):
@@ -3169,58 +3207,34 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             parameters: tuple[object, ...] = ()
             if after is not None:
                 cursor_clause = (
-                    "AND (hold.updated_at>? OR "
-                    "(hold.updated_at=? AND hold.review_case_id>?) OR "
-                    "(hold.updated_at=? AND hold.review_case_id=? "
-                    "AND hold.destination>?)) "
+                    "AND (request.occurred_at>? OR "
+                    "(request.occurred_at=? AND request.event_id>?)) "
                 )
-                parameters = (
-                    after[0],
-                    after[0],
-                    after[1],
-                    after[0],
-                    after[1],
-                    after[2],
-                )
-            # NOT INDEXED keeps the lineage-first plan this statement always had, so
-            # json_type still sees only holds whose case has a lineage (#1211).
+                parameters = (after[0], after[0], after[1])
             rows = self._connection.execute(
-                "SELECT hold.review_case_id,hold.destination,lineage.connection_name,"
-                "lineage.library_name,hold.document,hold.updated_at "
-                "FROM field_effect_manual_holds hold "
-                "JOIN current_review_case_lineages lineage NOT INDEXED "
-                "ON lineage.review_case_id=hold.review_case_id "
-                "WHERE hold.active=1 AND "
-                "json_type(hold.document,'$.pending_return')='object' "
+                "SELECT record.connection_name,record.library_name,record.item_id,"
+                "record.destination,request.event_id,request.scan_id,"
+                "request.occurred_at FROM owner_field_answers record "
+                "JOIN owner_field_events request "
+                "ON request.event_id=record.open_resume_id "
+                "WHERE record.open_resume_id IS NOT NULL "
                 + cursor_clause
-                + "ORDER BY hold.updated_at,hold.review_case_id,hold.destination LIMIT ?",
+                + "ORDER BY request.occurred_at,request.event_id LIMIT ?",
                 (*parameters, limit),
             ).fetchall()
-            pending = []
-            for (
-                review_case_id,
-                destination,
-                connection,
-                library,
-                document,
-                updated_at,
-            ) in rows:
-                raw = json.loads(document)
-                request = raw["pending_return"]
-                pending.append(
-                    (
-                        review_case_id,
-                        destination,
-                        connection,
-                        library,
-                        raw["decision_id"],
-                        request["scan_id"],
-                        request["requested_at"],
-                        updated_at,
-                    )
+            return tuple(
+                (
+                    str(connection),
+                    str(library),
+                    str(item),
+                    str(destination),
+                    str(request_id),
+                    str(scan_id),
+                    int(requested_at),
                 )
-            return tuple(pending)
-        except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
+                for connection, library, item, destination, request_id, scan_id, requested_at in rows
+            )
+        except (sqlite3.Error, TypeError, ValueError) as error:
             raise FieldEffectError("persistence") from error
 
     @local_operation

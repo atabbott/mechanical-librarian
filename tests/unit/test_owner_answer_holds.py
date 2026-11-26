@@ -30,7 +30,11 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.evidence_led_titles import isbn_title_report
 from tests.support.genre_reports import genre_report
-from tests.support.owner_field_record import record_recomputes  # noqa: F401
+from tests.support.owner_field_record import (
+    hold_token,
+    record_recomputes,  # noqa: F401
+    resume,
+)
 from tests.support.owner_values import OwnerStore, rewritten
 
 ORIGINAL = "Example Series 03 - Example Title"  # what the library holds
@@ -111,9 +115,7 @@ def _queued(store: OwnerStore, destination: str = "title") -> AutomaticDecision 
 
 
 def _hold(store: OwnerStore, destination: str = "title") -> str | None:
-    return store.repository.field_effect_manual_hold_token(
-        store.case.review_case_id, destination
-    )
+    return hold_token(store.repository, store.case.review_case_id, destination)
 
 
 def _field(store: OwnerStore, destination: str) -> dict[str, object]:
@@ -147,9 +149,10 @@ def test_a_title_typed_after_an_automatic_change_stays(tmp_path: Path) -> None:
     store, report, _ = _store(tmp_path)
     _automatic_writes_first(store, report)
     decision = store.decide("owner_entered", OWN)
-    # No automatic decision on this case: the answer holds, shows no Resume.
+    # The answer holds the field, and Resume shows wherever the field is
+    # Automatic, with or without an automatic decision on this case (V1).
     assert _hold(store) == decision.decision_id
-    assert _field(store, "title")["manual_hold"] is False
+    assert _field(store, "title")["manual_hold"] is True
     store.write(decision)
     store.publish(rewritten(report, title=OWN["value"]))  # the read-back
     _held_from_automatic(store, decision.decision_id)
@@ -346,20 +349,24 @@ def test_resume_releases_an_answer_held_without_an_automatic_decision(
     store.repository.activate_qualified_automatic(store.clock())
     store.publish(rewritten(report, publisher="Changed Elsewhere"))
     _held_from_automatic(store, decision.decision_id)
-    assert store.repository.clear_field_effect_manual_hold(
-        store.case.review_case_id, "title", store.clock(), decision.decision_id
-    )
+    assert resume(store.repository, store.case.review_case_id, "title", store.clock())
     assert _hold(store) is None
     assert _queued(store) is not None
     store.close()
 
 
-# A withdrawal keeps the answer's hold while a Resume it requested is still
-# out, so the return finishes or fails on the hold it named.
-def test_a_withdrawal_keeps_a_hold_with_a_return_pending(tmp_path: Path) -> None:
-    store, report, _ = _store(tmp_path, title="ask")
+# A withdrawal that leaves the field no answer closes the Resume still out
+# over it, naming the withdrawal, so no return finishes on an answer the
+# owner took back (ADR-0108).
+def test_a_withdrawal_leaving_no_answer_closes_its_pending_return(
+    tmp_path: Path,
+) -> None:
+    # Answered in Preview, so Automatic decided nothing here; Resume shows
+    # once Automatic is on and the field is Automatic.
+    store, report, _ = _store(tmp_path, posture="preview")
     store.publish(report)
     decision = store.decide("keep_current", destination="title")
+    store.repository.activate_qualified_automatic(store.clock())
     scan = store.repository.request_review_scan(
         report.target.connection,
         report.target.library,
@@ -368,81 +375,19 @@ def test_a_withdrawal_keeps_a_hold_with_a_return_pending(tmp_path: Path) -> None
         store.clock(),
     )
     at = store.clock()
-    assert store.repository.request_field_effect_manual_return(
+    assert store.repository.request_owner_field_resume(
         store.case.review_case_id, "title", decision.decision_id, scan.scan_id, at, at
     )
-    store.decide("withdraw", destination="title")
-    assert _hold(store) == decision.decision_id
+    withdrawal = store.decide("withdraw", destination="title")
+    assert _hold(store) is None
+    assert store.repository._connection.execute(
+        "SELECT kind,answer_id FROM owner_field_events ORDER BY rowid"
+    ).fetchall() == [
+        ("resume_requested", decision.decision_id),
+        ("resume_superseded", withdrawal.decision_id),
+    ]
+    assert _field(store, "title")["manual_hold"] is False
     store.close()
-
-
-# Cover keeps the earlier rule: a cover answer holds only over an automatic
-# cover decision, since a held cover refuses an automatic replacement outright
-# and would never show Resume.
-def test_a_cover_answer_without_an_automatic_cover_decision_sets_no_hold(
-    tmp_path: Path,
-) -> None:
-    from mechanical_librarian.adapters.persistence.metadata_reports import (
-        open_repository,
-    )
-    from tests.support.cover_taste import record_owner_cover_decisions
-
-    repository = open_repository(tmp_path / "covers.sqlite")
-    record_owner_cover_decisions(tmp_path, repository, 1)
-    connection = repository._connection
-    assert connection.execute(
-        "SELECT count(*) FROM human_decisions WHERE destination='cover'"
-    ).fetchone() == (1,)
-    assert connection.execute(
-        "SELECT count(*) FROM field_effect_manual_holds"
-    ).fetchone() == (0,)
-    repository.close()
-
-
-# A re-admitted case can carry a released cover row from a Resume on another
-# case. With no automatic cover decision the cover answer removes it, as
-# before the amendment, so the answer plans (#1358).
-def test_a_cover_answer_removes_a_released_cover_row_it_meets(tmp_path: Path) -> None:
-    from mechanical_librarian.adapters.persistence.field_effect_validation import (
-        FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
-    )
-    from mechanical_librarian.adapters.persistence.metadata_reports import (
-        open_repository,
-    )
-    from mechanical_librarian.domain.field_effect import (
-        canonical_json as canonical_effect_json,
-    )
-    from tests.support.cover_taste import record_owner_cover_decisions
-
-    repository = open_repository(tmp_path / "covers.sqlite")
-    connection = repository._connection
-
-    def released(case_id: str) -> None:
-        document = {
-            "active": False,
-            "decision_id": "human_decision_" + "0" * 64,
-            "destination": "cover",
-            "pending_return": None,
-            "pin": None,
-            "review_case_id": case_id,
-            "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
-            "updated_at": 150,
-        }
-        connection.execute(
-            "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
-            "active,updated_at,document) VALUES(?,'cover',0,150,?)",
-            (case_id, canonical_effect_json(document)),
-        )
-        connection.commit()
-
-    record_owner_cover_decisions(tmp_path, repository, 1, before_decision=released)
-    assert connection.execute(
-        "SELECT count(*) FROM human_decisions WHERE destination='cover'"
-    ).fetchone() == (1,)
-    assert connection.execute(
-        "SELECT count(*) FROM field_effect_manual_holds"
-    ).fetchone() == (0,)
-    repository.close()
 
 
 # A withdrawal still keeps Automatic off the field, also where it gives the

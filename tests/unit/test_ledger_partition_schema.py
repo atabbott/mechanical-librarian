@@ -23,10 +23,22 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.review_preparation import (
     request_matching_check,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _REPORT_KEPT_VALUE_SQL,
+)
+from mechanical_librarian.domain.activity_records import _reported_value
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+    TargetSeries,
+)
 from tests.support.activity_seed import seed_activity
 from tests.support.cover_taste import record_owner_cover_decisions
-from tests.support.description_advice import _prepared
+from tests.support.description_advice import _prepared, qualify_description_advice
 from tests.support.genre_reports import (
     OFFERED_DESCRIPTION_COPY,
     formatted_description_report,
@@ -34,7 +46,6 @@ from tests.support.genre_reports import (
 )
 from tests.support.ledger_copies import assert_ledger_copies
 from tests.support.ledger_partition import (
-    UNTIL_C2B,
     copied_store,
     opens,
     regenerate,
@@ -42,6 +53,7 @@ from tests.support.ledger_partition import (
     rewrite,
     rewrite_no_change,
 )
+from tests.support.owner_field_record import resume
 from tests.support.owner_values import OwnerStore
 
 DERIVED_TABLES = frozenset(
@@ -96,14 +108,6 @@ DERIVED_TABLES = frozenset(
     }
 )
 DERIVED_VIEWS = frozenset({"review_attention_refresh"})
-# Ledger foreign keys into derived state that a later stage removes. Each
-# entry is (table, column, referenced table).
-KNOWN_LEDGER_TO_DERIVED_KEYS = frozenset(
-    {
-        # #2038 C2b deletes the manual holds; the record replaces them.
-        ("field_effect_manual_holds", "review_case_id", "review_cases"),
-    }
-)
 _WRITE = re.compile(
     r"\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?"
     r"|DELETE\s+FROM)\s+(\w+)",
@@ -116,6 +120,7 @@ _LEDGER = schema.LEDGER_TABLES | schema.LEDGER_VIEWS
 @pytest.fixture
 def connection() -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(":memory:")
+    schema._register_casefold(connection)
     try:
         schema._create_schema(connection)
         yield connection
@@ -153,7 +158,7 @@ def test_every_table_and_view_is_ledger_or_pinned_derived(
     assert views == schema.LEDGER_VIEWS | DERIVED_VIEWS
 
 
-def test_ledger_foreign_keys_reference_only_ledger_tables(
+def test_no_ledger_table_references_derived_state(
     connection: sqlite3.Connection,
 ) -> None:
     crossing = {
@@ -162,7 +167,8 @@ def test_ledger_foreign_keys_reference_only_ledger_tables(
         for key in connection.execute(f"PRAGMA foreign_key_list('{table}')")
         if key[2] not in schema.LEDGER_TABLES
     }
-    assert crossing == KNOWN_LEDGER_TO_DERIVED_KEYS
+    # No ledger table references derived state (ADR-0108).
+    assert crossing == set()
     # Derived rows may reference ledger rows: the direction is one way only.
     assert any(
         key[2] in schema.LEDGER_TABLES
@@ -198,12 +204,13 @@ def test_triggers_writing_derived_state_are_derived_and_ledger_triggers_read_led
             assert _references(_body(sql), names) <= _LEDGER, name
     assert derived_on_ledger == {
         "automatic_safety_state",
-        "field_effect_manual_holds",
         "field_effect_suspensions",
         "human_decisions",
         "metadata_policy_resolutions",
         "metadata_policy_state",
         "owner_cover_pointers",
+        "owner_field_answers",
+        "owner_field_events",
     }
 
 
@@ -258,12 +265,12 @@ def test_owner_writes_and_no_change_copy_what_their_readers_show(
     assert described["history_selected_form"] == 1
     assert described["activity_field_effect_human"] > 0
     genres = {"kind": "list", "value": ["Fantasy"]}
-    store = OwnerStore(tmp_path / "genres", genre_report())
+    store = _automatic_genres_store(tmp_path / "genres")
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)
-        assert store.repository.clear_field_effect_manual_hold(
-            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        assert resume(
+            store.repository, store.case.review_case_id, "genres", store.clock()
         )
         store.decide("accept", genres, destination="genres")
         settled = assert_ledger_copies(store.repository)
@@ -383,6 +390,7 @@ def test_an_owner_authored_description_is_a_ledger_row_with_its_copies(
         ),
         ("item_id='another-book'", True),
         ("display_title='Another title'", True),
+        ("display_authors='[\"Another author\"]'", True),
     ],
 )
 def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
@@ -397,7 +405,7 @@ def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
     finally:
         repository.close()
     rewrite(path, f"UPDATE owner_authored_descriptions SET {assignment}")
-    if not assignment.startswith("candidate_document"):
+    if not assignment.startswith(("candidate_document", "display_authors")):
         # The record of the owner's answers copies the work and the title
         # too, so an edit that stands once regenerated moves both (ADR-0108).
         rewrite(path, f"UPDATE owner_field_answers SET {assignment}")
@@ -459,6 +467,10 @@ _CASE_AND_ITEM_COPIES = {
     ),
     "display_title": (
         f"UPDATE human_decisions SET display_title='Another title' "
+        f"WHERE decision_id={_UNWRITTEN}",
+    ),
+    "display_authors": (
+        f"UPDATE human_decisions SET display_authors='[\"Another author\"]' "
         f"WHERE decision_id={_UNWRITTEN}",
     ),
     "target_field_document": (
@@ -534,17 +546,27 @@ def test_an_event_and_a_transition_state_agree_with_the_ledger_always(
     assert not opens(activity)
 
 
+def _automatic_genres_store(root: Path) -> OwnerStore:
+    """A store whose genres are Automatic, where Resume is offered
+    (ADR-0108), with the genre report's case current."""
+    report = genre_report()
+    store = OwnerStore(root, None)
+    store.automatic("genres", "replace", report.target.library)
+    store.publish(report)
+    return store
+
+
 def _owner_genres(root: Path) -> Path:
     """A copy of a store whose owner wrote genres and then accepted the
     written value again: a plan and a no-change row, both the owner's."""
     root.mkdir(mode=0o700)
     genres = {"kind": "list", "value": ["Fantasy"]}
-    store = OwnerStore(root, genre_report())
+    store = _automatic_genres_store(root)
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)
-        assert store.repository.clear_field_effect_manual_hold(
-            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        assert resume(
+            store.repository, store.case.review_case_id, "genres", store.clock()
         )
         store.decide("accept", genres, destination="genres")
         return copied_store(store.repository, root / "copy")
@@ -553,17 +575,162 @@ def _owner_genres(root: Path) -> Path:
 
 
 @pytest.mark.parametrize("table", ["field_effects", "field_effect_no_changes"])
+@pytest.mark.parametrize(
+    "assignment",
+    ["display_title='Another title'", "display_authors='[\"Another author\"]'"],
+)
 def test_a_plan_and_a_no_change_title_agree_with_their_report(
-    tmp_path: Path, table: str
+    tmp_path: Path, table: str, assignment: str
 ) -> None:
     """A write plan and a no-change row show the title of the report their
-    decision was made over; reports never change, so while it is there the
-    copy equals it, and once a regeneration took it the copy stands."""
+    decision was made over, and the owner's its authors; reports never change,
+    so while it is there the copy equals it, and once a regeneration took it
+    the copy stands."""
     path = _owner_genres(tmp_path / "genres")
-    rewrite(path, f"UPDATE {table} SET display_title='Another title'")
+    assert rewrite(path, f"UPDATE {table} SET {assignment}") > 0
     assert not opens(path)
     regenerate(path)
     assert opens(path)
+
+
+def test_automatic_rows_copy_no_authors(tmp_path: Path) -> None:
+    """Only the owner's rows keep their authors (ADR-0108): an automatic
+    write keeps none, a copy on one is refused while its report is there, and
+    an automatic no-change row cannot hold one."""
+    held = genre_report(current=("Drama",), genres=("Fantasy",))
+    (tmp_path / "store").mkdir(mode=0o700)
+    store = OwnerStore(tmp_path / "store", None)
+    try:
+        store.automatic("genres", "replace", held.target.library)
+        store.publish(held)
+        store.write(
+            next(
+                AutomaticDecision.from_json(raw)
+                for raw in store.repository.get_review_case_decisions(
+                    store.case.review_case_id
+                )
+                if json.loads(raw)["schema_version"] == "automatic-decision-v1"
+                and json.loads(raw)["destination"] == "genres"
+            )
+        )
+        connection = store.repository._connection
+        assert connection.execute(
+            "SELECT DISTINCT display_authors FROM field_effects"
+        ).fetchall() == [(None,)]
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            connection.execute(
+                "INSERT INTO field_effect_no_changes(decision_id,review_case_id,"
+                "report_id,connection_name,library_name,work_id,destination,"
+                "target_fingerprint,target_version,origin,occurred_at,event_id,"
+                "display_authors) VALUES('d',?,?,'c','l','w','genres','f','v',"
+                "'automatic_policy',0,'e','[]')",
+                (store.case.review_case_id, store.case.report_id),
+            )
+        path = copied_store(store.repository, tmp_path / "changed")
+    finally:
+        store.close()
+    rewrite(path, "UPDATE field_effects SET display_authors='[\"Another author\"]'")
+    assert not opens(path)
+    regenerate(path)
+    assert opens(path)
+
+
+def _automatic_no_change(root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A copy of a store holding Automatic's no-change row: its advised
+    description is the text the report already shows."""
+    qualify_description_advice(monkeypatch)
+    root.mkdir(mode=0o700)
+    repository, store, binding, candidate, _ = _prepared(root, same_current=True)
+    try:
+        decision = store.admit(
+            candidate.candidate_id, binding, "automatic_policy", "c" * 64, 11
+        )
+        assert repository.record_current_field_effect_no_change(decision, 12)
+        assert (
+            assert_ledger_copies(repository)["activity_no_change_automatic_policy"] == 1
+        )
+        return copied_store(repository, root / "copy")
+    finally:
+        repository.close()
+
+
+def test_an_automatic_no_change_keeps_the_value_it_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Automatic's no-change row keeps the value its report shows, which
+    Activity reads once a regeneration takes the report (ADR-0108); while the
+    report is there the copy equals it. The owner's row keeps none."""
+    path = _automatic_no_change(tmp_path / "automatic", monkeypatch)
+    connection = sqlite3.connect(path)
+    try:
+        assert connection.execute(
+            "SELECT kept_value_document FROM field_effect_no_changes"
+        ).fetchall() == [('"Existing description."',)]
+    finally:
+        connection.close()
+    assert (
+        rewrite(path, "UPDATE field_effect_no_changes SET kept_value_document='null'")
+        == 1
+    )
+    assert not opens(path)
+    regenerate(path)
+    assert opens(path)
+    owner = _owner_genres(tmp_path / "genres")
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        rewrite(owner, "UPDATE field_effect_no_changes SET kept_value_document='null'")
+
+
+def _with_fields(*fields: TargetField) -> MetadataReport:
+    base = genre_report(current=("Drama",))
+    given = {field.destination: field for field in fields}
+    return MetadataReport.create(
+        target=TargetFacts(
+            base.target.connection,
+            base.target.library,
+            base.target.item,
+            tuple(given.get(field.destination, field) for field in base.target.fields),
+        ),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+    )
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        genre_report(),
+        # A published year read as the published date, a series and a flag.
+        _with_fields(
+            TargetField(
+                TargetDestination.PUBLISHED_YEAR, TargetFieldState.VALUE, "1999"
+            ),
+            TargetField(
+                TargetDestination.SERIES,
+                TargetFieldState.VALUE,
+                (TargetSeries("Saga", "2"),),
+            ),
+            TargetField(TargetDestination.EXPLICIT, TargetFieldState.VALUE, True),
+        ),
+    ],
+)
+def test_the_kept_value_copy_reads_its_report_as_activity_does(
+    report: MetadataReport,
+) -> None:
+    """The copy an automatic no-change row keeps is, for every destination,
+    the value Activity reads from its report (ADR-0108)."""
+    connection = sqlite3.connect(":memory:")
+    try:
+        for destination in TargetDestination:
+            (kept,) = connection.execute(
+                f"SELECT {_REPORT_KEPT_VALUE_SQL} FROM (SELECT ? AS document) "
+                "report, (SELECT ? AS destination) named",
+                (report.to_json(), destination.value),
+            ).fetchone()
+            assert json.loads(kept) == _reported_value(report, destination.value)
+    finally:
+        connection.close()
 
 
 # What open validation cannot check once the derived rows a ledger value was
@@ -579,6 +746,11 @@ ACCEPTED_GAPS = (
     "authored_description_display_title",
     "plan_display_title",
     "no_change_display_title",
+    "display_authors",
+    "authored_description_display_authors",
+    "plan_display_authors",
+    "no_change_display_authors",
+    "no_change_kept_value",
     # An owner cover choice's copies of its comparison.
     "preview_digest",
     "original_digest",
@@ -659,12 +831,6 @@ def test_a_regenerated_store_opens_and_every_ledger_row_decodes(
     assert (
         decoded["human_decisions.target_field_document"] == decoded["human_decisions"]
     )
-
-
-def test_only_the_manual_holds_still_reference_derived_state() -> None:
-    """A regeneration deletes exactly the ledger rows that still point into
-    derived state, which C2b removes with the holds themselves."""
-    assert {table for table, _, _ in KNOWN_LEDGER_TO_DERIVED_KEYS} == UNTIL_C2B
 
 
 def test_an_owner_cover_choice_stands_without_its_comparison(
@@ -757,12 +923,12 @@ def test_an_owner_no_change_agrees_with_its_case_while_it_is_there(
     """An owner's accept of the value already written names its case's
     report while that case is there; regenerated, the row stands."""
     genres = {"kind": "list", "value": ["Fantasy"]}
-    store = OwnerStore(tmp_path, genre_report())
+    store = _automatic_genres_store(tmp_path)
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)
-        assert store.repository.clear_field_effect_manual_hold(
-            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        assert resume(
+            store.repository, store.case.review_case_id, "genres", store.clock()
         )
         store.decide("accept", genres, destination="genres")
         decoded = reopen_without_derived_rows(store.repository, tmp_path / "regen")
@@ -770,6 +936,7 @@ def test_an_owner_no_change_agrees_with_its_case_while_it_is_there(
     finally:
         store.close()
     assert decoded["field_effect_no_changes.display_title"] == 1
+    assert decoded["field_effect_no_changes.display_authors"] == 1
     rewrite_no_change(path, "report_id", "report_" + _OTHER_DIGEST)
     assert not opens(path)
     regenerate(path)
@@ -787,12 +954,12 @@ def test_every_ledger_row_naming_an_owner_decision_names_its_work(
     with the plan, no-change row and events that name it: open refuses with
     or without the derived rows."""
     genres = {"kind": "list", "value": ["Fantasy"]}
-    store = OwnerStore(tmp_path, genre_report())
+    store = _automatic_genres_store(tmp_path)
     try:
         first = store.decide("accept", genres, destination="genres")
         store.write(first)
-        assert store.repository.clear_field_effect_manual_hold(
-            store.case.review_case_id, "genres", store.clock(), first.decision_id
+        assert resume(
+            store.repository, store.case.review_case_id, "genres", store.clock()
         )
         settled = store.decide("accept", genres, destination="genres")
         path = copied_store(store.repository, tmp_path / "changed")
@@ -878,10 +1045,15 @@ def _no_change(column: str, value: str) -> Callable[[Path], None]:
     return lambda path: rewrite_no_change(path, column, value)
 
 
-def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) -> None:
+def test_accepted_gaps_are_the_listed_ones(
+    owner_cover: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Each listed gap is a ledger value that, its derived rows gone, open
     cannot check; this test edits each and the store still opens."""
     stores = _gap_stores(tmp_path / "stores", owner_cover)
+    stores["automatic_no_change"] = _automatic_no_change(
+        tmp_path / "automatic_no_change", monkeypatch
+    )
     selection = "UPDATE owner_cover_selections SET "
     case = "review_case_" + _OTHER_DIGEST
     # Every edit to an owner answer the record holds moves the record too, as
@@ -914,6 +1086,27 @@ def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) ->
         "no_change_display_title": (
             "genres",
             "UPDATE field_effect_no_changes SET display_title='Another title'",
+        ),
+        "display_authors": (
+            "activity",
+            "UPDATE human_decisions SET display_authors='[\"Another author\"]'",
+        ),
+        "authored_description_display_authors": (
+            "advice",
+            "UPDATE owner_authored_descriptions "
+            "SET display_authors='[\"Another author\"]'",
+        ),
+        "plan_display_authors": (
+            "genres",
+            "UPDATE field_effects SET display_authors='[\"Another author\"]'",
+        ),
+        "no_change_display_authors": (
+            "genres",
+            "UPDATE field_effect_no_changes SET display_authors='[\"Another author\"]'",
+        ),
+        "no_change_kept_value": (
+            "automatic_no_change",
+            "UPDATE field_effect_no_changes SET kept_value_document='\"Another\"'",
         ),
         "preview_digest": (
             "cover",

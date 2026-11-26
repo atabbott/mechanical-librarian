@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _AUTOMATIC_DECIDED_SQL,
     _CURRENT_REVIEW_FROM_SQL,
     _REVIEW_FIELD_ATTENTION_CLEAR_SQL,
     _active_generation_automatic_sql,
@@ -708,7 +709,9 @@ def test_the_statement_carries_the_product_fragments_verbatim() -> None:
 
     Both are sliced from `_REVIEW_FIELD_ATTENTION_CLEAR_SQL` unchanged and
     together are that fragment less its description, automatic and cover
-    clauses, so a field Automatic decided is never excluded.
+    clauses, so a field Automatic decided is never excluded for that alone.
+    Automatic's decision is read there only beside the case's own record
+    answer, which then settles the field as the owner's (C2b-27).
     """
     owner = sample._OWNER_DECISION_CLEAR_SQL
     suspension = sample._SUSPENSION_CLEAR_SQL
@@ -722,7 +725,10 @@ def test_the_statement_carries_the_product_fragments_verbatim() -> None:
     assert _REVIEW_FIELD_ATTENTION_CLEAR_SQL.startswith(owner)
     assert _REVIEW_FIELD_ATTENTION_CLEAR_SQL.endswith(suspension)
     assert _episode_decision_sql("decision") in owner
-    assert "automatic_decisions" not in owner + suspension
+    assert owner.count(_AUTOMATIC_DECIDED_SQL) == 1
+    assert "automatic_decisions" not in (owner + suspension).replace(
+        _AUTOMATIC_DECIDED_SQL, ""
+    )
     assert _REVIEW_FIELD_ATTENTION_CLEAR_SQL not in sample._FIELDS_SQL
 
 

@@ -195,6 +195,8 @@ AUTOMATIC_SITE_CONDITIONS: Mapping[str, frozenset[AutomaticCondition]] = Mapping
     "attention_destinations": AUTOMATIC_SAFETY | {_C.FIELD_AUTOMATIC},
     # Activity's held_back note on a planned automatic write.
     "held_back_note": frozenset({_C.POSTURE}),
+    # _resume_offer_sql: the page's Resume offer and the request's re-check.
+    "resume_offer": frozenset({_C.POSTURE, _C.FIELD_AUTOMATIC}),
 })
 
 

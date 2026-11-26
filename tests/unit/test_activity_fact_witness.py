@@ -36,6 +36,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.schema import _register_casefold
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
@@ -233,7 +234,10 @@ def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Ledger]
 
 
 def _raw(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(path, isolation_level=None)
+    connection = sqlite3.connect(path, isolation_level=None)
+    # A writer of an Attention input reads the record's pins (ADR-0108).
+    _register_casefold(connection)
+    return connection
 
 
 def _drop_trigger(path: Path, name: str) -> str:

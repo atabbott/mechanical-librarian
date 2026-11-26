@@ -23,6 +23,9 @@ import sqlite3
 from collections.abc import Callable
 from typing import cast
 
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    RESUME_REPROJECTION_SQL,
+)
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     accept_preparation_trigger,
     defer_preparation_library_addition,
@@ -79,7 +82,15 @@ _UNMATCHED_PACKAGE_SQL = (
 )
 _RECORDED_SQL = _CASELESS_SQL + " AND NOT " + _UNMATCHED_PACKAGE_SQL
 _NOT_MATCHED_SQL = _CASELESS_SQL + " AND " + _UNMATCHED_PACKAGE_SQL
-_READY_SQL = "w.state='complete' AND w.outcome='case'"
+# A work Resume's request sent back to projection still counts as the ready
+# work it was until projection ends it again (C2b-12): the scan under way
+# never counts fewer works checked.
+_READY_SQL = (
+    "((w.state='complete' AND w.outcome='case') OR " + RESUME_REPROJECTION_SQL + ")"
+)
+_CHECKED_SQL = (
+    "(w.state IN ('complete','failed','stale') OR " + RESUME_REPROJECTION_SQL + ")"
+)
 
 
 # A terminal state is tested before a stage, because `stage` on a failed row is
@@ -94,7 +105,8 @@ _STAGE_BUCKETS = (
     ("admission", "w.state IN ('queued','delayed','running') AND w.stage='admission'"),
     (
         "projection",
-        "w.state IN ('queued','delayed','running') AND w.stage='projection'",
+        "w.state IN ('queued','delayed','running') AND w.stage='projection' "
+        "AND NOT " + RESUME_REPROJECTION_SQL,
     ),
     ("ready", _READY_SQL),
     # A recorded work belongs here rather than nowhere: the buckets partition
@@ -461,7 +473,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 return None
             counts = self._connection.execute(
                 "SELECT "
-                "COALESCE(SUM(CASE WHEN w.state IN ('complete','failed','stale') THEN 1 ELSE 0 END),0),"
+                f"COALESCE(SUM(CASE WHEN {_CHECKED_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_READY_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_BLOCKED_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_RECORDED_SQL} THEN 1 ELSE 0 END),0),"
@@ -525,7 +537,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             rows = self._connection.execute(
                 "SELECT s.scan_id,s.connection_name,s.library_name,s.state,s.total,"
                 "s.rescan_requested,s.updated_at,s.discovery_failure,"
-                "COALESCE(SUM(CASE WHEN w.state IN ('complete','failed','stale') THEN 1 ELSE 0 END),0),"
+                f"COALESCE(SUM(CASE WHEN {_CHECKED_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_READY_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_BLOCKED_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_RECORDED_SQL} THEN 1 ELSE 0 END),0),"

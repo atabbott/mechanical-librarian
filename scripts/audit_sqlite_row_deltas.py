@@ -30,6 +30,7 @@ TEST_NODES = (
 
 def _baseline() -> dict[str, int]:
     connection = sqlite3.connect(":memory:")
+    _register_casefold(connection)
     try:
         _create_schema(connection)
         return {

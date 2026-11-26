@@ -29,6 +29,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
 )
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.persistence import metadata_reports as metadata
+from mechanical_librarian.adapters.persistence import schema
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
     compact_cover_consideration,
@@ -205,6 +206,12 @@ from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.cover_producers import _qualified_cover_report, held_measured_stage
 from tests.support.cover_selections import ALL_COVER_POINTERS, ALL_COVER_SELECTIONS
+from tests.support.owner_field_record import (
+    hold_context,
+    hold_token,
+    insert_record_row,
+    resume,
+)
 from tests.support.proposal_evidence import (
     _claim,
     _exact_edition_cover,
@@ -4424,9 +4431,8 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             cover_confirmation=confirmation,
         )
         assert not authority_adapter.current(operation.plan.authority)
-        assert repository.field_effect_manual_hold_context(
-            automatic.review_case_id, "cover"
-        ) == (snapshot.connection, snapshot.library)
+        held = hold_context(repository, automatic.review_case_id, "cover")
+        assert held == (snapshot.connection, snapshot.library)
         current = repository._connection.execute(
             "SELECT selection.kind FROM " + ALL_COVER_POINTERS + " current "
             "JOIN "
@@ -4457,6 +4463,8 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         (root / "both-pointers").mkdir(mode=0o700)
         both_pointers = root / "both-pointers" / "reports.sqlite"
         hostile = sqlite3.connect(both_pointers)
+        # A writer of an Attention input reads the record's pins (ADR-0108).
+        schema._register_casefold(hostile)
         repository._connection.backup(hostile)
         (guard,) = hostile.execute(
             "SELECT sql FROM sqlite_schema "
@@ -6736,9 +6744,7 @@ def test_human_authority_supersedes_automatic_without_global_suspension() -> Non
                 "SELECT (SELECT COUNT(*) FROM human_decisions),(SELECT COUNT(*) FROM automatic_decisions)"
             ).fetchone()
         )
-        assert ("primary", "ebooks") == repository.field_effect_manual_hold_context(
-            case_id, "title"
-        )
+        assert ("primary", "ebooks") == hold_context(repository, case_id, "title")
         assert (
             AutomaticSafetyState(False, None, ()) == repository.automatic_safety_state()
         )
@@ -6855,13 +6861,6 @@ def test_automatic_tuple_replay_is_exact_and_date_and_title_bundles_are_atomic()
 
 def test_a_pinned_destination_blocks_its_automatic_bundle() -> None:
     """A pin on a bundle's field mints none of the bundle (#1346, AC7)."""
-    from mechanical_librarian.adapters.persistence.field_effect_validation import (
-        FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
-    )
-    from mechanical_librarian.domain.field_effect import (
-        canonical_json as canonical_effect_json,
-    )
-
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         case_id = _case(repository)
@@ -6871,20 +6870,9 @@ def test_a_pinned_destination_blocks_its_automatic_bundle() -> None:
         # bundle check rather than by skipping a single decision.
         assert {field.destination for field in title.outcomes} == {"title"}
         assert all(field.combination_ids for field in title.outcomes)
-        document = {
-            "active": True,
-            "decision_id": "human_decision_" + "1" * 64,
-            "destination": "title",
-            "pending_return": None,
-            "pin": {"fingerprint": "2" * 64, "in_force": True},
-            "review_case_id": case_id,
-            "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
-            "updated_at": 6,
-        }
-        repository._connection.execute(
-            "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
-            "active,updated_at,document) VALUES(?,'title',1,6,?)",
-            (case_id, canonical_effect_json(document)),
+        # A pin on the record of the owner's answers (ADR-0108).
+        insert_record_row(
+            repository._connection, case_id, "title", pin_fingerprint="2" * 64
         )
         repository._record_automatic_outcomes(title, 7)
         repository._record_automatic_outcomes(dates, 8)
@@ -6895,8 +6883,7 @@ def test_a_pinned_destination_blocks_its_automatic_bundle() -> None:
         assert documents[0]["bundle_id"] is not None
         # A hold without a pin does not refuse the decision (ADR-0085).
         repository._connection.execute(
-            "UPDATE field_effect_manual_holds SET document=? WHERE review_case_id=?",
-            (canonical_effect_json({**document, "pin": None}), case_id),
+            "UPDATE owner_field_answers SET pin_fingerprint=NULL"
         )
         repository._record_automatic_outcomes(title, 9)
         assert sorted(
@@ -6908,13 +6895,6 @@ def test_a_pinned_destination_blocks_its_automatic_bundle() -> None:
 
 def test_a_pinned_subtitle_blocks_the_corroborated_split_bundle() -> None:
     """A pin on the split's subtitle mints no title either (#1346, AC7)."""
-    from mechanical_librarian.adapters.persistence.field_effect_validation import (
-        FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
-    )
-    from mechanical_librarian.domain.field_effect import (
-        canonical_json as canonical_effect_json,
-    )
-
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         case_id = _case(repository)
@@ -6945,20 +6925,9 @@ def test_a_pinned_subtitle_blocks_the_corroborated_split_bundle() -> None:
             ),
         )
         dates = _synthetic_automatic_tuple(repository, case_id, "date_precision")
-        document = {
-            "active": True,
-            "decision_id": "human_decision_" + "1" * 64,
-            "destination": "subtitle",
-            "pending_return": None,
-            "pin": {"fingerprint": "2" * 64, "in_force": True},
-            "review_case_id": case_id,
-            "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
-            "updated_at": 6,
-        }
-        repository._connection.execute(
-            "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
-            "active,updated_at,document) VALUES(?,'subtitle',1,6,?)",
-            (case_id, canonical_effect_json(document)),
+        # A pin on the record of the owner's answers (ADR-0108).
+        insert_record_row(
+            repository._connection, case_id, "subtitle", pin_fingerprint="2" * 64
         )
         repository._record_automatic_outcomes(split, 7)
         repository._record_automatic_outcomes(dates, 8)
@@ -6968,8 +6937,7 @@ def test_a_pinned_subtitle_blocks_the_corroborated_split_bundle() -> None:
         assert [value["destination"] for value in documents] == ["publishedDate"]
         # Without the pin the same split records both members as one bundle.
         repository._connection.execute(
-            "UPDATE field_effect_manual_holds SET document=? WHERE review_case_id=?",
-            (canonical_effect_json({**document, "pin": None}), case_id),
+            "UPDATE owner_field_answers SET pin_fingerprint=NULL"
         )
         repository._record_automatic_outcomes(split, 9)
         recorded = [
@@ -9303,9 +9271,7 @@ def test_title_recovery_reprojects_a_successor_that_carries_the_owners_hold(
         occurred_at=5,
     )
     repository.record_human_decision(owner)
-    assert repository.field_effect_manual_hold_token(held_case, "title") == (
-        owner.decision_id
-    )
+    assert hold_token(repository, held_case, "title") == (owner.decision_id)
     repository.set_automatic_safety_state(
         AutomaticSafetyState(
             False, None, (("title_layout", "automatic_admission_failed"),)
@@ -9328,9 +9294,7 @@ def test_title_recovery_reprojects_a_successor_that_carries_the_owners_hold(
         successor_of=silent,
     )
     assert successor != held_case
-    assert repository.field_effect_manual_hold_token(successor, "title") == (
-        owner.decision_id
-    )
+    assert hold_token(repository, successor, "title") == (owner.decision_id)
     assert _automatic_titles(repository, successor) == []
     AutomaticSafetyControls(repository).recover(30, "title_layout")
     action = repository.claim_review_pipeline_action(32)
@@ -9353,9 +9317,7 @@ def test_title_recovery_reprojects_a_successor_that_carries_the_owners_hold(
     assert repository.claim_review_pipeline_action(36) is None
     assert _automatic_titles(repository, successor) == automatic
     # Resume releases the hold, and the automatic decision is then planned.
-    assert repository.clear_field_effect_manual_hold(
-        successor, "title", 40, owner.decision_id
-    )
+    assert resume(repository, successor, "title", 40)
     assert _pending_titles(repository, successor) == automatic
     repository.close()
 

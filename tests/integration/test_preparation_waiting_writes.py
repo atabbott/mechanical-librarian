@@ -14,7 +14,7 @@ that changes the proposals moves on exactly as a requested refresh does
 (ADR-0102).
 
 The field cases drive the real preparation harness of
-`test_leaving_automatic_posture.py`; the cover cases build the same pipeline
+`tests/support/prepared_library.py`; the cover cases build the same pipeline
 over the real owner cover decision of `test_waiting_plan_identity.py`.
 """
 
@@ -52,8 +52,6 @@ from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewAdmissionResult
-from tests.integration.test_leaving_automatic_posture import _PRODUCER, _Library
-from tests.integration.test_leaving_automatic_posture import library as library
 from tests.integration.test_policy_activation_waiting_writes import (
     _CLOSED,
     _activate_cover_policy,
@@ -63,7 +61,11 @@ from tests.integration.test_policy_activation_waiting_writes import (
     _owner_decision_id,
     _reopen_fields,
 )
+from tests.support.owner_field_record import hold_token
 from tests.support.owner_values import rewritten
+from tests.support.prepared_library import PRODUCER as _PRODUCER
+from tests.support.prepared_library import Library as _Library
+from tests.support.prepared_library import library as library
 from tests.unit.test_unmatched_recording_research import _restamped
 from tests.unit.test_waiting_plan_identity import (
     _cleanup,
@@ -728,7 +730,7 @@ def _changed_search_rows(
     )
     _assert_field_closed(library, lane, decision_id, waiting_id)
     return (
-        library.root.field_effect_manual_hold_token(case_after, destination),
+        hold_token(library.root, case_after, destination),
         decision_id,
         tuple(
             library.root._connection.execute(

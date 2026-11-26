@@ -35,14 +35,20 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
 )
 
-# Ledger tables that still reference a derived row, so a regeneration takes
-# their rows too. #2038 C2b deletes the manual holds; the record replaces them.
-UNTIL_C2B = frozenset({"field_effect_manual_holds"})
 _COPIES = {
-    "human_decisions": ("display_title", "target_field_document", "selected_form"),
-    "field_effects": ("display_title",),
-    "field_effect_no_changes": ("display_title",),
-    "owner_authored_descriptions": ("candidate_document",),
+    "human_decisions": (
+        "display_title",
+        "display_authors",
+        "target_field_document",
+        "selected_form",
+    ),
+    "field_effects": ("display_title", "display_authors"),
+    "field_effect_no_changes": (
+        "display_title",
+        "display_authors",
+        "kept_value_document",
+    ),
+    "owner_authored_descriptions": ("candidate_document", "display_authors"),
     "owner_cover_selections": (
         "transport_sha256",
         "width",
@@ -66,13 +72,14 @@ def _tables(connection: sqlite3.Connection) -> set[str]:
 def _ledger_rows(connection: sqlite3.Connection) -> dict[str, list[tuple[object, ...]]]:
     return {
         table: sorted(connection.execute(f"SELECT * FROM {table}"), key=repr)
-        for table in sorted(schema.LEDGER_TABLES - UNTIL_C2B)
+        for table in sorted(schema.LEDGER_TABLES)
     }
 
 
 def _derived_setup() -> dict[str, list[tuple[object, ...]]]:
     """Each derived table and the rows a new schema writes into it."""
     fresh = sqlite3.connect(":memory:")
+    schema._register_casefold(fresh)
     try:
         schema._create_schema(fresh)
         return {
@@ -88,6 +95,7 @@ def _without_triggers[T](path: Path, change: Callable[[sqlite3.Connection], T]) 
     as a hostile edit or a table drop would, then restore each trigger by its
     exact text, so the schema still compares equal; return what it returns."""
     connection = sqlite3.connect(path)
+    schema._register_casefold(connection)
     try:
         triggers = connection.execute(
             "SELECT name,sql FROM sqlite_schema WHERE type='trigger' ORDER BY name"
@@ -109,7 +117,7 @@ def regenerate(path: Path) -> None:
     setup = _derived_setup()
 
     def change(connection: sqlite3.Connection) -> None:
-        for table in (*setup, *sorted(UNTIL_C2B)):
+        for table in setup:
             connection.execute(f"DELETE FROM {table}")
         for table, rows in setup.items():
             for row in rows:

@@ -64,6 +64,7 @@ from mechanical_librarian.adapters.persistence.owner_field_answers import (
     OWNER_FIELD_EVENTS_REQUEST_INDEX_SQL,
     OWNER_FIELD_EVENTS_SQL,
     SETUP_OWNER_ANSWER_ORDINAL_ROW,
+    case_record_sql,
     validate_owner_field_answers,
 )
 from mechanical_librarian.adapters.persistence.owner_settings import (
@@ -78,7 +79,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
     _OWNER_SELECTION_COPIES,
     _OWNER_SELECTION_COPY_JOIN_SQL,
+    _PLAN_OWNER_SQL,
     _PLAN_REPORT_JOIN_SQL,
+    _REPORT_AUTHORS_VALUE_SQL,
+    _REPORT_KEPT_VALUE_SQL,
     _REPORT_TITLE_VALUE_SQL,
 )
 from mechanical_librarian.application.cover_consideration import (
@@ -104,6 +108,7 @@ from mechanical_librarian.domain.human_decision import (
     COVER_SELECTION_AUTHORITY_SCHEMA,
     HumanDecision,
     HumanDecisionError,
+    field_fingerprint,
     keeps_unread_cover,
     manual_cover_eligible,
     owner_cover_selection_kind,
@@ -376,17 +381,30 @@ def _review_value_flags(target: object, providers: object) -> str:
     )
 
 
+def _pin_fingerprint(destination: object, field: object) -> str | None:
+    """`field_fingerprint` of one case's target field as stored JSON, or of
+    none: what a pin on the field is compared with when it is read (S15)."""
+    if type(destination) is not str or (field is not None and type(field) is not str):
+        raise ValueError("pin fingerprint input is invalid")
+    value = None if field is None else json.loads(field)
+    return field_fingerprint(destination, value if type(value) is dict else None)
+
+
 def _register_casefold(connection: sqlite3.Connection) -> None:
     """Give a connection the deterministic functions its facts were derived by.
 
     Every connection that inserts a report fires the browse-fact trigger, and
     every connection that validates facts recomputes them, through the fold
-    and the value flags (#1334). One that lacks them fails with `no such
-    function` and writes or accepts nothing.
+    and the value flags (#1334). Every connection that writes an input of the
+    attention facts reads a pin's fingerprint (ADR-0108). One that lacks them
+    fails with `no such function` and writes or accepts nothing.
     """
     connection.create_function("ml_casefold", 1, _review_casefold, deterministic=True)
     connection.create_function(
         "ml_value_flags", 2, _review_value_flags, deterministic=True
+    )
+    connection.create_function(
+        "ml_pin_fingerprint", 2, _pin_fingerprint, deterministic=True
     )
 
 
@@ -943,10 +961,12 @@ _HUMAN_DECISIONS_SQL = (
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536), "
     # A ledger row keeps its work and what its readers show when the case is
-    # gone (ADR-0108): the case's display title, its target field as read
-    # ('null' where it read none) and an accepted description's chosen copy.
+    # gone (ADR-0108): the case's display title and authors, its target field
+    # as read ('null' where it read none) and an accepted description's chosen
+    # copy.
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'), "
+    "display_authors TEXT CHECK(display_authors IS NULL OR (typeof(display_authors)='text' AND json_valid(display_authors) AND json_type(display_authors)='array')), "
     "target_field_document TEXT NOT NULL CHECK(typeof(target_field_document)='text' AND json_valid(target_field_document) AND json_type(target_field_document) IN ('object','null')), "
     "selected_form TEXT CHECK(selected_form IS NULL OR (typeof(selected_form)='text' AND destination='description' AND outcome='accept')), "
     # The selected value is null or one closed kind; the owner's empty value
@@ -1326,16 +1346,6 @@ _FIELD_EFFECT_CONSENTS_SQL = (
     "current INTEGER NOT NULL CHECK(current IN (0,1)), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096))"
 )
-_FIELD_EFFECT_MANUAL_HOLDS_SQL = (
-    "CREATE TABLE field_effect_manual_holds ("
-    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
-    "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
-    "active INTEGER NOT NULL CHECK(active IN (0,1)), "
-    "updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
-    "document TEXT NOT NULL CHECK(typeof(document)='text' AND "
-    "length(CAST(document AS BLOB)) BETWEEN 2 AND 4096), "
-    "PRIMARY KEY(review_case_id,destination))"
-)
 _FIELD_EFFECTS_SQL = (
     "CREATE TABLE field_effects ("
     "plan_id TEXT PRIMARY KEY NOT NULL CHECK(plan_id GLOB 'effect_plan_[0-9a-f]*' AND length(plan_id)=76), "
@@ -1344,7 +1354,9 @@ _FIELD_EFFECTS_SQL = (
     "('planned','claimed','applying','reconciling','retryable','verified','stale','superseded','abandoned')), "
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072), "
-    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'))"
+    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'), "
+    # An owner plan's authors, for its author label; Automatic's keep none.
+    "display_authors TEXT CHECK(display_authors IS NULL OR (typeof(display_authors)='text' AND json_valid(display_authors) AND json_type(display_authors)='array')))"
 )
 # Pending, revocation, replacement, history and override reads ask which effects
 # name a decision as their own authority or as their subtitle companion's;
@@ -1378,6 +1390,42 @@ _FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL = (
 _AUTOMATIC_POSTURE_SQL = (
     "EXISTS (SELECT 1 FROM metadata_policy_state "
     "WHERE singleton=1 AND posture='" + AUTOMATIC_POSTURE + "')"
+)
+
+
+def _resume_offer_sql(case: str, destination: str) -> str:
+    """Whether the field of the current case offers Resume automatic handling
+    (C0 `resume_offer`, S11 as D4 amends it): the record holds an unpinned
+    answer for the field of the case's book, Automatic is on, and the field
+    is Automatic: the case's policy sets it to Automatic, or, for the
+    description, the owner's Automatic description advice setting is on,
+    which is what admits Automatic's description (C2b-13). A pause, a
+    suspension or a stale qualification does not hide it: the request waits
+    for a scan that succeeds, and every write still checks them. A cover
+    offers Resume by its own `cover_automatic_held` mark instead (ADR-0108).
+    The posture term is read when this is called, so the site check can
+    bypass it."""
+    return (
+        "(EXISTS ("
+        + case_record_sql(case, destination)
+        + " AND record.pin_fingerprint IS NULL) AND "
+        + _AUTOMATIC_POSTURE_SQL
+        + f" AND CASE WHEN {destination}='description' THEN "
+        + _DESCRIPTION_AUTOMATIC_APPLICATION_SQL
+        + " ELSE EXISTS (SELECT 1 FROM shadow_outcome_field_facts offered "
+        f"WHERE offered.review_case_id={case} AND offered.destination={destination} "
+        "AND offered.automatic_destination=1) END)"
+    )
+
+
+# Whether the owner's Automatic description advice setting is on, as
+# `SQLiteDescriptionAdviceRepository.current_settings` reads it: the saved
+# owner settings, or before any are saved the settings the store was bound
+# with, which it registers as `ml_description_automatic_application`.
+_DESCRIPTION_AUTOMATIC_APPLICATION_SQL = (
+    "COALESCE((SELECT COALESCE(json_extract(settings.document,"
+    "'$.description_advice.automatic_application'),0) FROM owner_settings settings "
+    "WHERE settings.singleton=1),ml_description_automatic_application())=1"
 )
 
 
@@ -1502,7 +1550,13 @@ _FIELD_EFFECT_NO_CHANGES_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, work_id TEXT NOT NULL, destination TEXT NOT NULL, "
     "target_fingerprint TEXT NOT NULL, target_version TEXT NOT NULL, origin TEXT NOT NULL CHECK(origin IN ('human','automatic_policy')), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), event_id TEXT NOT NULL UNIQUE, "
-    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text')) WITHOUT ROWID"
+    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'), "
+    # The owner's row keeps its authors for its author label; Automatic's
+    # keeps none.
+    "display_authors TEXT CHECK(display_authors IS NULL OR (origin='human' AND typeof(display_authors)='text' AND json_valid(display_authors) AND json_type(display_authors)='array')), "
+    # Automatic's row keeps the value it kept, as JSON; the owner's keeps
+    # none, as its decision holds it.
+    "kept_value_document TEXT CHECK(kept_value_document IS NULL OR (origin='automatic_policy' AND typeof(kept_value_document)='text' AND json_valid(kept_value_document)))) WITHOUT ROWID"
 )
 _FIELD_EFFECT_ACTIONS_SQL = (
     "CREATE TABLE field_effect_actions ("
@@ -1747,7 +1801,7 @@ _DESCRIPTION_ADVICE_TABLES = {
     # The owner's choices of advised text are ledger (ADR-0108): they keep
     # the case and candidate ids as plain provenance, their work, and the
     # chosen candidate verbatim. Automatic's are derived.
-    "owner_authored_descriptions": "CREATE TABLE owner_authored_descriptions (decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), candidate_id TEXT NOT NULL CHECK(candidate_id GLOB 'description_candidate_[0-9a-f]*' AND length(candidate_id)=86), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384), connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, candidate_document TEXT NOT NULL CHECK(length(CAST(candidate_document AS BLOB)) BETWEEN 2 AND 131072), ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal)='integer' AND ordinal>0), episode INTEGER NOT NULL CHECK(typeof(episode)='integer' AND episode>=0 AND episode<ordinal), display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'))",
+    "owner_authored_descriptions": "CREATE TABLE owner_authored_descriptions (decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79), review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), candidate_id TEXT NOT NULL CHECK(candidate_id GLOB 'description_candidate_[0-9a-f]*' AND length(candidate_id)=86), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384), connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, candidate_document TEXT NOT NULL CHECK(length(CAST(candidate_document AS BLOB)) BETWEEN 2 AND 131072), ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal)='integer' AND ordinal>0), episode INTEGER NOT NULL CHECK(typeof(episode)='integer' AND episode>=0 AND episode<ordinal), display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'), display_authors TEXT CHECK(display_authors IS NULL OR (typeof(display_authors)='text' AND json_valid(display_authors) AND json_type(display_authors)='array')))",
     "automatic_description_decisions": "CREATE TABLE automatic_description_decisions (decision_id TEXT PRIMARY KEY NOT NULL CHECK(decision_id GLOB 'automatic_decision_[0-9a-f]*' AND length(decision_id)=83), review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), candidate_id TEXT NOT NULL REFERENCES description_advice_candidates(candidate_id), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384))",
     # The case's chosen advice, from either half; a trigger below requires
     # the decision in exactly one.
@@ -1962,10 +2016,20 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
         "CASE WHEN {row}.scope='destination' THEN {row}.destination END "
         "FROM current_review_packages c WHERE c.connection_name={row}.connection_name",
     ),
-    # A pin in force settles its field and a changed one asks it again.
-    "field_effect_manual_holds": (
+    # The record's answer for a field keeps Automatic's decision from
+    # settling it, settles it on its own case and episode and asks it
+    # elsewhere, unless it is only a pin taken back, and its pin settles or
+    # asks it; Resume's events open, fail and complete what the answer holds
+    # (ADR-0108, C2b-15, C2b-28).
+    "owner_field_answers": (
         ("insert", "update", "delete"),
-        _packages_of_case("{row}.destination"),
+        "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,"
+        "{row}.destination",
+    ),
+    "owner_field_events": (
+        ("insert",),
+        "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,"
+        "{row}.destination",
     ),
 }
 
@@ -2007,7 +2071,7 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
     ),
     "review_case_episodes": ("review_case_id", "decision_floor"),
     "metadata_policy_state": ("generation",),
-    "current_description_decisions": ("review_case_id",),
+    "current_description_decisions": ("review_case_id", "decision_id"),
     "current_cover_considerations": ("review_case_id", "consideration_id"),
     # Any owner's choice settles its work's cover, whichever it names.
     "owner_cover_pointers": ("connection_name", "library_name", "item_id"),
@@ -2018,11 +2082,16 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
         "selection_id",
     ),
     "field_effect_suspensions": ("scope", "connection_name", "destination"),
-    "field_effect_manual_holds": (
-        "review_case_id",
+    "owner_field_answers": (
+        "connection_name",
+        "library_name",
+        "item_id",
         "destination",
-        "active",
-        "document",
+        "review_case_id",
+        "episode",
+        "answer_id",
+        "open_resume_id",
+        "pin_fingerprint",
     ),
 }
 
@@ -2068,9 +2137,14 @@ _ATTENTION_FACT_OBJECTS: tuple[tuple[str, str, str], ...] = (
 
 
 def _create_attention_facts(connection: sqlite3.Connection) -> None:
-    """Create #1232's objects and derive every fact from the current rows."""
+    """Create #1232's objects and derive every fact from the current rows.
+
+    Deriving them reads a pin's fingerprint from the record (ADR-0108), so
+    the creating connection registers the functions the facts are derived by.
+    """
     for _kind, _name, statement in _ATTENTION_FACT_OBJECTS:
         connection.execute(statement)
+    _register_casefold(connection)
     connection.execute(
         "INSERT INTO review_attention_refresh(connection_name,library_name,item_id,"
         "destination) SELECT connection_name,library_name,item_id,NULL "
@@ -2199,7 +2273,6 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_FIELD_EFFECT_SUSPENSIONS_SQL)
     connection.execute(_FIELD_EFFECT_AUTHORITIES_SQL)
     connection.execute(_FIELD_EFFECT_CONSENTS_SQL)
-    connection.execute(_FIELD_EFFECT_MANUAL_HOLDS_SQL)
     connection.execute(_FIELD_EFFECTS_SQL)
     connection.execute(_FIELD_EFFECTS_DECISION_INDEX_SQL)
     connection.execute(_FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL)
@@ -2545,7 +2618,6 @@ def _decision_and_field_effect_objects() -> tuple[tuple[str, str, str | None], .
         ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),
         ("table", "field_effect_cleanups", _FIELD_EFFECT_CLEANUPS_SQL),
         ("table", "field_effect_consents", _FIELD_EFFECT_CONSENTS_SQL),
-        ("table", "field_effect_manual_holds", _FIELD_EFFECT_MANUAL_HOLDS_SQL),
         ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
         ("table", "field_effect_no_changes", _FIELD_EFFECT_NO_CHANGES_SQL),
         ("table", "field_effects", _FIELD_EFFECTS_SQL),
@@ -2572,7 +2644,6 @@ def _decision_and_field_effect_objects() -> tuple[tuple[str, str, str | None], .
         ("index", "sqlite_autoindex_field_effect_authorities_1", None),
         ("index", "sqlite_autoindex_field_effect_cleanups_1", None),
         ("index", "sqlite_autoindex_field_effect_consents_1", None),
-        ("index", "sqlite_autoindex_field_effect_manual_holds_1", None),
         ("index", "sqlite_autoindex_field_effects_1", None),
         ("index", "field_effects_decision", _FIELD_EFFECTS_DECISION_INDEX_SQL),
         (
@@ -2869,8 +2940,7 @@ def _review_objects() -> tuple[tuple[str, str, str | None], ...]:
 # budgets and paid capped artefacts. Every other table and view is derived and
 # recomputed from the library, its providers and the ledger. A ledger row never
 # references a derived row; tests/unit/test_ledger_partition_schema.py pins the
-# derived list and both directions. Until C2b the manual holds are listed
-# whole.
+# derived list and both directions.
 LEDGER_TABLES = frozenset(
     {
         "automatic_safety_state",
@@ -2882,7 +2952,6 @@ LEDGER_TABLES = frozenset(
         "field_effect_consents",
         "field_effect_control",
         "field_effect_events",
-        "field_effect_manual_holds",
         "field_effect_no_changes",
         "field_effect_suspensions",
         "field_effects",
@@ -3135,9 +3204,11 @@ _OWNER_ITEM_KEY_DISAGREES_SQL = (
 # A ledger copy that disagrees with the derived row it was copied from while
 # that row is there (ADR-0108). Cases, reports and decisions never change, so
 # each copy equals them for as long as they exist: an owner decision's work,
-# fingerprint, title and target field are its case's; an authored
-# description's title its case's; a plan's and a no-change row's title the
-# report they name; and a transition's size and settled counts its items'.
+# fingerprint, title, authors and target field are its case's; an authored
+# description's title and authors its case's; a plan's and a no-change row's
+# title the report they name, and the owner's their authors too (Automatic's
+# keep none); Automatic's no-change row's kept value that report's; and a
+# transition's size and settled counts its items'.
 # Items or not, an owner decision's event names the decision's case and a
 # transition's state is the one its counts give.
 _CASE_FACT_SQL = "json_extract(review.document,'$.{}')"
@@ -3154,6 +3225,8 @@ _LEDGER_COPY_DISAGREES_SQL = (
     + _CASE_FACT_SQL.format("target_fingerprint")
     + " OR decision.display_title IS NOT "
     + _REPORT_TITLE_VALUE_SQL
+    + " OR decision.display_authors IS NOT "
+    + _REPORT_AUTHORS_VALUE_SQL
     # The target's field for the destination, the first that names it, as
     # `decision_copies` reads it; json() renders both texts alike.
     + " OR json(decision.target_field_document) IS NOT COALESCE((SELECT "
@@ -3165,14 +3238,26 @@ _LEDGER_COPY_DISAGREES_SQL = (
     "JOIN metadata_reports report ON report.report_id=review.report_id "
     "WHERE authored.display_title IS NOT "
     + _REPORT_TITLE_VALUE_SQL
+    + " OR authored.display_authors IS NOT "
+    + _REPORT_AUTHORS_VALUE_SQL
     + " UNION ALL SELECT 1 FROM field_effect_no_changes named "
     "JOIN metadata_reports report ON report.report_id=named.report_id "
     "WHERE named.display_title IS NOT "
     + _REPORT_TITLE_VALUE_SQL
-    + " UNION ALL SELECT 1 FROM field_effects effect"
+    + " OR named.display_authors IS NOT CASE WHEN named.origin='human' THEN "
+    + _REPORT_AUTHORS_VALUE_SQL
+    + " END OR json(named.kept_value_document) IS NOT CASE WHEN "
+    "named.origin='automatic_policy' THEN "
+    + _REPORT_KEPT_VALUE_SQL
+    + " END UNION ALL SELECT 1 FROM field_effects effect"
     + _PLAN_REPORT_JOIN_SQL
-    + " WHERE report.report_id IS NOT NULL AND effect.display_title IS NOT "
+    + " WHERE report.report_id IS NOT NULL AND (effect.display_title IS NOT "
     + _REPORT_TITLE_VALUE_SQL
+    + " OR effect.display_authors IS NOT CASE WHEN "
+    + _PLAN_OWNER_SQL
+    + " THEN "
+    + _REPORT_AUTHORS_VALUE_SQL
+    + " END)"
     + " UNION ALL SELECT 1 FROM metadata_policy_transitions transition "
     "JOIN (SELECT transition_id,count(*) AS total,sum(state='complete') AS completed,"
     "sum(state='failed') AS failed FROM metadata_policy_transition_items "

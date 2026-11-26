@@ -9,6 +9,7 @@ import pytest
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.schema import _register_casefold
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.proposal_sets import (
     GetProposalSet,
@@ -360,6 +361,8 @@ def test_actual_v32_baseline_table_refuses_before_rows_without_mutation(
         )
         connection.execute("PRAGMA writable_schema=OFF")
     with sqlite3.connect(path) as connection:
+        # A writer of an Attention input reads the record's pins (ADR-0108).
+        _register_casefold(connection)
         if populated:
             document = capsule["proposal_document"]
             proposal = json.loads(document)

@@ -38,7 +38,10 @@ from tests.support.ledger_partition import (
     reopen_without_derived_rows,
     rewrite_no_change,
 )
-from tests.support.owner_field_record import record_recomputes  # noqa: F401
+from tests.support.owner_field_record import (
+    hold_token,
+    record_recomputes,  # noqa: F401
+)
 from tests.unit.test_reviewer_access_application import _Auth
 
 
@@ -497,10 +500,7 @@ def test_owner_can_choose_advice_on_a_description_every_source_repeats(
         "choose-advice-every-source-repeats",
     )
     assert acknowledgement["advised"] is True
-    assert (
-        repository.field_effect_manual_hold_token(binding.review_case_id, "description")
-        is not None
-    )
+    assert hold_token(repository, binding.review_case_id, "description") is not None
     assert repository._connection.execute(
         "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
         "+(SELECT count(*) FROM automatic_description_decisions)"

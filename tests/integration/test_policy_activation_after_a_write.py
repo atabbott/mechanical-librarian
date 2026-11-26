@@ -35,16 +35,14 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import TargetDestination
 from mechanical_librarian.domain.review_case import ReviewCase
-from tests.integration.test_leaving_automatic_posture import (
-    _PRODUCER,
-    _accept,
-    _applier,
-    _Held,
-    _Library,
-    _planned,
-    _prepared,
-    _read,
-)
+from tests.integration.test_leaving_automatic_posture import _read
+from tests.support.prepared_library import PRODUCER as _PRODUCER
+from tests.support.prepared_library import Held as _Held
+from tests.support.prepared_library import Library as _Library
+from tests.support.prepared_library import accept as _accept
+from tests.support.prepared_library import applier as _applier
+from tests.support.prepared_library import planned as _planned
+from tests.support.prepared_library import prepared as _prepared
 
 _SITES = ("publication", "advance")
 
@@ -215,8 +213,8 @@ def test_a_changed_policy_reads_a_written_work_again(
     case = library.case()
     library.root.record_human_decision(_answer(case, "pin", "pin-after-the-read", 40))
     assert library.root._connection.execute(
-        "SELECT count(*) FROM field_effect_manual_holds WHERE active=1 "
-        "AND destination='authors' AND review_case_id=?",
+        "SELECT count(*) FROM owner_field_answers WHERE destination='authors' "
+        "AND pin_fingerprint IS NOT NULL AND review_case_id=?",
         (case.review_case_id,),
     ).fetchone() == (1,)
     library.root.record_human_decision(

@@ -14,7 +14,7 @@ case an earlier activation retired and preparation never readmitted, since that
 case can return only as a new episode (#1657).
 
 The field cases drive the real preparation harness of
-`test_leaving_automatic_posture.py`; the cover cases drive the real owner cover
+`tests/support/prepared_library.py`; the cover cases drive the real owner cover
 decision of `test_waiting_plan_identity.py`.
 """
 
@@ -63,9 +63,10 @@ from mechanical_librarian.domain.metadata_policy import (
     resolve_policy,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet
-from tests.integration.test_leaving_automatic_posture import _accept, _Library
-from tests.integration.test_leaving_automatic_posture import library as library
 from tests.support.field_effects import Clock
+from tests.support.prepared_library import Library as _Library
+from tests.support.prepared_library import accept as _accept
+from tests.support.prepared_library import library as library
 from tests.unit.test_waiting_plan_identity import (
     _cleanup,
     _CoverLane,

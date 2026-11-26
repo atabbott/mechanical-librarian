@@ -52,12 +52,19 @@ unchanged evidence and library values, a backup and a read-back check
 Your decision on a field always overrides Automatic for that field. It holds
 the field, whatever the mode or setting when you gave it: Automatic leaves the
 field alone on every later read of the work until you choose Resume automatic
-handling, which the field offers once Automatic has a decision for it
+handling and its checks finish. The field offers Resume while Automatic is on
+and the field is set to Automatic; the description offers it while
+**Automatically apply ready description advice** is on
 ([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
-Amendment 1). Withdrawing a decision removes the hold it set. While Automatic
-has a decision for the field, you cannot withdraw yours. Resume automatic
-handling removes the hold instead. A decision Automatic made before you last
-left Automatic doesn't count, since it decides nothing now
+Amendment 1). A later read that gives the work a new case asks you again a
+field you made a choice on, where that case offers a choice for it, even where
+Automatic decided it there; with no choice to make, the field reads as decided. Withdrawing a decision gives the
+field back to your answer from an earlier read of the work, if there is one,
+and Automatic stays off it; otherwise Automatic decides the field from the
+work's next read. After you choose Resume automatic handling, Automatic's
+decision for the field, if it has one, takes the place of yours, which can
+then no longer be withdrawn unless the Resume fails. A decision Automatic made
+before you last left Automatic doesn't count, since it decides nothing now
 ([ADR-0036](../architecture/decisions/0036-qualified-decision-only-automatic-policy.md)). Clearing a subtitle, publisher, genres or
 narrators is an answer like any other: it holds the field and ends a pin on
 it, and the cleared field can be pinned, so a source still offering a value
@@ -72,14 +79,15 @@ nothing itself; a value you chose is still written as usual. While the library
 shows the pinned value, the field stays out of Attention whatever its setting
 or reason, Automatic decides nothing for it (a title and subtitle split counts
 as one), description advice adds nothing, Book matching does not ask it again
-and the field's hold blocks every write. If a later read shows another
+and your pin blocks every write. If a later read shows another
 value, the field returns to Attention with the pinned value beside it, and
 Automatic still decides nothing; pinning the new value or Unpin settles it.
-Unpin removes the pin but keeps the hold, so Automatic writes nothing for the
+Unpin removes the pin but keeps your answer, so Automatic writes nothing for the
 field until Resume automatic handling. Where the field is Automatic and you
-only pinned it, Automatic still decides it on that work, so Resume shows
-there. Choosing another value ends the pin. A field has no pin
-while a change that is not your own standing answer waits to be written, after
+only pinned it, Automatic still decides it on that work and later ones where
+it has something to decide, and the field then reads as decided. Otherwise a
+pin taken back reads as if you had not pinned it, or, for a field set to
+Automatic, in Preview as held. Choosing another value ends the pin. A field has no pin while a change that is not your own standing answer waits to be written, after
 Resume automatic handling until you choose again, on a description while your
 choice of the adviser's text stands, where the library's value could not be
 read, and on covers

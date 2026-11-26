@@ -18,8 +18,29 @@ from mechanical_librarian.adapters.persistence import cover_taste, field_effect_
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
+from mechanical_librarian.domain.activity_records import (
+    _pinned_report,
+    _reported_value,
+    author_label,
+    report_work_labels,
+)
 from mechanical_librarian.domain.description_advice import DescriptionAdviceCandidate
+from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.review_case import ReviewCase
+
+
+def _authors(
+    repository: SQLiteMetadataReportRepository, report_id: object, copy: object
+) -> bool:
+    """Whether an owner row's authors copy reads as the author label its
+    report gives Activity now (ADR-0108)."""
+    (document,) = repository._connection.execute(
+        "SELECT document FROM metadata_reports WHERE report_id=?", (report_id,)
+    ).fetchone()
+    shown = report_work_labels(MetadataReport.from_json(document))[1]
+    if copy is None:
+        return shown == "Author details are not recorded"
+    return author_label(json.loads(cast(str, copy))) == shown
 
 
 def _arm(repository: SQLiteMetadataReportRepository, arm: Any) -> list[Any]:
@@ -51,11 +72,13 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
     checked: Counter[str] = Counter()
     # Activity: an owner decision's row reads its case's report.
     for row in _arm(repository, field_effect_activity._human_decision_arm):
-        assert connection.execute(
-            "SELECT connection_name,library_name,item_id,display_title "
-            "FROM human_decisions WHERE decision_id=?",
+        (*copies, authors) = connection.execute(
+            "SELECT connection_name,library_name,item_id,display_title,"
+            "display_authors FROM human_decisions WHERE decision_id=?",
             (row[17],),
-        ).fetchone() == (row[1], row[3], row[8], row[11])
+        ).fetchone()
+        assert tuple(copies) == (row[1], row[3], row[8], row[11])
+        assert _authors(repository, row[6], authors)
         assert connection.execute(
             "SELECT connection_name,library_name,item_id FROM human_decision_events "
             "WHERE event_id=?",
@@ -64,18 +87,44 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
         checked["activity_human_decision"] += 1
     # Activity: a write plan's rows read the report of its decision's case.
     for row in _arm(repository, field_effect_activity._field_effect_arm):
-        (title, decision_id) = connection.execute(
-            "SELECT display_title,decision_id FROM field_effects WHERE plan_id=?",
+        (title, authors, decision_id) = connection.execute(
+            "SELECT display_title,display_authors,decision_id FROM field_effects "
+            "WHERE plan_id=?",
             (row[15],),
         ).fetchone()
         assert title == row[11]
-        checked["activity_field_effect_" + _origin(repository, decision_id)] += 1
-    # Activity: a no-change row reads its own report.
+        origin = _origin(repository, decision_id)
+        # Only the owner's plans keep their authors.
+        if origin in {"human", "owner_description"}:
+            assert _authors(repository, row[6], authors)
+        else:
+            assert authors is None
+        checked["activity_field_effect_" + origin] += 1
+    # Activity: a no-change row reads its own report, and Automatic's the
+    # value it kept from it.
     for row in _arm(repository, field_effect_activity._field_effect_no_change_arm):
-        assert connection.execute(
-            "SELECT display_title FROM field_effect_no_changes WHERE event_id=?",
+        (title, authors, kept, fingerprint) = connection.execute(
+            "SELECT display_title,display_authors,kept_value_document,"
+            "target_fingerprint FROM field_effect_no_changes WHERE event_id=?",
             (row[0],),
-        ).fetchone() == (row[11],)
+        ).fetchone()
+        assert title == row[11]
+        if row[5] == "human":
+            assert _authors(repository, row[6], authors)
+            assert kept is None
+        else:
+            assert authors is None
+            (document,) = connection.execute(
+                "SELECT document FROM metadata_reports WHERE report_id=?", (row[6],)
+            ).fetchone()
+            shown = _reported_value(
+                _pinned_report(
+                    {"target_fingerprint": fingerprint},
+                    MetadataReport.from_json(document),
+                ),
+                row[2],
+            )
+            assert json.loads(cast(str, kept)) == shown
         checked["activity_no_change_" + row[5]] += 1
     # Activity: an owner's authored description reads its work from its
     # case's report and its candidate from the candidate row.
@@ -89,6 +138,12 @@ def assert_ledger_copies(repository: SQLiteMetadataReportRepository) -> Counter[
     for row in _arm(repository, field_effect_activity._description_decision_arm):
         if row[0] in owner_descriptions:
             assert owner_descriptions[row[0]] == (row[1], row[3], row[8], row[14])
+            (authors,) = connection.execute(
+                "SELECT display_authors FROM owner_authored_descriptions "
+                "WHERE decision_id=?",
+                (row[0],),
+            ).fetchone()
+            assert _authors(repository, row[6], authors)
             checked["activity_owner_description"] += 1
     # Review history: each authored description shows the candidate it chose.
     for decision_id, (*_, candidate_document) in owner_descriptions.items():

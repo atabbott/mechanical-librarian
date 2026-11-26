@@ -43,7 +43,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _REVIEW_FIELD_ATTENTION_CLEAR_SQL,
     _active_generation_automatic_sql,
 )
-from mechanical_librarian.adapters.persistence.schema import _SINGLE_SOURCE_CHOICE_SQL
+from mechanical_librarian.adapters.persistence.schema import (
+    _SINGLE_SOURCE_CHOICE_SQL,
+    _register_casefold,
+)
 from mechanical_librarian.domain.reviewer_decision_summary import correlation_identity
 
 DEFAULT_ORIGIN = "http://localhost:8080"
@@ -124,6 +127,8 @@ def _open_read_only(path: Path) -> sqlite3.Connection:
     absolute = str(path.absolute())
     connection = sqlite3.connect(f"file:{quote(absolute, safe='/')}?mode=ro", uri=True)
     connection.execute("PRAGMA query_only=ON")
+    # The owner-decision clause reads a pin's fingerprint (ADR-0108).
+    _register_casefold(connection)
     return connection
 
 

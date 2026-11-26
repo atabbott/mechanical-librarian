@@ -21,6 +21,7 @@ import httpx
 import pytest
 
 import mechanical_librarian.bootstrap.composition as composition
+from mechanical_librarian.adapters.persistence import owner_field_answers
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -907,9 +908,7 @@ def test_successor_discovery_retains_terminal_presentation_work(
     ).fetchone()
     assert before_sequence is not None
     if outcome == "failed":
-        with patch.object(
-            repository, "_has_pending_field_effect_manual_return", return_value=True
-        ):
+        with patch.object(repository, "has_open_resume_for_scan", return_value=True):
             assert repository.claim_review_pipeline_action(105) is None
     else:
         assert repository.claim_review_pipeline_action(105) is None
@@ -7678,7 +7677,7 @@ def test_failed_discovery_preserves_the_requested_successor(
 
     with patch.object(
         repository,
-        "_has_pending_field_effect_manual_return",
+        "has_open_resume_for_scan",
         return_value=True,
     ):
         repository.fail_review_pipeline_action(discovery, "failed", False, 13)
@@ -7710,7 +7709,7 @@ def test_failed_processing_preserves_the_requested_successor(
 
     with patch.object(
         repository,
-        "_has_pending_field_effect_manual_return",
+        "has_open_resume_for_scan",
         return_value=True,
     ):
         assert repository.claim_review_pipeline_action(16) is None
@@ -7720,6 +7719,98 @@ def test_failed_processing_preserves_the_requested_successor(
     successor = repository.claim_review_pipeline_action(17)
     assert successor is not None
     assert successor.stage == "discovery"
+    repository.close()
+
+
+def _open_resume_on(repository: SQLiteMetadataReportRepository, scan_id: str) -> None:
+    """An open Resume request on the scan, as the hold Resume site writes it."""
+    connection = repository._connection
+    with connection:
+        owner_field_answers._append_event(
+            connection,
+            ("primary", "fiction", "item-1", "title"),
+            "resume_requested",
+            request_id=None,
+            scan_id=scan_id,
+            answer_id=None,
+            at=1,
+        )
+
+
+def _failed_resumes(
+    repository: SQLiteMetadataReportRepository,
+) -> list[tuple[str, int]]:
+    return repository._connection.execute(
+        "SELECT scan_id,occurred_at FROM owner_field_events "
+        "WHERE kind='resume_failed' ORDER BY rowid"
+    ).fetchall()
+
+
+@pytest.mark.parametrize("successor", (False, True), ids=("fails", "requeued"))
+def test_a_failed_discovery_fails_the_open_resumes_on_its_scan(
+    application_path: Path, successor: bool
+) -> None:
+    """A scan that ends with failures writes `resume_failed` for each open
+    Resume on it in the same transaction; one queued again instead does not
+    (ADR-0108). The seam resolves through the repository at call time."""
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    _open_resume_on(repository, discovery.scan_id)
+    if successor:
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 12)
+    with patch.object(
+        repository,
+        "has_open_resume_for_scan",
+        return_value=True,
+    ):
+        repository.fail_review_pipeline_action(discovery, "failed", False, 13)
+    assert _failed_resumes(repository) == (
+        [] if successor else [(discovery.scan_id, 13)]
+    )
+    repository.close()
+
+
+@pytest.mark.parametrize("ending", ("failed", "stale", "requeued"))
+def test_a_scan_settled_with_failures_fails_the_open_resumes_on_it(
+    application_path: Path, ending: str
+) -> None:
+    successor = ending == "requeued"
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("item-1", "1" * 64),), 12
+    )
+    work = repository.claim_review_pipeline_action(13)
+    assert work is not None
+    _open_resume_on(repository, discovery.scan_id)
+    if successor:
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 14)
+    if ending == "stale":
+        with repository._connection:
+            repository._connection.execute(
+                "UPDATE review_preparation_work SET state='stale',"
+                "failure_code='stale',updated_at=15 WHERE work_id=?",
+                (work.action_id,),
+            )
+    else:
+        repository.fail_review_pipeline_action(work, "failed", False, 15)
+    with patch.object(
+        repository,
+        "has_open_resume_for_scan",
+        return_value=True,
+    ):
+        assert repository.claim_review_pipeline_action(16) is None
+    assert repository._connection.execute(
+        "SELECT state FROM review_preparation_scans WHERE scan_id=?",
+        (discovery.scan_id,),
+    ).fetchone() == ("queued" if successor else "completed_with_failures",)
+    assert _failed_resumes(repository) == (
+        [] if successor else [(discovery.scan_id, 16)]
+    )
     repository.close()
 
 
@@ -8799,7 +8890,7 @@ def test_manual_return_successor_discards_failed_scan_absence_candidates(
 
     with patch.object(
         repository,
-        "_has_pending_field_effect_manual_return",
+        "has_open_resume_for_scan",
         return_value=True,
     ):
         assert repository.claim_review_pipeline_action(16) is None

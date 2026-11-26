@@ -114,7 +114,7 @@ Tables fall into six kinds. The kind decides the table's write rule.
 | Current pointers | Updated in the transaction that publishes or admits their target | `current_metadata_reports`, `current_metadata_report_lineages`, `current_review_case_lineages`, `current_review_packages`, `current_cover_considerations`, `owner_cover_pointers`, `automatic_cover_pointers`, `current_description_advice`, `current_description_decisions`, `review_case_episodes`, `review_case_level_reconciliation` |
 | Derived facts | Written only by triggers, in the same statement or transaction as their source | `review_case_field_facts`, `shadow_outcome_field_facts`, `metadata_report_browse_facts`, `metadata_report_browse_authors`, `metadata_report_value_flags`, `proposal_set_browse_facts`, `review_attention_facts` |
 | Operational and recovery state | Mutable state machines with their own restart rules | `review_preparation_scans`, `review_preparation_work`, `review_preparation_absences`, `review_preparation_connection_conditions`, `review_preparation_presentation`, `description_preparation_pending`, `description_advice_attempts`, `provider_recovery_outbox`, `metadata_policy_transitions`, `metadata_policy_transition_items`, `metadata_policy_resolutions`, `field_effects`, `field_effect_actions`, `field_effect_cleanups`, `review_preparation_control` |
-| Controls, settings and credentials | Singletons or scoped rows changed only by their own command | `metadata_policy_state`, `review_preparation_owner_control`, `automatic_safety_state`, `field_effect_control`, `field_effect_suspensions`, `field_effect_authorities`, `field_effect_consents`, `field_effect_manual_holds`, `owner_field_answers`, `owner_answer_ordinal`, `browse_fact_identity`, `library_visit`, `owner_settings`, `owner_setting_secrets`, `reviewer_access`, `reviewer_access_secrets` |
+| Controls, settings and credentials | Singletons or scoped rows changed only by their own command | `metadata_policy_state`, `review_preparation_owner_control`, `automatic_safety_state`, `field_effect_control`, `field_effect_suspensions`, `field_effect_authorities`, `field_effect_consents`, `owner_field_answers`, `owner_answer_ordinal`, `browse_fact_identity`, `library_visit`, `owner_settings`, `owner_setting_secrets`, `reviewer_access`, `reviewer_access_secrets` |
 
 There is also one view, `review_attention_refresh`, used only to drive
 attention-fact maintenance (see [Derived facts](#derived-facts)).
@@ -168,9 +168,9 @@ What the main aggregates mean, where the table names alone do not say:
   `field_effect_cleanups` its cleanup boundary. `field_effect_no_changes`
   records, as a terminal fact, an automatic candidate equal to the current
   value or an owner's accept of the value the case's latest write holds, so
-  it is never re-planned. Authorities, consents, suspensions, manual
-  holds and the pause control each gate claims independently; a manual hold
-  follows the work across cases (see [Transactions](#transactions)). See
+  it is never re-planned. Authorities, consents, suspensions, the record of
+  the owner's answers and the pause control each gate claims independently;
+  the record is kept per work. See
   [Backups and recovery](../operations/backups-and-recovery.md#guarded-field-effect-recovery)
   for what restart does with in-flight effects.
 - **Provider recovery hand-off.** `provider_recovery_outbox` makes each
@@ -274,11 +274,8 @@ These units are atomic:
   pointers, its browse facts and any package update commit together, after
   rechecking target and media currentness inside the transaction.
 - **Admission.** Proposal and case creation recheck the report and pointers
-  inside SQLite. The case, its transition, lineage pointer, package, derived
-  facts and the work's active manual holds commit together. A hold follows the
-  work to each successor case; a released hold, or one with a return pending,
-  is not carried
-  ([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
+  inside SQLite. The case, its transition, lineage pointer, package and derived
+  facts commit together.
 - **Package cutover.** Lineage, package and `provider_recovery_outbox` enqueue
   commit together; the outbox is drained after commit.
 - **Decisions.** A human decision and its event commit together under one
@@ -586,13 +583,11 @@ proposed). Until regeneration lands, every schema change stays a clean rebuild.
   alone, and the copies [Schema admission](security.md#schema-admission) lists
   against their derived rows while those exist; a live write plan still needs
   its own. A test deletes every derived row and reopens.
-  `field_effect_manual_holds` keeps its foreign key until the record below
-  replaces it.
 - One ledger row per field records the owner's latest answer
   (`owner_field_answers`, ordered by `owner_answer_ordinal`, with the
-  append-only `owner_field_events` for Resume). For now it is written beside
-  `field_effect_manual_holds`, which still decides, and open recomputes it
-  from the owner's decisions and refuses a store whose record differs.
+  append-only `owner_field_events` for Resume). It decides every automatic
+  path and Resume, and open recomputes it from the owner's decisions and
+  refuses a store whose record differs.
 - Planned: `ledger_meta` records the ledger format version, the derived
   version and schema digest, and the derived epoch, which proposal identity
   binds so no case id recurs across a regeneration. `derived_regenerations`

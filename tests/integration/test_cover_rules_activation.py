@@ -94,6 +94,7 @@ from tests.support.audiobook_covers import (
 from tests.support.cover_producers import incumbent_identity
 from tests.support.cover_selections import ALL_COVER_POINTERS, ALL_COVER_SELECTIONS
 from tests.support.field_effects import CAPABILITY, Clock
+from tests.support.owner_field_record import mark_cover_taken_over
 from tests.unit.test_shadow_outcome_persistence import (
     _pipeline_configuration,
     _qualified_cover_report,
@@ -690,7 +691,7 @@ def test_owner_choice_hold_and_fetching_keep_the_measured_switch_a_suggestion(
         first = repository.current_cover_consideration_document(prepared.review_case_id)
         assert first is not None
         assert _selections(repository) == []
-        if condition == "owner":
+        if condition in {"owner", "hold"}:
             case = ReviewCase.create_from_data(
                 json.loads(repository.get_review_case(prepared.review_case_id))["case"]
             )
@@ -717,11 +718,15 @@ def test_owner_choice_hold_and_fetching_keep_the_measured_switch_a_suggestion(
                 },
             )
         if condition == "hold":
-            # A held field: the owner took it back after a write elsewhere.
-            repository._set_field_effect_manual_hold(
-                prepared.review_case_id, "cover", 11, "synthetic-held-decision"
-            )
-            repository._connection.commit()
+            # A held field: the record holds an owner's cover that took it
+            # over from Automatic (ADR-0108, S9), with no owner pointer left.
+            connection = repository._connection
+            (selection,) = connection.execute(
+                "SELECT selection_id FROM owner_cover_selections"
+            ).fetchone()
+            mark_cover_taken_over(connection, selection)
+            connection.execute("DELETE FROM owner_cover_pointers")
+            connection.commit()
         monkeypatch.setattr(
             cover_qualification_policy,
             record,

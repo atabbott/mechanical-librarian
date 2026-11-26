@@ -1,9 +1,9 @@
 """The field-effect aggregate: the writes and the aggregate's own reads.
 
 Owns `field_effects` and every table that hangs off one plan -- the actions
-queue, the authorities, the consents, the manual holds, the capability
-suspensions, the no-change records, the cleanups, the append-only events, and
-the singleton `field_effect_control` pause. Thirty-eight methods move verbatim,
+queue, the authorities, the consents, the capability suspensions, the
+no-change records, the cleanups, the append-only events, and the singleton
+`field_effect_control` pause. Thirty-eight methods move verbatim,
 every `except` block and message intact.
 
 The cross-aggregate query and projection side -- the activity page and the
@@ -52,8 +52,15 @@ from typing import cast
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     FIELD_EFFECT_CONSENT_STATE_SCHEMA,
-    FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
     _consent_state,
+)
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    BUNDLE_ANSWERED_SQL,
+    complete_resume,
+    request_resume,
+)
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    has_open_resume_for_scan as _has_open_resume_for_scan,
 )
 from mechanical_librarian.adapters.persistence.retained_covers import (
     release_put_back_retained_cover,
@@ -62,12 +69,16 @@ from mechanical_librarian.adapters.persistence.retained_covers import (
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
     mark_preparation_work_fresh,
+    requeue_case_projection,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
     _ATTENTION_FACTS_JOIN_SQL,
     _CURRENT_REVIEW_FROM_SQL,
+    _PLAN_AUTHORS_SQL,
     _PLAN_TITLE_SQL,
+    _REPORT_AUTHORS_SQL,
+    _REPORT_KEPT_SQL,
     _REPORT_TITLE_SQL,
     _active_generation_automatic_sql,
 )
@@ -75,6 +86,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
     _FIELD_EFFECT_DEFERRED_SQL,
     _FIELD_EFFECT_READY_STATES_SQL,
+    _resume_offer_sql,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -127,6 +139,18 @@ _DISPLACED_CASES_SQL = (
 )
 
 
+# The owner answers of a field a Resume request covers: its owner decisions
+# and authored descriptions at or below the request's `over_ordinal`, pins
+# and unpins aside; bound by the key and the ordinal twice.
+_COVERED_OWNER_ANSWERS_SQL = (
+    "SELECT decision_id FROM human_decisions WHERE connection_name=? "
+    "AND library_name=? AND item_id=? AND destination=? AND ordinal<=? "
+    "AND outcome NOT IN ('pin','unpin') UNION ALL SELECT decision_id FROM "
+    "owner_authored_descriptions WHERE connection_name=? AND library_name=? "
+    "AND item_id=? AND ?='description' AND ordinal<=?"
+)
+
+
 class SQLiteFieldEffectRepository(ConnectionScoped):
     """Plan, claim, transition, suspend and retire one library's field effects."""
 
@@ -150,8 +174,8 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             [FieldEffectOperation, str, int], None
         ],
         current_cover_authority: Callable[[], tuple[str | None, str | None]],
-        resume_automatic_cover: Callable[[str, str, int], None] = (
-            lambda _case, _decision, _at: None
+        resume_automatic_cover: Callable[[str, str, str, int], None] = (
+            lambda _connection, _library, _item, _at: None
         ),
     ) -> None:
         super().__init__(connection, binding)
@@ -221,8 +245,14 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 else "automatic_policy",
             )
             inserted = self._connection.execute(
-                "INSERT OR IGNORE INTO field_effect_no_changes(decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id,display_title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,"
+                # The owner's row keeps its authors too, Automatic's the
+                # value it kept (ADR-0108).
+                "INSERT OR IGNORE INTO field_effect_no_changes(decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id,display_title,display_authors,kept_value_document) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,"
                 + _REPORT_TITLE_SQL
+                + ",CASE WHEN ?='human' THEN "
+                + _REPORT_AUTHORS_SQL
+                + " END,"
+                + _REPORT_KEPT_SQL
                 + ")",
                 (
                     record.decision_id,
@@ -237,6 +267,11 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     record.origin,
                     record.occurred_at,
                     record.event_id,
+                    record.report_id,
+                    record.origin,
+                    record.report_id,
+                    record.origin,
+                    record.destination,
                     record.report_id,
                 ),
             ).rowcount
@@ -751,92 +786,55 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     ),
                 )
 
-    def _set_field_effect_manual_hold(
-        self,
-        review_case_id: str,
-        destination: str,
-        changed_at: int,
-        decision_id: str,
-        *,
-        pin: dict[str, object] | None = None,
-    ) -> None:
-        document = canonical_effect_json(
-            {
-                "active": True,
-                "destination": destination,
-                "decision_id": decision_id,
-                "pending_return": None,
-                "pin": pin,
-                "review_case_id": review_case_id,
-                "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
-                "updated_at": changed_at,
-            }
-        )
-        # An owner's hold write re-inserts its row, so it takes a fresh rowid
-        # and outranks, on an equal update time, a copy carried to a sibling
-        # case earlier (_WORK_LATEST_MANUAL_HOLDS_SQL). The explicit DELETE
-        # fires the attention delete trigger, as INSERT OR REPLACE would not.
-        self._connection.execute(
-            "DELETE FROM field_effect_manual_holds "
-            "WHERE review_case_id=? AND destination=?",
-            (review_case_id, destination),
-        )
-        self._connection.execute(
-            "INSERT INTO field_effect_manual_holds(review_case_id,destination,active,updated_at,document) "
-            "VALUES(?,?,1,?,?)",
-            (review_case_id, destination, changed_at, document),
-        )
-
     @local_operation
-    def field_effect_manual_hold_context(
+    def owner_field_resume_context(
         self,
         review_case_id: str,
         destination: str,
-    ) -> tuple[str, str] | None:
+    ) -> tuple[str, str, str] | None:
+        """The connection, library and answer of a field Resume may be asked
+        of: the record holds an answer for the field of the current case's
+        book, with no pin on it (ADR-0085, Amendment 2; ADR-0108)."""
+        return self._resume_context(review_case_id, destination)
+
+    def _resume_context(
+        self, review_case_id: str, destination: str
+    ) -> tuple[str, str, str] | None:
         row = self._connection.execute(
-            "SELECT lineage.connection_name,lineage.library_name "
+            "SELECT lineage.connection_name,lineage.library_name,record.answer_id "
             "FROM current_review_case_lineages lineage "
-            "JOIN field_effect_manual_holds hold ON hold.review_case_id=lineage.review_case_id "
-            "WHERE lineage.review_case_id=? AND hold.destination=? AND hold.active=1",
+            "JOIN owner_field_answers record "
+            "ON record.connection_name=lineage.connection_name "
+            "AND record.library_name=lineage.library_name "
+            "AND record.item_id=lineage.item_id "
+            "WHERE lineage.review_case_id=? AND record.destination=? "
+            "AND record.pin_fingerprint IS NULL",
             (review_case_id, destination),
         ).fetchone()
-        return None if row is None else (row[0], row[1])
+        return None if row is None else (row[0], row[1], row[2])
 
     @local_operation
-    def field_effect_manual_hold_token(
+    def request_owner_field_resume(
         self,
         review_case_id: str,
         destination: str,
-    ) -> str | None:
-        row = self._connection.execute(
-            "SELECT document FROM field_effect_manual_holds "
-            "WHERE review_case_id=? AND destination=? AND active=1",
-            (review_case_id, destination),
-        ).fetchone()
-        if row is None:
-            return None
-        try:
-            value = json.loads(row[0])
-            token = value["decision_id"]
-        except (json.JSONDecodeError, KeyError, TypeError) as error:
-            raise FieldEffectError("persistence") from error
-        return token if type(token) is str else None
-
-    @local_operation
-    def request_field_effect_manual_return(
-        self,
-        review_case_id: str,
-        destination: str,
-        hold_token: str,
+        answer_token: str,
         scan_id: str,
         requested_at: int,
         changed_at: int,
     ) -> bool:
-        """Persist an accepted return request against one exact human hold."""
+        """Ask Resume of the record's exact unpinned answer for the field of
+        the current case's book, in one transaction (ADR-0108).
+
+        The request covers every answer up to the counter now, closing an
+        open one superseded. The scan Resume waits on is requeued where it
+        ended with failures, and the current case's projection is requeued
+        with no trigger, so it records Automatic's decision.
+        """
         if (
             any(
                 type(value) is not str or not value
-                for value in (review_case_id, destination, hold_token, scan_id)
+                for value in (review_case_id, destination, answer_token, scan_id)
             )
             or type(requested_at) is not int
             or requested_at < 0
@@ -844,23 +842,27 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             or changed_at < 0
         ):
             raise FieldEffectError("invalid_manual_hold")
-        transaction = self._transaction("request_field_effect_manual_return")
+        transaction = self._transaction("request_owner_field_resume")
         try:
             transaction.begin()
-            row = self._connection.execute(
-                "SELECT document FROM field_effect_manual_holds "
-                "WHERE review_case_id=? AND destination=? AND active=1",
-                (review_case_id, destination),
-            ).fetchone()
-            if row is None:
+            # A pin, or an answer recorded after the caller read the field,
+            # is refused here, in this write's own transaction (ADR-0085,
+            # Amendment 2).
+            context = self._resume_context(review_case_id, destination)
+            if context is None or context[2] != answer_token:
                 transaction.rollback()
                 return False
-            active_document = row[0]
-            raw = json.loads(active_document)
-            # A pin is released only by Unpin, so a pin recorded after the
-            # caller read the hold is refused here, in this write's own
-            # transaction (ADR-0085, Amendment 2).
-            if raw.get("decision_id") != hold_token or raw.get("pin") is not None:
+            # The field must still offer Resume (C0 `resume_offer`): Automatic
+            # on, and the field Automatic on the case (the description by its
+            # advice setting, C2b-13). A cover offers it by its own mark, which
+            # the page reads.
+            if (
+                destination != "cover"
+                and not self._connection.execute(
+                    "SELECT " + _resume_offer_sql(":case", ":destination"),
+                    {"case": review_case_id, "destination": destination},
+                ).fetchone()[0]
+            ):
                 transaction.rollback()
                 return False
             scan = self._connection.execute(
@@ -872,30 +874,18 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "WHERE scan.scan_id=?",
                 (review_case_id, scan_id),
             ).fetchone()
-            if scan is None:
+            if scan is None or (
+                request_resume(
+                    self._connection,
+                    self._case_item(review_case_id),
+                    destination,
+                    scan_id,
+                    requested_at,
+                )
+                is None
+            ):
                 transaction.rollback()
                 return False
-            raw["pending_return"] = {
-                "requested_at": requested_at,
-                "scan_id": scan_id,
-            }
-            raw["updated_at"] = changed_at
-            document = canonical_effect_json(raw)
-            # Re-inserted under the same document guard, so the request takes a
-            # fresh rowid like every owner hold write (_set_field_effect_manual_hold).
-            updated = self._connection.execute(
-                "DELETE FROM field_effect_manual_holds "
-                "WHERE review_case_id=? AND destination=? AND active=1 AND document=?",
-                (review_case_id, destination, active_document),
-            ).rowcount
-            if updated != 1:
-                transaction.rollback()
-                return False
-            self._connection.execute(
-                "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
-                "active,updated_at,document) VALUES(?,?,1,?,?)",
-                (review_case_id, destination, changed_at, document),
-            )
             if scan[0] == "completed_with_failures":
                 requeued = self._connection.execute(
                     "UPDATE review_preparation_scans SET state='queued',discovery_failure=NULL,"
@@ -908,120 +898,113 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 if requeued != 1:
                     transaction.rollback()
                     return False
+            requeue_case_projection(self._connection, review_case_id, changed_at)
             transaction.commit()
             return True
-        except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            sqlite3.Error,
+            TypeError,
+            MetadataReportError,
+        ) as error:
             transaction.rollback()
             raise FieldEffectError("persistence") from error
 
-    def _has_pending_field_effect_manual_return(self, scan_id: str) -> bool:
-        return bool(
-            self._connection.execute(
-                "SELECT EXISTS(SELECT 1 FROM field_effect_manual_holds "
-                "WHERE active=1 AND "
-                "json_extract(document,'$.pending_return.scan_id')=?)",
-                (scan_id,),
-            ).fetchone()[0]
-        )
+    def _case_item(self, review_case_id: str) -> tuple[str, str, str]:
+        """The book of a current case, as the record keys it."""
+        row = self._connection.execute(
+            "SELECT connection_name,library_name,item_id "
+            "FROM current_review_case_lineages WHERE review_case_id=?",
+            (review_case_id,),
+        ).fetchone()
+        if row is None:
+            raise FieldEffectError("persistence")
+        return (row[0], row[1], row[2])
+
+    def has_open_resume_for_scan(self, scan_id: str) -> bool:
+        return _has_open_resume_for_scan(self._connection, scan_id)
 
     @local_operation
-    def clear_field_effect_manual_hold(
+    def complete_owner_field_resume(
         self,
-        review_case_id: str,
+        connection_name: str,
+        library_name: str,
+        item_id: str,
         destination: str,
+        request_id: str,
         changed_at: int,
-        expected_hold_token: str | None = None,
-    ) -> tuple[str, str] | None:
-        """Atomically clear an active hold and return its rescan lineage."""
-        context = self.field_effect_manual_hold_context(review_case_id, destination)
-        if context is None:
-            return None
-        transaction = self._transaction("clear_field_effect_manual_hold")
+    ) -> bool:
+        """Complete the field's open Resume once its scan succeeded, in one
+        transaction (ADR-0108, "Completion").
+
+        It waits, completing nothing, while a write of an owner answer the
+        request covers is claimed, applying or reconciling. Otherwise it
+        revokes those answers' authority, closing a planned or retryable
+        plan of one as superseded, takes the record's answer back where the
+        request covers it, re-arms the active generation's automatic
+        authority for the field on the book's current case, and hands a
+        cover back to Automatic. False where the request is no longer open
+        or a covered write is out.
+        """
+        key = (connection_name, library_name, item_id, destination)
+        transaction = self._transaction("complete_owner_field_resume")
         try:
             transaction.begin()
-            hold = self._connection.execute(
-                "SELECT document FROM field_effect_manual_holds "
-                "WHERE review_case_id=? AND destination=? AND active=1",
-                (review_case_id, destination),
+            over = self._connection.execute(
+                "SELECT over_ordinal FROM owner_field_events WHERE event_id=? "
+                "AND kind='resume_requested' AND connection_name=? "
+                "AND library_name=? AND item_id=? AND destination=? AND NOT EXISTS ("
+                "SELECT 1 FROM owner_field_events closing WHERE "
+                "closing.request_id=owner_field_events.event_id "
+                "AND closing.kind IN ('resume_completed','resume_superseded'))",
+                (request_id, *key),
             ).fetchone()
-            if hold is None:
+            if over is None:
                 transaction.rollback()
-                return None
-            active_document = hold[0]
-            raw = json.loads(active_document)
-            if (
-                expected_hold_token is not None
-                and raw.get("decision_id") != expected_hold_token
+                return False
+            covered = [
+                str(row[0])
+                for row in self._connection.execute(
+                    _COVERED_OWNER_ANSWERS_SQL, (*key, over[0], *key, over[0])
+                )
+            ]
+            if any(
+                self._connection.execute(
+                    "SELECT 1 FROM field_effects WHERE decision_id=? "
+                    "AND state IN ('claimed','applying','reconciling')",
+                    (decision_id,),
+                ).fetchone()
+                for decision_id in covered
             ):
                 transaction.rollback()
-                return None
-            document = canonical_effect_json(
-                {
-                    "active": False,
-                    "decision_id": raw["decision_id"],
-                    "destination": destination,
-                    "review_case_id": review_case_id,
-                    "pending_return": None,
-                    "pin": None,
-                    "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
-                    "updated_at": changed_at,
-                }
-            )
-            # Re-inserted under the same document guard, so the release takes a
-            # fresh rowid like every owner hold write (_set_field_effect_manual_hold).
-            updated = self._connection.execute(
-                "DELETE FROM field_effect_manual_holds "
-                "WHERE review_case_id=? AND destination=? AND active=1 AND document=?",
-                (review_case_id, destination, active_document),
-            ).rowcount
-            if updated == 1:
-                self._connection.execute(
-                    "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
-                    "active,updated_at,document) VALUES(?,?,0,?,?)",
-                    (review_case_id, destination, changed_at, document),
+                return False
+            for decision_id in covered:
+                self._revoke_field_effect_authority_in_transaction(
+                    decision_id, changed_at, required=False
                 )
-            # Only the active generation's decision is held (#1573).
-            automatic = self._connection.execute(
-                "SELECT decision_id FROM automatic_decisions "
-                "WHERE review_case_id=? AND destination=? AND "
-                + _active_generation_automatic_sql("automatic_decisions"),
-                (review_case_id, destination),
+            complete_resume(self._connection, key[:3], destination, changed_at)
+            case = self._connection.execute(
+                "SELECT review_case_id FROM current_review_case_lineages "
+                "WHERE connection_name=? AND library_name=? AND item_id=? "
+                "AND review_case_id IS NOT NULL",
+                key[:3],
             ).fetchone()
-            if updated == 1 and automatic is not None:
-                authority = self._connection.execute(
-                    "SELECT document FROM field_effect_authorities WHERE decision_id=?",
-                    (automatic[0],),
-                ).fetchone()
-                if authority is not None:
-                    authority_document = json.loads(authority[0])
-                    authority_document["current"] = True
-                    authority_document["updated_at"] = changed_at
-                    self._connection.execute(
-                        "UPDATE field_effect_authorities SET current=1,updated_at=?,document=? "
-                        "WHERE decision_id=?",
-                        (
-                            changed_at,
-                            canonical_effect_json(authority_document),
-                            automatic[0],
-                        ),
-                    )
-            if updated == 1 and destination == "cover":
+            if case is not None:
+                self._rearm_resumed_case(case[0], destination, changed_at)
+            if destination == "cover":
                 # Cover Resume (K9): the owner's cover goes back to Automatic
                 # in this transaction, which reads and writes only this store.
-                # The hold names the owner's latest answer, since every cover
-                # answer over a standing hold takes it over.
-                self._resume_automatic_cover(
-                    review_case_id, raw["decision_id"], changed_at
-                )
+                self._resume_automatic_cover(*key[:3], changed_at)
             transaction.commit()
-            return context if updated == 1 else None
+            return True
         except (
             json.JSONDecodeError,
             KeyError,
             sqlite3.Error,
             TypeError,
             # Cover Resume re-runs admission, which refuses stored state it
-            # cannot trust; the release is then undone with it (K9).
+            # cannot trust; the completion is then undone with it (K9).
             MetadataReportError,
             AutomaticDecisionError,
         ) as error:
@@ -1030,6 +1013,38 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         except BaseException:
             transaction.rollback()
             raise
+
+    def _rearm_resumed_case(
+        self, review_case_id: str, destination: str, changed_at: int
+    ) -> None:
+        """On the book's current case, re-arm the active generation's
+        automatic authority for the field (#1573), the current automatic
+        description's included (ADR-0108)."""
+        rearmed = self._connection.execute(
+            "SELECT decision_id FROM automatic_decisions "
+            "WHERE review_case_id=? AND destination=? AND "
+            + _active_generation_automatic_sql("automatic_decisions")
+            + " UNION ALL SELECT current.decision_id FROM current_description_decisions "
+            "current JOIN automatic_description_decisions automatic "
+            "ON automatic.decision_id=current.decision_id "
+            "WHERE current.review_case_id=? AND ?='description'",
+            (review_case_id, destination, review_case_id, destination),
+        ).fetchall()
+        for (decision_id,) in rearmed:
+            authority = self._connection.execute(
+                "SELECT document FROM field_effect_authorities WHERE decision_id=?",
+                (decision_id,),
+            ).fetchone()
+            if authority is None:
+                continue
+            authority_document = json.loads(authority[0])
+            authority_document["current"] = True
+            authority_document["updated_at"] = changed_at
+            self._connection.execute(
+                "UPDATE field_effect_authorities SET current=1,updated_at=?,document=? "
+                "WHERE decision_id=?",
+                (changed_at, canonical_effect_json(authority_document), decision_id),
+            )
 
     @local_operation
     def next_field_effect_plan_id(
@@ -1220,9 +1235,14 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 return persisted
             self._record_plan_authorities(operation)
             self._connection.execute(
-                # The title Activity shows for the plan (ADR-0108).
-                "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,work_id,destination,state,attempt,updated_at,document,display_title) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?," + _PLAN_TITLE_SQL + ")",
+                # The title Activity shows for the plan, and an owner
+                # plan's authors (ADR-0108).
+                "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,work_id,destination,state,attempt,updated_at,document,display_title,display_authors) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,"
+                + _PLAN_TITLE_SQL
+                + ","
+                + _PLAN_AUTHORS_SQL
+                + ")",
                 (
                     operation.plan.plan_id,
                     operation.plan.authority.decision_id,
@@ -1234,6 +1254,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     operation.attempt,
                     operation.updated_at,
                     document,
+                    operation.plan.authority.decision_id,
                     operation.plan.authority.decision_id,
                 ),
             )
@@ -1259,9 +1280,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 ).fetchone()
                 if (
                     row is None
+                    # The record's answer for either half holds the bundle.
                     or self._connection.execute(
-                        "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? AND destination IN ('title','subtitle') AND active=1",
-                        (member.authority.review_case_id,),
+                        BUNDLE_ANSWERED_SQL, (member.authority.review_case_id,) * 2
                     ).fetchone()
                     is not None
                 ):

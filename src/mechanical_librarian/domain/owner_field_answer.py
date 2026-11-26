@@ -3,9 +3,15 @@
 The store writes `owner_field_answers` incrementally in each answer's own
 transaction. This fold recomputes the same rows from the ledger alone: the
 owner's human decisions and authored descriptions in ordinal order, each cover
-answer naming its owner selection. It gives a withdrawal the answer it
-restores, and it is what the recomputation test compares the stored record
-with. Resume's events join it with Resume (C2b); until then no event exists.
+answer naming its owner selection, interleaved with Resume's events. It gives a
+withdrawal the answer it restores, and it is what the recomputation test
+compares the stored record with.
+
+Every event stores `over_ordinal`, the counter's value when it was written
+(for a request, the coverage bound). An event at position c follows every
+answer with ordinal at or below c and precedes every answer above it; events
+at one position keep the order the store wrote them (ADR-0108, "Resume
+automatic handling").
 """
 
 from __future__ import annotations
@@ -69,6 +75,32 @@ class OwnerAnswerRow:
     recorded_at: int
     target_field_document: str
     cover_selection_id: str | None
+
+    @property
+    def key(self) -> ItemKey:
+        return (self.connection_name, self.library_name, self.item_id, self.destination)
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerFieldEventRow:
+    """One `owner_field_events` row, in its column order.
+
+    A request names no request and its ``over_ordinal`` is the bound of the
+    answers it covers; completion, failure and supersession name their
+    request.
+    """
+
+    event_id: str
+    connection_name: str
+    library_name: str
+    item_id: str
+    destination: str
+    kind: str
+    request_id: str | None
+    over_ordinal: int
+    scan_id: str | None
+    answer_id: str | None
+    occurred_at: int
 
     @property
     def key(self) -> ItemKey:
@@ -177,8 +209,59 @@ def pin_fingerprint(row: OwnerAnswerRow, standing: OwnerAnswerRow | None) -> str
     return _shown_fingerprint(row)
 
 
+def _answer(
+    record: dict[ItemKey, OwnerFieldAnswer],
+    stood: dict[str, OwnerFieldAnswer],
+    latest: dict[tuple[str, str], OwnerAnswerRow],
+    row: OwnerAnswerRow,
+) -> None:
+    """Fold one owner answer into ``record``."""
+    key = row.key
+    current = record.get(key)
+    standing = _standing(latest, row) if row.source == "human" else None
+    if row.source == "human" and row.outcome not in _ANNOTATIONS:
+        latest[(row.review_case_id, row.destination)] = row
+    if row.outcome == "unpin":
+        if current is not None:
+            record[key] = replace(current, pin_fingerprint=None)
+    elif row.outcome == "pin" and (
+        standing is not None and standing.outcome in _STANDING_OUTCOMES
+    ):
+        # A pin over a standing answer marks the record; it replaces nothing.
+        if current is not None:
+            record[key] = replace(
+                current, pin_fingerprint=pin_fingerprint(row, standing)
+            )
+    elif row.outcome == "withdraw":
+        if (
+            current is None
+            or standing is None
+            or current.answer_id != standing.answer_id
+        ):
+            pass
+        elif row.cause is not None:
+            # Book matching asked the field again: the answer stays,
+            # but it is no longer carried (ADR-0108).
+            record[key] = replace(current, carry_eligible=False)
+        elif current.previous_answer_id in stood:
+            record[key] = replace(
+                stood[current.previous_answer_id], carry_eligible=False
+            )
+        else:
+            del record[key]
+    else:
+        record[key] = answer_from(
+            row,
+            current,
+            pin_fingerprint(row, standing) if row.outcome == "pin" else None,
+        )
+    if key in record:
+        stood[record[key].answer_id] = record[key]
+
+
 def _fold(
     rows: Iterable[OwnerAnswerRow],
+    events: Iterable[OwnerFieldEventRow] = (),
 ) -> tuple[dict[ItemKey, OwnerFieldAnswer], dict[str, OwnerFieldAnswer]]:
     record: dict[ItemKey, OwnerFieldAnswer] = {}
     # Each answer as it last stood in the record, for a later restore.
@@ -186,63 +269,68 @@ def _fold(
     # Each case field's latest owner decision, pins and unpins aside, so a
     # store's open folds its whole ledger in one pass.
     latest: dict[tuple[str, str], OwnerAnswerRow] = {}
-    for row in sorted(rows, key=lambda value: value.ordinal):
-        key = row.key
-        current = record.get(key)
-        standing = _standing(latest, row) if row.source == "human" else None
-        if row.source == "human" and row.outcome not in _ANNOTATIONS:
-            latest[(row.review_case_id, row.destination)] = row
-        if row.outcome == "unpin":
-            if current is not None:
-                record[key] = replace(current, pin_fingerprint=None)
-        elif row.outcome == "pin" and (
-            standing is not None and standing.outcome in _STANDING_OUTCOMES
-        ):
-            # A pin over a standing answer marks the record; it replaces nothing.
-            if current is not None:
-                record[key] = replace(
-                    current, pin_fingerprint=pin_fingerprint(row, standing)
-                )
-        elif row.outcome == "withdraw":
-            if (
-                current is None
-                or standing is None
-                or current.answer_id != standing.answer_id
-            ):
-                pass
-            elif row.cause is not None:
-                # Book matching asked the field again: the answer stays,
-                # but it is no longer carried (ADR-0108).
-                record[key] = replace(current, carry_eligible=False)
-            elif current.previous_answer_id in stood:
-                record[key] = replace(
-                    stood[current.previous_answer_id], carry_eligible=False
-                )
-            else:
+    requests: dict[str, OwnerFieldEventRow] = {}
+    # Each field's unclosed request, by the order the store wrote them.
+    unclosed: dict[ItemKey, OwnerFieldEventRow] = {}
+    entries: list[tuple[int, int, int, OwnerAnswerRow | OwnerFieldEventRow]] = [
+        (row.ordinal, 0, index, row) for index, row in enumerate(rows)
+    ]
+    entries.extend(
+        (event.over_ordinal, 1, index, event) for index, event in enumerate(events)
+    )
+    for _, _, _, entry in sorted(entries, key=lambda value: value[:3]):
+        if isinstance(entry, OwnerAnswerRow):
+            _answer(record, stood, latest, entry)
+            continue
+        key = entry.key
+        if entry.kind == "resume_requested":
+            requests[entry.event_id] = entry
+            unclosed[key] = entry
+            continue
+        request = requests.get(entry.request_id or "")
+        if request is None or request.key != key:
+            continue
+        if entry.kind == "resume_completed":
+            # Completion hands back every answer the request covers; an
+            # answer given after it was asked superseded it instead.
+            current = record.get(key)
+            if current is not None and current.ordinal <= request.over_ordinal:
                 del record[key]
-        else:
-            record[key] = answer_from(
-                row,
-                current,
-                pin_fingerprint(row, standing) if row.outcome == "pin" else None,
-            )
-        if key in record:
-            stood[record[key].answer_id] = record[key]
+        if entry.kind in {"resume_completed", "resume_superseded"} and (
+            unclosed.get(key) is request
+        ):
+            del unclosed[key]
+    for key, request in unclosed.items():
+        current = record.get(key)
+        if current is not None and current.ordinal <= request.over_ordinal:
+            record[key] = replace(current, open_resume_id=request.event_id)
     return record, stood
 
 
 def fold_owner_field_answers(
     rows: Iterable[OwnerAnswerRow],
+    events: Iterable[OwnerFieldEventRow],
 ) -> dict[ItemKey, OwnerFieldAnswer]:
-    """The record the ledger's owner answers give, by item key and destination."""
-    return _fold(rows)[0]
+    """The record the ledger's owner answers and Resume's events give, by
+    item key and destination.
+
+    A completion deletes the field's answer when the request covers it. The
+    field's one unclosed request stays open on the final answer when it
+    covers that answer: a withdrawal that restores an earlier answer keeps
+    it, a failure changes nothing, and an answer or emptying withdrawal
+    after it closed it with its own event.
+    """
+    return _fold(rows, events)[0]
 
 
 def restored_answer(
     rows: Iterable[OwnerAnswerRow], answer_id: str | None
 ) -> OwnerFieldAnswer | None:
     """The answer ``answer_id`` as a withdrawal restores it: as it last stood
-    in the record, no longer carried; None when it never stood there."""
+    in the record, no longer carried; None when it never stood there.
+
+    It carries no open Resume: the store sets the field's open request on it.
+    """
     if answer_id is None:
         return None
     stood = _fold(rows)[1].get(answer_id)

@@ -12,12 +12,16 @@ from typing import Literal
 
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
     case_episode,
+    case_record_sql,
     next_ordinal,
+    owner_row_counts_sql,
     record_answer,
+    resumed_ordinal_sql,
 )
 from mechanical_librarian.adapters.persistence.owner_links import owner_link_bound
 from mechanical_librarian.adapters.persistence.review_sql import (
     _AUTOMATIC_SAFETY_ROW_SQL,
+    _CASE_AUTHORS_SQL,
     _CASE_TITLE_SQL,
     _authored_description_sql,
 )
@@ -60,18 +64,40 @@ _DESCRIPTION_CHOICE_SQL = (
     "AND destination='description' AND has_owner_decision_actions=1"
 )
 
+# What keeps automatic advice from deciding the case's description (17b): an
+# owner description decision, or the owner's chosen advice, that Resume has
+# not taken back, or a pin on the record (ADR-0085, Amendment 2; ADR-0108).
+_OWNER_KEEPS_ADVICE_OUT_SQL = (
+    "SELECT 1 FROM human_decisions human WHERE human.review_case_id=:case "
+    "AND human.destination='description' AND "
+    + owner_row_counts_sql("human")
+    + " UNION ALL SELECT 1 FROM current_description_decisions chosen "
+    "JOIN owner_authored_descriptions authored "
+    "ON authored.decision_id=chosen.decision_id WHERE chosen.review_case_id=:case "
+    "AND NOT authored.ordinal<=COALESCE("
+    + resumed_ordinal_sql("authored", "'description'")
+    + ",0) UNION ALL "
+    + case_record_sql(":case", "'description'")
+    + " AND record.pin_fingerprint IS NOT NULL LIMIT 1"
+)
+
 
 class SQLiteDescriptionAdviceRepository(ConnectionScoped):
     def __init__(
         self,
         connection: sqlite3.Connection,
         revoke: Callable[[str, int], object] | None = None,
-        manual_hold: Callable[[str, str, int, str], None] | None = None,
     ) -> None:
         super().__init__(connection)
         self._revoke = revoke
-        self._manual_hold = manual_hold
         self._settings = DescriptionAdviceSettings()
+        # The bound setting stands until owner settings are saved; Resume's
+        # offer reads it through this, as `current_settings` does (C2b-13).
+        connection.create_function(
+            "ml_description_automatic_application",
+            0,
+            lambda: int(self._settings.automatic_application),
+        )
         self._identity: Callable[[str, str | None], tuple[str, str] | None] = (
             lambda _engine, _model: None
         )
@@ -316,15 +342,6 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 # Text the reader refuses is never written (#1995, D3).
                 raise ValueError("description advice unreadable")
             case_id = expected_binding.review_case_id
-            # An owner decision or a pin keeps automatic advice out
-            # (ADR-0085, Amendment 2).
-            human = self._connection.execute(
-                "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination='description' "
-                "UNION ALL SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
-                "AND destination='description' AND active=1 "
-                "AND json_type(document,'$.pin')='object' LIMIT 1",
-                (case_id, case_id),
-            ).fetchone()
             prior = self._connection.execute(
                 _authored_description_sql(
                     "SELECT d.document FROM current_description_decisions p JOIN {table} d ON d.decision_id=p.decision_id WHERE p.review_case_id=?"
@@ -333,29 +350,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             ).fetchone()
             choosable = self._description_choosable(case_id)
             if origin == "automatic_policy":
-                safety = self._connection.execute(_AUTOMATIC_SAFETY_ROW_SQL).fetchone()
-                posture = self._connection.execute(
-                    "SELECT posture FROM metadata_policy_state WHERE singleton=1"
-                ).fetchone()
-                if (
-                    not self.current_settings().automatic_application
-                    # Until a shipped record names its adviser, automatic
-                    # advice only suggests (ADR-0099 Decision 10).
-                    or not description_advice_qualified(candidate)
-                    or candidate.output.disposition != "ready"
-                    or not automatic_description_floor_met(candidate.output.description)
-                    or human is not None
-                    or not choosable
-                    # An owner's hold does not refuse the decision: a successor
-                    # carries it with nothing yet to hold, and authority_value
-                    # holds the write (ADR-0085).
-                    or posture != (AUTOMATIC_POSTURE,)
-                    or safety is None
-                    or not automatic_safety_row_permits(safety, "description")
-                    or prior is not None
-                    and AuthoredDescriptionDecision.from_json(prior[0]).origin
-                    == "human"
-                ):
+                if self._automatic_admission_refused(candidate, case_id, choosable):
                     raise ValueError("description automatic admission unavailable")
             elif origin != "human":
                 raise ValueError("invalid description authority")
@@ -438,13 +433,16 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 if work is None:
                     raise ValueError("description advice is stale")
                 # It is an owner answer: its ordinal is the counter's and
-                # its episode and title are its case's now (ADR-0108).
+                # its episode, title and authors are its case's now
+                # (ADR-0108).
                 self._connection.execute(
                     "INSERT INTO owner_authored_descriptions(decision_id,review_case_id,"
                     "candidate_id,idempotency_digest,document,connection_name,"
                     "library_name,item_id,candidate_document,ordinal,episode,"
-                    "display_title) VALUES(?,?,?,?,?,?,?,?,?,?,?,"
+                    "display_title,display_authors) VALUES(?,?,?,?,?,?,?,?,?,?,?,"
                     + _CASE_TITLE_SQL
+                    + ","
+                    + _CASE_AUTHORS_SQL
                     + ")",
                     (
                         *row_values,
@@ -452,6 +450,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                         candidate_document,
                         next_ordinal(self._connection),
                         case_episode(self._connection, case_id),
+                        case_id,
                         case_id,
                     ),
                 )
@@ -467,11 +466,8 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 (case_id, decision.decision_id),
             )
             if origin == "human":
-                if self._manual_hold is None:
-                    raise ValueError("description manual hold unavailable")
-                self._manual_hold(case_id, "description", now, decision.decision_id)
-                # The owner's choice is the field's answer in the record,
-                # written beside the hold (ADR-0108, C2a).
+                # The owner's choice is the field's answer in the record
+                # (ADR-0108).
                 record_answer(
                     self._connection, "authored_description", decision.decision_id
                 )
@@ -481,6 +477,40 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         except BaseException:
             transaction.rollback()
             raise
+
+    def _automatic_admission_refused(
+        self, candidate: DescriptionAdviceCandidate, case_id: str, choosable: bool
+    ) -> bool:
+        """Whether automatic advice may not become the case's description
+        decision (17b).
+
+        Automatic application, a shipped record naming the adviser (ADR-0099
+        Decision 10), ready advice above the floor, a choosable field, the
+        Automatic posture and the shared safety row must all hold, and no
+        owner answer Resume has not taken back, nor a pin, may stand: an
+        owner description decision of the case, the owner's chosen advice on
+        it, or a pin on the record (ADR-0085, Amendment 2; ADR-0108). The
+        record's answer alone does not refuse the decision: a later case
+        records it under that answer, and authority_value holds the write.
+        """
+        safety = self._connection.execute(_AUTOMATIC_SAFETY_ROW_SQL).fetchone()
+        posture = self._connection.execute(
+            "SELECT posture FROM metadata_policy_state WHERE singleton=1"
+        ).fetchone()
+        return (
+            not self.current_settings().automatic_application
+            or not description_advice_qualified(candidate)
+            or candidate.output.disposition != "ready"
+            or not automatic_description_floor_met(candidate.output.description)
+            or self._connection.execute(
+                _OWNER_KEEPS_ADVICE_OUT_SQL, {"case": case_id}
+            ).fetchone()
+            is not None
+            or not choosable
+            or posture != (AUTOMATIC_POSTURE,)
+            or safety is None
+            or not automatic_safety_row_permits(safety, "description")
+        )
 
     def _description_choosable(self, case_id: str) -> bool:
         """Whether the description offers the owner a choice with its advice.
@@ -540,10 +570,10 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             posture = self._connection.execute(
                 "SELECT posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
+            # The record's answer for the description holds the write until
+            # Resume completes (ADR-0108).
             owner_final = self._connection.execute(
-                "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination='description' "
-                "UNION ALL SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? AND destination='description' AND active=1 LIMIT 1",
-                (decision.review_case_id, decision.review_case_id),
+                case_record_sql("?", "'description'"), (decision.review_case_id,)
             ).fetchone()
             # An owner's choice keeps its authority when the offer changes;
             # an automatic one writes only while the field offers a choice.

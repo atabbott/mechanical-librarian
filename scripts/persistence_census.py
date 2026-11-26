@@ -30,6 +30,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _REVIEW_SEARCH_SQL,
     _browse_scalar_sql,
 )
+from mechanical_librarian.adapters.persistence.schema import _pin_fingerprint
 
 # The report statements are imported rather than copied so the census always
 # explains what the report actually runs. Direct execution puts scripts/ on
@@ -86,6 +87,9 @@ def _open_read_only(path: Path) -> sqlite3.Connection:
     )
     connection.create_function(
         "ml_cover_consideration_current", 2, lambda _document, _replay: 0
+    )
+    connection.create_function(
+        "ml_pin_fingerprint", 2, _pin_fingerprint, deterministic=True
     )
     return connection
 

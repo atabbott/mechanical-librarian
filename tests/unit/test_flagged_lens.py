@@ -499,6 +499,9 @@ def test_a_connection_without_the_flag_function_writes_and_validates_nothing(
         connection.create_function(
             "ml_casefold", 1, schema._review_casefold, deterministic=True
         )
+        connection.create_function(
+            "ml_pin_fingerprint", 2, schema._pin_fingerprint, deterministic=True
+        )
         with pytest.raises(sqlite3.OperationalError, match="ml_value_flags"):
             connection.execute(insert, row)
         assert connection.execute(

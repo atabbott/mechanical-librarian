@@ -73,6 +73,9 @@ from mechanical_librarian.adapters.persistence.library_visit import (
 from mechanical_librarian.adapters.persistence.metadata_policy import (
     SQLiteMetadataPolicyRepository,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    fail_open_resumes_for_scan,
+)
 from mechanical_librarian.adapters.persistence.owner_links import (
     OwnerLinkChanged,
     OwnerLinkIdempotencyConflict,
@@ -390,11 +393,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             lambda decision_id, at: self._revoke_field_effect_authority_in_transaction(
                 decision_id, at, required=False
             ),
-            lambda case_id, destination, at, decision_id: (
-                self._set_field_effect_manual_hold(
-                    case_id, destination, at, decision_id
-                )
-            ),
         )
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._cover_taste = SQLiteCoverTasteRepository(
@@ -437,23 +435,23 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
             resume_automatic_cover=(
-                lambda review_case_id, decision_id, changed_at: (
+                lambda connection_name, library_name, item_id, changed_at: (
                     self._cover_considerations._resume_automatic_cover(
-                        review_case_id, decision_id, changed_at
+                        connection_name, library_name, item_id, changed_at
                     )
                 )
             ),
         )
-        # Every injected callable resolves its target through this repository at
-        # call time rather than capturing a bound method here.  Three review
-        # pipeline tests substitute `_has_pending_field_effect_manual_return` on
-        # the repository and drive it through a claimed action; a captured bound
-        # method would leave them passing while testing nothing.
+        # Each injected callable resolves through this repository at call time,
+        # so tests substituting a seam here still bite (review_preparation.py).
         self._review_preparation = SQLiteReviewPreparationRepository(
             connection,
             binding,
-            has_pending_field_effect_manual_return=(
-                lambda scan_id: self._has_pending_field_effect_manual_return(scan_id)
+            has_open_resume_for_scan=(
+                lambda scan_id: self.has_open_resume_for_scan(scan_id)
+            ),
+            fail_open_resumes_for_scan=(
+                lambda scan_id, at: self._fail_open_resumes_for_scan(scan_id, at)
             ),
             require_staged_shadow_projection_current=(
                 lambda review_case_id, action: (
@@ -590,13 +588,6 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda decision_id, changed_at, *, required: (
                     self._revoke_field_effect_authority_in_transaction(
                         decision_id, changed_at, required=required
-                    )
-                )
-            ),
-            set_field_effect_manual_hold=(
-                lambda review_case_id, destination, changed_at, decision_id, pin: (
-                    self._set_field_effect_manual_hold(
-                        review_case_id, destination, changed_at, decision_id, pin=pin
                     )
                 )
             ),
@@ -1070,85 +1061,63 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
         return self._field_effect_activity.pending_field_effect_decision_counts()
 
-    def _set_field_effect_manual_hold(
+    def owner_field_resume_context(
         self,
         review_case_id: str,
         destination: str,
-        changed_at: int,
-        decision_id: str,
-        *,
-        pin: dict[str, object] | None = None,
-    ) -> None:
-        self._field_effects._set_field_effect_manual_hold(
-            review_case_id,
-            destination,
-            changed_at,
-            decision_id,
-            pin=pin,
-        )
-
-    def field_effect_manual_hold_context(
-        self,
-        review_case_id: str,
-        destination: str,
-    ) -> tuple[str, str] | None:
-        return self._field_effects.field_effect_manual_hold_context(
+    ) -> tuple[str, str, str] | None:
+        return self._field_effects.owner_field_resume_context(
             review_case_id,
             destination,
         )
 
-    def field_effect_manual_hold_token(
+    def request_owner_field_resume(
         self,
         review_case_id: str,
         destination: str,
-    ) -> str | None:
-        return self._field_effects.field_effect_manual_hold_token(
-            review_case_id,
-            destination,
-        )
-
-    def request_field_effect_manual_return(
-        self,
-        review_case_id: str,
-        destination: str,
-        hold_token: str,
+        answer_token: str,
         scan_id: str,
         requested_at: int,
         changed_at: int,
     ) -> bool:
-        return self._field_effects.request_field_effect_manual_return(
+        return self._field_effects.request_owner_field_resume(
             review_case_id,
             destination,
-            hold_token,
+            answer_token,
             scan_id,
             requested_at,
             changed_at,
         )
 
-    def pending_field_effect_manual_returns(
+    def pending_owner_field_resumes(
         self,
         limit: int,
-        after: tuple[int, str, str] | None = None,
-    ) -> tuple[tuple[str, str, str, str, str, str, int, int], ...]:
-        return self._field_effect_activity.pending_field_effect_manual_returns(
-            limit, after
-        )
+        after: tuple[int, str] | None = None,
+    ) -> tuple[tuple[str, str, str, str, str, str, int], ...]:
+        return self._field_effect_activity.pending_owner_field_resumes(limit, after)
 
-    def _has_pending_field_effect_manual_return(self, scan_id: str) -> bool:
-        return self._field_effects._has_pending_field_effect_manual_return(scan_id)
+    def has_open_resume_for_scan(self, scan_id: str) -> bool:
+        return self._field_effects.has_open_resume_for_scan(scan_id)
 
-    def clear_field_effect_manual_hold(
+    def _fail_open_resumes_for_scan(self, scan_id: str, at: int) -> int:
+        return fail_open_resumes_for_scan(self._connection, scan_id, at)
+
+    def complete_owner_field_resume(
         self,
-        review_case_id: str,
+        connection_name: str,
+        library_name: str,
+        item_id: str,
         destination: str,
+        request_id: str,
         changed_at: int,
-        expected_hold_token: str | None = None,
-    ) -> tuple[str, str] | None:
-        return self._field_effects.clear_field_effect_manual_hold(
-            review_case_id,
+    ) -> bool:
+        return self._field_effects.complete_owner_field_resume(
+            connection_name,
+            library_name,
+            item_id,
             destination,
+            request_id,
             changed_at,
-            expected_hold_token,
         )
 
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:

@@ -10,20 +10,17 @@ requeues the prepared works, so each is decided again from what Preview
 showed (#1573), and an earlier decision keeps no field out of Attention
 (#1601).
 
-The harness drives a real SQLite repository and the real
-``ReviewPreparationPipeline`` with stages that call the real report, proposal,
-admission and projection seams.
+The harness (`tests/support/prepared_library.py`) drives a real SQLite
+repository and the real ``ReviewPreparationPipeline`` with stages that call
+the real report, proposal, admission and projection seams.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -31,44 +28,23 @@ import pytest
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
-from mechanical_librarian.adapters.field_effect_fakes import (
-    FakeBackupReadiness,
-    FakeCapabilityObserver,
-    FakeDependencyCurrentness,
-    FakeForwardReevaluation,
-    FakeTargetService,
-    PrivateCoverRecoveryStore,
-)
-from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.persistence.metadata_reports import (
-    SQLiteMetadataReportRepository,
     open_repository,
 )
-from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
-    GuardedFieldApplication,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.review_pipeline import (
-    PipelineAction,
-    ReviewPipelineError,
-    ReviewPipelineRepository,
-    ReviewPreparationPipeline,
-)
 from mechanical_librarian.application.review_web import (
-    BrowseReviewLibrary,
     InspectCurrentReviewCase,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
-from mechanical_librarian.domain.cover_evidence import CoverSource
 from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectNoChange,
-    FieldEffectOperation,
     field_value_version,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
@@ -76,17 +52,11 @@ from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
     MetadataPolicyProfile,
-    ResolvedMetadataPolicy,
     human_review_destinations,
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
-    MetadataReport,
-    ProviderObservation,
     TargetDestination,
-    TargetFacts,
-    TargetField,
-    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase
@@ -95,481 +65,16 @@ from tests.support.audiobook_reports import (
     publish_audiobook_preview,
     synthetic_audiobook_bibliographic_report,
 )
-from tests.support.author_evidence import author_report
-from tests.support.owner_field_record import record_recomputes  # noqa: F401
-
-_PRODUCER = "f" * 64
-_LINEAGE = "connection_name='primary' AND library_name='ebooks' AND item_id='item-1'"
-
-
-@dataclass
-class _Held:
-    """What Audiobookshelf holds for the work now: the opt-in library model.
-
-    Discovery lists the work with these authors, extraction reads these
-    fields into its report, and proposal and admission refuse a report whose
-    target differs from them, as `require_report_current` does in production.
-    """
-
-    target: TargetFacts
-    # Every extraction claimed after preparation, and every report proposed.
-    extractions: list[PipelineAction] = field(default_factory=list)
-    proposed: list[str] = field(default_factory=list)
-    # Failure codes the next extractions raise, in order.
-    failures: list[str] = field(default_factory=list)
-
-    def write(self, destination: TargetDestination, value: tuple[str, ...]) -> None:
-        """Record a value the library now holds, as a verified write leaves it."""
-        self.target = TargetFacts(
-            self.target.connection,
-            self.target.library,
-            self.target.item,
-            tuple(
-                TargetField(destination, TargetFieldState.VALUE, value)
-                if held.destination is destination
-                else held
-                for held in self.target.fields
-            ),
-        )
-
-    @property
-    def authors(self) -> tuple[str, ...]:
-        (authors,) = (
-            held.value
-            for held in self.target.fields
-            if held.destination is TargetDestination.AUTHORS
-        )
-        assert type(authors) is tuple
-        return cast(tuple[str, ...], authors)
-
-    def require_current(self, report: MetadataReport) -> None:
-        if report.target.fields != self.target.fields:
-            raise ReviewPipelineError("stale")
-
-
-@dataclass
-class _Library:
-    root: SQLiteMetadataReportRepository
-    pipeline: ReviewPreparationPipeline
-    report: MetadataReport
-    admissions: list[tuple[str, str | None]]
-    evaluations: list[str]
-    now: list[int]
-    # Every call that would read the file, Audiobookshelf or a provider in
-    # production, by stage, once the harness has prepared its work.
-    external: list[str] = field(default_factory=list)
-    held: _Held | None = None
-
-    def drain(self) -> None:
-        for _ in range(32):
-            if not self.pipeline.run_next():
-                return
-        raise AssertionError("preparation did not settle")
-
-    def leave_automatic(self) -> None:
-        assert self.root.enter_shadow_preview(20, ("ebooks",)) == "preview"
-        self.now[0] = 30
-        self.drain()
-
-    def case_id(self) -> str:
-        (case_id,) = self.root._connection.execute(
-            "SELECT review_case_id FROM current_review_case_lineages WHERE " + _LINEAGE
-        ).fetchone()
-        assert type(case_id) is str
-        return case_id
-
-    def case(self) -> ReviewCase:
-        return ReviewCase.create_from_data(
-            json.loads(self.root.get_review_case(self.case_id()))["case"]
-        )
-
-    def automatic(self, generation: int = 2) -> AutomaticDecision:
-        """The authors decision recorded under `generation`."""
-        (document,) = self.root._connection.execute(
-            "SELECT document FROM automatic_decisions WHERE destination='authors' "
-            "AND policy_generation=?",
-            (generation,),
-        ).fetchone()
-        return AutomaticDecision.from_json(document)
-
-    def decisions(self) -> list[tuple[str, int]]:
-        """Every automatic decision, as (field, generation), in recorded order."""
-        return [
-            (str(destination), int(generation))
-            for destination, generation in self.root._connection.execute(
-                "SELECT destination,policy_generation FROM automatic_decisions "
-                "ORDER BY policy_generation,destination"
-            )
-        ]
-
-    def generation(self) -> int:
-        (generation,) = self.root._connection.execute(
-            "SELECT generation FROM metadata_policy_state"
-        ).fetchone()
-        return int(generation)
-
-    def pending(self) -> list[str]:
-        return [
-            json.loads(document)["decision_id"]
-            for document in self.root.pending_field_effect_decision_documents(100)
-        ]
-
-    def attention(self) -> list[tuple[object, object]]:
-        page = BrowseReviewLibrary(self.root).attention(
-            search=None, limit=50, cursor=None
-        )
-        return [
-            (item.get("review_case_id"), item.get("destination"))
-            for item in cast(list[dict[str, object]], page["items"])
-        ]
-
-    def library(self, lens: str) -> list[dict[str, object]]:
-        page = BrowseReviewLibrary(self.root).library(
-            lens=lens, search=None, limit=50, cursor=None
-        )
-        return cast(list[dict[str, object]], page["items"])
-
-
-def _resolved(
-    repository: SQLiteMetadataReportRepository, library: str
-) -> ResolvedMetadataPolicy:
-    generation = repository._connection.execute(
-        "SELECT generation FROM metadata_policy_state"
-    ).fetchone()[0]
-    document = repository._connection.execute(
-        "SELECT document FROM metadata_policy_resolutions WHERE generation=? AND library_name=?",
-        (generation, library),
-    ).fetchone()[0]
-    return ResolvedMetadataPolicy.from_data(json.loads(document))
-
-
-@contextmanager
-def _prepared(
-    tmp_path: Path,
-    *,
-    automatic: bool,
-    covers: tuple[CoverSource, ...] = (),
-    providers: tuple[ProviderObservation, ...] | None = None,
-    before_projection: Callable[[ReviewPipelineRepository, Any], None] | None = None,
-    cover_order: str | None = None,
-    library_model: Literal["publication", "advance"] | None = None,
-) -> Iterator[_Library]:
-    """One work prepared under a qualified Automatic contributor-names policy.
-
-    With `automatic` false the owner stays in Preview, so the work is first
-    prepared there and nothing is decided automatically. `covers` become the
-    report's cover sources and `providers`, when given, its providers.
-    `before_projection`, when given, runs before each projection as the cover
-    stage does in production. `cover_order`, when given, makes covers
-    automatic under that cover-order option.
-
-    `library_model`, when given, turns on the library model (`_Held`):
-    discovery runs, extraction reads what the library holds now, and proposal
-    and admission check currentness as production does. Extraction completes
-    through `complete_review_extraction_publication`, as production does,
-    with "publication", and through the pipeline's advance with "advance".
-    """
-    database = tmp_path / "application.sqlite3"
-    report = author_report(tmp_path / "media", "supported")
-    if covers or providers is not None:
-        report = MetadataReport.create(
-            target=report.target,
-            file=report.file,
-            local_claims=report.local_claims,
-            local_reasons=report.local_reasons,
-            providers=report.providers if providers is None else providers,
-            cover_sources=covers,
-        )
-    root = open_repository(database, cross_thread=True)
-    options = dict(DEFAULT_OPTIONS)
-    destinations = {
-        name: "unsupported" if name == "explicit" else "ask"
-        for name in OPTION_CATALOGUE
-    }
-    options["contributor_names"] = "canonical"
-    destinations["contributor_names"] = "automatic"
-    if cover_order is not None:
-        options["cover_order"] = cover_order
-        destinations["cover_order"] = "automatic"
-    profile = MetadataPolicyProfile.create("Leave automatic", options, destinations)
-    resolved = resolve_policy(profile, "ebooks")
-    root.enter_shadow_preview(1, ())
-    root.create_metadata_policy_draft(profile.canonical_json)
-    root.activate_metadata_policy(
-        profile.policy_id,
-        MetadataPolicyProfile.builtin().policy_id,
-        (("ebooks", resolved.resolved_id, resolved.canonical_json),),
-        2,
-        expected_active_generation=1,
-    )
-    if automatic:
-        root.activate_qualified_automatic(3)
-    held = None if library_model is None else _Held(report.target)
-
-    def entry(authors: tuple[str, ...]) -> CatalogueEntry:
-        return CatalogueEntry(
-            "primary",
-            "ebooks",
-            "lib-1",
-            "item-1",
-            1,
-            "Synthetic work",
-            authors,
-            True,
-            False,
-            "singular-supported",
-            report.file.identity,
-            "/book.epub",
-            "epub",
-            "books",
-        )
-
-    root.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 4)
-    discovery = root.claim_review_pipeline_action(5)
-    assert discovery is not None
-    root.complete_review_discovery(
-        discovery,
-        1,
-        "a" * 64,
-        (entry(("Ada Example",) if held is None else held.authors),),
-        6,
-    )
-    now = [10]
-    evaluations: list[str] = []
-    admissions: list[tuple[str, str | None]] = []
-
-    external: list[str] = []
-    prepared = [False]
-
-    def extract(
-        repository: ReviewPipelineRepository, action: PipelineAction, claim_next: bool
-    ) -> tuple[str, bool]:
-        if prepared[0]:
-            external.append("extraction")
-        if held is None:
-            cast(SQLiteMetadataReportRepository, repository).publish(
-                report, lambda: True
-            )
-            return report.report_id, False
-        return _extract_held(
-            cast(SQLiteMetadataReportRepository, repository),
-            action,
-            claim_next,
-            held,
-            report,
-            library_model == "publication",
-            now[0],
-            prepared[0],
-        )
-
-    discoveries = [1]
-
-    def discover(
-        _connection: str, _library: str
-    ) -> tuple[int, str, tuple[CatalogueEntry, ...]]:
-        if held is None:
-            raise AssertionError()
-        external.append("discovery")
-        discoveries[0] += 1
-        return discoveries[0], f"{discoveries[0]:064x}", (entry(held.authors),)
-
-    def propose(repository: ReviewPipelineRepository, report_id: str) -> str:
-        concrete = cast(SQLiteMetadataReportRepository, repository)
-        value = MetadataReport.from_json(concrete.get(report_id))
-        if held is not None:
-            held.proposed.append(report_id)
-            held.require_current(value)
-        policy = _resolved(concrete, value.target.library)
-        proposal = evaluate_report(
-            value, policy.resolved_id, human_review_destinations(policy)
-        )
-        concrete.publish_proposal(proposal)
-        evaluations.append(proposal.proposal_set_id)
-        return proposal.proposal_set_id
-
-    def admit(
-        repository: ReviewPipelineRepository, proposal_set_id: str
-    ) -> tuple[str, str | None]:
-        concrete = cast(SQLiteMetadataReportRepository, repository)
-        proposal = ProposalSet.from_json(concrete.get_proposal(proposal_set_id))
-        if held is not None:
-            held.require_current(
-                MetadataReport.from_json(concrete.get(proposal.report_id))
-            )
-        result = ReviewAdmissionResult.from_json(concrete.admit_review_case(proposal))
-        admissions.append((result.status, result.review_case_id))
-        return result.status, result.review_case_id
-
-    def project(repository: ReviewPipelineRepository, action: Any) -> str:
-        concrete = cast(SQLiteMetadataReportRepository, repository)
-        # As ReviewPipelineStages.project does: Book matching first (#1355).
-        if type(action) is str:
-            concrete.reconcile_case_level(action, now[0])
-            outcome = concrete.persist_shadow_outcome(action, now[0])
-        else:
-            concrete.reconcile_case_level(action.review_case_id, now[0])
-            outcome = concrete.persist_shadow_outcome(
-                action.review_case_id, now[0], staged_action=action
-            )
-        return "stale" if outcome == "stale" else "complete"
-
-    pipeline = ReviewPreparationPipeline(
-        repository_factory=lambda: open_repository(database, authority=root.authority),
-        libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
-        discover=discover,
-        extract=extract,
-        providers=lambda *_: (),
-        propose=propose,
-        admit=admit,
-        project=project,
-        before_projection=(
-            (lambda *_args: None) if before_projection is None else before_projection
-        ),
-        clock=lambda: now[0],
-    )
-    value = _Library(
-        root, pipeline, report, admissions, evaluations, now, external, held
-    )
-    try:
-        value.drain()
-        prepared[0] = True
-        if automatic:
-            assert root.shadow_posture() == "automatic"
-            # Replaced providers carry no authors candidate to decide.
-            if providers is None:
-                assert value.automatic().outcome == "candidate"
-        else:
-            assert root.shadow_posture() == "preview"
-        yield value
-    finally:
-        root.close()
-
-
-def _extract_held(
-    repository: SQLiteMetadataReportRepository,
-    action: PipelineAction,
-    claim_next: bool,
-    held: _Held,
-    prepared: MetadataReport,
-    publication: bool,
-    now: int,
-    recorded: bool,
-) -> tuple[str, bool]:
-    """Read the work as the library holds it now and publish that report."""
-    if recorded:
-        held.extractions.append(action)
-    if held.failures:
-        raise ReviewPipelineError(held.failures.pop(0))
-    report = (
-        prepared
-        if held.target == prepared.target
-        else MetadataReport.create(
-            target=held.target,
-            file=prepared.file,
-            local_claims=prepared.local_claims,
-            local_reasons=prepared.local_reasons,
-            providers=prepared.providers,
-            cover_sources=prepared.cover_sources,
-        )
-    )
-    current = repository._connection.execute(
-        "SELECT report_id FROM current_metadata_reports WHERE " + _LINEAGE
-    ).fetchone()
-    repository.publish(
-        report,
-        lambda: True,
-        None if current is None else current[0],
-        after_publication=(
-            (
-                lambda bound, published: cast(
-                    SQLiteMetadataReportRepository, bound
-                ).complete_review_extraction_publication(
-                    action, published.report_id, now, claim_next=claim_next
-                )
-            )
-            if publication
-            else None
-        ),
-    )
-    return report.report_id, publication
-
-
-@pytest.fixture
-def library(tmp_path: Path) -> Iterator[_Library]:
-    """One work prepared and decided in the Automatic posture."""
-    with _prepared(tmp_path, automatic=True) as value:
-        yield value
-
-
-@pytest.fixture
-def preview_library(tmp_path: Path) -> Iterator[_Library]:
-    """One work first prepared in Preview, before Automatic is confirmed."""
-    with _prepared(tmp_path, automatic=False) as value:
-        yield value
-
-
-def _accept(case: ReviewCase, destination: str, key: str, at: int) -> HumanDecision:
-    proposal = next(
-        value for value in case.proposals if value["destination"] == destination
-    )
-    result = proposal["result"]
-    assert type(result) is dict
-    alternatives = result["alternatives"]
-    assert type(alternatives) is list and alternatives
-    return HumanDecision.create(
-        case,
-        proposal_id=str(proposal["proposal_id"]),
-        target_fingerprint=case.target_fingerprint,
-        destination=destination,
-        actor="owner",
-        outcome="accept",
-        selected_value=alternatives[0]["value"],
-        idempotency_key=key,
-        occurred_at=at,
-    )
-
-
-def _applier(
-    library: _Library, tmp_path: Path
-) -> tuple[ContinuousGuardedApplication, GuardedFieldApplication, FakeTargetService]:
-    repository = library.root
-    target = FakeTargetService()
-    authority = PersistedFieldEffectAuthority(repository)
-    capability = FakeCapabilityObserver("c" * 64)
-    service = GuardedFieldApplication(
-        repository,
-        target,
-        FakeBackupReadiness(),
-        capability,
-        authority,
-        FakeDependencyCurrentness(),
-        PersistedEffectConsent(repository),
-        PrivateCoverRecoveryStore(tmp_path / "recovery", lambda _: b"old"),
-        FakeForwardReevaluation(),
-        lambda: library.now[0],
-    )
-    scheduler = ContinuousGuardedApplication(
-        repository,
-        {("primary", "ebooks"): service},
-        {("primary", "ebooks"): capability},
-        authority,
-        (("primary", "ebooks"),),
-        lambda: library.now[0],
-        lambda *_: None,
-    )
-    return scheduler, service, target
-
-
-def _planned(library: _Library) -> dict[str, FieldEffectOperation]:
-    return {
-        operation.plan.authority.decision_id: operation
-        for operation in (
-            FieldEffectOperation.from_json(document)
-            for (document,) in library.root._connection.execute(
-                "SELECT document FROM field_effects"
-            ).fetchall()
-        )
-    }
+from tests.support.owner_field_record import record_recomputes, resume  # noqa: F401
+from tests.support.prepared_library import LINEAGE as _LINEAGE
+from tests.support.prepared_library import PRODUCER as _PRODUCER
+from tests.support.prepared_library import Library as _Library
+from tests.support.prepared_library import accept as _accept
+from tests.support.prepared_library import applier as _applier
+from tests.support.prepared_library import library as library
+from tests.support.prepared_library import planned as _planned
+from tests.support.prepared_library import prepared as _prepared
+from tests.support.prepared_library import preview_library as preview_library
 
 
 def test_leaving_automatic_with_an_unchanged_policy_keeps_the_review_case(
@@ -803,9 +308,7 @@ def test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_conf
     before = _read_fields(library)["authors"]
     assert before["manual_hold"] is True
     if episode == "released":
-        assert library.root.clear_field_effect_manual_hold(
-            case_id, "authors", 12, owner.decision_id
-        )
+        assert resume(library.root, case_id, "authors", 12)
         assert library.automatic().decision_id in library.pending()
 
     library.leave_automatic()
@@ -824,13 +327,17 @@ def test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_conf
     assert again.decision_id not in library.pending()
     field = _read_fields(library)["authors"]
     assert field["manual_hold"] is True
-    assert field["classification"] == "human_recorded"
-    assert field["classification_cause"] == "human_decided"
+    # An answer of the case's earlier episode decides nothing on it, and
+    # nothing carried settles the field: the record's answer asks it, never
+    # reading as nothing to decide (V3, C2b-15).
+    assert (field["classification"], field["classification_cause"]) == (
+        ("needs_attention", "review_needed")
+        if episode == "earlier"
+        else ("human_recorded", "human_decided")
+    )
     assert (field["human_decision"] is None) is (episode == "earlier")
 
-    assert library.root.clear_field_effect_manual_hold(
-        case_id, "authors", 42, owner.decision_id
-    )
+    assert resume(library.root, case_id, "authors", 42)
     assert again.decision_id in library.pending()
     assert _read_fields(library)["authors"]["manual_hold"] is False
 
@@ -841,7 +348,7 @@ def test_an_answer_with_no_earlier_automatic_decision_still_keeps_automatic_off(
     """Only a field Automatic had decided on the case is decided again under
     its hold. An answer given in Preview, before Automatic decided anything on
     the case, still keeps Automatic from recording a decision there (ADR-0085,
-    Amendment 1: it shows as an ordinary answer until a later case)."""
+    Amendment 1), and the case offers Resume for it at once (V1, ADR-0108)."""
     library = preview_library
     owner = _accept(library.case(), "authors", "answered-in-preview", 11)
     library.root.record_human_decision(owner)
@@ -849,7 +356,7 @@ def test_an_answer_with_no_earlier_automatic_decision_still_keeps_automatic_off(
     library.now[0] = 41
     library.drain()
     assert ("authors", library.generation()) not in library.decisions()
-    assert _read_fields(library)["authors"]["manual_hold"] is False
+    assert _read_fields(library)["authors"]["manual_hold"] is True
 
 
 @pytest.mark.parametrize("unpinned", [True, False], ids=["unpinned", "pinned"])
@@ -880,15 +387,15 @@ def test_a_pin_taken_back_before_automatic_decided_shows_the_hold_once_it_is_on(
     assert decided.review_case_id == library.case_id()
     assert decided.decision_id not in library.pending()
     assert field["manual_hold"] is True
+    # The unpinned answer is the record's, given on this case: the owner
+    # decided the field (C2b-15).
     assert (field["classification"], field["classification_cause"]) == (
         "human_recorded",
         "human_decided",
     )
     scheduler, _, _ = _applier(library, tmp_path)
     assert _note(library, scheduler, decided.decision_id) == "held"
-    assert root.clear_field_effect_manual_hold(
-        library.case_id(), "authors", 42, pin.decision_id
-    )
+    assert resume(root, library.case_id(), "authors", 42)
     assert decided.decision_id in library.pending()
     assert _read_fields(library)["authors"]["manual_hold"] is False
     assert _note(library, scheduler, decided.decision_id) is None
@@ -952,9 +459,7 @@ def test_a_title_pin_taken_back_in_preview_holds_the_whole_bundle(
         detail = InspectCurrentReviewCase(root).run(case_id)
         fields = {str(field["destination"]): field for field in detail["fields"]}
         assert fields["title"]["manual_hold"] is True
-        assert root.clear_field_effect_manual_hold(
-            case_id, "title", 50, pin.decision_id
-        )
+        assert resume(root, case_id, "title", 50)
         detail = InspectCurrentReviewCase(root).run(case_id)
         fields = {str(field["destination"]): field for field in detail["fields"]}
         assert fields["title"]["manual_hold"] is False
@@ -1285,7 +790,7 @@ def test_activity_notes_an_automatic_choice_a_hold_keeps_unwritten(
     # A requested Resume is on its way, so the note goes; checks that end
     # with failures keep the hold and ask for Resume again, so it is back.
     scan = root.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 41)
-    assert root.request_field_effect_manual_return(
+    assert root.request_owner_field_resume(
         case_id, "authors", owner.decision_id, scan.scan_id, 41, 41
     )
     assert _note(library, scheduler, again.decision_id) is None
@@ -1295,12 +800,11 @@ def test_activity_notes_an_automatic_choice_a_hold_keeps_unwritten(
             "WHERE scan_id=?",
             (scan.scan_id,),
         )
+        assert root._fail_open_resumes_for_scan(scan.scan_id, 41) == 1
     assert _read_fields(library)["authors"]["manual_return_failed"] is True
     assert _note(library, scheduler, again.decision_id) == "held"
 
-    assert root.clear_field_effect_manual_hold(
-        case_id, "authors", 42, owner.decision_id
-    )
+    assert resume(root, case_id, "authors", 42)
     assert _note(library, scheduler, again.decision_id) is None
 
 
@@ -1392,9 +896,7 @@ def test_a_hold_on_one_field_of_a_bundle_notes_both_choices(
         )
         root.record_human_decision(_accept(case, held, f"held-for-the-{held}-pair", 7))
         assert root._connection.execute(
-            "SELECT destination FROM field_effect_manual_holds "
-            "WHERE review_case_id=? AND active=1",
-            (case_id,),
+            "SELECT destination FROM owner_field_answers"
         ).fetchall() == [(held,)]
         assert root._field_effect_activity._activity_page_notes_once(
             [], [], [], pair
@@ -1403,12 +905,12 @@ def test_a_hold_on_one_field_of_a_bundle_notes_both_choices(
         root.close()
 
 
-def test_an_automatic_description_a_carried_hold_keeps_reads_held(
+def test_an_automatic_description_the_record_keeps_reads_held(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Automatic description advice admitted beside a hold carried from the
-    work's earlier case waits for Resume like any automatic choice, so
-    Activity notes it (ADR-0085)."""
+    """Automatic description advice chosen while the record holds the
+    owner's description answer waits for Resume like any automatic choice,
+    so Activity notes it (ADR-0085, ADR-0108)."""
     from tests.support.description_advice import (
         _prepared,
         qualify_description_advice,
@@ -1426,22 +928,34 @@ def test_an_automatic_description_a_carried_hold_keeps_reads_held(
         assert decision_id.startswith("automatic_decision_")
         notes = repository._field_effect_activity._activity_page_notes_once
         assert notes([], [], [], [decision_id]) == {}
-        # The row a later case of the work carries: no answer on this case.
+        # The owner keeps the description: the record holds the answer, and
+        # the answer takes the case's chosen advice away.
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(binding.review_case_id))["case"]
+        )
+        proposal = next(
+            value for value in case.proposals if value["destination"] == "description"
+        )
+        repository.record_human_decision(
+            HumanDecision.create(
+                case,
+                proposal_id=str(proposal["proposal_id"]),
+                target_fingerprint=case.target_fingerprint,
+                destination="description",
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="held-description",
+                occurred_at=12,
+            )
+        )
+        assert notes([], [], [], [decision_id]) == {}
+        # Automatic's advice chosen again beside that answer, as a store whose
+        # advice stood while the answer was recorded holds it: it is held.
         with repository._connection:
             repository._connection.execute(
-                "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
-                "active,updated_at,document) VALUES(?,'description',1,12,?)",
-                (
-                    binding.review_case_id,
-                    json.dumps(
-                        {
-                            "decision_id": "human_decision_" + "1" * 64,
-                            "pending_return": None,
-                            "pin": None,
-                            "updated_at": 12,
-                        }
-                    ),
-                ),
+                "INSERT INTO current_description_decisions VALUES(?,?)",
+                (binding.review_case_id, decision_id),
             )
         assert notes([], [], [], [decision_id]) == {decision_id: "held"}
     finally:
@@ -1588,11 +1102,12 @@ def _owner(library: _Library, outcome: str, at: int) -> HumanDecision:
     )
 
 
+_NOTHING_TO_DECIDE = "Nothing to decide for this field."
 _HELD = (
     "Your earlier decision still holds this field, so turning on Automatic "
     "leaves it as it is."
 )
-_NOTHING_TO_DECIDE = "Nothing to decide for this field."
+_REVIEW_NEEDED = "This field needs your review."
 
 
 @pytest.mark.parametrize(
@@ -1609,7 +1124,10 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
     and plans its write. An answer from the first episode keeps its hold, so
     Automatic decides under it and writes nothing until Resume (ADR-0085,
     Amendment 4), as does a pin taken back in Preview, whose hold stays.
-    Once Resume released the answer's hold, Automatic decides and writes."""
+    Once Resume released the answer's hold, Automatic decides and writes.
+    The first episode's answer asks the field in Preview, and the pin's
+    answer, the case's own, reads held, as on main: neither says nothing to
+    decide (C2b-15)."""
     with _prepared(tmp_path, automatic=True, library_model="publication") as library:
         root, held = library.root, library.held
         assert held is not None
@@ -1619,9 +1137,7 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
             root.record_human_decision(answer)
             assert _read_fields(library)["authors"]["manual_hold"] is True
             if owner == "earlier_episode_resumed":
-                assert root.clear_field_effect_manual_hold(
-                    first, "authors", 11, answer.decision_id
-                )
+                assert resume(root, first, "authors", 11)
         # The authors change in Audiobookshelf and change back, each read by
         # a scan.
         for value, at in ((("Someone Else",), 12), (authors, 14)):
@@ -1637,23 +1153,28 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
                 root.record_human_decision(_owner(library, outcome, at))
 
         preview = _read_fields(library)["authors"]
-        assert (preview["classification"], preview["human_decision"]) == (
-            "unsupported",
-            None,
-        )
+        assert preview["human_decision"] is None
         shown = preview["earlier_automatic_value"]
         held_on = owner in {"earlier_episode", "unpinned"}
-        # The hold that keeps Automatic off says so, without Resume: nothing
-        # of Automatic's is held yet in Preview.
+        # Without Resume: nothing of Automatic's is held yet in Preview.
         assert (
+            preview["classification"],
             preview["classification_cause"],
             preview["classification_reason"],
             preview["manual_hold"],
             preview["needs_attention"],
-        ) == (
-            ("held_in_preview", _HELD, False, False)
-            if held_on
-            else ("nothing_to_decide", _NOTHING_TO_DECIDE, False, False)
+        ) == {
+            "earlier_episode": (
+                "needs_attention",
+                "review_needed",
+                _REVIEW_NEEDED,
+                False,
+                True,
+            ),
+            "unpinned": ("unsupported", "held_in_preview", _HELD, False, False),
+        }.get(
+            owner,
+            ("unsupported", "nothing_to_decide", _NOTHING_TO_DECIDE, False, False),
         )
         assert shown == (
             None if held_on else {"kind": "list", "value": ["Ada Example"]}
@@ -1669,10 +1190,11 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
 def test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided(
     preview_library: _Library,
 ) -> None:
-    """A pin taken back in Preview leaves its hold, so the field reads held.
-    Turning on Automatic then leaves its value as it is: Automatic decides the
-    field under the hold and writes nothing until Resume (ADR-0085,
-    Amendments 5 and 6)."""
+    """A pin taken back in Preview leaves its answer in the record, the case's
+    own, so the field reads held, with no Resume while Automatic is off.
+    Turning on Automatic then leaves its
+    value as it is: Automatic decides the field under the answer and writes
+    nothing until Resume (ADR-0085, Amendments 5 and 6; C2b-15)."""
     library = preview_library
     before = _read_fields(library)["authors"]["current"]
     for outcome, at in (("pin", 11), ("unpin", 12)):
@@ -1684,6 +1206,7 @@ def test_a_pin_taken_back_in_preview_holds_a_field_automatic_never_decided(
         preview["manual_hold"],
         preview["needs_attention"],
     ) == ("held_in_preview", _HELD, False, False)
+    assert preview["human_decision"] is None
 
     _confirm_automatic(library, 40)
 
@@ -1856,17 +1379,12 @@ def test_an_owner_decision_after_confirming_holds_the_current_generation(
     # decision, not the earlier generation's.
     assert not root.field_effect_authority_is_current(plan.authority)
     (held,) = root._connection.execute(
-        "SELECT json_extract(document,'$.decision_id') FROM field_effect_manual_holds "
-        "WHERE review_case_id=? AND destination='authors' AND active=1",
-        (fresh.review_case_id,),
+        "SELECT answer_id FROM owner_field_answers WHERE destination='authors'"
     ).fetchone()
     assert held == owner.decision_id
 
     # Releasing the hold makes this generation's decision current again.
-    assert (
-        root.clear_field_effect_manual_hold(fresh.review_case_id, "authors", 45)
-        is not None
-    )
+    assert resume(root, fresh.review_case_id, "authors", 45)
     assert root._connection.execute(
         "SELECT decision_id FROM field_effect_authorities WHERE current=1 "
         "AND decision_id IN (?,?)",
@@ -1981,8 +1499,7 @@ def _settled_without_a_write(
         (owner.decision_id,),
     ).fetchall() == [("human", field_value_version("authors", ["Ada Example"]))]
     (hold,) = root._connection.execute(
-        "SELECT json_extract(document,'$.decision_id') FROM "
-        "field_effect_manual_holds WHERE destination='authors' AND active=1"
+        "SELECT answer_id FROM owner_field_answers WHERE destination='authors'"
     ).fetchone()
     assert hold == owner.decision_id
     assert _read(library, scheduler)["fields"]["authors"]["no_change_required"] is True
@@ -2063,9 +1580,7 @@ def test_choosing_automatics_written_value_needs_no_write(
     if posture == "automatic":
         # Returning the field to Automatic leaves its written decision
         # settled: nothing waits and nothing is planned.
-        assert root.clear_field_effect_manual_hold(
-            library.case_id(), "authors", 43, owner.decision_id
-        )
+        assert resume(root, library.case_id(), "authors", 43)
         library.now[0] = 44
         scheduler.schedule()
         assert automatic.decision_id not in library.pending()
@@ -2082,9 +1597,7 @@ def test_choosing_the_written_value_after_resume_holds_the_field_again(
     _, scheduler = _automatic_written(library, tmp_path)
     first = _accept(library.case(), "authors", "owner-presses-before-resume", 40)
     root.record_human_decision(first)
-    assert root.clear_field_effect_manual_hold(
-        library.case_id(), "authors", 41, first.decision_id
-    )
+    assert resume(root, library.case_id(), "authors", 41)
     resumed = _read(library, scheduler)["fields"]["authors"]
     assert resumed["pin_control"] == {"pin": "change_waiting", "unpin": False}
 
@@ -2141,13 +1654,10 @@ def test_the_card_pin_on_automatics_written_value_settles(
     assert accept.decision_id not in library.pending()
     assert accept.decision_id not in _planned(library)
     assert root.pending_field_effect_decision_counts() == ()
-    (hold,) = root._connection.execute(
-        "SELECT document FROM field_effect_manual_holds "
-        "WHERE destination='authors' AND active=1"
-    ).fetchone()
-    held = json.loads(hold)
-    assert held["decision_id"] == accept.decision_id
-    assert held["pin"] is not None
+    assert root._connection.execute(
+        "SELECT answer_id,pin_fingerprint IS NOT NULL FROM owner_field_answers "
+        "WHERE destination='authors'"
+    ).fetchall() == [(accept.decision_id, 1)]
 
 
 def test_an_earlier_generation_write_once_settled_lets_the_owner_answer(
@@ -2278,20 +1788,18 @@ def test_an_answer_beside_an_earlier_generation_decision_can_be_withdrawn(
 ) -> None:
     """The page offers Withdraw where only an earlier generation's automatic
     decision is on the field, so the store accepts it: that decision holds
-    nothing and no Resume shows to release it (ADR-0036, ADR-0085)."""
+    nothing and no Resume shows to release it (ADR-0036, ADR-0085). Beside
+    this generation's decision it is offered too while the record holds the
+    answer (V2, ADR-0108)."""
     root = library.root
     earlier = library.automatic()
     if answered != "in_preview":
         root.record_human_decision(
             _accept(library.case(), "authors", "answer-before-leaving", 11)
         )
-        # Beside this generation's decision the refusal stands, and says so.
         assert _read_fields(library)["authors"]["owner_control"]["withdraw"] == (
-            "automatic_hold"
+            "available"
         )
-        with pytest.raises(HumanDecisionError) as refused:
-            root.record_human_decision(_withdraw(library, "withdraw-in-automatic", 12))
-        assert refused.value.code == "automatic_hold"
     library.leave_automatic()
     if answered == "in_preview":
         root.record_human_decision(
@@ -2299,18 +1807,22 @@ def test_an_answer_beside_an_earlier_generation_decision_can_be_withdrawn(
         )
     if answered.endswith("confirmed"):
         # Confirming decides the held field again under its hold, so the
-        # field reads as before leaving: the hold, Resume, and the refusal
-        # (ADR-0085, Amendment 4).
+        # field reads as before leaving: the hold, Resume, and Withdraw
+        # (ADR-0085, Amendment 4; V2).
         _confirm_automatic(library, 40)
         assert library.decisions() == [("authors", 2), ("authors", 3)]
         field = _read_fields(library)["authors"]
         assert (field["manual_hold"], field["owner_control"]["withdraw"]) == (
             True,
-            "automatic_hold",
+            "available",
         )
-        with pytest.raises(HumanDecisionError) as refused:
-            root.record_human_decision(_withdraw(library, "withdraw-confirmed", 41))
-        assert refused.value.code == "automatic_hold"
+        root.record_human_decision(_withdraw(library, "withdraw-confirmed", 41))
+        # The withdrawal empties the record, so this generation's decision
+        # plans nothing either (ADR-0108).
+        assert library.automatic(3).decision_id not in library.pending()
+        assert root._connection.execute(
+            "SELECT count(*) FROM owner_field_answers"
+        ).fetchone() == (0,)
         return
     assert library.decisions() == [("authors", 2)]
     field = _read_fields(library)["authors"]
@@ -2325,7 +1837,7 @@ def test_an_answer_beside_an_earlier_generation_decision_can_be_withdrawn(
     assert earlier.decision_id not in library.pending()
     assert library.pending() == []
     assert root._connection.execute(
-        "SELECT count(*) FROM field_effect_manual_holds WHERE active=1"
+        "SELECT count(*) FROM owner_field_answers"
     ).fetchone() == (0,)
     field = _read_fields(library)["authors"]
     assert field["human_decision"] is None

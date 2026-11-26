@@ -43,9 +43,10 @@ from mechanical_librarian.adapters.persistence.owner_field_answers import (
     next_ordinal,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _CASE_AUTHORS_SQL,
     _CASE_TITLE_SQL,
     _episode_decision_sql,
-    _pin_hold_sql,
+    _pin_record_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     refresh_offered_field_facts,
@@ -221,23 +222,29 @@ def _write_marker(
 
 
 # Every owner decision is inserted with its work and copies (ADR-0108): its
-# ordinal from the owner-answer counter, the decision's own columns, then its item key, its case's display title (bound to
-# the case) and target field, and an accepted description's chosen copy.
+# ordinal from the owner-answer counter, the decision's own columns, then its
+# item key, its case's display title and authors (each bound to the case) and
+# target field, and an accepted description's chosen copy.
 HUMAN_DECISION_INSERT_SQL = (
     "INSERT INTO human_decisions(ordinal,"
     "decision_id,review_case_id,proposal_id,target_fingerprint,"
     "destination,actor,outcome,selected_value_document,"
     "idempotency_digest,request_digest,occurred_at,document,"
-    "connection_name,library_name,item_id,display_title,"
+    "connection_name,library_name,item_id,display_title,display_authors,"
     "target_field_document,selected_form) "
-    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?," + _CASE_TITLE_SQL + ",?,?)"
+    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
+    + _CASE_TITLE_SQL
+    + ","
+    + _CASE_AUTHORS_SQL
+    + ",?,?)"
 )
 
 
 def decision_copies(case: ReviewCase, destination: str) -> tuple[str, ...]:
-    """A decision's item key, its case bound for the display title, and the
-    case's target field for its destination as read ('null' where it read
-    none), in `HUMAN_DECISION_INSERT_SQL`'s order (ADR-0108)."""
+    """A decision's item key, its case bound for the display title and again
+    for the authors, and the case's target field for its destination as read
+    ('null' where it read none), in `HUMAN_DECISION_INSERT_SQL`'s order
+    (ADR-0108)."""
     target = case.target
     fields = target.get("fields")
     field = next(
@@ -252,6 +259,7 @@ def decision_copies(case: ReviewCase, destination: str) -> tuple[str, ...]:
         str(target["connection"]),
         str(target["library"]),
         str(target["item"]),
+        case.review_case_id,
         case.review_case_id,
         _canonical_json(field),
     )
@@ -277,8 +285,8 @@ def _ask_changed_fields(
     field is compared with the field's offer at ``level`` by digest. Where they
     differ, the valueless ``matching_changed`` row is appended (no event, so no
     Activity row) and the superseded choice's pending effect closes as
-    ``matching_changed``. Automatic decisions, consents and the manual hold
-    are untouched, so a field asked again stays the owner's to decide.
+    ``matching_changed``. Automatic decisions, consents and the record of the
+    owner's answer are untouched, so a field asked again stays the owner's to decide.
     """
     destinations = {
         cast("str", proposal["destination"])
@@ -293,8 +301,11 @@ def _ask_changed_fields(
             # A pin in force keeps its field out of the question whatever
             # the offer now is (ADR-0085, Amendment 2).
             + " AND NOT "
-            + _pin_hold_sql(
-                "human_decisions.review_case_id", "human_decisions.destination", True
+            + _pin_record_sql(
+                "human_decisions.review_case_id",
+                "human_decisions.destination",
+                True,
+                item="human_decisions",
             )
             + " ORDER BY ordinal DESC LIMIT 1",
             (case.review_case_id, destination),

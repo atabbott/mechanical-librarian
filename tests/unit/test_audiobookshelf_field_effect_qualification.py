@@ -571,11 +571,11 @@ def test_return_to_automatic_requires_requested_scan_before_hold_clear(
         )
 
 
-def test_return_lineage_reads_hold_before_progress() -> None:
+def test_return_lineage_reads_the_record_before_progress() -> None:
     events = []
     repository = SimpleNamespace(
-        field_effect_manual_hold_context=(
-            lambda *_: events.append("hold") or None  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - `append` returning `None` is what lets the following value be the fake's result while the call order is recorded.
+        owner_field_resume_context=(
+            lambda *_: events.append("record") or None  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - `append` returning `None` is what lets the following value be the fake's result while the call order is recorded.
         ),
         review_pipeline_progress=(
             lambda *_: (
@@ -589,7 +589,7 @@ def test_return_lineage_reads_hold_before_progress() -> None:
         repository, "primary", "books", "review_case", "title"
     )
 
-    assert events == ["hold", "progress"]
+    assert events == ["record", "progress"]
     assert progress.state == "completed"
     assert hold is None
 

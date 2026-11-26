@@ -21,6 +21,9 @@ from mechanical_librarian.adapters.field_effect_authority import (
 from mechanical_librarian.adapters.field_effect_fakes import FakeCapabilityObserver
 from mechanical_librarian.adapters.persistence.activity_facts import ActivityFactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    case_record_sql,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
 )
@@ -54,7 +57,12 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from tests.support.genre_reports import genre_report, publish_genre_case
-from tests.support.owner_field_record import record_recomputes  # noqa: F401
+from tests.support.owner_field_record import (
+    complete_resume,
+    hold_token,
+    record_recomputes,  # noqa: F401
+    resume,
+)
 from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
 from tests.support.proposal_evidence import _local_subtitle
 
@@ -197,7 +205,12 @@ def test_withdraw_in_flight_is_already_decided(store: OwnerStore) -> None:
     assert codes == ["already_decided"]
 
 
-def test_an_automatic_hold_outranks_a_written_decision(tmp_path: Path) -> None:
+# While the record holds the owner's answer, Automatic's decision beside it
+# settles nothing and holds nothing back, so a written answer is refused as
+# written, not as held (V2, ADR-0108).
+def test_a_written_decision_beside_automatics_is_refused_as_written(
+    tmp_path: Path,
+) -> None:
     store = OwnerStore(tmp_path, None)
     try:
         case_id, _ = publish_genre_case(store.repository, genre_report())
@@ -212,14 +225,15 @@ def test_an_automatic_hold_outranks_a_written_decision(tmp_path: Path) -> None:
                 destination="genres",
             )
         )
-        _refused(store, "automatic_hold", "withdraw", destination="genres")
-        assert _field(store, "genres")["owner_control"]["withdraw"] == "automatic_hold"
+        _refused(store, "decision_written", "withdraw", destination="genres")
+        assert _field(store, "genres")["owner_control"]["withdraw"] == "written"
     finally:
         store.close()
 
 
-# The refusal names Resume automatic handling, so the field states it only
-# while the hold stands with no Resume out; the store still refuses after.
+# Withdraw shows beside Automatic's decision while the record holds the
+# answer (V2). Once a Resume is out, Automatic's decision settles the field
+# again, so the page offers no withdrawal and the store refuses one.
 def test_the_hold_refusal_shows_only_until_resume_is_chosen(tmp_path: Path) -> None:
     store = OwnerStore(tmp_path, None)
     try:
@@ -231,7 +245,7 @@ def test_the_hold_refusal_shows_only_until_resume_is_chosen(tmp_path: Path) -> N
             {"kind": "list", "value": ["Fantasy"]},
             destination="genres",
         )
-        assert _field(store, "genres")["owner_control"]["withdraw"] == "automatic_hold"
+        assert _field(store, "genres")["owner_control"]["withdraw"] == "available"
         scan = store.repository.request_review_scan(
             report.target.connection,
             report.target.library,
@@ -240,13 +254,11 @@ def test_the_hold_refusal_shows_only_until_resume_is_chosen(tmp_path: Path) -> N
             store.clock(),
         )
         at = store.clock()
-        assert store.repository.request_field_effect_manual_return(
+        assert store.repository.request_owner_field_resume(
             case_id, "genres", decision.decision_id, scan.scan_id, at, at
         )
         assert _field(store, "genres")["owner_control"]["withdraw"] is None
-        assert store.repository.clear_field_effect_manual_hold(
-            case_id, "genres", store.clock(), decision.decision_id
-        )
+        assert resume(store.repository, case_id, "genres", store.clock())
         assert _field(store, "genres")["owner_control"]["withdraw"] is None
         _refused(store, "automatic_hold", "withdraw", destination="genres")
     finally:
@@ -267,14 +279,12 @@ def test_a_resumed_answer_without_entry_keeps_only_a_recorded_value(
     try:
         case_id, _ = publish_genre_case(store.repository, genre_report())
         store.load(case_id)
-        decision = store.decide(
+        store.decide(
             outcome, {"kind": "list", "value": ["Fantasy"]}, destination="genres"
         )
         held = _field(store, "genres")["owner_control"]
-        assert cast(dict, held)["withdraw"] == "automatic_hold"
-        assert store.repository.clear_field_effect_manual_hold(
-            case_id, "genres", store.clock(), decision.decision_id
-        )
+        assert cast(dict, held)["withdraw"] == "available"
+        assert resume(store.repository, case_id, "genres", store.clock())
         assert _field(store, "genres")["owner_control"] == (
             {
                 "entry": None,
@@ -461,9 +471,7 @@ def test_a_clear_after_a_fill_goes_back_to_the_empty_field(tmp_path: Path) -> No
         )
         assert store.target.read(written.plan).value is None
         assert (
-            store.repository.field_effect_manual_hold_token(
-                store.case.review_case_id, "subtitle"
-            )
+            hold_token(store.repository, store.case.review_case_id, "subtitle")
             == clear.decision_id
         )
         # History and Activity read the clear as a removal, never as a value.
@@ -541,9 +549,7 @@ def test_keeping_an_empty_genres_after_a_write_goes_back_to_empty(
     assert (back.plan.pre_value, back.plan.desired_value) == (["Fantasy"], None)
     assert store.target.read(back.plan).value is None
     assert (
-        store.repository.field_effect_manual_hold_token(
-            store.case.review_case_id, "genres"
-        )
+        hold_token(store.repository, store.case.review_case_id, "genres")
         == keep.decision_id
     )
     assert keep.decision_id not in _pending(store)
@@ -1043,9 +1049,7 @@ def _automatic_genres(store: OwnerStore) -> list[str]:
 
 
 def _hold(store: OwnerStore) -> str | None:
-    return store.repository.field_effect_manual_hold_token(
-        store.case.review_case_id, "genres"
-    )
+    return hold_token(store.repository, store.case.review_case_id, "genres")
 
 
 def test_the_hold_follows_the_work_to_its_successor(
@@ -1057,10 +1061,11 @@ def test_the_hold_follows_the_work_to_its_successor(
     assert store.case.review_case_id != first
     assert _hold(store) == token
     assert _automatic_genres(store) == []
-    # The successor says so, and offers "Return to automatic" for it.
+    # The successor offers Resume for it, and asks the field by its own
+    # reason: nothing is carried to settle it (V1, V3).
     field = _field(store, "genres")
     assert (field["manual_hold"], field["human_decision"]) == (True, None)
-    assert field["classification"] == "human_recorded"
+    assert field["classification"] == "needs_attention"
     store.publish(rewritten(_HELD, publisher="Changed Again"))
     assert _hold(store) == token
     assert _automatic_genres(store) == []
@@ -1070,7 +1075,7 @@ def test_the_hold_follows_the_work_to_its_successor(
     assert _hold(store) == token
 
 
-def test_a_pending_return_is_not_carried_forward(
+def test_a_pending_return_follows_the_work_to_its_successor(
     held: tuple[OwnerStore, str],
 ) -> None:
     store, token = held
@@ -1078,11 +1083,18 @@ def test_a_pending_return_is_not_carried_forward(
         "primary", "ebooks", "library-ebooks", "a" * 64, store.clock()
     )
     at = store.clock()
-    assert store.repository.request_field_effect_manual_return(
+    assert store.repository.request_owner_field_resume(
         store.case.review_case_id, "genres", token, scan.scan_id, at, at
     )
     store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
-    assert _hold(store) is None
+    assert _hold(store) == token
+    # The request is the work's, not the case's: until its checks complete
+    # the record still holds the field on the successor (ADR-0108, V5).
+    assert _automatic_genres(store) == []
+    request = store.repository._connection.execute(
+        "SELECT open_resume_id FROM owner_field_answers WHERE destination='genres'"
+    ).fetchone()[0]
+    assert complete_resume(store.repository, request, store.clock())
     assert _automatic_genres(store) == [store.case.review_case_id]
 
 
@@ -1112,9 +1124,7 @@ def test_returning_the_successor_to_automatic_releases_the_hold(
     store, token = held
     store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
     successor = store.case.review_case_id
-    assert store.repository.clear_field_effect_manual_hold(
-        successor, "genres", store.clock(), token
-    )
+    assert resume(store.repository, successor, "genres", store.clock())
     assert _hold(store) is None
     assert _automatic_genres(store) == [successor]
     assert _field(store, "genres")["manual_hold"] is False
@@ -1133,9 +1143,7 @@ def test_a_released_hold_stays_released_when_an_earlier_case_recurs(
     first = store.case.review_case_id
     store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
     successor = store.case.review_case_id
-    assert store.repository.clear_field_effect_manual_hold(
-        successor, "genres", store.clock(), token
-    )
+    assert resume(store.repository, successor, "genres", store.clock())
     assert _automatic_genres(store) == [successor]
     store.publish(_HELD)
     assert store.case.review_case_id == first
@@ -1158,9 +1166,7 @@ def test_returning_the_holding_case_to_automatic_clears_its_held_flag(
 ) -> None:
     store, token = held
     assert _field(store, "genres")["manual_hold"] is True
-    assert store.repository.clear_field_effect_manual_hold(
-        store.case.review_case_id, "genres", store.clock(), token
-    )
+    assert resume(store.repository, store.case.review_case_id, "genres", store.clock())
     assert _hold(store) is None
     assert _field(store, "genres")["manual_hold"] is False
 
@@ -1170,7 +1176,7 @@ def _request_return(store: OwnerStore, token: str) -> tuple[str, int]:
         "primary", "ebooks", "library-ebooks", "a" * 64, store.clock()
     )
     at = store.clock()
-    assert store.repository.request_field_effect_manual_return(
+    assert store.repository.request_owner_field_resume(
         store.case.review_case_id, "genres", token, scan.scan_id, at, at
     )
     return scan.scan_id, at
@@ -1191,9 +1197,7 @@ def test_the_holding_case_shows_a_requested_return_until_it_is_released(
     assert _field(store, "genres")["manual_return_failed"] is False
     _request_return(store, token)
     assert _held_and_requested(store) == (True, True)
-    assert store.repository.clear_field_effect_manual_hold(
-        store.case.review_case_id, "genres", store.clock(), token
-    )
+    assert resume(store.repository, store.case.review_case_id, "genres", store.clock())
     assert _held_and_requested(store) == (False, False)
 
 
@@ -1224,18 +1228,19 @@ def test_requesting_a_return_again_on_the_same_hold_is_safe(
     first = _request_return(store, token)
     second = _request_return(store, token)
     assert second[1] > first[1]
-    rows = store.repository._connection.execute(
-        "SELECT document FROM field_effect_manual_holds "
-        "WHERE review_case_id=? AND destination='genres' AND active=1",
-        (store.case.review_case_id,),
-    ).fetchall()
-    assert len(rows) == 1
-    document = json.loads(rows[0][0])
-    assert document["pending_return"] == {
-        "requested_at": second[1],
-        "scan_id": second[0],
-    }
-    assert document["decision_id"] == token
+    # The record keeps one answer, its open request the second, and the
+    # first is closed superseded.
+    row = _record_row(store)
+    assert row is not None and row[0] == token
+    assert store.repository._connection.execute(
+        "SELECT kind,scan_id,occurred_at,event_id=? FROM owner_field_events "
+        "WHERE destination='genres' ORDER BY rowid",
+        (row[1],),
+    ).fetchall() == [
+        ("resume_requested", first[0], first[1], 0),
+        ("resume_superseded", None, second[1], 0),
+        ("resume_requested", second[0], second[1], 1),
+    ]
     assert _hold(store) == token
     assert _held_and_requested(store) == (True, True)
 
@@ -1253,11 +1258,14 @@ def test_a_requested_return_whose_checks_fail_can_be_requested_again(
         True,
         False,
     )
+    # The scan settles with failures, and fails the request on it, in one
+    # transaction, as preparation settles it.
     store.repository._connection.execute(
         "UPDATE review_preparation_scans SET state='completed_with_failures' "
         "WHERE scan_id=?",
         (scan_id,),
     )
+    assert store.repository._fail_open_resumes_for_scan(scan_id, store.clock()) == 1
     store.repository._connection.commit()
     field = _field(store, "genres")
     assert field["manual_hold"] is True
@@ -1265,8 +1273,9 @@ def test_a_requested_return_whose_checks_fail_can_be_requested_again(
         False,
         True,
     )
-    # The failure line names Resume, so the refusal does not say it twice.
-    assert cast(dict, field["owner_control"])["withdraw"] is None
+    # A failed Resume leaves the record holding the answer, so Automatic's
+    # decision settles nothing and the answer can be withdrawn (§3.6, V2).
+    assert cast(dict, field["owner_control"])["withdraw"] == "available"
     again, _ = _request_return(store, token)
     assert again == scan_id
     assert store.repository._connection.execute(
@@ -1289,18 +1298,16 @@ def test_a_pending_return_reaches_an_earlier_case_that_recurs(
         "primary", "ebooks", "library-ebooks", "a" * 64, store.clock()
     )
     at = store.clock()
-    assert store.repository.request_field_effect_manual_return(
+    assert store.repository.request_owner_field_resume(
         store.case.review_case_id, "genres", token, scan.scan_id, at, at
     )
     store.publish(_HELD)
     assert store.case.review_case_id == first
-    row = store.repository._connection.execute(
-        "SELECT active,document FROM field_effect_manual_holds "
-        "WHERE review_case_id=? AND destination='genres'",
-        (first,),
-    ).fetchone()
-    assert row[0] == 1
-    assert json.loads(row[1])["pending_return"]["scan_id"] == scan.scan_id
+    row = _record_row(store)
+    assert row is not None and row[0] == token
+    assert store.repository._connection.execute(
+        "SELECT kind,scan_id FROM owner_field_events WHERE event_id=?", (row[1],)
+    ).fetchone() == ("resume_requested", scan.scan_id)
     store.repository.close()
     store.repository = open_repository(store.root / "owner.sqlite")
 
@@ -1345,21 +1352,21 @@ def _genres_policy(store: OwnerStore, destination: str, generation: int) -> None
 def _recur_after_release(
     store: OwnerStore, token: str, before_release: str | None = None
 ) -> None:
-    """Genres turns to Ask, so no later case has an automatic genres decision
-    and each carries the hold; the work reads A, then B, where the hold is
-    released, then A again. `before_release` is recorded on A first."""
-    _genres_policy(store, "ask", 2)
-    earlier = store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    """The work reads B, where Resume hands genres back to Automatic, which
+    alone offers it (ADR-0108); then genres turns to Ask, so no later case
+    has an automatic genres decision, and the work reads C, then D, then C
+    again. `before_release` is recorded on B first."""
+    store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
     if before_release is not None:
         # Every owner answer holds the field (ADR-0085, Amendment 1), so
-        # this answer's hold is the one B carries and the one released.
+        # this answer is the one the record holds and Resume hands back.
         token = store.decide(before_release, _FANTASY, destination="genres").decision_id
-    store.publish(rewritten(_HELD, publisher="Changed Again"))
     assert _hold(store) == token
-    assert store.repository.clear_field_effect_manual_hold(
-        store.case.review_case_id, "genres", store.clock(), token
-    )
-    assert store.publish(rewritten(_HELD, publisher="Changed Elsewhere")) == earlier
+    assert resume(store.repository, store.case.review_case_id, "genres", store.clock())
+    _genres_policy(store, "ask", 2)
+    earlier = store.publish(rewritten(_HELD, publisher="Changed Later"))
+    store.publish(rewritten(_HELD, publisher="Changed Again"))
+    assert store.publish(rewritten(_HELD, publisher="Changed Later")) == earlier
     assert _hold(store) is None
     assert _automatic_genres(store) == []
 
@@ -1485,10 +1492,12 @@ def _resume_service(store: OwnerStore, tmp_path: Path, completed: list[int]):
     return app.state.review_application, scheduler, scans
 
 
-def _hold_document(store: OwnerStore) -> tuple[int, str] | None:
+def _record_row(store: OwnerStore) -> tuple[str, str | None] | None:
+    """The record's genres answer for the current case's book and its open
+    Resume, if any."""
     return store.repository._connection.execute(
-        "SELECT active,document FROM field_effect_manual_holds "
-        "WHERE review_case_id=? AND destination='genres'",
+        "SELECT record.answer_id,record.open_resume_id"
+        + case_record_sql("?", "'genres'").removeprefix("SELECT 1"),
         (store.case.review_case_id,),
     ).fetchone()
 
@@ -1506,13 +1515,13 @@ def test_resume_is_refused_where_the_hold_holds_no_decision(
     assert _hold(store) == token
     assert _field(store, "genres")["manual_hold"] is False
     application, _, scans = _resume_service(store, tmp_path, [0])
-    before = _hold_document(store)
+    before = _record_row(store)
     with pytest.raises(GuardedApplicationError) as error:
         application.return_to_automatic(store.case.review_case_id, "genres")
     assert error.value.code == "manual_hold"
     # Nothing was requested or released.
     assert scans == []
-    assert _hold_document(store) == before
+    assert _record_row(store) == before
 
 
 def test_resume_shown_on_a_successor_requests_a_return_that_completes(
@@ -1525,9 +1534,8 @@ def test_resume_shown_on_a_successor_requests_a_return_that_completes(
     application, scheduler, scans = _resume_service(store, tmp_path, completed)
     application.return_to_automatic(store.case.review_case_id, "genres")
     assert scans == [("primary", "ebooks")]
-    row = _hold_document(store)
-    assert row is not None and row[0] == 1
-    assert "pending_return" in json.loads(row[1])
+    row = _record_row(store)
+    assert row is not None and row[0] == token and row[1] is not None
     # The fresh checks complete, and the pending return releases the hold.
     completed[0] = 10**9
     scheduler.schedule()
@@ -1657,6 +1665,11 @@ def test_choosing_the_previous_value_again_reads_the_earlier_case_as_new(
     assert title["human_decision"] is None
     assert title["owner_control"]["withdraw"] is None
     assert _decision_ids(store) == set()
+    # The record's answer is the later case's, not this episode's. The title
+    # offers no decision here, so that answer settles it rather than asking
+    # it (C2b-15, C2b-18).
+    assert title["decision_actions"] == []
+    assert title["classification_cause"] == "human_decided"
     assert _asking(store) == before
     _refused(store, "nothing_to_withdraw", "withdraw")
     # The earlier episode stays as history, and the store reopens.
@@ -1927,9 +1940,7 @@ def _automatic_after_going_back(
     store.write(store.decide("keep_current", destination="genres"))
     token = _hold(store)
     assert token is not None
-    assert store.repository.clear_field_effect_manual_hold(
-        store.case.review_case_id, "genres", store.clock(), token
-    )
+    assert resume(store.repository, store.case.review_case_id, "genres", store.clock())
     written = store.write(automatic)
     assert written.plan.desired_value == ["Fantasy"]
     if early is not None:
@@ -2000,10 +2011,10 @@ def test_accepting_the_value_the_case_wrote_is_unchanged(store: OwnerStore) -> N
     nothing; the first accept still replays, and a keep still records."""
     first = store.decide("accept", _FANTASY, destination="genres")
     store.write(first)
-    hold = _hold_document(store)
+    record = _record_row(store)
     _refused(store, "owner_value_unchanged", "accept", _FANTASY, destination="genres")
     assert _pending(store) == []
-    assert _hold_document(store) == hold
+    assert _record_row(store) == record
     assert store.repository._connection.execute(
         "SELECT COUNT(*) FROM field_effect_no_changes"
     ).fetchone() == (0,)
@@ -2026,16 +2037,18 @@ def test_accepting_the_value_the_case_wrote_is_unchanged(store: OwnerStore) -> N
 
 
 def test_accepting_the_written_value_after_resume_holds_the_field_again(
-    store: OwnerStore,
+    tmp_path: Path,
 ) -> None:
     """Resume automatic handling released the owner's written answer, so it
     no longer holds the field: choosing its value again holds the field anew
-    with nothing to write, rather than being refused as unchanged."""
+    with nothing to write, rather than being refused as unchanged. Resume is
+    offered only where genres is Automatic (ADR-0108)."""
+    store = OwnerStore(tmp_path, None)
+    store.automatic("genres", "replace", _HELD.target.library)
+    store.publish(genre_report())
     first = store.decide("accept", _FANTASY, destination="genres")
     store.write(first)
-    assert store.repository.clear_field_effect_manual_hold(
-        store.case.review_case_id, "genres", store.clock(), first.decision_id
-    )
+    assert resume(store.repository, store.case.review_case_id, "genres", store.clock())
     again = store.decide("accept", _FANTASY, destination="genres")
     assert _pending(store) == []
     assert _hold(store) == again.decision_id
@@ -2043,6 +2056,7 @@ def test_accepting_the_written_value_after_resume_holds_the_field_again(
         "SELECT decision_id,origin FROM field_effect_no_changes"
     ).fetchall() == [(again.decision_id, "human")]
     _refused(store, "owner_value_unchanged", "accept", _FANTASY, destination="genres")
+    store.close()
 
 
 @pytest.mark.parametrize("later", ["keep_current", "owner_entered"])
@@ -2208,8 +2222,8 @@ def test_a_write_landing_in_a_later_episode_is_the_cases_own(
             store.decide("accept", _FANTASY, destination="genres")
         _leave_and_return(store)
         if planned == "revived":
-            assert store.repository.clear_field_effect_manual_hold(
-                store.case.review_case_id, "genres", store.clock(), _hold(store)
+            assert resume(
+                store.repository, store.case.review_case_id, "genres", store.clock()
             )
         assert store.write(automatic).plan.plan_id == early.plan.plan_id
         assert store.repository.written_field_values(store.case.review_case_id) == (
@@ -2273,8 +2287,8 @@ def test_history_reads_the_write_before_a_decision_in_its_second(
         automatic = _genres_automatic(store)
         store.frozen = same_second
         accept = store.decide("accept", _FANTASY, destination="genres")
-        assert store.repository.clear_field_effect_manual_hold(
-            store.case.review_case_id, "genres", store.clock(), _hold(store)
+        assert resume(
+            store.repository, store.case.review_case_id, "genres", store.clock()
         )
         written = store.write(automatic)
         store.frozen = False

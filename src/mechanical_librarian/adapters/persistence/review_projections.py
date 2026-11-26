@@ -39,6 +39,7 @@ from mechanical_librarian.adapters.persistence.decisions import (
     field_change_waiting_sql,
     field_write_waiting_sql,
     owner_keeps_automatic_off,
+    pin_in_force_sql,
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
@@ -69,10 +70,14 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _LATEST_PREPARATION_WORK_SQL,
     _POLICY_ASK_ATTENTION_SQL,
     _episode_decision_sql,
+    _read_as_own_sql,
+    _resumed_decision_sql,
+    _withdrawn_automatic_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
     _policy_settles_choice_sql,
+    _resume_offer_sql,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -118,6 +123,15 @@ from mechanical_librarian.domain.review_case import (
 )
 from mechanical_librarian.domain.review_field_classification import ReviewFieldCause
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+
+# The record's rows for the book of current case `:case`, each field's
+# answer, as `{alias}` (ADR-0108).
+_CASE_RECORD_ROWS_SQL = (
+    "current_review_case_lineages {alias}_case JOIN owner_field_answers {alias} "
+    "ON {alias}.connection_name={alias}_case.connection_name "
+    "AND {alias}.library_name={alias}_case.library_name "
+    "AND {alias}.item_id={alias}_case.item_id AND {alias}_case.review_case_id=:case"
+)
 
 
 class SQLiteReviewProjectionRepository(ConnectionScoped):
@@ -383,14 +397,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 ).fetchone()
                 is not None,
                 decision_effect_states=self._decision_effect_states(review_case_id),
-                held_destinations=tuple(
-                    row[0]
-                    for row in self._connection.execute(
-                        "SELECT destination FROM field_effect_manual_holds "
-                        "WHERE review_case_id=? AND active=1 ORDER BY destination",
-                        (review_case_id,),
-                    )
-                ),
+                **self._record_states(review_case_id),
                 pins=self._pins(review_case_id),
                 change_waiting_destinations=tuple(
                     row[0]
@@ -432,12 +439,6 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         {"review_case_id": review_case_id},
                     )
                 ),
-                return_requested_destinations=self._return_destinations(
-                    review_case_id, failed=False
-                ),
-                return_failed_destinations=self._return_destinations(
-                    review_case_id, failed=True
-                ),
                 previous_values=self._previous_field_values(
                     report.target.connection,
                     report.target.library,
@@ -460,13 +461,14 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         return snapshot
 
     def _pins(self, review_case_id: str) -> tuple[tuple[str, bool, str], ...]:
-        """Each pin on the case's active holds (ADR-0085, Amendment 2).
+        """Each pin on the record of the case's book (ADR-0085, Amendment 2;
+        ADR-0108), in force or not as read on this case (S15).
 
-        The pinned value is the chosen value where the hold's decision chose
-        one, and otherwise the value of that decision's case; a hold breaking
-        that reads no pin. The chosen value is parsed here, not extracted in
-        SQL, which would read a JSON boolean as an integer. Kept apart so
-        `read_current_review_case` stays under the code-size guide.
+        The pinned value is the chosen value where the pinned answer chose
+        one, and otherwise the value of that answer's case. The chosen value
+        is parsed here, not extracted in SQL, which would read a JSON boolean
+        as an integer. Kept apart so `read_current_review_case` stays under
+        the code-size guide.
         """
         return tuple(
             (
@@ -483,43 +485,93 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 else row[4],
             )
             for row in self._connection.execute(
-                "SELECT hold.destination,"
-                "json_extract(hold.document,'$.pin.in_force'),"
-                "human.outcome,human.selected_value_document,target.value "
-                "FROM field_effect_manual_holds hold JOIN human_decisions human "
-                "ON human.decision_id=json_extract(hold.document,'$.decision_id') "
+                "SELECT pinned.destination,"
+                + pin_in_force_sql(":case", "pinned.destination")
+                + ",human.outcome,human.selected_value_document,target.value FROM "
+                + _CASE_RECORD_ROWS_SQL.format(alias="pinned")
+                + " JOIN human_decisions human ON human.decision_id=pinned.answer_id "
                 "AND human.outcome IN ('pin','keep_current','accept','owner_entered') "
                 "JOIN review_cases review "
                 "ON review.review_case_id=human.review_case_id,"
                 "json_each(review.document,'$.target.fields') target "
-                "WHERE hold.review_case_id=? AND hold.active=1 "
-                "AND json_type(hold.document,'$.pin')='object' "
-                "AND json_extract(target.value,'$.destination')=hold.destination "
-                "ORDER BY hold.destination",
-                (review_case_id,),
+                "WHERE pinned.pin_fingerprint IS NOT NULL "
+                "AND json_extract(target.value,'$.destination')=pinned.destination "
+                "ORDER BY pinned.destination",
+                {"case": review_case_id},
             )
         )
 
-    def _return_destinations(
-        self, review_case_id: str, *, failed: bool
-    ) -> tuple[str, ...]:
-        # A requested return is outstanding while its scan can still finish.
-        # A scan that finished with failures keeps the hold, and nothing
-        # retries it, so that request reads as failed: the owner asks again,
-        # which requeues the scan (#1755).
-        return tuple(
-            row[0]
-            for row in self._connection.execute(
-                "SELECT hold.destination FROM field_effect_manual_holds hold "
-                "JOIN review_preparation_scans scan "
-                "ON scan.scan_id=json_extract(hold.document,'$.pending_return.scan_id') "
-                "WHERE hold.review_case_id=? AND hold.active=1 AND "
-                "json_type(hold.document,'$.pending_return')='object' AND "
-                "(scan.state='completed_with_failures')=? "
-                "ORDER BY hold.destination",
-                (review_case_id, int(failed)),
-            )
-        )
+    def _record_states(self, review_case_id: str) -> dict[str, tuple[str, ...]]:
+        """What the record of the case's book holds for the case page
+        (ADR-0108): each field it holds an answer for; each with a Resume
+        open over it, as requested or, once its scan ended with failures, as
+        failed (the owner asks again, which requeues the scan, #1755); each
+        that offers Resume (C0 `resume_offer`; a cover where the owner's
+        cover took it over from Automatic, S9); each whose answer the case
+        reads as its own (`_read_as_own_sql`), which decides the field here
+        (C2b-15), a pin taken back only where Automatic decided it (C2b-27,
+        C2b-28); each the owner withdrew beside Automatic's decision on the
+        case, which then settles nothing (`_withdrawn_automatic_sql`); and the
+        case's owner decisions a completed Resume took back, which no longer
+        decide their field (D3). Kept apart so `read_current_review_case`
+        stays under the code-size guide."""
+        states: dict[str, list[str]] = {
+            "held_destinations": [],
+            "return_requested_destinations": [],
+            "return_failed_destinations": [],
+            "resume_offer_destinations": [],
+            "own_answer_destinations": [],
+        }
+        for destination, opened, failed, offered, own in self._connection.execute(
+            "SELECT held.destination,held.open_resume_id IS NOT NULL,"
+            "EXISTS (SELECT 1 FROM owner_field_events failed "
+            "WHERE failed.request_id=held.open_resume_id "
+            "AND failed.kind='resume_failed'),CASE WHEN held.destination='cover' "
+            "THEN EXISTS (SELECT 1 FROM owner_cover_selections took "
+            "WHERE took.selection_id=held.cover_selection_id "
+            "AND took.cover_took_over=1) ELSE "
+            + _resume_offer_sql(":case", "held.destination")
+            + " END,"
+            + _read_as_own_sql("held", ":case", "held.destination")
+            + " FROM "
+            + _CASE_RECORD_ROWS_SQL.format(alias="held")
+            + " ORDER BY held.destination",
+            {"case": review_case_id},
+        ):
+            states["held_destinations"].append(destination)
+            if opened:
+                states[
+                    "return_failed_destinations"
+                    if failed
+                    else "return_requested_destinations"
+                ].append(destination)
+            if offered:
+                states["resume_offer_destinations"].append(destination)
+            if own:
+                states["own_answer_destinations"].append(destination)
+        return {
+            **{name: tuple(values) for name, values in states.items()},
+            "withdrawn_destinations": tuple(
+                row[0]
+                for row in self._connection.execute(
+                    "SELECT DISTINCT decision.destination FROM human_decisions "
+                    "decision WHERE decision.review_case_id=:case AND "
+                    + _withdrawn_automatic_sql(":case", "decision.destination")
+                    + " ORDER BY decision.destination",
+                    {"case": review_case_id},
+                )
+            ),
+            "covered_decision_ids": tuple(
+                row[0]
+                for row in self._connection.execute(
+                    "SELECT decision.decision_id FROM human_decisions decision "
+                    "WHERE decision.review_case_id=? AND "
+                    + _resumed_decision_sql("decision")
+                    + " ORDER BY decision.ordinal",
+                    (review_case_id,),
+                )
+            ),
+        }
 
     def _current_generation_decisions(
         self, decision_documents: tuple[str, ...]
@@ -932,9 +984,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         0
                         if case_id is None
                         else self._connection.execute(
-                            "SELECT COUNT(*) FROM field_effect_manual_holds "
-                            "WHERE review_case_id=? AND active=1 "
-                            "AND json_type(document,'$.pin')='object'",
+                            "SELECT COUNT(*) FROM "
+                            + _CASE_RECORD_ROWS_SQL.format(alias="pinned").replace(
+                                ":case", "?"
+                            )
+                            + " WHERE pinned.pin_fingerprint IS NOT NULL",
                             (case_id,),
                         ).fetchone()[0],
                     )

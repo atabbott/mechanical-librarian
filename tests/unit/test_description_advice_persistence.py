@@ -13,7 +13,11 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
 )
 from tests.support.description_advice import qualify_description_advice
-from tests.support.owner_field_record import record_recomputes  # noqa: F401
+from tests.support.owner_field_record import (
+    hold_token,
+    record_recomputes,  # noqa: F401
+    resume,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -709,15 +713,15 @@ def test_a_successor_carrying_the_owners_hold_admits_its_description_held(
     )
     owner = store.admit(original.candidate_id, binding, "human", "e" * 64, 11)
     assert (
-        repository.field_effect_manual_hold_token(binding.review_case_id, "description")
+        hold_token(repository, binding.review_case_id, "description")
         == owner.decision_id
     )
     report, fresh = _publish_successor(repository, binding)
     successor = fresh.review_case_id
-    assert (
-        repository.field_effect_manual_hold_token(successor, "description")
-        == owner.decision_id
-    )
+    assert hold_token(repository, successor, "description") == owner.decision_id
+    # Preparation projects the successor, which is where Resume is offered
+    # from: the field is Automatic on it (ADR-0108).
+    repository.persist_shadow_outcome(successor, 12)
     candidate = DescriptionAdviceService(
         store, access[0], store.current_settings, lambda: 12
     ).prepare(report, fresh, lambda: store.binding_is_current(fresh))
@@ -786,9 +790,7 @@ def test_a_successor_carrying_the_owners_hold_admits_its_description_held(
         "SELECT count(*) FROM field_effects WHERE decision_id=?",
         (decision.decision_id,),
     ).fetchone() == (0,)
-    assert repository.clear_field_effect_manual_hold(
-        successor, "description", 18, owner.decision_id
-    )
+    assert resume(repository, successor, "description", 18)
     documents, counts = pending()
     assert len(documents) == 1
     assert [(row["origin"], row["count"]) for row in counts] == [("automatic", 1)]
@@ -907,13 +909,12 @@ def test_an_owner_answer_without_an_authored_description_holds_later_advice(
         "SELECT count(*) FROM current_description_decisions"
     ).fetchone() == (0,)
     assert (
-        repository.field_effect_manual_hold_token(binding.review_case_id, "description")
+        hold_token(repository, binding.review_case_id, "description")
         == owner.decision_id
     )
     report, fresh = _publish_successor(repository, binding)
     assert (
-        repository.field_effect_manual_hold_token(fresh.review_case_id, "description")
-        == owner.decision_id
+        hold_token(repository, fresh.review_case_id, "description") == owner.decision_id
     )
     candidate = DescriptionAdviceService(
         store, access[0], store.current_settings, lambda: 12
@@ -931,11 +932,11 @@ def test_an_owner_answer_without_an_authored_description_holds_later_advice(
 
 
 def test_a_pinned_description_admits_no_automatic_advice(tmp_path):
-    """ADR-0085 Amendment 2 (#1346, AC8 and AC15): a pin carried to a later
-    case keeps automatic advice out of the description, while the owner's own
-    advice choice is still admitted and ends the pin. A carried hold without
-    a pin refuses no automatic admission (the test above), so only the pin
-    can refuse it."""
+    """ADR-0085 Amendment 2 (#1346, AC8 and AC15): a pin the record keeps for
+    the work keeps automatic advice out of the description on a later case,
+    while the owner's own advice choice is still admitted and ends the pin.
+    An answer without a pin refuses no automatic admission (the test above),
+    so only the pin can refuse it."""
     from mechanical_librarian.application.description_advice import (
         DescriptionAdviceService,
     )
@@ -970,13 +971,12 @@ def test_a_pinned_description_admits_no_automatic_advice(tmp_path):
     report, fresh = _publish_successor(repository, binding)
 
     def hold() -> dict[str, object]:
-        return json.loads(
-            repository._connection.execute(
-                "SELECT document FROM field_effect_manual_holds WHERE "
-                "review_case_id=? AND destination='description'",
-                (fresh.review_case_id,),
-            ).fetchone()[0]
-        )
+        """The record's description answer for the work, and its pin."""
+        answer, pinned = repository._connection.execute(
+            "SELECT answer_id,pin_fingerprint FROM owner_field_answers "
+            "WHERE destination='description'"
+        ).fetchone()
+        return {"decision_id": answer, "pin": pinned}
 
     assert hold()["decision_id"] == pin.decision_id
     assert hold()["pin"] is not None
@@ -1052,9 +1052,7 @@ def test_a_pin_never_reopens_a_description_choice(tmp_path, monkeypatch, beneath
             connection.execute(
                 "SELECT decision_id FROM human_decisions ORDER BY ordinal"
             ).fetchall(),
-            connection.execute(
-                "SELECT document FROM field_effect_manual_holds"
-            ).fetchall(),
+            connection.execute("SELECT * FROM owner_field_answers").fetchall(),
             repository.pending_field_effect_decision_documents(32),
         )
 
@@ -1066,7 +1064,7 @@ def test_a_pin_never_reopens_a_description_choice(tmp_path, monkeypatch, beneath
     # The advice choice is the description's pending write.
     assert chosen.to_json() in repository.pending_field_effect_decision_documents(32)
     assert (
-        repository.field_effect_manual_hold_token(binding.review_case_id, "description")
+        hold_token(repository, binding.review_case_id, "description")
         == chosen.decision_id
     )
     with pytest.raises(HumanDecisionError) as refused:

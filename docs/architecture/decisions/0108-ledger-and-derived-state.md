@@ -107,7 +107,9 @@ Rules for every ledger row:
   no derived row matches: the decided value, the display title and previous
   value at decision time, the whole chosen description candidate, the chosen
   cover's digests, target and observed identity, and for write plans and
-  no-change rows the display title and connection label.
+  no-change rows the display title and connection label. The owner's rows
+  also keep the work's authors, for Activity's author label; Automatic's
+  keep none, though its no-change rows keep the value they kept.
 - **Validation by partition.** Open validates terminal ledger history by its
   shape, its own copies and its ledger references; whether its derived
   provenance is current is a read-time question. Live rows (non-terminal
@@ -280,9 +282,13 @@ keeps its field (Amendment 1); a written value held as the owner's answer; a
 withdrawal after leaving Automatic; the answer and Resume kept across leaving
 and turning on Automatic (Amendment 4); the held line in Preview
 (Amendment 5); a pin taken back (Amendment 6); and going back after a write
-(ADR-0105). Because Resume is offered from the record (below), the cases
-Amendments 4 to 6 added so that a hold and Resume could show on a case need
-no case-scoped rule of their own.
+(ADR-0105). The automatic mint keeps the exemptions Amendments 4 to 6 added,
+read over the record instead of a hold on the case: where the record holds the
+field's answer, the case's latest answer for the field is not a withdrawal,
+and either Automatic decided the field on the case in an earlier generation
+or the owner only pinned it and took the pin back, Automatic still records
+its decision, so the case shows the held choice, Activity's "Held by you"
+note and Resume.
 
 ### Resume automatic handling
 
@@ -424,7 +430,22 @@ no owner decision" ([security](../security.md#owner-decisions),
 
 - An active-generation automatic decision, or a current automatic description
   decision, settles a field only when the record holds no answer for the work
-  and destination, or holds one with a Resume open.
+  and destination, or holds one with a Resume open. An active-generation
+  automatic decision also does not settle while the case episode's latest
+  human row for the field, pins and unpins aside, is the owner's withdrawal.
+  Book matching's `matching_changed` row is not one: the answer it asks again
+  reads as a pin taken back does, decided only where Automatic decided the
+  field, held in Preview, and otherwise as without the answer. That field
+  is asked where the case offers a decision on it, so an emptying withdrawal
+  never leaves it reading as decided by Automatic; Automatic decides it again
+  from the book's next case or episode ([Withdrawal and carry
+  eligibility](#withdrawal-and-carry-eligibility)). A Resume over the
+  withdrawal that has completed, or is open and has not failed, takes the
+  withdrawal back, and Automatic's decision settles the field again. The
+  description decision has no such case: an owner's description decision,
+  keep current among them, removes the case's current description decision,
+  Automatic authors none while such a row counts, and the owner cannot
+  withdraw a description.
 - Everything else that settles a field today still does: the case episode's
   latest human row that is not a withdrawal (carried rows, `settled` ones
   included), an authored description, and the owner cover pointer. An owner
@@ -497,9 +518,11 @@ Every automatic path reads the record by item key and destination instead of
 a hold on the case: both copies of the planning query (the automatic arm, the
 description arm and the cover arm), the title and subtitle bundle, the
 apply-time refusal of an automatic plan, the automatic field, cover and
-description mints, automatic description advice's authority, title-recovery
-requeue, the Attention clear test and reasons, the case page's held state, the
-pending Resume work list and Activity's Resume history. The hold table, its
+description mints, automatic description advice's authority, the Attention
+clear test and reasons, the case page's held state and the pending Resume
+work list. Title recovery keeps today's case-scoped
+clause: it does not requeue a case holding an owner decision on its title.
+The hold table, its
 document and validator, its writers and readers, the hold carry at admission,
 and the released-row tests are deleted.
 

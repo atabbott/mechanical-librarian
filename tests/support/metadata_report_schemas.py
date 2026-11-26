@@ -475,6 +475,20 @@ _ITEM_KEY = (
 _DISPLAY_TITLE = (
     "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text')"
 )
+_DISPLAY_AUTHORS = (
+    "display_authors TEXT CHECK(display_authors IS NULL OR (typeof(display_authors)='text' "
+    "AND json_valid(display_authors) AND json_type(display_authors)='array'))"
+)
+_OWNER_DISPLAY_AUTHORS = (
+    "display_authors TEXT CHECK(display_authors IS NULL OR (origin='human' AND "
+    "typeof(display_authors)='text' AND json_valid(display_authors) AND "
+    "json_type(display_authors)='array'))"
+)
+_AUTOMATIC_KEPT_VALUE = (
+    "kept_value_document TEXT CHECK(kept_value_document IS NULL OR "
+    "(origin='automatic_policy' AND typeof(kept_value_document)='text' AND "
+    "json_valid(kept_value_document)))"
+)
 
 
 def _undone(current: str, *steps: tuple[str, str]) -> str:
@@ -492,6 +506,8 @@ PRE_2038_HUMAN_DECISIONS_SQL = _undone(
         _ITEM_KEY
         + ", "
         + _DISPLAY_TITLE
+        + ", "
+        + _DISPLAY_AUTHORS
         + ", target_field_document TEXT NOT NULL CHECK(typeof(target_field_document)='text' "
         "AND json_valid(target_field_document) AND json_type(target_field_document) IN "
         "('object','null')), selected_form TEXT CHECK(selected_form IS NULL OR "
@@ -512,10 +528,20 @@ PRE_2038_FIELD_EFFECT_NO_CHANGES_SQL = _undone(
         _CASE_REFERENCE
         + "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), ",
     ),
-    (", " + _DISPLAY_TITLE + ") WITHOUT ROWID", ") WITHOUT ROWID"),
+    (
+        ", "
+        + _DISPLAY_TITLE
+        + ", "
+        + _OWNER_DISPLAY_AUTHORS
+        + ", "
+        + _AUTOMATIC_KEPT_VALUE
+        + ") WITHOUT ROWID",
+        ") WITHOUT ROWID",
+    ),
 )
 PRE_2038_FIELD_EFFECTS_SQL = _undone(
-    persistence_schema._FIELD_EFFECTS_SQL, (", " + _DISPLAY_TITLE + ")", ")")
+    persistence_schema._FIELD_EFFECTS_SQL,
+    (", " + _DISPLAY_TITLE + ", " + _DISPLAY_AUTHORS + ")", ")"),
 )
 PRE_2038_METADATA_POLICY_TRANSITIONS_SQL = _undone(
     persistence_schema._METADATA_POLICY_TRANSITIONS_SQL,
@@ -628,9 +654,10 @@ PRE_2038_DESCRIPTION_DECISIONS_CASE_INDEX_SQL = _renamed(
 
 def _undo_description_split(connection: sqlite3.Connection) -> None:
     """One description decisions table again, keeping every row and every
-    trigger a predecessor kept on the case's chosen one."""
+    trigger a predecessor kept on the case's chosen one, its Attention refresh
+    watching the case alone."""
     kept = [
-        sql
+        sql.replace(*_DESCRIPTION_GUARD_STEP)
         for (sql,) in connection.execute(
             "SELECT sql FROM sqlite_schema WHERE type='trigger' "
             "AND tbl_name='current_description_decisions' "
@@ -660,6 +687,112 @@ def _undo_description_split(connection: sqlite3.Connection) -> None:
         + "DROP TABLE temp.pre_2038_description;"
         "DROP TABLE temp.pre_2038_current_description;"
     )
+
+
+# Nor did it keep a record of the owner's answers for Attention to read: a
+# manual hold on the case carried its pin, in force or changed, and an
+# automatic or authored decision settled its field whatever the owner had
+# answered (#2038). These undo exactly the edits the record made to the
+# attention source, so every oracle below keeps describing the predecessor it
+# names.
+def _pin_hold_sql(in_force: bool) -> str:
+    return (
+        "EXISTS (SELECT 1 FROM field_effect_manual_holds pin_hold "
+        "WHERE pin_hold.review_case_id=rc.review_case_id "
+        "AND pin_hold.destination=result.destination "
+        "AND pin_hold.active=1 AND json_extract(pin_hold.document,'$.pin.in_force')="
+        + ("1" if in_force else "0")
+        + ")"
+    )
+
+
+_RECORD_HOLDS_SQL = review_sql._record_holds_sql("c", "result.destination")
+# Nor did a withdrawal beside Automatic's decision keep it from settling,
+# or ask the field.
+_NOT_WITHDRAWN_SQL = " AND NOT " + review_sql._withdrawn_automatic_sql(
+    "rc.review_case_id", "result.destination", "c"
+)
+# The record's answer settled nothing on its own case and asked nothing
+# elsewhere either, nor did a withdrawal beside Automatic's decision ask:
+# the reason's arm, then the clear's.
+_RECORD_ANSWER_STEPS = (
+    (
+        " OR "
+        + review_sql._record_asks_sql()
+        + " OR "
+        + review_sql._WITHDRAWN_ASKS_SQL
+        + ")",
+        ")",
+    ),
+    (
+        "AND NOT ("
+        + review_sql._record_case_answer_sql(own=True)
+        + " AND "
+        + review_sql._AUTOMATIC_DECIDED_SQL
+        + ") ",
+        "",
+    ),
+)
+_RECORD_ATTENTION_STEPS = (
+    *_RECORD_ANSWER_STEPS,
+    (
+        " AND NOT " + review_sql._resumed_decision_sql("c") + " ORDER BY",
+        " ORDER BY",
+    ),
+    (
+        " AND (EXISTS (SELECT 1 FROM owner_authored_descriptions owner_authored "
+        "WHERE owner_authored.decision_id=authored.decision_id) OR NOT "
+        + _RECORD_HOLDS_SQL
+        + _NOT_WITHDRAWN_SQL
+        + "))",
+        ")",
+    ),
+    (" AND NOT " + _RECORD_HOLDS_SQL + _NOT_WITHDRAWN_SQL + ") ", ") "),
+    (
+        review_sql._pin_record_sql(
+            "rc.review_case_id", "result.destination", True, item="c"
+        ),
+        _pin_hold_sql(True),
+    ),
+    (review_sql._PIN_CHANGED_SQL, _pin_hold_sql(False)),
+)
+# Nor did the case's chosen description refresh Attention when it changed
+# hands: which decision it named did not matter.
+_DESCRIPTION_GUARD_STEP = (
+    "OF review_case_id,decision_id ON current_description_decisions "
+    "WHEN OLD.review_case_id IS NOT NEW.review_case_id COLLATE BINARY "
+    "OR OLD.decision_id IS NOT NEW.decision_id COLLATE BINARY",
+    "OF review_case_id ON current_description_decisions "
+    "WHEN OLD.review_case_id IS NOT NEW.review_case_id COLLATE BINARY",
+)
+
+
+def pre_2038_record_attention_sql(sql: str) -> str:
+    """Attention SQL as producers before #2038 wrote it over manual holds."""
+    for now, then in (*_RECORD_ATTENTION_STEPS, _DESCRIPTION_GUARD_STEP):
+        sql = sql.replace(now, then)
+    assert "owner_field_" not in sql
+    return sql
+
+
+# Each step applies to the reason or the clear: none is left unanchored.
+assert all(
+    (
+        review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL
+        + review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL
+    ).count(now)
+    >= 1
+    for now, _ in _RECORD_ATTENTION_STEPS
+)
+assert any(
+    _DESCRIPTION_GUARD_STEP[0] in sql
+    for _, _, sql in persistence_schema._ATTENTION_FACT_OBJECTS
+)
+_PRE_2038_ATTENTION_CLEAR_SQL = pre_2038_record_attention_sql(
+    review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL
+)
+# Nor did any attention object watch the record.
+_RECORD_ATTENTION_OBJECTS = ("owner_field_answers_", "owner_field_events_")
 
 
 # Nor did it keep the owner's cover choices apart from Automatic's: one table
@@ -714,10 +847,10 @@ PRE_2038_COVER_SELECTION_TRIGGERS = tuple(
 )
 # Attention read the one pointer: an owner's choice, or Automatic's on the
 # work's current comparison, settled its cover.
-_COVER_ATTENTION_CLEAR_SQL = review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL[
-    review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL.index(
+_COVER_ATTENTION_CLEAR_SQL = _PRE_2038_ATTENTION_CLEAR_SQL[
+    _PRE_2038_ATTENTION_CLEAR_SQL.index(
         "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers"
-    ) : review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL.index(
+    ) : _PRE_2038_ATTENTION_CLEAR_SQL.index(
         "AND NOT EXISTS (SELECT 1 FROM field_effect_suspensions"
     )
 ]
@@ -732,14 +865,13 @@ PRE_2038_COVER_ATTENTION_CLEAR_SQL = (
     "AND current_cover.consideration_id=selection.consideration_id)) "
     "AND current_selection.connection_name=c.connection_name "
     "AND current_selection.library_name=c.library_name "
-    "AND current_selection.item_id=c.item_id AND NOT "
-    + review_sql._PIN_CHANGED_SQL
-    + ") "
+    "AND current_selection.item_id=c.item_id AND NOT " + _pin_hold_sql(False) + ") "
 )
 
 
 def pre_2038_attention_sql(sql: str) -> str:
     """Attention SQL, with or without pins, as producers before #2038 wrote it."""
+    sql = pre_2038_record_attention_sql(sql)
     for now, then in (
         (_COVER_ATTENTION_CLEAR_SQL, PRE_2038_COVER_ATTENTION_CLEAR_SQL),
         (
@@ -772,7 +904,7 @@ def pre_2038_attention_objects(
             ),
         )
         for kind, name, sql in objects
-        if not name.startswith("owner_cover_pointers_")
+        if not name.startswith(("owner_cover_pointers_", *_RECORD_ATTENTION_OBJECTS))
     )
 
 
@@ -828,6 +960,54 @@ def _undo_cover_split(connection: sqlite3.Connection, selections_sql: str) -> No
     )
 
 
+# Nor did it keep a record of the owner's answers at all: a manual hold per
+# case and field held the field, its pin and its Resume, by foreign key to
+# its case, and Attention refreshed from it as from the record now (#2038).
+PRE_2038_MANUAL_HOLDS_SQL = (
+    "CREATE TABLE field_effect_manual_holds ("
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
+    "active INTEGER NOT NULL CHECK(active IN (0,1)), "
+    "updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND "
+    "length(CAST(document AS BLOB)) BETWEEN 2 AND 4096), "
+    "PRIMARY KEY(review_case_id,destination))"
+)
+_HOLD_REFRESH = (
+    "INSERT INTO review_attention_refresh(connection_name,library_name,item_id,"
+    "destination) "
+)
+_HOLD_PACKAGES = (
+    "SELECT c.connection_name,c.library_name,c.item_id,{0}.destination "
+    "FROM current_review_packages c WHERE c.review_case_id={0}.review_case_id"
+)
+PRE_2038_MANUAL_HOLD_TRIGGERS = (
+    "CREATE TRIGGER field_effect_manual_holds_refresh_attention_insert AFTER "
+    "INSERT ON field_effect_manual_holds BEGIN "
+    + _HOLD_REFRESH
+    + _HOLD_PACKAGES.format("NEW")
+    + "; END",
+    "CREATE TRIGGER field_effect_manual_holds_refresh_attention_update AFTER "
+    "UPDATE OF review_case_id,destination,active,document ON "
+    "field_effect_manual_holds WHEN "
+    + " OR ".join(
+        f"OLD.{name} IS NOT NEW.{name} COLLATE BINARY"
+        for name in ("review_case_id", "destination", "active", "document")
+    )
+    + " BEGIN "
+    + _HOLD_REFRESH
+    + _HOLD_PACKAGES.format("OLD")
+    + " UNION "
+    + _HOLD_PACKAGES.format("NEW")
+    + "; END",
+    "CREATE TRIGGER field_effect_manual_holds_refresh_attention_delete AFTER "
+    "DELETE ON field_effect_manual_holds BEGIN "
+    + _HOLD_REFRESH
+    + _HOLD_PACKAGES.format("OLD")
+    + "; END",
+)
+
+
 def undo_2038_tables(
     connection: sqlite3.Connection,
     cover_selections_sql: str = PRE_2038_COVER_SELECTION_AUTHORITIES_SQL,
@@ -836,12 +1016,23 @@ def undo_2038_tables(
     the two preparation control rows merged back into one row, and the
     description decisions and cover selections each back in one table,
     keeping their values, and no record of the owner's answers, its counter
-    or its events. A producer's own cover selection table, when it kept an
-    older one, is `cover_selections_sql`."""
+    or its events, but the manual holds again, empty, with the refresh
+    triggers the record's took over where the store has those. A producer's
+    own cover selection table, when it kept an older one, is
+    `cover_selections_sql`."""
+    watched = connection.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type='trigger' "
+        "AND name='owner_field_answers_refresh_attention_insert'"
+    ).fetchone()
     connection.executescript(
         "DROP TABLE owner_field_answers;DROP TABLE owner_field_events;"
         "DROP TABLE owner_answer_ordinal;"
-        "CREATE TEMP TABLE pre_2038_control AS SELECT 1 AS singleton,"
+        + PRE_2038_MANUAL_HOLDS_SQL
+        + ";"
+        + "".join(
+            sql + ";" for sql in (PRE_2038_MANUAL_HOLD_TRIGGERS if watched else ())
+        )
+        + "CREATE TEMP TABLE pre_2038_control AS SELECT 1 AS singleton,"
         "owner.paused,scheduling.claim_sequence,owner.first_boot_acknowledged,"
         "scheduling.last_library,scheduling.circuit_failures,"
         "scheduling.circuit_open_until,scheduling.updated_at,"
@@ -899,23 +1090,25 @@ assert PRIOR_REVIEW_TRANSITIONS_SQL.count("recent_write") == 0
 # changed pin asked nothing, and a pin or unpin row was no outcome. These undo
 # exactly the edits #1346 made to the attention source, so the oracles
 # below keep describing the predecessors they name.
-_PIN_CHANGED_SQL = review_sql._PIN_CHANGED_SQL
-_PIN_IN_FORCE_SQL = review_sql._pin_hold_sql(
-    "rc.review_case_id", "result.destination", True
-)
+_PIN_CHANGED_SQL = _pin_hold_sql(False)
+_PIN_IN_FORCE_SQL = _pin_hold_sql(True)
 _PINNED_REASON_HEAD = "(result.has_owner_decision_actions=1 AND ((result."
 _PINNED_REASON_TAIL = " OR " + _PIN_CHANGED_SQL + ")"
-assert review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL.startswith(_PINNED_REASON_HEAD)
-assert review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL.endswith(_PINNED_REASON_TAIL)
-PRE_1346_REVIEW_FIELD_ATTENTION_REASON_SQL = (
-    review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL[1 : -len(_PINNED_REASON_TAIL)]
+_PRE_2038_REASON_SQL = pre_2038_record_attention_sql(
+    review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL
 )
+assert _PRE_2038_REASON_SQL.startswith(_PINNED_REASON_HEAD)
+assert _PRE_2038_REASON_SQL.endswith(_PINNED_REASON_TAIL)
+PRE_1346_REVIEW_FIELD_ATTENTION_REASON_SQL = _PRE_2038_REASON_SQL[
+    1 : -len(_PINNED_REASON_TAIL)
+]
 
 
 def without_pins(sql: str) -> str:
     """The attention SQL as every producer before #1346 wrote it."""
     unpinned = (
-        sql.replace(_PINNED_REASON_HEAD, _PINNED_REASON_HEAD[1:])
+        pre_2038_record_attention_sql(sql)
+        .replace(_PINNED_REASON_HEAD, _PINNED_REASON_HEAD[1:])
         .replace(_PINNED_REASON_TAIL, "")
         .replace("AND decision.outcome NOT IN ('pin','unpin') ", "")
         .replace(
@@ -992,7 +1185,7 @@ PRIOR_ATTENTION_FACT_OBJECTS = tuple(
         (
             "review_case_episodes_",
             "metadata_policy_state_",
-            "field_effect_manual_holds_",
+            *_RECORD_ATTENTION_OBJECTS,
         )
     )
 )

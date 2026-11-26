@@ -26,10 +26,11 @@ A ProposalSet is actionable when any result is `propose_change`,
 A work written recently keeps its case. When preparation admits a work with
 nothing actionable whose latest verified write, of any field and origin, is
 under 30 days old, the result is `admitted` or `superseded` with the
-transition reason `recent_write`, and holds and pins carry as for any case.
-Only preparation passes the time; the `case-admit` scenario retires as
+transition reason `recent_write`, and your answers and pins apply as on any
+case. Only preparation passes the time; the `case-admit` scenario retires as
 before. A kept case adds no Attention fact except a pinned field whose value
-changed, and preparation asks no cover or description advice for it. An
+changed: a field you made a choice on in an earlier case reads as decided there, and
+preparation asks no cover or description advice for it. An
 actionable result replaces it as usual. The first scan of the unchanged work
 once the write is 30 days old sends it back to admission, which retires the
 case ([ADR-0105](../architecture/decisions/0105-going-back-after-a-write.md)).
@@ -232,8 +233,8 @@ body is refused before parsing.
   `owner_value_unchanged` for the field's current value, which on the case
   that wrote the field is the written value. An accept of the value the
   case's latest write holds is refused the same way while the owner decision
-  that made that write is still the field's answer and Resume automatic
-  handling has not been asked to release it. Otherwise, except for a cover,
+  that made that write is still the field's answer and no Resume automatic
+  handling is open over it. Otherwise, except for a cover,
   it is recorded with nothing to write: it holds the field, is never
   pending, and Activity lists it as kept. A second such accept is refused
   the same way. On the case that wrote the field, `keep_current` writes back

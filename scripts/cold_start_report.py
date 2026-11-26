@@ -94,6 +94,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _STORED_COVER_ATTENTION_AUTHORITY_SQL,
 )
 from mechanical_librarian.adapters.persistence.schema import (
+    _pin_fingerprint,
     _report_provider_match_state_sql,
 )
 from mechanical_librarian.application.configuration import (
@@ -422,6 +423,9 @@ def _open_read_only(path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(f"file:{quote(absolute, safe='/')}?mode=ro", uri=True)
     connection.create_function(
         "ml_cover_consideration_current", 2, lambda _document, _replay: 0
+    )
+    connection.create_function(
+        "ml_pin_fingerprint", 2, _pin_fingerprint, deterministic=True
     )
     return connection
 

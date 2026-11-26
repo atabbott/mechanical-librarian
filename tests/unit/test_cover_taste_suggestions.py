@@ -39,6 +39,7 @@ from tests.unit.test_cover_taste_judge import (
     _Library,
     _library,
     _report,
+    _took_over_for_owner,
     _version,
 )
 
@@ -425,14 +426,16 @@ def test_the_judge_state_and_try_again(library) -> None:
     # A failed field counts only while it could be sent again: held for the
     # owner it is neither counted nor asked for.
     connection = library.repository._connection
-    connection.execute(
-        "INSERT INTO field_effect_manual_holds VALUES(?,?,?,?,?)",
-        (library.cases["keep_many"], "cover", 1, 60, "{}"),
-    )
+    _choose(library, "wrong_shape", _other(library, "wrong_shape"), NOW + 1)
+    _took_over_for_owner(library, "keep_many")
     assert cast("dict[str, object]", taste.read()["judge"])["failed"] == 0
     taste.retry_judge(1)
     assert len(_judgements(library)) == 1
-    connection.execute("DELETE FROM field_effect_manual_holds")
+    # A completed Resume deletes the record's row.
+    connection.execute(
+        "DELETE FROM owner_field_answers WHERE review_case_id=?",
+        (library.cases["keep_many"],),
+    )
     assert cast("dict[str, object]", taste.read()["judge"])["failed"] == 1
     with pytest.raises(CoverTasteRetryError):
         taste.retry_judge(2)
