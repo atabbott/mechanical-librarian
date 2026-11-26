@@ -16,12 +16,10 @@ import type {
   ActivityLibraryView,
   ActivitySearch,
   ActivityView,
-  CapabilityState,
 } from '../api/http'
 import { activityOutcome, ledgerRows } from '../activityState'
 import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
-import { WritePlanField } from '../components/WritePlanGroups'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
 import { destinationLabel, destinationPhrase, writeHoldReasons } from '../labels'
@@ -30,7 +28,6 @@ import {
   consentBasis,
   destinationReason,
   readWriteConsent,
-  libraryWritesHeld,
   writesEnabled,
   writesOffSentence,
 } from '../writeConsent'
@@ -46,23 +43,13 @@ import { categoryLabel, dayHeading, stateLabel } from '../activityLabels'
 import { ActivityEventRow, PageJump, RowTime } from './ActivityLedgerRow'
 import { ActivityStatusCopy, ProviderRecoveryPanel } from './ActivityStatus'
 import { focusAfterRetry } from '../focusAfterRetry'
-import { ActivityPermissionCheck, readinessUnavailableCopy } from './ActivityPermissionCheck'
+import { readinessUnavailableCopy } from './ActivityPermissionCheck'
+import { ActivityWritePermissions } from './ActivityWritePermissions'
 import { ActivityLibraryProgress } from './ActivityLibraryProgress'
 import type { PermissionCheck } from './ActivityPermissionCheck'
 // The activity response is validated into `ActivityDisplayView` at the
 // transport boundary, so this route reads it as the typed view it already is
 // rather than re-deriving `unknown` shapes a second time (#636).
-// A library whose every destination already holds permission has writes
-// enabled; it is not still waiting for consent (#1286).
-const capabilityLabel = (state: CapabilityState, consented: boolean) =>
-  consented
-    ? 'Writes enabled'
-    : {
-        allowed: 'Ready',
-        partially_allowed: 'Some fields are ready',
-        connection_unavailable: 'Connection needs checking',
-        not_ready: 'Not ready yet',
-      }[state]
 // Raised by the verification read made on Confirm, before any grant is sent.
 class ConsentBasisChanged extends Error {}
 class ConsentBasisUnavailable extends Error {}
@@ -1237,136 +1224,46 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         </section>
       ) : null}
       {consentOpen ? (
-        <section
-          className="activity-consent-ledger"
-          id="activity-consent"
-          tabIndex={-1}
-          aria-labelledby="activity-consent-title"
-        >
-          <div>
-            <h2 id="activity-consent-title">Write permissions</h2>
-          </div>
-          <ActivityPermissionCheck
-            discarded={Boolean(discarded)}
-            requested={permissionRequest !== null}
-            permissions={permissions}
-            permission={permission}
-            checking={checking}
-            basisStale={basisStale}
-            checkButton={checkButton}
-            check={() => {
-              checkPressed.current = true
-              checkPermissions()
-            }}
-          />
-          {configured.map((library) => {
-            const name = library.library
-            const state = capability(name)?.state ?? 'not_ready'
-            const destinations = capability(name)?.destinations ?? []
-            // Consented once nothing is left to grant: every destination that
-            // can be given permission holds it. One that can never be written
-            // here (a field the service lacks, a hold) does not keep the
-            // library reading as partly ready. Consent outlives a later
-            // suspension, so only a consented destination that is still
-            // allowed has writes enabled (#1286).
-            const consented =
-              destinations.some(writesEnabled) &&
-              !destinations.some(
-                (destination) => destination.state === 'allowed' && !destination.consented,
-              )
-            const displayName = names.name(name)
-            const disabled = !selectableNames.has(name)
-            return (
-              <div className="activity-consent-library" key={name}>
-                <label>
-                  <input
-                    type="checkbox"
-                    disabled={disabled}
-                    checked={selected.has(name)}
-                    onChange={() => toggle(name)}
-                  />
-                  <strong>{displayName}</strong>
-                  <small>
-                    {preparedCount(library).toLocaleString('en-US')} prepared ·{' '}
-                    {permission?.backup_ready !== true
-                      ? 'Backup not confirmed'
-                      : libraryWritesHeld(destinations)
-                        ? 'Writes held'
-                        : capabilityLabel(state, consented)}
-                  </small>
-                </label>
-                <ul aria-label={`${displayName} fields`}>
-                  {capability(name)?.destinations.map((entry) => (
-                    <li key={entry.destination}>
-                      <span>{destinationLabel(entry.destination)}</span>
-                      <small>
-                        {writesEnabled(entry)
-                          ? `Writes enabled · ${entry.prepared.toLocaleString('en-US')} prepared`
-                          : entry.state === 'allowed'
-                            ? `Included · ${entry.prepared.toLocaleString('en-US')} prepared`
-                            : `${entry.consented ? 'Writes held' : 'Excluded'}: ${destinationReason(entry.state, consent.lapsed !== null)}`}
-                      </small>
-                      <WritePlanField
-                        plan={permission?.plan}
-                        library={name}
-                        destination={entry.destination}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              </div>
+        <ActivityWritePermissions
+          discarded={Boolean(discarded)}
+          requested={permissionRequest !== null}
+          permissions={permissions}
+          permission={permission}
+          checking={checking}
+          basisStale={basisStale}
+          checkButton={checkButton}
+          check={() => {
+            checkPressed.current = true
+            checkPermissions()
+          }}
+          configured={configured}
+          selectable={selectableNames}
+          selected={selected}
+          toggle={toggle}
+          libraryName={names.name}
+          lapsed={consent.lapsed !== null}
+          status={consentFeedback ? commandStatus(true) : null}
+          pending={mutation.isPending}
+          confirmBusy={confirmBusy}
+          hasGrants={selectedGrants.length > 0}
+          cancel={() => closeConsentReview()}
+          confirm={() => {
+            if (confirmBusy || basisStale || confirming.current || !draft) return
+            confirming.current = true
+            mutation.mutate(
+              {
+                path: 'activity/consent',
+                body: { grants: selectedGrants },
+                basis: draft.check.basis,
+              },
+              {
+                onSettled: () => {
+                  confirming.current = false
+                },
+              },
             )
-          })}
-          {configured.some((library) =>
-            capability(library.library)?.destinations.some((entry) => entry.state === 'allowed'),
-          ) ? (
-            <p>
-              Only included fields are written. The backup and each field are checked again when you
-              confirm.
-            </p>
-          ) : null}
-          {consentFeedback ? commandStatus(true) : null}
-          <div className="activity-consent-actions">
-            <button
-              type="button"
-              onClick={() => closeConsentReview()}
-              disabled={mutation.isPending}
-            >
-              Cancel
-            </button>
-            <p id="activity-consent-requirement">Choose the libraries to include, then confirm.</p>
-            <Button
-              variant="primary"
-              aria-describedby="activity-consent-requirement"
-              // Busy, not disabled, so focus stays here; the ref refuses a
-              // second press that lands before the pending state renders.
-              aria-disabled={confirmBusy || basisStale || undefined}
-              disabled={
-                !confirmBusy &&
-                !basisStale &&
-                (permission?.backup_ready !== true || selectedGrants.length === 0)
-              }
-              onClick={() => {
-                if (confirmBusy || basisStale || confirming.current || !draft) return
-                confirming.current = true
-                mutation.mutate(
-                  {
-                    path: 'activity/consent',
-                    body: { grants: selectedGrants },
-                    basis: draft.check.basis,
-                  },
-                  {
-                    onSettled: () => {
-                      confirming.current = false
-                    },
-                  },
-                )
-              }}
-            >
-              Confirm write permissions
-            </Button>
-          </div>
-        </section>
+          }}
+        />
       ) : null}
       {/* Outcomes the card or a closed panel leave behind read directly under them. */}
       {commandStatus(!authorityFeedback && !consentFeedback)}
