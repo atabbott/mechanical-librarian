@@ -93,8 +93,8 @@ measurement or change decision, consent, backup or target-write authority.
 
 ## Amendment 1: admit what a killed write leaves before its journal sync (2026-11-26)
 
-- Status: proposed. Only the owner's own answer makes this amendment
-  accepted; until then the body above stays the accepted record.
+- Status: accepted (accepted by the owner on 2026-11-26). Where it differs,
+  this amendment replaces the body above.
 
 SQLite writes a journal segment header with zeroed magic and count, appends
 each record as page number, page and checksum in three writes, and writes the
