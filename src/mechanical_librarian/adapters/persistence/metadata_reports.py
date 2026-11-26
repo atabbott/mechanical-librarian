@@ -3336,6 +3336,38 @@ def open_shadow_preview_repository(path: Path) -> SQLiteShadowPreviewRepository:
             os.close(descriptor)
 
 
+def _database_open_flags() -> int:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow:
+        raise MetadataReportError("database no-follow access is unavailable")
+    return os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | nofollow
+
+
+def open_existing_database(
+    path: Path,
+    flags: int | None = None,
+    expected_identity: tuple[int, int] | None = None,
+) -> tuple[int, os.stat_result]:
+    """Open an existing database without following a link, and admit only a
+    regular file with a rollback-journal header; the caller owns the
+    descriptor. The server's open and regenerate-derived share this."""
+    descriptor = os.open(path, _database_open_flags() if flags is None else flags)
+    try:
+        information = os.fstat(descriptor)
+        if (
+            expected_identity is not None
+            and (information.st_dev, information.st_ino) != expected_identity
+        ):
+            raise MetadataReportError("database authority changed")
+        if not stat.S_ISREG(information.st_mode):
+            raise MetadataReportError("database path is invalid")
+        _validate_delete_mode_header(descriptor)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor, information
+
+
 def open_repository(
     path: Path,
     *,
@@ -3360,21 +3392,11 @@ def open_repository(
     owns_authority = False
     schema_validated = False
     try:
-        nofollow = getattr(os, "O_NOFOLLOW", 0)
-        if not nofollow:
-            raise MetadataReportError("database no-follow access is unavailable")
-        flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | nofollow
+        flags = _database_open_flags()
         if os.path.lexists(path):
-            descriptor = os.open(path, flags)
-            information = os.fstat(descriptor)
-            if (
-                expected_identity is not None
-                and (information.st_dev, information.st_ino) != expected_identity
-            ):
-                raise MetadataReportError("database authority changed")
-            if not stat.S_ISREG(information.st_mode):
-                raise MetadataReportError("database path is invalid")
-            _validate_delete_mode_header(descriptor)
+            descriptor, information = open_existing_database(
+                path, flags, expected_identity
+            )
             if sys.platform.startswith("linux"):
                 binding = _LinuxDatabaseBinding.create(
                     path,
