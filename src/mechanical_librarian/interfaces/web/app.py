@@ -395,9 +395,10 @@ class _PasswordChangeRequest(BaseModel):
 REVIEW_SESSION_SCHEMA: Final = "review-session-v1"
 # v3: the suggestion model's state and the suggestions confirmed (#1372 PR 4b).
 # v4: whether switching by taste has its qualification record (#1372 PR 5).
-ReviewTasteProfileSchemaVersion = Literal["review-taste-profile-v4"]
+# v5: whether an upgrade left earlier picks out of the count (#2039).
+ReviewTasteProfileSchemaVersion = Literal["review-taste-profile-v5"]
 REVIEW_TASTE_PROFILE_SCHEMA: Final[ReviewTasteProfileSchemaVersion] = (
-    "review-taste-profile-v4"
+    "review-taste-profile-v5"
 )
 MetadataPolicyNotebookSchemaVersion = Literal["metadata-policy-notebook-v2"]
 METADATA_POLICY_NOTEBOOK_SCHEMA: Final[MetadataPolicyNotebookSchemaVersion] = (
@@ -1989,6 +1990,9 @@ class _TasteProfileResponse(_ClosedModel):
     schema_version: ReviewTasteProfileSchemaVersion
     configured: StrictBool
     chosen: StrictInt = Field(ge=0)
+    # An upgrade left earlier picks out, so `chosen` counts picks made since
+    # (ADR-0108).
+    since_upgrade: StrictBool
     required: Literal[25]
     daily_limit: StrictInt = Field(ge=1, le=100)
     build: _TasteBuild | None
@@ -2085,6 +2089,7 @@ def _taste_response(data: dict[str, object]) -> _TasteProfileResponse:
         schema_version=REVIEW_TASTE_PROFILE_SCHEMA,
         configured=cast(bool, data["configured"]),
         chosen=cast(int, data["eligible"]),
+        since_upgrade=cast(bool, data["since_upgrade"]),
         required=TASTE_FIRST_BUILD_DECISIONS,
         daily_limit=cast(int, data["daily_limit"]),
         build=None

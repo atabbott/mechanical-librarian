@@ -6796,9 +6796,10 @@ const readTasteProfile = (document: unknown) =>
     fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
   }).getTasteProfile()
 const tasteDocument = {
-  schema_version: 'review-taste-profile-v4',
+  schema_version: 'review-taste-profile-v5',
   configured: true,
   chosen: 30,
+  since_upgrade: false,
   required: 25,
   daily_limit: 8,
   build: null,

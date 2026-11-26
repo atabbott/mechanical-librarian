@@ -103,7 +103,7 @@ function useWaitsUntil(retryAfter: number | null): boolean {
 function EmptyLine({ view, onStart }: { view: TasteProfile; onStart: () => void }) {
   return (
     <>
-      {view.chosen > 0 ? <p>{picksSaved(view.chosen, view.required)}</p> : null}
+      {view.chosen > 0 ? <p>{picksSaved(view.chosen, view.required, view.since_upgrade)}</p> : null}
       <button type="button" className="button-primary" onClick={onStart}>
         Start 25 picks
       </button>

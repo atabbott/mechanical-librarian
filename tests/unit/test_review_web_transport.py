@@ -4401,6 +4401,7 @@ class _TasteEdits:
         }
         return {
             "eligible": 25,
+            "since_upgrade": False,
             "build": None,
             "versions": [(1, 900, document)],
             "configured": True,

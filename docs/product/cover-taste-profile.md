@@ -15,7 +15,9 @@ Reviewer (no model is chosen, or its Codex sign-in or OpenRouter key is not
 ready), or "{n} of 25 picks saved." once any count, then Start 25 picks, which
 opens Covers' [picks](#picks). A
 first profile needs 25 recorded choices and a later one 10 more; at most 4
-are scheduled a day.
+are scheduled a day. After an upgrade a profile can be built only from choices
+made since, so the count starts again and, while it leaves earlier picks out,
+reads "{n} of 25 picks saved since the upgrade." (ADR-0108).
 
 While a first profile is written, and from the 25th choice until its build
 starts (within a minute), "Writing your taste profile" is the

@@ -86,7 +86,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.interfaces.web.app",
         "REVIEW_TASTE_PROFILE_SCHEMA",
-        "review-taste-profile-v4",
+        "review-taste-profile-v5",
     ),
     (
         "mechanical_librarian.application.review_covers",

@@ -96,6 +96,8 @@ export function CoverCalibration({
   const next = open[1]
   const pass = (id: string) => setSeen((was) => new Set(was).add(id))
   const required = taste.required
+  // Its end notices keep today's count sentence; only the line above Start
+  // on Covers says the count started again after an upgrade (#2039).
   const done = taste.chosen >= required
   // Re-checked when it opens: a work decided elsewhere, no longer current,
   // fetching or with nothing to choose is passed over without a word (S4).
@@ -142,13 +144,13 @@ export function CoverCalibration({
   const end = done
     ? ({ kind: 'done' } as const)
     : stopped && counted
-      ? ({ kind: 'notice', text: picksSaved(taste.chosen, required) } as const)
+      ? ({ kind: 'notice', text: picksSaved(taste.chosen, required, false) } as const)
       : empty
         ? ({ kind: 'notice', text: emptyCopy } as const)
         : ranOut && rereadAt === seen.size && rereadDone === seen.size && counted
           ? ({
               kind: 'notice',
-              text: `${picksSaved(taste.chosen, required)} ${ranOutCopy}`,
+              text: `${picksSaved(taste.chosen, required, false)} ${ranOutCopy}`,
             } as const)
           : null
   useEffect(() => {

@@ -354,9 +354,10 @@ export const idlePreparation: PreparationView = {
 type ScriptedPolicyCommand = (path: string, body?: unknown) => Promise<never>
 // Covers → Taste profile before any build: configured, nothing chosen yet.
 export const tasteProfile: TasteProfileView = {
-  schema_version: 'review-taste-profile-v4',
+  schema_version: 'review-taste-profile-v5',
   configured: true,
   chosen: 0,
+  since_upgrade: false,
   required: 25,
   daily_limit: 8,
   build: null,

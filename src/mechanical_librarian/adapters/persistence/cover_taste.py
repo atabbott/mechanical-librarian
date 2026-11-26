@@ -189,6 +189,17 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
             ).fetchone()[0],
         )
 
+    def _left_out(self) -> bool:
+        """Some choices made are ones no build can use. Comparisons are
+        append-only, so only a regeneration takes one away: the count then
+        started again from the choices made since (ADR-0108)."""
+        (left_out,) = self._connection.execute(
+            f"SELECT EXISTS(SELECT 1 {_ELIGIBLE} "
+            "AND consideration.consideration_id IS NULL)",
+            (TASTE_MIN_ARTS,),
+        ).fetchone()
+        return bool(left_out)
+
     def _short_of_choices(self) -> bool:
         """Fewer choices a build can use than any build is due on, as after
         a regeneration: a failed build is then neither shown nor tried again,
@@ -650,6 +661,7 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
         ]
         return {
             "eligible": self._usable(),
+            "since_upgrade": self._left_out(),
             "build": None
             if build is None
             or build[1] == "succeeded"
