@@ -109,6 +109,7 @@ def _decision(
             json.dumps({"cause": cause, "episode": episode}),
             *key,
             case,
+            case,
             "null",
             None,
         ),
@@ -406,7 +407,7 @@ def test_a_counter_behind_an_ordinal_is_refused(ledger: sqlite3.Connection) -> N
 
 def test_an_ordinal_given_twice_is_refused(ledger: sqlite3.Connection) -> None:
     ledger.execute(
-        "INSERT INTO owner_authored_descriptions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO owner_authored_descriptions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
         (
             _id("authored"),
             _CASE,
@@ -450,7 +451,7 @@ def test_a_human_answer_unlike_its_decision_is_refused(
 def _authored(connection: sqlite3.Connection, *, title: str | None = None) -> str:
     decision_id = _id("authored")
     connection.execute(
-        "INSERT INTO owner_authored_descriptions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO owner_authored_descriptions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
         (
             decision_id,
             _CASE,

@@ -182,7 +182,7 @@ def test_reader_equals_recomputation_across_pending_changes(
     step(
         (
             "INSERT INTO field_effect_no_changes VALUES(?,?,?,'primary','books',"
-            "'work','title','fingerprint','version','human',1,?,NULL)",
+            "'work','title','fingerprint','version','human',1,?,NULL,NULL)",
             (pending[3], case, report, "event-" + _digest("no-change")),
         )
     )

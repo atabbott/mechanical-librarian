@@ -107,7 +107,9 @@ Rules for every ledger row:
   no derived row matches: the decided value, the display title and previous
   value at decision time, the whole chosen description candidate, the chosen
   cover's digests, target and observed identity, and for write plans and
-  no-change rows the display title and connection label.
+  no-change rows the display title and connection label. The owner's rows
+  also keep the work's authors, for Activity's author label; Automatic's
+  keep none.
 - **Validation by partition.** Open validates terminal ledger history by its
   shape, its own copies and its ledger references; whether its derived
   provenance is current is a read-time question. Live rows (non-terminal

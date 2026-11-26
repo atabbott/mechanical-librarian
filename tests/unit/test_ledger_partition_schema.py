@@ -378,6 +378,7 @@ def test_an_owner_authored_description_is_a_ledger_row_with_its_copies(
         ),
         ("item_id='another-book'", True),
         ("display_title='Another title'", True),
+        ("display_authors='[\"Another author\"]'", True),
     ],
 )
 def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
@@ -392,7 +393,7 @@ def test_an_owner_authored_description_agrees_with_its_case_and_candidate(
     finally:
         repository.close()
     rewrite(path, f"UPDATE owner_authored_descriptions SET {assignment}")
-    if not assignment.startswith("candidate_document"):
+    if not assignment.startswith(("candidate_document", "display_authors")):
         # The record of the owner's answers copies the work and the title
         # too, so an edit that stands once regenerated moves both (ADR-0108).
         rewrite(path, f"UPDATE owner_field_answers SET {assignment}")
@@ -454,6 +455,10 @@ _CASE_AND_ITEM_COPIES = {
     ),
     "display_title": (
         f"UPDATE human_decisions SET display_title='Another title' "
+        f"WHERE decision_id={_UNWRITTEN}",
+    ),
+    "display_authors": (
+        f"UPDATE human_decisions SET display_authors='[\"Another author\"]' "
         f"WHERE decision_id={_UNWRITTEN}",
     ),
     "target_field_document": (
@@ -558,14 +563,61 @@ def _owner_genres(root: Path) -> Path:
 
 
 @pytest.mark.parametrize("table", ["field_effects", "field_effect_no_changes"])
+@pytest.mark.parametrize(
+    "assignment",
+    ["display_title='Another title'", "display_authors='[\"Another author\"]'"],
+)
 def test_a_plan_and_a_no_change_title_agree_with_their_report(
-    tmp_path: Path, table: str
+    tmp_path: Path, table: str, assignment: str
 ) -> None:
     """A write plan and a no-change row show the title of the report their
-    decision was made over; reports never change, so while it is there the
-    copy equals it, and once a regeneration took it the copy stands."""
+    decision was made over, and the owner's its authors; reports never change,
+    so while it is there the copy equals it, and once a regeneration took it
+    the copy stands."""
     path = _owner_genres(tmp_path / "genres")
-    rewrite(path, f"UPDATE {table} SET display_title='Another title'")
+    assert rewrite(path, f"UPDATE {table} SET {assignment}") > 0
+    assert not opens(path)
+    regenerate(path)
+    assert opens(path)
+
+
+def test_automatic_rows_copy_no_authors(tmp_path: Path) -> None:
+    """Only the owner's rows keep their authors (ADR-0108): an automatic
+    write keeps none, a copy on one is refused while its report is there, and
+    an automatic no-change row cannot hold one."""
+    held = genre_report(current=("Drama",), genres=("Fantasy",))
+    (tmp_path / "store").mkdir(mode=0o700)
+    store = OwnerStore(tmp_path / "store", None)
+    try:
+        store.automatic("genres", "replace", held.target.library)
+        store.publish(held)
+        store.write(
+            next(
+                AutomaticDecision.from_json(raw)
+                for raw in store.repository.get_review_case_decisions(
+                    store.case.review_case_id
+                )
+                if json.loads(raw)["schema_version"] == "automatic-decision-v1"
+                and json.loads(raw)["destination"] == "genres"
+            )
+        )
+        connection = store.repository._connection
+        assert connection.execute(
+            "SELECT DISTINCT display_authors FROM field_effects"
+        ).fetchall() == [(None,)]
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            connection.execute(
+                "INSERT INTO field_effect_no_changes(decision_id,review_case_id,"
+                "report_id,connection_name,library_name,work_id,destination,"
+                "target_fingerprint,target_version,origin,occurred_at,event_id,"
+                "display_authors) VALUES('d',?,?,'c','l','w','genres','f','v',"
+                "'automatic_policy',0,'e','[]')",
+                (store.case.review_case_id, store.case.report_id),
+            )
+        path = copied_store(store.repository, tmp_path / "changed")
+    finally:
+        store.close()
+    rewrite(path, "UPDATE field_effects SET display_authors='[\"Another author\"]'")
     assert not opens(path)
     regenerate(path)
     assert opens(path)
@@ -584,6 +636,10 @@ ACCEPTED_GAPS = (
     "authored_description_display_title",
     "plan_display_title",
     "no_change_display_title",
+    "display_authors",
+    "authored_description_display_authors",
+    "plan_display_authors",
+    "no_change_display_authors",
     # An owner cover choice's copies of its comparison.
     "preview_digest",
     "original_digest",
@@ -769,6 +825,7 @@ def test_an_owner_no_change_agrees_with_its_case_while_it_is_there(
     finally:
         store.close()
     assert decoded["field_effect_no_changes.display_title"] == 1
+    assert decoded["field_effect_no_changes.display_authors"] == 1
     rewrite_no_change(path, "report_id", "report_" + _OTHER_DIGEST)
     assert not opens(path)
     regenerate(path)
@@ -913,6 +970,23 @@ def test_accepted_gaps_are_the_listed_ones(owner_cover: Path, tmp_path: Path) ->
         "no_change_display_title": (
             "genres",
             "UPDATE field_effect_no_changes SET display_title='Another title'",
+        ),
+        "display_authors": (
+            "activity",
+            "UPDATE human_decisions SET display_authors='[\"Another author\"]'",
+        ),
+        "authored_description_display_authors": (
+            "advice",
+            "UPDATE owner_authored_descriptions "
+            "SET display_authors='[\"Another author\"]'",
+        ),
+        "plan_display_authors": (
+            "genres",
+            "UPDATE field_effects SET display_authors='[\"Another author\"]'",
+        ),
+        "no_change_display_authors": (
+            "genres",
+            "UPDATE field_effect_no_changes SET display_authors='[\"Another author\"]'",
         ),
         "preview_digest": (
             "cover",
