@@ -750,18 +750,44 @@ def asked_again_document_sql(answer: str, case: str, destination: str) -> str:
     )
 
 
+def asked_again_unsettled_sql(answer: str, case: str, destination: str) -> str:
+    """Whether Automatic's decision leaves unsettled the field `destination`
+    of case `case` whose record row is `answer`, so an answer
+    `asked_again_sql` asks is said to ask (review 1 of #2039): no Resume is
+    open over the answer, or the one open failed, or the owner withdrew the
+    field beside Automatic's decision on the case with no Resume taking that
+    back (`_withdrawn_automatic_sql`). A Resume open that has not failed
+    hands the field to Automatic, so nothing is asked again meanwhile.
+    Attention's reason and Activity's note read this; the case page applies
+    the same rule as `_automatic_settles` (`review_web`) over the record
+    states it reads per row, because its asked-again destinations also feed
+    the field's attention candidacy, which this rule must not change."""
+    return (
+        f"({answer}.open_resume_id IS NULL OR EXISTS (SELECT 1 FROM "
+        "owner_field_events unsettled_failed WHERE "
+        f"unsettled_failed.request_id={answer}.open_resume_id "
+        "AND unsettled_failed.kind='resume_failed') OR "
+        + _withdrawn_automatic_sql(case, destination, answer)
+        + ")"
+    )
+
+
 def record_asked_again_sql(item: str, case: str, destination: str) -> str:
     """The record's answer for the field `destination` of the book row
     `item` names, asked again on case `case`, as `asked_again_document_sql`
     gives it, or NULL. A cover's answer is the book's own pointer, never
-    asked again. Attention and Activity read this; the case page reads the
-    same document per record row (`review_projections`)."""
+    asked again, and nothing is asked while Automatic's decision settles the
+    field (`asked_again_unsettled_sql`). Attention reads this; Activity reads
+    the same terms; the case page reads the same document per record row
+    (`review_projections`) and applies the same gate."""
     return (
         "(SELECT "
         + asked_again_document_sql("asked", case, destination)
         + " FROM owner_field_answers asked WHERE "
         + f"{destination}<>'cover' AND "
         + _record_key_sql("asked", item, destination)
+        + " AND "
+        + asked_again_unsettled_sql("asked", case, destination)
         + ")"
     )
 
@@ -1220,6 +1246,7 @@ __all__ = [
     "asked_again_sql",
     "asked_again_document_sql",
     "asked_again_reason_sql",
+    "asked_again_unsettled_sql",
     "record_asked_again_sql",
     "carry_waiting_sql",
     "_read_as_own_sql",

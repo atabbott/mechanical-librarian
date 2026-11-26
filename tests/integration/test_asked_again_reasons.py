@@ -18,6 +18,9 @@ import pytest
 from mechanical_librarian.adapters.persistence.owner_field_answers import (
     retire_record_answer,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    record_asked_again_sql,
+)
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     InspectCurrentReviewCase,
@@ -232,6 +235,77 @@ def test_a_failed_resume_hands_the_field_back(tmp_path: Path) -> None:
     store.repository.retry_question_checks(None, store.clock(), provisional_only=True)
     assert [outcome for _, outcome, *_ in _outcomes(store)] == ["asked_again"]
     _agrees(store, "resume_failed", kept, value=_kept_title(report))
+    store.close()
+
+
+def _attention_reason(store: OwnerStore, destination: str) -> object:
+    """The document Attention's reason column reads for the field of the
+    current case (`record_asked_again_sql`), whether or not the field is in
+    Attention."""
+    (document,) = store.repository._connection.execute(
+        "SELECT "
+        + record_asked_again_sql("lineage", ":case", ":destination")
+        + " FROM current_review_case_lineages lineage "
+        "WHERE lineage.review_case_id=:case",
+        {"case": store.case.review_case_id, "destination": destination},
+    ).fetchone()
+    return document
+
+
+def _asks_nothing(store: OwnerStore, destination: str = "title") -> None:
+    """The case page, Attention and Activity agree the record's answer asks
+    nothing: no cause or document on the field, no Attention item with a
+    reason (nor any reason in the column, read directly), and no Activity
+    note."""
+    field = _field(store, destination)
+    assert field["classification_cause"] != "asked_again"
+    assert field["asked_again"] is None
+    item = _attention(store, destination)
+    assert item is None or item.get("asked_again") is None
+    assert _attention_reason(store, destination) is None
+    assert {
+        event: note for event, note in _notes(store).items() if note is not None
+    } == {}
+    assert_record_recomputes(store.repository._connection)
+
+
+def test_a_new_resume_after_a_failed_one_stops_asking_until_it_fails(
+    tmp_path: Path,
+) -> None:
+    """Review 1, finding 1: after a failed Resume asks the field again, the
+    owner requests Resume again. While that request is open and has not
+    failed, Automatic's decision settles the field, so the case page,
+    Attention and Activity stop asking; once it fails, all three ask again
+    with `resume_failed`."""
+    store, report, _ = _store(tmp_path)
+    store.publish(report)
+    first = store.case.review_case_id
+    kept = store.decide("keep_current")
+    request = request_resume(store.repository, first, "title", store.clock())
+    assert request is not None
+    store.publish(_publisher_changed(report))
+    (scan,) = store.repository._connection.execute(
+        "SELECT scan_id FROM owner_field_events WHERE event_id=?", (request,)
+    ).fetchone()
+    assert store.repository._fail_open_resumes_for_scan(scan, store.clock()) == 1
+    store.repository._connection.commit()
+    store.repository.retry_question_checks(None, store.clock(), provisional_only=True)
+    _agrees(store, "resume_failed", kept, value=_kept_title(report))
+    assert '"reason":"resume_failed"' in str(_attention_reason(store, "title"))
+
+    again = request_resume(
+        store.repository, store.case.review_case_id, "title", store.clock()
+    )
+    assert again is not None
+    _asks_nothing(store)
+
+    (scan,) = store.repository._connection.execute(
+        "SELECT scan_id FROM owner_field_events WHERE event_id=?", (again,)
+    ).fetchone()
+    assert store.repository._fail_open_resumes_for_scan(scan, store.clock()) == 1
+    store.repository._connection.commit()
+    _agrees(store, "resume_failed", kept, value=_kept_title(report))
+    assert '"reason":"resume_failed"' in str(_attention_reason(store, "title"))
     store.close()
 
 

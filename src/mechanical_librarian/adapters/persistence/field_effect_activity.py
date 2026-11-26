@@ -99,6 +99,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _episode_decision_sql,
     asked_again_reason_sql,
     asked_again_sql,
+    asked_again_unsettled_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _AUTOMATIC_POSTURE_SQL,
@@ -971,7 +972,9 @@ def _activity_event(
         "state": row.state,
         "work_id": row.work_id,
         **({"work_label": row.event_title} if row.event_title else {}),
-        # Read only where the row names no report (ADR-0108).
+        # The copy's author label is attached whenever the row has a copy;
+        # while the row's report is there, the report's own label overrides
+        # it (`project_readable_activity_event`, ADR-0108).
         **(
             {"author_label": author_label(json.loads(row.authors))}
             if row.authors is not None
@@ -5146,8 +5149,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
             # The record's answer the work's current case asks again (or its
             # root, where it was carried) says why, as Attention and the case
-            # page do; it wins over Book matching's note above (contract
-            # #2039 3.3). A carried row has no row of its own (Q1).
+            # page do, and not while Automatic's decision settles the field
+            # (`asked_again_unsettled_sql`); it wins over Book matching's note
+            # above (contract #2039 3.3). A carried row has no row of its own
+            # (Q1).
             rows = self._connection.execute(
                 "SELECT event.event_id,"
                 + asked_again_reason_sql("asked", "current.review_case_id")
@@ -5173,6 +5178,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "asked_decision WHERE asked_decision.decision_id=asked.answer_id),"
                 "asked.answer_id) AND "
                 + asked_again_sql(
+                    "asked", "current.review_case_id", "asked.destination"
+                )
+                + " AND "
+                + asked_again_unsettled_sql(
                     "asked", "current.review_case_id", "asked.destination"
                 ),
                 decisions,
