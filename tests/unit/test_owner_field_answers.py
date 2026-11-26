@@ -134,6 +134,7 @@ def _event(
     destination: str = "genres",
     key: tuple[str, str, str] = _KEY,
     event_id: str | None = None,
+    answer: str | None = None,
 ) -> str:
     previous = connection.execute(
         "SELECT event_id FROM owner_field_events WHERE connection_name=? AND "
@@ -149,7 +150,7 @@ def _event(
         "request_id": request,
         "over_ordinal": over,
         "scan_id": "scan-1" if kind == "resume_requested" else None,
-        "answer_id": None,
+        "answer_id": answer,
         "occurred_at": 9,
     }
     event_id = event_id or owner_field_event_id(
@@ -161,7 +162,7 @@ def _event(
         request_id=request,
         over_ordinal=over,
         scan_id=cast("str | None", values["scan_id"]),
-        answer_id=None,
+        answer_id=answer,
         occurred_at=9,
         previous_event_id=None if previous is None else previous[0],
     )
@@ -332,12 +333,14 @@ def test_an_event_names_its_request_exactly_when_it_answers_one(
         )
 
 
-def test_events_are_append_only_and_retired_is_admitted(
+def test_events_are_append_only_and_retired_names_its_answer(
     ledger: sqlite3.Connection,
 ) -> None:
-    """`retired` is a kind the record admits; nothing writes it until C4'."""
+    """`retired` names the answer whose plan it retired (C4')."""
     request = _event(ledger, "resume_requested")
-    _event(ledger, "retired", destination="title")
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        _event(ledger, "retired", destination="title")
+    _event(ledger, "retired", destination="title", answer=_id("filler"))
     for statement in (
         "UPDATE owner_field_events SET occurred_at=10",
         "DELETE FROM owner_field_events",

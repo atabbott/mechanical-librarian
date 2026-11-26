@@ -142,7 +142,9 @@ OWNER_FIELD_EVENTS_SQL = (
     f"answer_id TEXT CHECK(answer_id IS NULL OR ({_HUMAN_ID.format('answer_id')})), "
     "occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer' AND occurred_at>=0), "
     "CHECK((kind IN ('resume_requested','retired'))=(request_id IS NULL)), "
-    "CHECK(kind<>'resume_requested' OR scan_id IS NOT NULL))"
+    "CHECK(kind<>'resume_requested' OR scan_id IS NOT NULL), "
+    # A retirement names the answer whose plan it retired (C4', #2040).
+    "CHECK(kind<>'retired' OR answer_id IS NOT NULL))"
 )
 OWNER_FIELD_EVENTS_KEY_INDEX_SQL = (
     "CREATE INDEX owner_field_events_key "
@@ -477,6 +479,72 @@ def withdraw_answer(connection: sqlite3.Connection, decision_id: str) -> None:
         connection.execute(f"DELETE FROM owner_field_answers WHERE {_KEY_SQL}", key)
     else:
         _write(connection, replace(restored, open_resume_id=current.open_resume_id))
+
+
+def close_resume_over_answer(
+    connection: sqlite3.Connection, key: ItemKey, at: int
+) -> bool:
+    """Close the field's open Resume `resume_superseded` naming the record's
+    answer it covers, inside the caller's transaction: the answer stays, no
+    longer carried, so nothing carries or plans and the field is asked again
+    with Resume offered (ADR-0108, step 0; `--retire-pending` alike, contract
+    T5). False, changing nothing, with no open request over the answer."""
+    current = _current(connection, key)
+    request = _open_request(connection, key)
+    if current is None or request is None or current.ordinal > request[1]:
+        return False
+    _append_event(
+        connection,
+        key,
+        "resume_superseded",
+        request_id=request[0],
+        scan_id=None,
+        answer_id=current.answer_id,
+        at=at,
+    )
+    _write(connection, replace(current, open_resume_id=None, carry_eligible=False))
+    return True
+
+
+def retire_record_answer(
+    connection: sqlite3.Connection, key: ItemKey, answer_id: str, at: int
+) -> None:
+    """``answer_id``'s plan was retired: write `retired` naming it, inside the
+    caller's transaction. Where it is the field's answer it stays, no longer
+    carried, so it is asked again and Automatic stays off (ADR-0108)."""
+    _append_event(
+        connection,
+        key,
+        "retired",
+        request_id=None,
+        scan_id=None,
+        answer_id=answer_id,
+        at=at,
+    )
+    connection.execute(
+        f"UPDATE owner_field_answers SET carry_eligible=0 WHERE {_KEY_SQL} "
+        "AND answer_id=?",
+        (*key, answer_id),
+    )
+
+
+def answer_written_sql(answer: str) -> str:
+    """Whether owner answer `answer` (an SQL expression naming a decision id)
+    is written: a verified plan or a no-change row of it or of its carry
+    chain, its root and every row carried from that root. Ledger rows only,
+    so it reads the same with or without derived rows (ADR-0108, step 3)."""
+    return (
+        "EXISTS (SELECT 1 FROM human_decisions written_answer JOIN human_decisions "
+        "written_chain ON written_chain.decision_id=COALESCE("
+        "written_answer.carried_from,written_answer.decision_id) "
+        "OR written_chain.carried_from=COALESCE(written_answer.carried_from,"
+        f"written_answer.decision_id) WHERE written_answer.decision_id={answer} "
+        "AND (EXISTS (SELECT 1 FROM field_effects written_plan "
+        "WHERE written_plan.decision_id=written_chain.decision_id "
+        "AND written_plan.state='verified') OR EXISTS (SELECT 1 FROM "
+        "field_effect_no_changes written_nothing "
+        "WHERE written_nothing.decision_id=written_chain.decision_id)))"
+    )
 
 
 def matching_changed(
@@ -828,7 +896,9 @@ __all__ = [
     "OWNER_FIELD_EVENTS_SQL",
     "OWNER_FIELD_EVENT_TRIGGERS",
     "SETUP_OWNER_ANSWER_ORDINAL_ROW",
+    "answer_written_sql",
     "case_episode",
+    "close_resume_over_answer",
     "complete_resume",
     "fail_open_resumes_for_scan",
     "has_open_resume_for_scan",
@@ -840,6 +910,7 @@ __all__ = [
     "record_answer",
     "record_differences",
     "request_resume",
+    "retire_record_answer",
     "stored_answers",
     "validate_owner_field_answers",
     "withdraw_answer",

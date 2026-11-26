@@ -215,6 +215,11 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "human-decision-v9",
     ),
     (
+        "mechanical_librarian.domain.human_decision",
+        "HUMAN_DECISION_EVENT_SCHEMA",
+        "human-decision-event-v2",
+    ),
+    (
         "mechanical_librarian.domain.decision_question",
         "DECISION_QUESTION_SCHEMA",
         "decision-question-v1",

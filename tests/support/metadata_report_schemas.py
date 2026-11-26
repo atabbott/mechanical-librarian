@@ -519,6 +519,11 @@ PRE_2038_HUMAN_DECISIONS_SQL = _undone(
 )
 PRE_2038_HUMAN_DECISION_EVENTS_SQL = _undone(
     persistence_schema._HUMAN_DECISION_EVENTS_SQL,
+    (
+        "kind TEXT NOT NULL CHECK(kind IN "
+        "('human_decision_recorded','human_decision_carried'))",
+        "kind TEXT NOT NULL CHECK(kind='human_decision_recorded')",
+    ),
     (_CASE_SHAPE, _CASE_REFERENCE),
     (", " + _ITEM_KEY + ")", ")"),
 )

@@ -41,9 +41,15 @@ COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v3"
 AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v1"
 
 HUMAN_DECISION_SCHEMA: Final = "human-decision-v9"
-HumanDecisionEventSchemaVersion = Literal["human-decision-event-v1"]
+HumanDecisionEventSchemaVersion = Literal["human-decision-event-v2"]
 HUMAN_DECISION_EVENT_SCHEMA: Final[HumanDecisionEventSchemaVersion] = (
-    "human-decision-event-v1"
+    "human-decision-event-v2"
+)
+# The audit event's kinds: an owner request's decision, and an answer the
+# question check carried to a later case or episode (ADR-0108).
+HUMAN_DECISION_EVENT_KINDS: Final = (
+    "human_decision_recorded",
+    "human_decision_carried",
 )
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
