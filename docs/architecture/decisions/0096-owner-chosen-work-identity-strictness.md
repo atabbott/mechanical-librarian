@@ -9,7 +9,7 @@
   predicate), ADR-0059 (which candidates are identity-confirmed for covers),
   ADR-0093 (the eligible set and its order)
 - Adopts: ADR-0092, placement amended (see the activation amendment)
-- Amended by: [ADR-0108](0108-ledger-and-derived-state.md) (proposed: a
+- Amended by: [ADR-0108](0108-ledger-and-derived-state.md) (accepted 2026-11-26: a
   carried owner answer keeps its cause and stays supersedable by a later
   `matching_changed` row, which ends its carry; terminal decisions are not
   re-checked against level offers a regeneration dropped)

@@ -1,8 +1,7 @@
 # ADR-0108: Keep owner state in a ledger, regenerate derived state offline, and keep one record of the owner's answer per field
 
-- Status: proposed. Only the owner's own answer makes this record accepted.
-  Until then ADR-0013, ADR-0085 and ADR-0096 stay the accepted record, and
-  nothing here is built.
+- Status: accepted (2026-11-26, the owner's own answer), with its amendments
+  to the records under "Amends", ADR-0071's among them.
 - Date: 2026-11-24
 - Owners: project maintainers
 - Issues: #2037 (this record); built by #2036 (C0, merged), #2038 (C2),
@@ -760,7 +759,8 @@ ADR-0077 is not amended: no read admission or currentness-fact rule changes.
 
 ### Left to the owner
 
-These change only with the owner's own answer and are not made here:
+These change only with the owner's own answer and are not made here. The
+owner accepted this record and the `AGENTS.md` exception on 2026-11-26:
 
 - `AGENTS.md` "Change requirements" and its ADR-0013 bullet: from the cutover,
   the owner-run offline `regenerate-derived` command is the one exception to

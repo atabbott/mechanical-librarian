@@ -97,7 +97,9 @@ and metadata sources to the reviewer, background work, access and appearance.
 - Media mounts remain read-only. The product does not replace playback,
   reading, acquisition, user management, or general library management.
 - The product is pre-release. It accepts only absent or exact-current persisted
-  state and does not migrate or silently interpret earlier development state.
+  state, except that the owner can run regenerate-derived offline to rebuild
+  what preparation makes while keeping their answers, settings and write
+  history.
 - There is no published production image or supported release yet. Planned
   adapters, formats, reviewer backends, and embedded-file writes are direction,
   not current capability.

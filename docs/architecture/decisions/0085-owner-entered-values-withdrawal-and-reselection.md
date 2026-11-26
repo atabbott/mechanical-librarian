@@ -8,7 +8,7 @@
 - Amended by: [ADR-0105](0105-going-back-after-a-write.md) (proposed: the
   owner may clear four fields and enter names, the written value is current on
   the writing case, and a clear holds its field and can be pinned);
-  [ADR-0108](0108-ledger-and-derived-state.md) (proposed: from C-minus stage
+  [ADR-0108](0108-ledger-and-derived-state.md) (accepted 2026-11-26: from C-minus stage
   C2 one ledger record of the owner's answer per field, covers included,
   replaces the manual hold, its carry and its Resume, Amendments 1 to 6 are
   restated over it, and a withdrawal restores only an answer from an earlier
