@@ -18,6 +18,7 @@ import pytest
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.proposal_sets import CreateProposalSet
+from mechanical_librarian.domain.level_proposal_set import derive_level
 from mechanical_librarian.domain.metadata_report import canonical_json
 from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
@@ -25,8 +26,13 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase, review_proposals
+from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.support.genre_reports import genre_report
 from tests.support.ledger_partition import rewrite
+from tests.unit.test_level_proposal_sets import _policy as _level_policy
+from tests.unit.test_level_proposal_sets import _refused, _synopsis
+from tests.unit.test_level_proposal_sets import _report as _level_report
 
 _REPORT = genre_report(current=("Drama",), genres=("Fantasy",))
 # What 881a92c's evaluator, before the epoch existed, made of `_REPORT`.
@@ -172,5 +178,64 @@ def test_a_store_at_a_later_epoch_publishes_and_admits_at_that_epoch(
     try:
         with pytest.raises(MetadataReportError, match="source disagrees"):
             repository.get_review_case(admitted["review_case_id"])
+    finally:
+        repository.close()
+
+
+def test_a_level_derivation_and_a_shadow_check_keep_the_sources_epoch() -> None:
+    """The level set is evaluated at its live set's epoch, and a shadow packet
+    is checked against its supplied set at that set's epoch."""
+    report = _level_report(_refused(_synopsis()))
+    policy = _level_policy(report)
+    level = WorkIdentityLevel.TITLE_AND_CREATOR
+    derived: dict[int, str] = {}
+    for epoch in (0, 1):
+        live = evaluate_report(report, policy.resolved_id, derived_epoch=epoch)
+        derivation = derive_level(
+            report, live, ReviewCase.create(live, report), policy, 1, level
+        )
+        derived[epoch] = derivation.level_proposal_set_id
+        level_set = evaluate_report(
+            report,
+            live.resolved_policy_id,
+            work_identity_level=level,
+            derived_epoch=epoch,
+        )
+        stored = json.loads(derivation.document)["level_set"]
+        assert stored == json.loads(level_set.to_json())
+        assert stored.get("derived_epoch", 0) == epoch
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(level_set, report),
+            level_set,
+            report,
+            include_policy_ignored=True,
+            work_identity_level=level,
+        )
+        packet.validate_source(report, level_set, None, work_identity_level=level)
+    assert derived[0] != derived[1]
+    # Re-evaluating the epoch 1 set at epoch 0 disagrees, which is what the
+    # check would compare had it not taken the supplied set's epoch.
+    assert (
+        evaluate_report(report, policy.resolved_id, work_identity_level=level).to_json()
+        != level_set.to_json()
+    )
+
+
+def test_the_unchanged_proposal_check_reads_the_ledgers_epoch(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "application.sqlite3"
+    open_repository(path).close()
+    rewrite(path, "UPDATE ledger_meta SET derived_epoch=1")
+    repository = open_repository(path, create=False)
+    try:
+        repository.publish(_REPORT, lambda: True, None)
+        published = ProposalSet.from_json(
+            CreateProposalSet(repository, lambda _: True).run(_REPORT.report_id)
+        )
+        same = repository._review_preparation._proposes_the_same
+        assert same(_REPORT, _REPORT.report_id, published.proposal_set_id)
+        # The epoch 0 set of the same report is not what this epoch proposes.
+        assert not same(_REPORT, _REPORT.report_id, _PROPOSAL_SET_ID)
     finally:
         repository.close()

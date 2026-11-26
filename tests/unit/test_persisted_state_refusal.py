@@ -282,3 +282,19 @@ def test_the_regeneration_audit_refuses_a_malformed_row(
     finally:
         connection.rollback()
         connection.close()
+
+
+def test_setup_admits_only_the_fresh_ledger_record(store: Path) -> None:
+    """A store left before setup's first commit holds exactly the ledger
+    record a fresh schema seeds; any other record is not that store."""
+    repository = open_repository(store, create=False)
+    try:
+        assert repository.setup_state_store().is_exact_schema_only()
+    finally:
+        repository.close()
+    rewrite(store, "UPDATE ledger_meta SET derived_epoch=1")
+    repository = open_repository(store, create=False)
+    try:
+        assert not repository.setup_state_store().is_exact_schema_only()
+    finally:
+        repository.close()
