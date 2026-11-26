@@ -436,7 +436,7 @@ class SQLiteRegenerationStore:
             held = None
             # A database of this build has nothing to regenerate: the run
             # writes nothing, so it needs neither the reserve nor the copy.
-            if not _derived_is_current(connection):
+            if not _up_to_date(connection):
                 # The scratch copy is the run's first write: the free-space
                 # refusal comes before it, never a full volume met while copying.
                 free, needed = _space(binding.parent_descriptor, binding.descriptor)
@@ -566,18 +566,25 @@ def _replaced_copy(connection: sqlite3.Connection, parent: int) -> _HeldCopy | N
     return _HeldCopy(name, identity)
 
 
-def _derived_is_current(connection: sqlite3.Connection) -> bool:
-    """The ledger names this build's derived partition, the file holds
-    exactly this build's objects, and its browse facts were folded under this
-    build's Unicode version and rule list."""
+def _up_to_date(connection: sqlite3.Connection) -> bool:
+    """No migration is pending, as the ledger is this build's format; it
+    names this build's derived partition; the file holds exactly this
+    build's objects; and its browse facts were folded under this build's
+    Unicode version and rule list."""
     row = connection.execute(
-        "SELECT derived_version,derived_schema_digest FROM ledger_meta"
+        "SELECT ledger_format_version,derived_version,derived_schema_digest "
+        "FROM ledger_meta"
     ).fetchone()
     objects = connection.execute(
         "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
     ).fetchall()
     return (
-        row == (DERIVED_VERSION, build_partition().derived_schema_digest)
+        row
+        == (
+            LEDGER_FORMAT_VERSION,
+            DERIVED_VERSION,
+            build_partition().derived_schema_digest,
+        )
         and objects == _expected_schema_objects()
         and browse_fact_identity_is_current(connection) is True
     )
@@ -707,11 +714,12 @@ class SQLiteRegenerationSession:
             self._binding.parent_descriptor, self._binding.descriptor
         )
 
-    def derived_is_current(self) -> bool:
-        """Nothing to do: the ledger names this build's derived partition and
-        the file holds exactly this build's objects."""
+    def up_to_date(self) -> bool:
+        """Nothing to do: no migration is pending, the ledger names this
+        build's derived partition and the file holds exactly this build's
+        objects."""
         with self._named_failures():
-            return _derived_is_current(self._connection)
+            return _up_to_date(self._connection)
 
     def free_space(self) -> tuple[int, int]:
         """Free space counts the held restore point admission found the run

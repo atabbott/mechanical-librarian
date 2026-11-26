@@ -1449,7 +1449,7 @@ class _Session:
         self.inspection = inspection
         self.written: list[str] = []
 
-    def derived_is_current(self) -> bool:
+    def up_to_date(self) -> bool:
         return False
 
     def free_space(self) -> tuple[int, int]:
