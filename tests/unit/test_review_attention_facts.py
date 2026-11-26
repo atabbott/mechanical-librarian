@@ -30,6 +30,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
     _COVER_UNRESOLVED_OUTCOME_SQL,
@@ -51,6 +52,7 @@ from tests.support.metadata_report_schemas import (
     PRE_1346_ATTENTION_FACT_SOURCE_SQL,
     PRIOR_AUTOMATIC_DECIDED_SQL,
     PRIOR_HUMAN_DECIDED_SQL,
+    pre_2038_attention_sql,
 )
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
 from tests.unit.test_browse_attention_statements import (
@@ -77,9 +79,7 @@ _PARENTS = {
         ("review_cases", "report_id"),
     ),
     "cover_considerations": (("current_cover_considerations", "consideration_id"),),
-    "cover_selection_authorities": (
-        ("current_cover_selection_authorities", "selection_id"),
-    ),
+    "automatic_cover_selections": (("automatic_cover_pointers", "selection_id"),),
 }
 _OPERATIONS = ("insert", "update", "delete")
 # The fact source as main held it before #1249 removed the audiobook clause
@@ -420,7 +420,12 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
             repository, quiet, (("description", "abstention", "ask"),)
         ),
     )
-    authored = f"description_decision_{_hex('authored')}"
+    # The chosen advice names a decision of one half (#2038).
+    authored = f"automatic_decision_{_hex('authored')}"
+    run(
+        "INSERT INTO automatic_description_decisions VALUES(?,?,?,?,?)",
+        (authored, quiet, f"description_candidate_{_hex('authored')}", "a" * 64, "{}"),
+    )
     yield (
         "description authored",
         (("current_description_decisions", "insert"),),
@@ -619,40 +624,81 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
     cover = _attentive(connection, "cover")
     yield (
         "owner selects a cover",
-        (("current_cover_selection_authorities", "insert"),),
+        (("owner_cover_pointers", "insert"),),
         lambda: _cover_selection(repository, cover[3], "owner", cover[3]),
     )
     yield (
         "owner selection withdrawn",
-        (("current_cover_selection_authorities", "delete"),),
+        (("owner_cover_pointers", "delete"),),
         lambda: (
             save(
                 "selection",
-                "SELECT * FROM current_cover_selection_authorities "
+                "SELECT * FROM owner_cover_pointers "
                 "WHERE (connection_name,library_name,item_id)=(?,?,?)",
                 *cover[:3],
             ),
-            run("DELETE FROM current_cover_selection_authorities"),
+            run("DELETE FROM owner_cover_pointers"),
         ),
     )
     yield (
         "owner selection restored",
-        (("current_cover_selection_authorities", "insert"),),
+        (("owner_cover_pointers", "insert"),),
         lambda: run(
-            "INSERT INTO current_cover_selection_authorities VALUES(?,?,?,?)",
+            "INSERT INTO owner_cover_pointers VALUES(?,?,?,?)",
             saved["selection"],
+        ),
+    )
+    other = _attentive(connection, "cover")
+    yield (
+        "owner selection moves to another work",
+        (("owner_cover_pointers", "update"),),
+        lambda: run(
+            "UPDATE owner_cover_pointers SET connection_name=?,library_name=?,"
+            "item_id=?,selection_id=? WHERE (connection_name,library_name,item_id)"
+            "=(?,?,?)",
+            (
+                *other[:3],
+                _cover_selection(repository, other[3], "owner", other[3], point=False),
+                *cover[:3],
+            ),
+        ),
+    )
+    yield (
+        "automation selects the current comparison's cover",
+        (("automatic_cover_pointers", "insert"),),
+        lambda: _cover_selection(repository, cover[3], "automatic", cover[3]),
+    )
+    yield (
+        "automation's selection withdrawn",
+        (("automatic_cover_pointers", "delete"),),
+        lambda: (
+            save(
+                "automatic",
+                "SELECT * FROM automatic_cover_pointers "
+                "WHERE (connection_name,library_name,item_id)=(?,?,?)",
+                *cover[:3],
+            ),
+            run("DELETE FROM automatic_cover_pointers"),
+        ),
+    )
+    yield (
+        "automation's selection restored",
+        (("automatic_cover_pointers", "insert"),),
+        lambda: run(
+            "INSERT INTO automatic_cover_pointers VALUES(?,?,?,?)",
+            saved["automatic"],
         ),
     )
     stale = f"cover_selection_{_hex('stale')}"
     yield (
-        "selection becomes automation for another consideration",
-        (("current_cover_selection_authorities", "update"),),
+        "automation moves to another consideration",
+        (("automatic_cover_pointers", "update"),),
         lambda: (
             run(
-                "INSERT INTO cover_selection_authorities(selection_id,connection_name,"
-                "library_name,item_id,kind,decision_id,consideration_id,"
+                "INSERT INTO automatic_cover_selections(selection_id,connection_name,"
+                "library_name,item_id,decision_id,consideration_id,"
                 "supersedes_selection_id,occurred_at,document) "
-                "VALUES(?,?,?,?,'automatic',?,?,NULL,1,?)",
+                "VALUES(?,?,?,?,?,?,NULL,1,?)",
                 (
                     stale,
                     *cover[:3],
@@ -668,7 +714,7 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
                 ),
             ),
             run(
-                "UPDATE current_cover_selection_authorities SET selection_id=? "
+                "UPDATE automatic_cover_pointers SET selection_id=? "
                 "WHERE (connection_name,library_name,item_id)=(?,?,?)",
                 (stale, *cover[:3]),
             ),
@@ -993,6 +1039,7 @@ def test_one_decision_refreshes_one_field_at_any_library_size() -> None:
                     "WHERE review_case_id IS NOT NULL ORDER BY item_id LIMIT 1"
                 ).fetchone()[0]
                 steps = 0
+                ordinal = next_ordinal(connection)
 
                 def progress() -> int:
                     nonlocal steps
@@ -1001,12 +1048,14 @@ def test_one_decision_refreshes_one_field_at_any_library_size() -> None:
 
                 connection.set_progress_handler(progress, 100)
                 connection.execute(
-                    "INSERT INTO human_decisions(decision_id,review_case_id,"
+                    "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,"
                     "proposal_id,target_fingerprint,destination,actor,outcome,"
                     "selected_value_document,idempotency_digest,request_digest,"
-                    "occurred_at,document) VALUES(?,?,?,?,'title','owner','accept',"
-                    "'null',?,?,1,'{}')",
+                    "occurred_at,document,connection_name,library_name,item_id,"
+                    "target_field_document) VALUES(?,?,?,?,?,'title','owner','accept',"
+                    "'null',?,?,1,'{}','primary','books','work','null')",
                     (
+                        ordinal,
                         f"human_decision_{_hex(case_id)}",
                         case_id,
                         f"review_proposal_{_hex(case_id)}",
@@ -1126,8 +1175,11 @@ def _predecessor(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
 
 
 def test_the_predecessor_oracle_is_mains_fact_source_before_1249() -> None:
+    # Main read one cover selection table then (#2038).
     assert (
-        hashlib.sha256(_PRE_1249_ATTENTION_FACT_SOURCE_SQL.encode()).hexdigest()
+        hashlib.sha256(
+            pre_2038_attention_sql(_PRE_1249_ATTENTION_FACT_SOURCE_SQL).encode()
+        ).hexdigest()
         == "1513216e8213975ceedf17f5ddd01cf7f3ba4c8ab6c68678f9013399bc7b9d86"
     )
     # Exactly two edits: the audiobook clause leaves, and narrators asks

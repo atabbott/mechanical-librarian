@@ -62,6 +62,7 @@ from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.support.audiobook_reports import synthetic_audiobook_bibliographic_report
 from tests.support.evidence_led_titles import isbn_title_report
 from tests.support.genre_reports import genre_report
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
 from tests.unit.test_owner_answer_holds import (
     ORIGINAL,

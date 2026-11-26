@@ -1,7 +1,7 @@
 """The review-scan and target-connection half of review preparation.
 
-Owns `review_preparation_scans`, the singleton `review_preparation_control`
-that pauses the pipeline, and `review_preparation_connection_conditions`: which
+Owns `review_preparation_scans`, the pause in the owner's singleton
+`review_preparation_owner_control`, and `review_preparation_connection_conditions`: which
 scan is current, whether preparation is running at all, and whether one target
 connection may be reached, must be re-qualified, is deferred, or is held.
 
@@ -132,7 +132,7 @@ def request_cover_preparation(connection: sqlite3.Connection, now: int) -> None:
     as for description advice; the next scan does the same.
     """
     if connection.execute(
-        "SELECT paused FROM review_preparation_control WHERE singleton=1"
+        "SELECT paused FROM review_preparation_owner_control WHERE singleton=1"
     ).fetchone() == (1,):
         return
     rows = connection.execute(
@@ -244,7 +244,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         try:
             transaction.begin()
             control = self._connection.execute(
-                "SELECT paused FROM review_preparation_control WHERE singleton=1"
+                "SELECT paused FROM review_preparation_owner_control WHERE singleton=1"
             ).fetchone()
             if control is None:
                 raise MetadataReportError("review preparation control is unavailable")
@@ -512,7 +512,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         try:
             transaction.begin()
             control = self._connection.execute(
-                "SELECT paused FROM review_preparation_control WHERE singleton=1"
+                "SELECT paused FROM review_preparation_owner_control WHERE singleton=1"
             ).fetchone()
             if control is None:
                 raise MetadataReportError("review preparation control is unavailable")
@@ -592,7 +592,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
     def review_pipeline_paused(self) -> bool:
         try:
             row = self._connection.execute(
-                "SELECT paused FROM review_preparation_control WHERE singleton=1"
+                "SELECT paused FROM review_preparation_owner_control WHERE singleton=1"
             ).fetchone()
             if row is None:
                 raise MetadataReportError("review preparation control is unavailable")
@@ -611,8 +611,12 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         try:
             transaction.begin()
             self._connection.execute(
-                "UPDATE review_preparation_control SET paused=?,updated_at=? WHERE singleton=1",
-                (paused, updated_at),
+                "UPDATE review_preparation_owner_control SET paused=? WHERE singleton=1",
+                (paused,),
+            )
+            self._connection.execute(
+                "UPDATE review_preparation_control SET updated_at=? WHERE singleton=1",
+                (updated_at,),
             )
             refresh_preparation_run_state(self._connection, updated_at)
             transaction.commit()
@@ -703,7 +707,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         clear_pause: bool,
     ) -> None:
         paused = self._connection.execute(
-            "SELECT paused FROM review_preparation_control WHERE singleton=1"
+            "SELECT paused FROM review_preparation_owner_control WHERE singleton=1"
         ).fetchone()
         if paused is None:
             raise MetadataReportError("review preparation control is unavailable")
@@ -756,7 +760,10 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     )
         if clear_pause:
             self._connection.execute(
-                "UPDATE review_preparation_control SET paused=0,updated_at=? WHERE singleton=1",
+                "UPDATE review_preparation_owner_control SET paused=0 WHERE singleton=1"
+            )
+            self._connection.execute(
+                "UPDATE review_preparation_control SET updated_at=? WHERE singleton=1",
                 (updated_at,),
             )
         surviving = self._connection.execute(

@@ -1150,7 +1150,7 @@ def test_authenticated_preparation_status_survives_writer_journal_churn() -> Non
 
             def trace(statement: str) -> None:
                 if statement.startswith(
-                    "SELECT paused FROM review_preparation_control"
+                    "SELECT paused FROM review_preparation_owner_control"
                 ):
                     control_started.set()
                     release_writer.set()
@@ -1207,9 +1207,9 @@ def test_authenticated_preparation_status_survives_writer_journal_churn() -> Non
                     state = "queued" if paused else "discovering"
                     writer_repository._connection.execute("BEGIN IMMEDIATE")
                     writer_repository._connection.execute(
-                        "UPDATE review_preparation_control "
-                        "SET paused=?,updated_at=? WHERE singleton=1",
-                        (paused, updated_at),
+                        "UPDATE review_preparation_owner_control "
+                        "SET paused=? WHERE singleton=1",
+                        (paused,),
                     )
                     writer_repository._connection.execute(
                         "UPDATE review_preparation_scans "

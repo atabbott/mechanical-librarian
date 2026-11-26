@@ -41,6 +41,7 @@ from mechanical_librarian.domain.work_identity import (
 )
 from mechanical_librarian.infrastructure.security.credentials import inventaire_client
 from tests.support.audiobook_providers import alternative_work_plan
+from tests.support.cover_selections import ALL_COVER_POINTERS, ALL_COVER_SELECTIONS
 from tests.support.ebook_ladder import (
     SERIES_TITLED_AUTHOR,
     SERIES_TITLED_EBOOK,
@@ -1603,8 +1604,8 @@ def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
             }
             assert (
                 repository._connection.execute(
-                    "SELECT (SELECT count(*) FROM cover_selection_authorities) + "
-                    "(SELECT count(*) FROM current_cover_selection_authorities) + "
+                    "SELECT (SELECT count(*) FROM " + ALL_COVER_SELECTIONS + ") + "
+                    "(SELECT count(*) FROM " + ALL_COVER_POINTERS + ") + "
                     "(SELECT count(*) FROM field_effects)"
                 ).fetchone()[0]
                 == 0

@@ -13,6 +13,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
 )
 from tests.support.description_advice import qualify_description_advice
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
@@ -986,8 +987,9 @@ def test_a_pinned_description_admits_no_automatic_advice(tmp_path):
     with pytest.raises(ValueError, match="automatic admission unavailable"):
         store.admit(candidate.candidate_id, fresh, "automatic_policy", "a" * 64, 15)
     assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions WHERE review_case_id=?",
-        (fresh.review_case_id,),
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions WHERE review_case_id=?)"
+        "+(SELECT count(*) FROM automatic_description_decisions WHERE review_case_id=?)",
+        (fresh.review_case_id,) * 2,
     ).fetchone() == (0,)
     owner = store.admit(candidate.candidate_id, fresh, "human", "b" * 64, 16)
     assert owner.origin == "human"

@@ -44,6 +44,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.audiobook_reports import admitted_audiobook_report
+from tests.support.cover_selections import ALL_COVER_POINTERS, ALL_COVER_SELECTIONS
 from tests.support.genre_reports import genre_report
 from tests.support.owner_values import OwnerStore, rewritten
 
@@ -1597,7 +1598,7 @@ def test_owner_confirmed_unknown_cover_lifecycle(
                     "SELECT count(*) FROM human_decisions"
                 ).fetchone() == (0,)
                 assert repository._connection.execute(
-                    "SELECT count(*) FROM cover_selection_authorities"
+                    "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
                 ).fetchone() == (0,)
                 if damage == "directory":
                     blob.rmdir()
@@ -1649,7 +1650,7 @@ def test_owner_confirmed_unknown_cover_lifecycle(
         "SELECT count(*) FROM human_decisions"
     ).fetchone() == (1,)
     first_selection = repository._connection.execute(
-        "SELECT selection_id FROM current_cover_selection_authorities"
+        "SELECT selection_id FROM " + ALL_COVER_POINTERS
     ).fetchone()[0]
     inspected = InspectCurrentReviewCase(repository, covers).run(case_id)
     chosen_field = next(
@@ -1669,7 +1670,7 @@ def test_owner_confirmed_unknown_cover_lifecycle(
     covers = bind(repository)
     retained = json.loads(
         repository._connection.execute(
-            "SELECT document FROM cover_selection_authorities"
+            "SELECT document FROM " + ALL_COVER_SELECTIONS
         ).fetchone()[0]
     )
     assert retained["schema_version"] == COVER_SELECTION_AUTHORITY_SCHEMA
@@ -1695,11 +1696,11 @@ def test_owner_confirmed_unknown_cover_lifecycle(
             else:
                 del altered[mutation]
             trigger = clone.execute(
-                "SELECT sql FROM sqlite_master WHERE name='cover_selection_authorities_no_update'"
+                "SELECT sql FROM sqlite_master WHERE name='owner_cover_selections_no_update'"
             ).fetchone()[0]
-            clone.execute("DROP TRIGGER cover_selection_authorities_no_update")
+            clone.execute("DROP TRIGGER owner_cover_selections_no_update")
             clone.execute(
-                "UPDATE cover_selection_authorities SET document=?",
+                "UPDATE owner_cover_selections SET document=?",
                 (json.dumps(altered, sort_keys=True, separators=(",", ":")),),
             )
             clone.execute(trigger)
@@ -1780,7 +1781,7 @@ def test_owner_confirmed_unknown_cover_lifecycle(
         repository._connection.commit()
         assert repository.get_field_effect(operation.plan.plan_id).state == "planned"
         assert repository._connection.execute(
-            "SELECT selection_id FROM current_cover_selection_authorities"
+            "SELECT selection_id FROM " + ALL_COVER_POINTERS
         ).fetchone() == (first_selection,)
     target.seed(operation.plan)
     if effect_state == "verified":

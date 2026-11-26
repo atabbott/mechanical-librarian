@@ -31,6 +31,7 @@ from mechanical_librarian.adapters.persistence.field_effect_activity import (
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.adapters.persistence.review_sql import (
     _active_generation_automatic_sql,
     _episode_decision_sql,
@@ -124,11 +125,14 @@ def store(tmp_path: Path) -> Iterator[tuple[sqlite3.Connection, list[str]]]:
             ),
         )
         connection.execute(
-            "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
+            "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,proposal_id,"
             "target_fingerprint,destination,actor,outcome,selected_value_document,"
-            "idempotency_digest,request_digest,occurred_at,document) "
-            "VALUES(?,?,?,?,'authors','owner','accept','null',?,?,?,?)",
+            "idempotency_digest,request_digest,occurred_at,document,"
+            "connection_name,library_name,item_id,target_field_document) "
+            "VALUES(?,?,?,?,?,'authors','owner','accept','null',?,?,?,?,"
+            "'primary','books','work','null')",
             (
+                next_ordinal(connection),
                 human_id,
                 case,
                 "review_proposal_" + _digest(f"proposal-{index}"),
@@ -233,7 +237,8 @@ _INDEXES_1204 = (
     "field_effects_ready",
     "field_effects_waiting",
     "field_effects_target",
-    "description_decisions_case",
+    "owner_authored_descriptions_case",
+    "automatic_description_decisions_case",
 )
 
 
@@ -577,12 +582,16 @@ _RECORDED_AUTHORITY = (
 )
 _RECORDED_CASE = (
     "SELECT destination,decision_id FROM automatic_decisions WHERE review_case_id=? "
-    "UNION ALL SELECT 'cover',selection.decision_id FROM current_review_case_lineages lineage "
-    "JOIN current_cover_selection_authorities current ON "
-    "current.connection_name=lineage.connection_name AND "
-    "current.library_name=lineage.library_name AND current.item_id=lineage.item_id "
-    "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
-    "WHERE lineage.review_case_id=? UNION ALL "
+    + "".join(
+        "UNION ALL SELECT 'cover',selection.decision_id FROM current_review_case_lineages "
+        f"lineage JOIN {kind}_cover_pointers current ON "
+        "current.connection_name=lineage.connection_name AND "
+        "current.library_name=lineage.library_name AND current.item_id=lineage.item_id "
+        f"JOIN {kind}_cover_selections selection ON selection.selection_id=current.selection_id "
+        "WHERE lineage.review_case_id=? "
+        for kind in ("owner", "automatic")
+    )
+    + "UNION ALL "
     "SELECT destination,decision_id FROM human_decisions WHERE review_case_id=?"
 )
 _ORIGINAL_LOOKUPS = {
@@ -701,7 +710,7 @@ def _lookups(
         "revoke": (earlier_id, earlier_id),
         "replacement": (earlier_id, earlier_id, False),
         "authority": (case_id, destination, later.decision_id, case_id, destination),
-        "override": (case_id, case_id, case_id),
+        "override": (case_id,) * 4,
     }
     lookups = {}
     for name, statements in traced.items():
@@ -1301,24 +1310,44 @@ def test_description_decision_history_breaks_tied_times_by_decision_id(
                     **admitted.model_dump(exclude={"decision_id"}),
                     "idempotency_digest": digit * 64,
                     "occurred_at": 10**9,
+                    "origin": origin,
                 }
             )
-            for digit in "bcdef0"
+            for digit, origin in zip(
+                "bcdef0", ("human", "automatic_policy") * 3, strict=True
+            )
         ),
         key=lambda decision: decision.decision_id,
     )
-    # Six decisions tie on one second, stored in ascending decision-id order.
+    # Six decisions tie on one second, stored in ascending decision-id order,
+    # the owner's and Automatic's in their own halves (#2038).
     for decision in tied:
-        repository._connection.execute(
-            "INSERT INTO description_decisions VALUES(?,?,?,?,?)",
-            (
-                decision.decision_id,
-                binding.review_case_id,
-                candidate.candidate_id,
-                decision.idempotency_digest,
-                decision.to_json(),
-            ),
+        values = (
+            decision.decision_id,
+            binding.review_case_id,
+            candidate.candidate_id,
+            decision.idempotency_digest,
+            decision.to_json(),
         )
+        if decision.origin == "human":
+            repository._connection.execute(
+                "INSERT INTO owner_authored_descriptions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    *values,
+                    "primary",
+                    "ebooks",
+                    "item-1",
+                    candidate.to_json(),
+                    next_ordinal(repository._connection),
+                    0,
+                    None,
+                ),
+            )
+        else:
+            repository._connection.execute(
+                "INSERT INTO automatic_description_decisions VALUES(?,?,?,?,?)",
+                values,
+            )
     repository._connection.commit()
     limited = repository.get_review_case_history(binding.review_case_id, 4)
     assert [
@@ -1481,6 +1510,69 @@ def _before_1205(name: str, statement: str) -> str:
     return statement
 
 
+# #2038 split the description decisions into the owner's ledger half and
+# Automatic's derived half; one table held both, told apart by origin.
+_SPLIT_2038 = (
+    (
+        "'description','human' FROM current_description_decisions p JOIN "
+        "owner_authored_descriptions d ON d.decision_id=p.decision_id UNION ALL "
+        "SELECT d.decision_id,d.review_case_id,'description','automatic' FROM "
+        "current_description_decisions p JOIN automatic_description_decisions d "
+        "ON d.decision_id=p.decision_id WHERE NOT EXISTS (",
+        "'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN "
+        "'human' ELSE 'automatic' END FROM current_description_decisions p JOIN "
+        "description_decisions d ON d.decision_id=p.decision_id WHERE "
+        "(json_extract(d.document,'$.origin')='human' OR (NOT EXISTS (",
+    ),
+    (
+        "FROM current_description_decisions p JOIN owner_authored_descriptions d "
+        "ON d.decision_id=p.decision_id JOIN current_review_case_lineages l "
+        "ON l.review_case_id=d.review_case_id UNION ALL SELECT d.decision_id,"
+        "json_extract(d.document,'$.occurred_at'),d.document FROM "
+        "current_description_decisions p JOIN automatic_description_decisions d "
+        "ON d.decision_id=p.decision_id JOIN current_review_case_lineages l "
+        "ON l.review_case_id=d.review_case_id WHERE NOT EXISTS (",
+        "FROM current_description_decisions p JOIN description_decisions d "
+        "ON d.decision_id=p.decision_id JOIN current_review_case_lineages l "
+        "ON l.review_case_id=d.review_case_id WHERE "
+        "(json_extract(d.document,'$.origin')='human' OR (NOT EXISTS (",
+    ),
+)
+
+
+# It split the cover selections too: Automatic's current one had been read
+# from the one pointer and selection table by kind.
+_COVER_SPLIT_2038 = (
+    (
+        "FROM automatic_cover_pointers current JOIN automatic_cover_selections "
+        "selection ON",
+        "FROM current_cover_selection_authorities current JOIN "
+        "cover_selection_authorities selection ON",
+    ),
+    (
+        "ON lineage.review_case_id=consideration.review_case_id WHERE ",
+        "ON lineage.review_case_id=consideration.review_case_id WHERE "
+        "selection.kind='automatic' AND ",
+    ),
+)
+
+
+def _before_2038(statement: str) -> str:
+    """One description decisions table again, told apart by origin, and
+    one cover selection table told apart by kind."""
+    (now, then), *_ = (step for step in _SPLIT_2038 if step[0] in statement)
+    assert statement.count(now) == 1
+    closing = _ACTIVE_GENERATION_DESCRIPTION_SQL + ")"
+    assert statement.count(closing) == 1
+    statement = statement.replace(now, then).replace(
+        closing, _ACTIVE_GENERATION_DESCRIPTION_SQL + ")))"
+    )
+    for now, then in _COVER_SPLIT_2038:
+        assert statement.count(now) == 1, now
+        statement = statement.replace(now, then)
+    return statement
+
+
 def _before_1568(statement: str) -> str:
     """Remove the Automatic-posture test #1568 added to each automatic arm."""
     held = "hold.active=1) AND " + _AUTOMATIC_POSTURE_SQL + "))"
@@ -1562,7 +1654,9 @@ def test_lineage_membership_restores_the_1204_text(
         name: hashlib.sha256(
             _before_1523(
                 _before_frozen_follows(
-                    _before_1568(_before_1573(_before_1205(name, statement)))
+                    _before_1568(
+                        _before_1573(_before_1205(name, _before_2038(statement)))
+                    )
                 )
             )
             .replace(_HUMAN_PLANS, "human.outcome='accept'", 1)
@@ -1632,11 +1726,14 @@ def test_lineage_membership_equals_the_correlated_test_across_lineage_shapes(
     ).fetchone()
     cover_id = "human_decision_" + _digest("cover-owner")
     connection.execute(
-        "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
+        "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,proposal_id,"
         "target_fingerprint,destination,actor,outcome,selected_value_document,"
-        "idempotency_digest,request_digest,occurred_at,document) "
-        "VALUES(?,?,?,?,'cover','owner','accept','null',?,?,0,?)",
+        "idempotency_digest,request_digest,occurred_at,document,"
+        "connection_name,library_name,item_id,target_field_document) "
+        "VALUES(?,?,?,?,?,'cover','owner','accept','null',?,?,0,?,"
+        "'primary','books','work','null')",
         (
+            next_ordinal(connection),
             cover_id,
             cover_case,
             "review_proposal_" + _digest("cover-proposal"),
@@ -1701,13 +1798,16 @@ def test_lineage_membership_refuses_malformed_documents_as_before(
     # earlier owner decision reads the case's review document.
     later_id = "human_decision_" + _digest("corrective")
     connection.execute(
-        "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
+        "INSERT INTO human_decisions(ordinal,decision_id,review_case_id,proposal_id,"
         "target_fingerprint,destination,actor,outcome,selected_value_document,"
-        "idempotency_digest,request_digest,occurred_at,document) "
-        "SELECT ?,review_case_id,proposal_id,target_fingerprint,destination,actor,"
-        "'keep_current',selected_value_document,?,?,occurred_at+1,? "
+        "idempotency_digest,request_digest,occurred_at,document,"
+        "connection_name,library_name,item_id,target_field_document) "
+        "SELECT ?,?,review_case_id,proposal_id,target_fingerprint,destination,actor,"
+        "'keep_current',selected_value_document,?,?,occurred_at+1,?,"
+        "connection_name,library_name,item_id,target_field_document "
         "FROM human_decisions WHERE ordinal=?",
         (
+            next_ordinal(connection),
             later_id,
             _digest("corrective-idempotency"),
             _digest("corrective-request"),

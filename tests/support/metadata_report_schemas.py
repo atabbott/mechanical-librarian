@@ -458,13 +458,410 @@ assert (
 )
 
 
+# Every producer before #2038 held its owner decisions, their events and its
+# no-change rows by foreign key to their case and report, and kept no item key
+# or display copies on them or on its write plans (ADR-0108). These undo
+# exactly that change, so each older form below derives from them.
+_CASE_REFERENCE = (
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+)
+_CASE_SHAPE = (
+    "review_case_id TEXT NOT NULL CHECK(review_case_id GLOB 'review_case_[0-9a-f]*' "
+    "AND length(review_case_id)=76), "
+)
+_ITEM_KEY = (
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL"
+)
+_DISPLAY_TITLE = (
+    "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text')"
+)
+
+
+def _undone(current: str, *steps: tuple[str, str]) -> str:
+    """The current DDL with each (now, then) step undone, every one applying."""
+    for now, then in steps:
+        assert current.count(now) == 1, now
+        current = current.replace(now, then)
+    return current
+
+
+PRE_2038_HUMAN_DECISIONS_SQL = _undone(
+    persistence_schema._HUMAN_DECISIONS_SQL,
+    (_CASE_SHAPE, _CASE_REFERENCE),
+    (
+        _ITEM_KEY
+        + ", "
+        + _DISPLAY_TITLE
+        + ", target_field_document TEXT NOT NULL CHECK(typeof(target_field_document)='text' "
+        "AND json_valid(target_field_document) AND json_type(target_field_document) IN "
+        "('object','null')), selected_form TEXT CHECK(selected_form IS NULL OR "
+        "(typeof(selected_form)='text' AND destination='description' AND outcome='accept')), ",
+        "",
+    ),
+)
+PRE_2038_HUMAN_DECISION_EVENTS_SQL = _undone(
+    persistence_schema._HUMAN_DECISION_EVENTS_SQL,
+    (_CASE_SHAPE, _CASE_REFERENCE),
+    (", " + _ITEM_KEY + ")", ")"),
+)
+PRE_2038_FIELD_EFFECT_NO_CHANGES_SQL = _undone(
+    persistence_schema._FIELD_EFFECT_NO_CHANGES_SQL,
+    (
+        _CASE_SHAPE
+        + "report_id TEXT NOT NULL CHECK(report_id GLOB 'report_[0-9a-f]*' AND length(report_id)=71), ",
+        _CASE_REFERENCE
+        + "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), ",
+    ),
+    (", " + _DISPLAY_TITLE + ") WITHOUT ROWID", ") WITHOUT ROWID"),
+)
+PRE_2038_FIELD_EFFECTS_SQL = _undone(
+    persistence_schema._FIELD_EFFECTS_SQL, (", " + _DISPLAY_TITLE + ")", ")")
+)
+PRE_2038_METADATA_POLICY_TRANSITIONS_SQL = _undone(
+    persistence_schema._METADATA_POLICY_TRANSITIONS_SQL,
+    (
+        ", completed INTEGER NOT NULL DEFAULT 0 CHECK(completed>=0), "
+        "failed INTEGER NOT NULL DEFAULT 0 CHECK(failed>=0), "
+        "CHECK(completed+failed<=total))",
+        ")",
+    ),
+)
+# What a reconstruction of any earlier producer sets first, before its own
+# older forms (#2038).
+PRE_2038_SCHEMA = {
+    "_HUMAN_DECISIONS_SQL": PRE_2038_HUMAN_DECISIONS_SQL,
+    "_HUMAN_DECISION_EVENTS_SQL": PRE_2038_HUMAN_DECISION_EVENTS_SQL,
+    "_FIELD_EFFECT_NO_CHANGES_SQL": PRE_2038_FIELD_EFFECT_NO_CHANGES_SQL,
+    "_FIELD_EFFECTS_SQL": PRE_2038_FIELD_EFFECTS_SQL,
+    "_METADATA_POLICY_TRANSITIONS_SQL": PRE_2038_METADATA_POLICY_TRANSITIONS_SQL,
+}
+
+
+def set_pre_2038_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undo #2038's schema change for a reconstructed earlier producer."""
+    for name, sql in PRE_2038_SCHEMA.items():
+        monkeypatch.setattr(persistence_schema, name, sql)
+    # Its rows carried no item key or copies, so its open had none to
+    # compare; it kept no owner control row apart from scheduling and no
+    # record of the owner's answers to validate.
+    for name in (
+        "_OWNER_ITEM_KEY_DISAGREES_SQL",
+        "_LEDGER_COPY_DISAGREES_SQL",
+        "_OWNER_CONTROL_NOT_ONE_ROW_SQL",
+    ):
+        monkeypatch.setattr(persistence_schema, name, "SELECT 1 WHERE 0")
+    monkeypatch.setattr(
+        persistence_schema, "validate_owner_field_answers", lambda connection: None
+    )
+
+
+# Nor did it keep the owner's preparation controls apart from scheduling: one
+# row held both, the Book matching level last (#2038).
+PRE_2038_REVIEW_CONTROL_SQL = _undone(
+    persistence_schema._REVIEW_CONTROL_SQL,
+    (
+        "CHECK(singleton=1), claim_sequence",
+        "CHECK(singleton=1), paused INTEGER NOT NULL CHECK(paused IN (0,1)), "
+        "claim_sequence",
+    ),
+    (
+        "CHECK(claim_sequence>=0), last_library",
+        "CHECK(claim_sequence>=0), first_boot_acknowledged INTEGER NOT NULL "
+        "CHECK(first_boot_acknowledged IN (0,1)), last_library",
+    ),
+    (
+        "CHECK(updated_at>=0))",
+        "CHECK(updated_at>=0), work_identity_level TEXT NOT NULL DEFAULT "
+        "'identifier' CHECK(work_identity_level IN "
+        "('identifier','title_and_creator_exact','title_and_creator')))",
+    ),
+)
+
+
+# Nor did it keep the owner's authored descriptions apart from Automatic's:
+# one table held both, and the case's chosen one named it by foreign key.
+_AUTOMATIC_DESCRIPTION_DECISIONS_SQL = persistence_schema._DESCRIPTION_ADVICE_TABLES[
+    "automatic_description_decisions"
+]
+PRE_2038_DESCRIPTION_DECISIONS_SQL = _undone(
+    _AUTOMATIC_DESCRIPTION_DECISIONS_SQL,
+    (
+        "CREATE TABLE automatic_description_decisions (decision_id TEXT PRIMARY KEY "
+        "NOT NULL CHECK(decision_id GLOB 'automatic_decision_[0-9a-f]*' AND "
+        "length(decision_id)=83), ",
+        "CREATE TABLE description_decisions (decision_id TEXT PRIMARY KEY NOT NULL, ",
+    ),
+)
+PRE_2038_CURRENT_DESCRIPTION_DECISIONS_SQL = _undone(
+    persistence_schema._DESCRIPTION_ADVICE_TABLES["current_description_decisions"],
+    (
+        "decision_id TEXT NOT NULL)",
+        "decision_id TEXT NOT NULL REFERENCES description_decisions(decision_id))",
+    ),
+)
+
+
+def _renamed(current: str, now: str, then: str) -> str:
+    """An object of the one table, named and placed on it as before."""
+    assert current.count(now) == 2, now
+    return current.replace(now, then)
+
+
+PRE_2038_DESCRIPTION_DECISION_TRIGGERS = tuple(
+    _renamed(
+        persistence_schema._DESCRIPTION_ADVICE_TRIGGERS[
+            f"automatic_description_decisions_no_{operation}"
+        ],
+        "automatic_description_decisions",
+        "description_decisions",
+    )
+    for operation in ("update", "delete")
+)
+PRE_2038_DESCRIPTION_DECISIONS_CASE_INDEX_SQL = _renamed(
+    persistence_schema._DESCRIPTION_DECISION_INDEXES[
+        "automatic_description_decisions_case"
+    ],
+    "automatic_description_decisions",
+    "description_decisions",
+)
+
+
+def _undo_description_split(connection: sqlite3.Connection) -> None:
+    """One description decisions table again, keeping every row and every
+    trigger a predecessor kept on the case's chosen one."""
+    kept = [
+        sql
+        for (sql,) in connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type='trigger' "
+            "AND tbl_name='current_description_decisions' "
+            "AND name NOT LIKE 'current_description_decisions_validate_%' ORDER BY rowid"
+        )
+    ]
+    connection.executescript(
+        "CREATE TEMP TABLE pre_2038_description AS SELECT decision_id,review_case_id,"
+        "candidate_id,idempotency_digest,document FROM owner_authored_descriptions "
+        "UNION ALL SELECT decision_id,review_case_id,candidate_id,idempotency_digest,"
+        "document FROM automatic_description_decisions;"
+        "CREATE TEMP TABLE pre_2038_current_description AS "
+        "SELECT * FROM current_description_decisions;"
+        "DROP TABLE current_description_decisions;"
+        "DROP TABLE owner_authored_descriptions;"
+        "DROP TABLE automatic_description_decisions;"
+        + PRE_2038_DESCRIPTION_DECISIONS_SQL
+        + ";"
+        + PRE_2038_CURRENT_DESCRIPTION_DECISIONS_SQL
+        + ";INSERT INTO description_decisions SELECT * FROM pre_2038_description;"
+        "INSERT INTO current_description_decisions "
+        "SELECT * FROM pre_2038_current_description;"
+        + "".join(sql + ";" for sql in PRE_2038_DESCRIPTION_DECISION_TRIGGERS)
+        + PRE_2038_DESCRIPTION_DECISIONS_CASE_INDEX_SQL
+        + ";"
+        + "".join(sql + ";" for sql in kept)
+        + "DROP TABLE temp.pre_2038_description;"
+        "DROP TABLE temp.pre_2038_current_description;"
+    )
+
+
+# Nor did it keep the owner's cover choices apart from Automatic's: one table
+# held both kinds, and one pointer per work named the current one.
+PRE_2038_COVER_SELECTION_AUTHORITIES_SQL = (
+    "CREATE TABLE cover_selection_authorities ("
+    + persistence_schema._COVER_SELECTION_KEY_SQL
+    + "kind TEXT NOT NULL CHECK(kind IN ('automatic','owner')), "
+    "decision_id TEXT NOT NULL UNIQUE CHECK((kind='automatic' AND decision_id GLOB "
+    "'automatic_decision_[0-9a-f]*' AND length(decision_id)=83) OR (kind='owner' AND "
+    "decision_id GLOB 'human_decision_[0-9a-f]*' AND length(decision_id)=79)), "
+    "consideration_id TEXT NOT NULL REFERENCES cover_considerations(consideration_id), "
+    "supersedes_selection_id TEXT REFERENCES cover_selection_authorities(selection_id), "
+    + persistence_schema._COVER_SELECTION_DOCUMENT_SQL
+    + "CHECK(kind<>'owner' OR (CASE WHEN json_valid(document) THEN "
+    "json_extract(document,'$.schema_version')="
+    f"'{persistence_schema.COVER_SELECTION_AUTHORITY_SCHEMA}' ELSE 0 END) IS 1), "
+    "CHECK(kind<>'automatic' OR (CASE WHEN json_valid(document) "
+    "AND json_type(document,'$.decision_document')='text' "
+    "THEN CASE WHEN json_valid(json_extract(document,'$.decision_document')) "
+    "THEN json_extract(json_extract(document,'$.decision_document'),"
+    f"'$.schema_version')='{persistence_schema.COVER_AUTOMATIC_DECISION_SCHEMA}' "
+    "ELSE 0 END ELSE 0 END) IS 1), "
+    "CHECK(supersedes_selection_id IS NULL OR supersedes_selection_id<>selection_id))"
+)
+PRE_2038_CURRENT_COVER_SELECTION_AUTHORITIES_SQL = _undone(
+    persistence_schema._COVER_POINTERS_SQL["owner"],
+    (
+        "CREATE TABLE owner_cover_pointers",
+        "CREATE TABLE current_cover_selection_authorities",
+    ),
+    ("REFERENCES owner_cover_selections", "REFERENCES cover_selection_authorities"),
+)
+PRE_2038_COVER_SELECTION_TRIGGERS = tuple(
+    f"CREATE TRIGGER cover_selection_authorities_no_{operation} BEFORE "
+    f"{operation.upper()} ON cover_selection_authorities BEGIN SELECT "
+    "RAISE(ABORT, 'cover selection authorities are append-only'); END"
+    for operation in ("update", "delete")
+) + tuple(
+    _undone(
+        persistence_schema._COVER_SELECTION_TRIGGERS[
+            f"owner_cover_pointers_validate_{operation}"
+        ],
+        (
+            f"TRIGGER owner_cover_pointers_validate_{operation}",
+            f"TRIGGER current_cover_selection_authorities_validate_{operation}",
+        ),
+        ("ON owner_cover_pointers", "ON current_cover_selection_authorities"),
+        ("FROM owner_cover_selections", "FROM cover_selection_authorities"),
+    )
+    for operation in ("insert", "update")
+)
+# Attention read the one pointer: an owner's choice, or Automatic's on the
+# work's current comparison, settled its cover.
+_COVER_ATTENTION_CLEAR_SQL = review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL[
+    review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL.index(
+        "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers"
+    ) : review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL.index(
+        "AND NOT EXISTS (SELECT 1 FROM field_effect_suspensions"
+    )
+]
+PRE_2038_COVER_ATTENTION_CLEAR_SQL = (
+    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current_selection "
+    "JOIN cover_selection_authorities selection "
+    "ON selection.selection_id=current_selection.selection_id "
+    "JOIN current_cover_considerations current_cover "
+    "ON current_cover.review_case_id=rc.review_case_id "
+    "WHERE result.destination='cover' "
+    "AND (selection.kind='owner' OR (selection.kind='automatic' "
+    "AND current_cover.consideration_id=selection.consideration_id)) "
+    "AND current_selection.connection_name=c.connection_name "
+    "AND current_selection.library_name=c.library_name "
+    "AND current_selection.item_id=c.item_id AND NOT "
+    + review_sql._PIN_CHANGED_SQL
+    + ") "
+)
+
+
+def pre_2038_attention_sql(sql: str) -> str:
+    """Attention SQL, with or without pins, as producers before #2038 wrote it."""
+    for now, then in (
+        (_COVER_ATTENTION_CLEAR_SQL, PRE_2038_COVER_ATTENTION_CLEAR_SQL),
+        (
+            without_pins(_COVER_ATTENTION_CLEAR_SQL),
+            without_pins(PRE_2038_COVER_ATTENTION_CLEAR_SQL),
+        ),
+    ):
+        sql = sql.replace(now, then)
+    return sql
+
+
+def pre_2038_attention_objects(
+    objects: tuple[tuple[str, str, str], ...],
+) -> tuple[tuple[str, str, str], ...]:
+    """Attention objects as producers before #2038 named and wrote them:
+    one pointer table's refresh triggers, guarding every column as
+    Automatic's pointer does, and the one-pointer clear."""
+    return tuple(
+        (
+            kind,
+            name.replace(
+                "automatic_cover_pointers", "current_cover_selection_authorities"
+            ),
+            pre_2038_attention_sql(
+                sql.replace(
+                    "automatic_cover_pointers", "current_cover_selection_authorities"
+                )
+                if name.startswith("automatic_cover_pointers_")
+                else sql
+            ),
+        )
+        for kind, name, sql in objects
+        if not name.startswith("owner_cover_pointers_")
+    )
+
+
+def _undo_cover_split(connection: sqlite3.Connection, selections_sql: str) -> None:
+    """One cover selection table and one pointer again, keeping every row,
+    the pointer's attention triggers, which guarded every column as
+    Automatic's pointer does, and Attention's one-pointer clear."""
+    kept = [
+        sql.replace("automatic_cover_pointers", "current_cover_selection_authorities")
+        for (sql,) in connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type='trigger' "
+            "AND tbl_name='automatic_cover_pointers' "
+            "AND name LIKE 'automatic_cover_pointers_refresh_attention_%' "
+            "ORDER BY rowid"
+        )
+    ]
+    rewritten = [
+        (kind, name, sql)
+        for kind, name, sql in connection.execute(
+            "SELECT type,name,sql FROM sqlite_schema WHERE type IN ('trigger','view') "
+            "AND sql LIKE '%owner_cover_pointers current_selection%' ORDER BY rowid"
+        )
+    ]
+    columns = (
+        "selection_id,connection_name,library_name,item_id,{kind},decision_id,"
+        "consideration_id,supersedes_selection_id,occurred_at,document"
+    )
+    connection.executescript(
+        "CREATE TEMP TABLE pre_2038_cover AS "
+        + " UNION ALL ".join(
+            f"SELECT {columns.format(kind=repr(kind))} FROM {kind}_cover_selections"
+            for kind in ("owner", "automatic")
+        )
+        + ";CREATE TEMP TABLE pre_2038_current_cover AS SELECT * FROM "
+        "owner_cover_pointers UNION ALL SELECT * FROM automatic_cover_pointers;"
+        + "".join(f"DROP {kind.upper()} {name};" for kind, name, _ in rewritten)
+        + "DROP TABLE owner_cover_pointers;"
+        "DROP TABLE automatic_cover_pointers;"
+        "DROP TABLE owner_cover_selections;"
+        "DROP TABLE automatic_cover_selections;"
+        + selections_sql
+        + ";"
+        + PRE_2038_CURRENT_COVER_SELECTION_AUTHORITIES_SQL
+        + ";INSERT INTO cover_selection_authorities SELECT * FROM pre_2038_cover "
+        "ORDER BY occurred_at,selection_id;"
+        "INSERT INTO current_cover_selection_authorities "
+        "SELECT * FROM pre_2038_current_cover;"
+        + "".join(sql + ";" for sql in PRE_2038_COVER_SELECTION_TRIGGERS)
+        + "".join(sql + ";" for sql in kept)
+        + "".join(pre_2038_attention_sql(sql) + ";" for _, _, sql in rewritten)
+        + "DROP TABLE temp.pre_2038_cover;"
+        "DROP TABLE temp.pre_2038_current_cover;"
+    )
+
+
+def undo_2038_tables(
+    connection: sqlite3.Connection,
+    cover_selections_sql: str = PRE_2038_COVER_SELECTION_AUTHORITIES_SQL,
+) -> None:
+    """Undo #2038's table splits as every producer before it kept them:
+    the two preparation control rows merged back into one row, and the
+    description decisions and cover selections each back in one table,
+    keeping their values, and no record of the owner's answers, its counter
+    or its events. A producer's own cover selection table, when it kept an
+    older one, is `cover_selections_sql`."""
+    connection.executescript(
+        "DROP TABLE owner_field_answers;DROP TABLE owner_field_events;"
+        "DROP TABLE owner_answer_ordinal;"
+        "CREATE TEMP TABLE pre_2038_control AS SELECT 1 AS singleton,"
+        "owner.paused,scheduling.claim_sequence,owner.first_boot_acknowledged,"
+        "scheduling.last_library,scheduling.circuit_failures,"
+        "scheduling.circuit_open_until,scheduling.updated_at,"
+        "owner.work_identity_level FROM review_preparation_control scheduling,"
+        "review_preparation_owner_control owner;"
+        "DROP TABLE review_preparation_owner_control;"
+        "DROP TABLE review_preparation_control;"
+        + PRE_2038_REVIEW_CONTROL_SQL
+        + ";INSERT INTO review_preparation_control SELECT * FROM pre_2038_control;"
+        "DROP TABLE temp.pre_2038_control;"
+    )
+    _undo_description_split(connection)
+    _undo_cover_split(connection, cover_selections_sql)
+
+
 # Every producer before #1285 admitted only the three original human outcomes.
 # Every producer before #1523 kept no check on the selected value's kind.
 WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL = (
-    persistence_schema._HUMAN_DECISIONS_SQL[
-        : persistence_schema._HUMAN_DECISIONS_SQL.index(
-            ", CHECK(selected_value_document='null'"
-        )
+    PRE_2038_HUMAN_DECISIONS_SQL[
+        : PRE_2038_HUMAN_DECISIONS_SQL.index(", CHECK(selected_value_document='null'")
     ]
     + ")"
 )
@@ -478,12 +875,12 @@ PRIOR_REVIEW_CASE_EPISODES_SQL = persistence_schema._REVIEW_CASE_EPISODES_SQL.re
     "event_floor", "effect_floor"
 )
 assert PRIOR_REVIEW_CASE_EPISODES_SQL != persistence_schema._REVIEW_CASE_EPISODES_SQL
-PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL = persistence_schema._HUMAN_DECISIONS_SQL.replace(
+PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL = PRE_2038_HUMAN_DECISIONS_SQL.replace(
     "CHECK(json_valid(document)=0 OR json_type(document,'$.follows') IN ('null','text')))",
     "CHECK(json_valid(document)=0 OR json_type(document,'$.follows')='null' "
     "OR (outcome='keep_current' AND json_type(document,'$.follows')='text')))",
 )
-assert PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL != persistence_schema._HUMAN_DECISIONS_SQL
+assert PRIOR_FOLLOWS_HUMAN_DECISIONS_SQL != PRE_2038_HUMAN_DECISIONS_SQL
 # Every producer before #1953 recorded no unidentified retirement.
 WITHOUT_UNIDENTIFIED_REVIEW_TRANSITIONS_SQL = (
     persistence_schema._REVIEW_TRANSITIONS_SQL.replace(

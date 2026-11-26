@@ -681,6 +681,19 @@ mutation. Admission does not rely on SQLite alone:
   every current row; any difference refuses the database
   ([ADR-0084](decisions/0084-persisted-attention-facts.md)). No product code
   writes with `REPLACE`, which would skip delete triggers.
+- Ledger rows are always checked against ledger tables, and a live write
+  plan still needs its derived rows
+  ([ADR-0108](decisions/0108-ledger-and-derived-state.md)). While the derived
+  rows exist, an owner decision's work, fingerprint, title and target field
+  must match its case, an authored description's work and title its case, a
+  plan's or no-change row's title its report, a cover choice's copies its
+  comparison, and a policy transition's size and counts its items. Once a
+  regeneration removes them, nothing checks a copy against its source, nor
+  any case, proposal, comparison, selection or report a ledger row names; a
+  description's chosen form is never checked, and an answer's episode only
+  against the answer it replaced. Each is an accepted gap, since changing one
+  needs write access to the volume. The record of the owner's answers must
+  equal its recomputation from them.
 
 Database-root crash recovery is explicit, runs under an exclusive lock and
 rolls back a private journal on verified copies first; unknown or malformed

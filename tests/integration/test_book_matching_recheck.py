@@ -50,6 +50,7 @@ from tests.integration.test_leaving_automatic_posture import (
     _Library,
     _prepared,
 )
+from tests.support.cover_selections import ALL_COVER_SELECTIONS
 from tests.unit.test_cover_packets import _preview, _source
 
 _PAYLOAD = _preview(2)
@@ -557,7 +558,7 @@ def test_a_title_and_author_pick_needs_the_unverified_match_flag(
                     cover_confirmation=confirmation,
                 )
             assert root._connection.execute(
-                "SELECT count(*) FROM cover_selection_authorities"
+                "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
             ).fetchone() == (0,)
             return
         root.record_human_decision(
@@ -566,18 +567,18 @@ def test_a_title_and_author_pick_needs_the_unverified_match_flag(
             cover_confirmation=confirmation,
         )
         assert root._connection.execute(
-            "SELECT kind FROM cover_selection_authorities"
+            "SELECT kind FROM " + ALL_COVER_SELECTIONS
         ).fetchall() == [("owner",)]
         # The readback reopening runs admits the confirmed pick, and refuses
         # the same pick stored without the flag.
         _validate_cover_selection_authorities(root._connection)
         for (trigger,) in root._connection.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' "
-            "AND tbl_name='cover_selection_authorities'"
+            "AND tbl_name='owner_cover_selections'"
         ).fetchall():
             root._connection.execute(f'DROP TRIGGER "{trigger}"')
         root._connection.execute(
-            "UPDATE cover_selection_authorities SET document=replace(document,"
+            "UPDATE owner_cover_selections SET document=replace(document,"
             "'\"confirm_unverified_match\":true','\"confirm_unverified_match\":false')"
         )
         with pytest.raises(MetadataReportError):
@@ -595,7 +596,7 @@ _COVER_ORDERS = ("fixed_source_order",)
 def _automatic_covers(library: _Library) -> list[tuple[str, str]]:
     return library.root._connection.execute(
         "SELECT kind,json_extract(document,'$.candidate_artifact_id') "
-        "FROM cover_selection_authorities"
+        "FROM " + ALL_COVER_SELECTIONS
     ).fetchall()
 
 
@@ -655,7 +656,7 @@ def test_a_level_match_never_becomes_an_automatic_cover(
         library.drain()
         connection = root._connection
         assert connection.execute(
-            "SELECT count(*) FROM cover_selection_authorities"
+            "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
         ).fetchone() == (0,)
         assert connection.execute(
             "SELECT count(*) FROM automatic_decisions WHERE destination='cover'"
@@ -693,7 +694,7 @@ def test_a_nested_author_level_match_never_becomes_an_automatic_cover(
         library.drain()
         connection = root._connection
         assert connection.execute(
-            "SELECT count(*) FROM cover_selection_authorities"
+            "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
         ).fetchone() == (0,)
         assert connection.execute(
             "SELECT count(*) FROM automatic_decisions WHERE destination='cover'"

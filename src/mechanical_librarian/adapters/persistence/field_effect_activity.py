@@ -88,7 +88,9 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _LANDED_IN_EPISODE_SQL,
     _LANDED_LAST_SQL,
     _LANDED_SQL,
+    _PLAN_REPORT_JOIN_SQL,
     _active_generation_automatic_sql,
+    _authored_description_sql,
     _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -528,8 +530,8 @@ _PENDING_PREPARED_SQL = (
     + _AUTOMATIC_POSTURE_SQL
     + " UNION ALL "
     "SELECT selection.decision_id,consideration.review_case_id,'cover','automatic' "
-    "FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities selection "
+    "FROM automatic_cover_pointers current "
+    "JOIN automatic_cover_selections selection "
     "ON selection.selection_id=current.selection_id "
     "JOIN cover_considerations consideration "
     "ON consideration.consideration_id=selection.consideration_id "
@@ -537,16 +539,17 @@ _PENDING_PREPARED_SQL = (
     "ON current_consideration.consideration_id=consideration.consideration_id "
     "JOIN current_review_case_lineages lineage "
     "ON lineage.review_case_id=consideration.review_case_id "
-    "WHERE selection.kind='automatic' AND "
+    "WHERE "
     + _AUTOMATIC_POSTURE_SQL
-    + " UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id"
-    " WHERE (json_extract(d.document,'$.origin')='human' OR (NOT EXISTS ("
+    + " UNION ALL SELECT d.decision_id,d.review_case_id,'description','human' FROM current_description_decisions p JOIN owner_authored_descriptions d ON d.decision_id=p.decision_id"
+    " UNION ALL SELECT d.decision_id,d.review_case_id,'description','automatic' FROM current_description_decisions p JOIN automatic_description_decisions d ON d.decision_id=p.decision_id"
+    " WHERE NOT EXISTS ("
     "SELECT 1 FROM field_effect_manual_holds hold WHERE "
     "hold.review_case_id=d.review_case_id AND "
     "hold.destination='description' AND hold.active=1) AND "
     + _AUTOMATIC_POSTURE_SQL
     + _ACTIVE_GENERATION_DESCRIPTION_SQL
-    + "))) "
+    + ") "
 )
 
 # A hold Activity notes against an automatic choice: one the owner can end
@@ -608,11 +611,10 @@ _HELD_AUTOMATIC_NOTE_SQL = (
     + ") AND "
     + _unwritten_choice_sql("automatic.decision_id")
     + " UNION ALL SELECT d.decision_id FROM current_description_decisions p "
-    "JOIN description_decisions d ON d.decision_id=p.decision_id "
+    "JOIN automatic_description_decisions d ON d.decision_id=p.decision_id "
     "JOIN field_effect_manual_holds hold ON hold.review_case_id=d.review_case_id "
     "AND hold.destination='description' "
-    "WHERE d.decision_id IN (SELECT value FROM json_each(?)) "
-    "AND json_extract(d.document,'$.origin')<>'human' AND "
+    "WHERE d.decision_id IN (SELECT value FROM json_each(?)) AND "
     + _AUTOMATIC_POSTURE_SQL
     + _ACTIVE_GENERATION_DESCRIPTION_SQL
     + " AND "
@@ -1069,17 +1071,7 @@ def _field_effect_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
                    {scalar["title"]}, NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id, NULL, NULL,
                    CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, 0, 0
               FROM field_effect_events event
-              JOIN field_effects effect ON effect.plan_id=event.plan_id
-         LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id
-         LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id
-         LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id
-         LEFT JOIN review_cases automatic_review ON automatic_review.review_case_id=automatic.review_case_id
-         LEFT JOIN cover_selection_authorities cover_selection ON cover_selection.decision_id=effect.decision_id AND cover_selection.kind='automatic'
-         LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id
-         LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id
-         LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id
-         LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id
-         LEFT JOIN metadata_reports report ON report.report_id=COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id){scope("field_effect", "event.plan_id", "WHERE")}"""
+              JOIN field_effects effect ON effect.plan_id=event.plan_id{_PLAN_REPORT_JOIN_SQL}{scope("field_effect", "event.plan_id", "WHERE")}"""
 
 
 def _human_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
@@ -1125,7 +1117,14 @@ def _description_preparation_arm(
 
 
 def _description_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
-    """Every authored description decision."""
+    """Every authored description decision, the owner's and Automatic's."""
+    return "\n            UNION ALL".join(
+        _description_decision_half_arm(scope, table)
+        for table in ("owner_authored_descriptions", "automatic_description_decisions")
+    )
+
+
+def _description_decision_half_arm(scope: _ActivityArmScope, table: str) -> str:
     return f"""
             SELECT decision.decision_id, json_extract(report.document,'$.target.connection'), 'description',
                    json_extract(report.document,'$.target.library'), json_extract(decision.document,'$.occurred_at'), json_extract(decision.document,'$.origin'), review.report_id,
@@ -1133,7 +1132,7 @@ def _description_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) 
                    CASE json_extract(decision.document,'$.origin') WHEN 'human' THEN 'review' ELSE 'metadata' END,
                    json_extract(report.document,'$.target.fields[0].value'), NULL, 'description_decision', candidate.document, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
                    CASE WHEN length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 16384 AND json_valid(decision.document) THEN 1 ELSE 0 END, 0, 0
-              FROM description_decisions decision
+              FROM {table} decision
               JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id
               JOIN review_cases review ON review.review_case_id=decision.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id{scope("description_decision", "decision.decision_id", "WHERE")}"""
@@ -1146,11 +1145,10 @@ def _cover_selection_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> st
                    selection.library_name, selection.occurred_at, 'automatic_policy', review.report_id,
                    'recorded', selection.item_id, json_extract(selection.document,'$.decision_document'), 'metadata', {scalar["title"]}, NULL, 'automatic_decision', NULL, review.review_case_id, NULL, selection.decision_id, NULL, NULL,
                    CASE WHEN typeof(selection.document)='text' AND length(CAST(selection.document AS BLOB)) BETWEEN 2 AND 131072 AND json_valid(selection.document) AND json_valid(json_extract(selection.document,'$.decision_document')) THEN 1 ELSE 0 END, 0, 0
-              FROM cover_selection_authorities selection
+              FROM automatic_cover_selections selection
               JOIN cover_considerations consideration ON consideration.consideration_id=selection.consideration_id
               JOIN review_cases review ON review.review_case_id=consideration.review_case_id
-         LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id
-             WHERE selection.kind='automatic'{scope("automatic_decision", "selection.decision_id", "AND")}"""
+         LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id{scope("automatic_decision", "selection.decision_id", "WHERE")}"""
 
 
 def _field_effect_no_change_arm(
@@ -1185,9 +1183,8 @@ def _cover_safeguard_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> st
               JOIN review_cases review ON review.review_case_id=event.review_case_id
          LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id
              WHERE (event.kind<>'selected' OR NOT EXISTS (
-                   SELECT 1 FROM cover_selection_authorities selection
-                    WHERE selection.decision_id=event.decision_id
-                      AND selection.kind='automatic')){scope("cover_safeguard", "event.event_id", "AND")}"""
+                   SELECT 1 FROM automatic_cover_selections selection
+                    WHERE selection.decision_id=event.decision_id)){scope("cover_safeguard", "event.event_id", "AND")}"""
 
 
 def _policy_transition_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
@@ -1446,16 +1443,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             raise FieldEffectError("authority_binding")
         if type(decision) is AuthoredDescriptionDecision:
             row = self._connection.execute(
-                "SELECT document FROM description_decisions WHERE decision_id=?",
-                (decision.decision_id,),
+                _authored_description_sql(
+                    "SELECT document FROM {table} WHERE decision_id=?"
+                ),
+                (decision.decision_id, decision.decision_id),
             ).fetchone()
         elif type(decision) is CoverAutomaticDecision:
             row = self._connection.execute(
                 "SELECT json_extract(selection.document,'$.decision_document') "
-                "FROM current_cover_selection_authorities current "
-                "JOIN cover_selection_authorities selection "
+                "FROM automatic_cover_pointers current "
+                "JOIN automatic_cover_selections selection "
                 "ON selection.selection_id=current.selection_id "
-                "WHERE selection.kind='automatic' AND selection.decision_id=?",
+                "WHERE selection.decision_id=?",
                 (decision.decision_id,),
             ).fetchone()
         else:
@@ -2066,14 +2065,19 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if destination == "description":
             authored_predecessor = self._connection.execute(
                 "SELECT effect.document FROM field_effects effect "
-                "JOIN description_decisions authored ON authored.decision_id=effect.decision_id "
-                "WHERE authored.review_case_id=? AND effect.state='verified' AND "
+                "WHERE effect.decision_id IN ("
+                + _authored_description_sql(
+                    "SELECT authored.decision_id FROM {table} authored "
+                    "WHERE authored.review_case_id=?"
+                )
+                + ") AND effect.state='verified' AND "
                 + _LANDED_IN_EPISODE_SQL
                 + "AND "
                 + _LANDED_SQL
                 + ">COALESCE((SELECT MAX(rowid) FROM field_effect_events "
                 "WHERE plan_id=? AND kind='verified'),0) " + _LANDED_LAST_SQL,
                 (
+                    review_case_id,
                     review_case_id,
                     review_case_id,
                     None
@@ -2353,7 +2357,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         consideration = json.loads(expanded_document)
         selected_artifact = value.get("value") if type(value) is dict else None
         selected_authority = self._connection.execute(
-            "SELECT 1 FROM current_cover_selection_authorities current JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id WHERE selection.decision_id=? AND selection.kind='owner'",
+            "SELECT 1 FROM owner_cover_pointers current JOIN owner_cover_selections selection ON selection.selection_id=current.selection_id WHERE selection.decision_id=?",
             (decision.decision_id,),
         ).fetchone()
         if selected_authority != (1,):
@@ -2519,15 +2523,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         (AGENTS.md) when #1372 PR 5 added the taste checks.
         """
         cover_selection = self._connection.execute(
-            "SELECT selection.decision_id FROM current_cover_selection_authorities current "
-            "JOIN cover_selection_authorities selection "
+            "SELECT selection.decision_id FROM automatic_cover_pointers current "
+            "JOIN automatic_cover_selections selection "
             "ON selection.selection_id=current.selection_id "
-            "WHERE selection.decision_id=? AND selection.kind='automatic'",
+            "WHERE selection.decision_id=?",
             (authority.decision_id,),
         ).fetchone()
         cover_history = self._connection.execute(
-            "SELECT json_extract(document,'$.decision_document') FROM cover_selection_authorities WHERE decision_id=? "
-            "AND kind='automatic'",
+            "SELECT json_extract(document,'$.decision_document') FROM automatic_cover_selections WHERE decision_id=?",
             (authority.decision_id,),
         ).fetchone()
         if cover_history is None:
@@ -2593,17 +2596,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + _AUTOMATIC_POSTURE_SQL
                 + " AND (EXISTS (SELECT 1 FROM automatic_decisions "
                 "WHERE decision_id=?) OR EXISTS (SELECT 1 FROM "
-                "cover_selection_authorities WHERE decision_id=? AND "
-                "kind='automatic') OR EXISTS (SELECT 1 FROM description_decisions "
-                "WHERE decision_id=? AND CASE WHEN json_valid(document) THEN "
-                "json_extract(document,'$.origin') END IS NOT 'human'))",
+                "automatic_cover_selections WHERE decision_id=?) OR EXISTS (SELECT 1 FROM "
+                "automatic_description_decisions WHERE decision_id=?))",
                 (authority.decision_id,) * 3,
             ).fetchone()
             is None
         )
         description = self._connection.execute(
-            "SELECT document FROM description_decisions WHERE decision_id=?",
-            (authority.decision_id,),
+            _authored_description_sql(
+                "SELECT document FROM {table} WHERE decision_id=?"
+            ),
+            (authority.decision_id,) * 2,
         ).fetchone()
         if description is not None:
             if not current:
@@ -2623,12 +2626,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             except (ValueError, FieldEffectError):
                 return False
         owner_cover = self._connection.execute(
-            "SELECT consideration.document,json_extract(selection.document,'$.candidate_artifact_id'),report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM cover_selection_authorities selection JOIN cover_considerations consideration ON consideration.consideration_id=selection.consideration_id LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id WHERE selection.decision_id=? AND selection.kind='owner'",
+            "SELECT consideration.document,json_extract(selection.document,'$.candidate_artifact_id'),report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM owner_cover_selections selection JOIN cover_considerations consideration ON consideration.consideration_id=selection.consideration_id LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id WHERE selection.decision_id=?",
             (authority.decision_id,),
         ).fetchone()
         if owner_cover is not None:
             if not current or self._connection.execute(
-                "SELECT 1 FROM current_cover_selection_authorities current JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id JOIN current_cover_considerations consideration ON consideration.consideration_id=selection.consideration_id AND consideration.review_case_id=? WHERE selection.decision_id=? AND NOT EXISTS (SELECT 1 FROM cover_consideration_events event WHERE event.consideration_id=selection.consideration_id AND event.kind='stale')",
+                "SELECT 1 FROM owner_cover_pointers current JOIN owner_cover_selections selection ON selection.selection_id=current.selection_id JOIN current_cover_considerations consideration ON consideration.consideration_id=selection.consideration_id AND consideration.review_case_id=? WHERE selection.decision_id=? AND NOT EXISTS (SELECT 1 FROM cover_consideration_events event WHERE event.consideration_id=selection.consideration_id AND event.kind='stale')",
                 (authority.review_case_id, authority.decision_id),
             ).fetchone() != (1,):
                 return False
@@ -2714,8 +2717,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if self._connection.execute(
             "SELECT 1 FROM field_effect_manual_holds hold "
             "WHERE hold.review_case_id=? AND hold.destination='cover' "
-            "AND hold.active=1 AND EXISTS(SELECT 1 FROM cover_selection_authorities "
-            "WHERE decision_id=? AND kind='automatic') "
+            "AND hold.active=1 AND EXISTS(SELECT 1 FROM automatic_cover_selections "
+            "WHERE decision_id=?) "
             "UNION ALL SELECT 1 FROM automatic_decisions automatic "
             "JOIN field_effect_manual_holds hold ON hold.review_case_id=automatic.review_case_id "
             "AND hold.destination=automatic.destination AND hold.active=1 "
@@ -2926,8 +2929,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + _AUTOMATIC_POSTURE_SQL
                 + " UNION ALL SELECT selection.decision_id,selection.occurred_at,"
                 "json_extract(selection.document,'$.decision_document') "
-                "FROM current_cover_selection_authorities current "
-                "JOIN cover_selection_authorities selection "
+                "FROM automatic_cover_pointers current "
+                "JOIN automatic_cover_selections selection "
                 "ON selection.selection_id=current.selection_id "
                 "JOIN cover_considerations consideration "
                 "ON consideration.consideration_id=selection.consideration_id "
@@ -2935,20 +2938,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON current_consideration.consideration_id=consideration.consideration_id "
                 "JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=consideration.review_case_id "
-                "WHERE selection.kind='automatic' AND "
+                "WHERE "
                 + _AUTOMATIC_POSTURE_SQL
-                + " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
                 # An owner's description is the decision its own hold keeps; an
                 # automatic one under a hold waits for Resume (ADR-0085), and
                 # outside the Automatic posture waits for Automatic again.
-                " WHERE (json_extract(d.document,'$.origin')='human' OR (NOT EXISTS ("
+                + " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN owner_authored_descriptions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
+                " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN automatic_description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
+                " WHERE NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=d.review_case_id AND "
                 "hold.destination='description' AND hold.active=1) AND "
                 + _AUTOMATIC_POSTURE_SQL
                 + _ACTIVE_GENERATION_DESCRIPTION_SQL
-                + "))"
-                ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
+                + ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
                 "AND "
                 + _FIELD_EFFECT_HOLDS_DECISION_SQL
                 + ") AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
@@ -3096,13 +3099,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 self._connection.execute(
                     f"SELECT decision_id,document FROM human_decisions WHERE decision_id IN ({marks}) "
                     f"UNION ALL SELECT decision_id,document FROM automatic_decisions WHERE decision_id IN ({marks}) "
-                    f"UNION ALL SELECT decision_id,document FROM description_decisions WHERE decision_id IN ({marks}) "
+                    f"UNION ALL SELECT decision_id,document FROM owner_authored_descriptions WHERE decision_id IN ({marks}) "
+                    f"UNION ALL SELECT decision_id,document FROM automatic_description_decisions WHERE decision_id IN ({marks}) "
                     "UNION ALL SELECT selection.decision_id,json_extract(selection.document,"
-                    "'$.decision_document') FROM current_cover_selection_authorities current "
-                    "JOIN cover_selection_authorities selection "
+                    "'$.decision_document') FROM automatic_cover_pointers current "
+                    "JOIN automatic_cover_selections selection "
                     "ON selection.selection_id=current.selection_id "
-                    f"WHERE selection.kind='automatic' AND selection.decision_id IN ({marks})",
-                    decision_ids * 4,
+                    f"WHERE selection.decision_id IN ({marks})",
+                    decision_ids * 5,
                 ).fetchall()
             )
         except sqlite3.Error as error:
@@ -3866,10 +3870,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         ] = {}
         if authored_ids:
             for document, candidate_document in self._connection.execute(
-                "SELECT d.document,c.document FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.decision_id IN ("
-                + ",".join("?" for _ in authored_ids)
-                + ")",
-                authored_ids,
+                _authored_description_sql(
+                    "SELECT d.document,c.document FROM {table} d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.decision_id IN ("
+                    + ",".join("?" for _ in authored_ids)
+                    + ")"
+                ),
+                authored_ids * 2,
             ):
                 authored = AuthoredDescriptionDecision.from_json(document)
                 candidate = DescriptionAdviceCandidate.from_json(candidate_document)
@@ -5739,11 +5745,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id "
             "LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id "
             "LEFT JOIN review_cases automatic_review ON automatic_review.review_case_id=automatic.review_case_id "
-            "LEFT JOIN cover_selection_authorities cover_selection ON cover_selection.decision_id=effect.decision_id AND cover_selection.kind='automatic' "
+            "LEFT JOIN automatic_cover_selections cover_selection ON cover_selection.decision_id=effect.decision_id "
             "LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id "
             "LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id "
-            "LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id "
-            "LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id "
+            "LEFT JOIN owner_authored_descriptions owner_description ON owner_description.decision_id=effect.decision_id "
+            "LEFT JOIN automatic_description_decisions automatic_description ON automatic_description.decision_id=effect.decision_id "
+            "LEFT JOIN review_cases description_review ON description_review.review_case_id=COALESCE(owner_description.review_case_id,automatic_description.review_case_id) "
             "WHERE effect.state IN "
             + _FIELD_EFFECT_WAITING_STATES_SQL
             + " AND "
@@ -6003,8 +6010,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         ):
             raise FieldEffectError("authority")
         authored_row = self._connection.execute(
-            "SELECT document FROM description_decisions WHERE decision_id=?",
-            (authority.decision_id,),
+            _authored_description_sql(
+                "SELECT document FROM {table} WHERE decision_id=?"
+            ),
+            (authority.decision_id,) * 2,
         ).fetchone()
         if authored_row is not None:
             from mechanical_librarian.application.field_effects import (
@@ -6036,10 +6045,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "SELECT document FROM automatic_decisions WHERE decision_id=? "
                     "AND review_case_id=? AND destination=? UNION ALL "
                     "SELECT json_extract(selection.document,'$.decision_document') "
-                    "FROM current_cover_selection_authorities current "
-                    "JOIN cover_selection_authorities selection "
+                    "FROM automatic_cover_pointers current "
+                    "JOIN automatic_cover_selections selection "
                     "ON selection.selection_id=current.selection_id "
-                    "WHERE selection.decision_id=? AND selection.kind='automatic' "
+                    "WHERE selection.decision_id=? "
                     "AND ?='cover'",
                     (
                         authority.decision_id,

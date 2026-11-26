@@ -64,6 +64,9 @@ from tests.integration.test_leaving_automatic_posture import (
     _planned,
     _prepared,
 )
+from tests.support.ledger_copies import assert_ledger_copies
+from tests.support.ledger_partition import reopen_without_derived_rows
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.support.owner_values import OwnerStore
 from tests.unit import test_identity_refused_retention as retained
 from tests.unit.test_cover_packets import _source
@@ -364,6 +367,15 @@ def test_level_change_reasks_only_changed_offer(tmp_path: Path, case: str) -> No
         # A replayed check asks nothing twice.
         assert _check(store, 62) == "reconciled"
         assert len(_decisions(store)) == 2
+        # The valueless row Book matching appended carries its case's copies
+        # as the owner's own did (ADR-0108).
+        assert assert_ledger_copies(store.repository)["history_target_field"] == 2
+        assert (
+            reopen_without_derived_rows(store.repository, tmp_path / "regenerated")[
+                "human_decisions"
+            ]
+            == 2
+        )
     finally:
         store.close()
 
@@ -471,6 +483,12 @@ def test_offer_change_appends_valueless_matching_changed_decision(
             "matching_changed",
         )
         assert cause.proposal_id == standing.proposal_id
+        # The record keeps the choice as the field's answer, no longer
+        # carried (ADR-0108).
+        assert store.repository._connection.execute(
+            "SELECT answer_id,carry_eligible FROM owner_field_answers "
+            "WHERE destination='description'"
+        ).fetchall() == [(standing.decision_id, 0)]
         assert cause.offered_alternatives_digest == offer_digest(
             store.case.proposals, "description"
         )
@@ -1008,7 +1026,7 @@ def test_works_list_and_attention_facts_follow_the_offer(tmp_path: Path) -> None
         "CREATE TABLE review_case_level_offers(review_case_id,work_identity_level,"
         "reconciled_level,document);"
         "CREATE TABLE review_case_level_reconciliation(review_case_id,reconciled_level);"
-        "CREATE TABLE review_preparation_control(singleton,work_identity_level);"
+        "CREATE TABLE review_preparation_owner_control(singleton,work_identity_level);"
         "CREATE TABLE proposal_set_browse_facts(proposal_set_id,resolved_policy_id);"
         "CREATE TABLE metadata_policy_resolutions(resolved_policy_id,document);"
         "CREATE TABLE review_cases(review_case_id,proposal_set_id,document);"
@@ -1098,7 +1116,8 @@ def test_facts_that_differ_from_live_are_checked_and_kept_by_the_offer(
             (exact, case_id),
         )
         connection.execute(
-            "UPDATE review_preparation_control SET work_identity_level=?", (exact,)
+            "UPDATE review_preparation_owner_control SET work_identity_level=?",
+            (exact,),
         )
         refresh_offered_field_facts(connection, case_id)
         connection.commit()

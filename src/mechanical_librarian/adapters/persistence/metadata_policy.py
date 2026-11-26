@@ -220,18 +220,14 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 # whatever the policy's destinations, so it always counts.
                 terms = [
                     "SELECT 1 FROM current_description_decisions current "
-                    "JOIN description_decisions decision ON decision.decision_id=current.decision_id "
-                    "WHERE CASE WHEN json_valid(decision.document) "
-                    "THEN json_extract(decision.document,'$.origin') END='automatic_policy'"
+                    "JOIN automatic_description_decisions decision ON decision.decision_id=current.decision_id"
                 ]
                 if any(
                     value == "automatic" for _, value in active_profile.destinations
                 ):
                     terms[:0] = [
                         "SELECT 1 FROM automatic_decisions",
-                        "SELECT 1 FROM current_cover_selection_authorities current "
-                        "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
-                        "WHERE selection.kind='automatic'",
+                        "SELECT 1 FROM automatic_cover_pointers",
                     ]
                 affected = self._connection.execute(
                     " UNION ALL ".join(terms) + " LIMIT 1"
@@ -1120,18 +1116,18 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             else ("completed_with_failures" if counts[2] else "completed")
         )
         self._connection.execute(
-            "UPDATE metadata_policy_transitions SET state=?,updated_at=? WHERE transition_id=?",
-            (state, updated_at, transition_id),
+            "UPDATE metadata_policy_transitions SET state=?,completed=?,failed=?,"
+            "updated_at=? WHERE transition_id=?",
+            (state, counts[1], counts[2], updated_at, transition_id),
         )
 
     @local_operation
     def metadata_policy_transition(self) -> PolicyTransition | None:
         try:
             row = self._connection.execute(
-                "SELECT t.transition_id,t.from_policy_id,t.to_policy_id,t.generation,t.state,t.total,t.acknowledged,"
-                "COALESCE(SUM(i.state='complete'),0),COALESCE(SUM(i.state='failed'),0) "
-                "FROM metadata_policy_transitions t LEFT JOIN metadata_policy_transition_items i ON i.transition_id=t.transition_id "
-                "GROUP BY t.transition_id ORDER BY t.generation DESC LIMIT 1"
+                "SELECT transition_id,from_policy_id,to_policy_id,generation,state,total,"
+                "acknowledged,completed,failed FROM metadata_policy_transitions "
+                "ORDER BY generation DESC LIMIT 1"
             ).fetchone()
             if row is None:
                 return None

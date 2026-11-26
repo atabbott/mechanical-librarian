@@ -54,6 +54,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from tests.support.genre_reports import genre_report, publish_genre_case
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
 from tests.support.proposal_evidence import _local_subtitle
 

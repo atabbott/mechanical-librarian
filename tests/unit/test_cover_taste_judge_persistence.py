@@ -566,13 +566,12 @@ def _automatic(library: _Library, item: str, consideration_id: str, tag: str) ->
     ).fetchone()
     selection = "cover_selection_" + tag * 64
     connection.execute(
-        "INSERT INTO cover_selection_authorities VALUES(?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO automatic_cover_selections VALUES(?,?,?,?,?,?,?,?,?)",
         (
             selection,
             connection_name,
             library_name,
             item_id,
-            "automatic",
             "automatic_decision_" + tag * 64,
             consideration_id,
             None,
@@ -587,7 +586,7 @@ def _automatic(library: _Library, item: str, consideration_id: str, tag: str) ->
         ),
     )
     connection.execute(
-        "INSERT INTO current_cover_selection_authorities VALUES(?,?,?,?)",
+        "INSERT INTO automatic_cover_pointers VALUES(?,?,?,?)",
         (connection_name, library_name, item_id, selection),
     )
     connection.commit()

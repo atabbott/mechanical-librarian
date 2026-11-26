@@ -3141,7 +3141,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def has_first_boot_preparation(self) -> bool:
         """Read explicit setup-origin scan identities without inferring store history."""
         acknowledged = self._connection.execute(
-            "SELECT first_boot_acknowledged FROM review_preparation_control WHERE singleton=1"
+            "SELECT first_boot_acknowledged FROM review_preparation_owner_control WHERE singleton=1"
         ).fetchone()
         if acknowledged != (0,):
             return False
@@ -3160,7 +3160,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         try:
             transaction.begin()
             cursor = self._connection.execute(
-                "UPDATE review_preparation_control SET first_boot_acknowledged=1 "
+                "UPDATE review_preparation_owner_control SET first_boot_acknowledged=1 "
                 "WHERE singleton=1"
             )
             if cursor.rowcount != 1:

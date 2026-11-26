@@ -84,6 +84,14 @@ from tests.support.field_effects import (  # noqa: F401
     metadata_report,
 )
 from tests.support.genre_reports import genre_report
+from tests.support.ledger_copies import assert_ledger_copies
+from tests.support.ledger_partition import (
+    copied_store,
+    opens,
+    regenerate,
+    reopen_without_derived_rows,
+    rewrite_no_change,
+)
 from tests.support.owner_values import OwnerStore
 from tests.support.proposal_evidence import (
     _claim,
@@ -413,6 +421,24 @@ def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
     assert [event["state"] for event in no_change_rows] == ["no_change_required"]
     assert _ledger(effects, search="retryable") == []
     assert _ledger(effects, search="no_change_required") == []
+    # Its copy is the title Activity shows for it now (ADR-0108).
+    assert (
+        assert_ledger_copies(effects.repository)["activity_no_change_automatic_policy"]
+        == 1
+    )
+    # Its ledger stands without the derived rows it was made against.
+    assert (
+        reopen_without_derived_rows(
+            effects.repository, effects.database_path.parent / "regenerated"
+        )["field_effect_no_changes"]
+        == 1
+    )
+    # While Automatic's decision is there the row agrees with it in full.
+    path = copied_store(effects.repository, effects.database_path.parent / "changed")
+    rewrite_no_change(path, "target_version", "0" * 64)
+    assert not opens(path)
+    regenerate(path)
+    assert opens(path)
 
 
 def test_one_preparation_gathers_only_its_automatic_checks(

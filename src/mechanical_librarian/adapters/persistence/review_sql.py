@@ -13,6 +13,94 @@ from __future__ import annotations
 
 from mechanical_librarian.domain.automatic_decision import SAFETY_CATEGORY_LANES
 
+# The owner's authored descriptions are ledger and Automatic's derived
+# (ADR-0108). A statement that reads a description decision of either origin
+# names `{table}` and runs once per half, joined by UNION ALL; each half is
+# keyed and indexed alike, so each arm keeps its own index.
+_AUTHORED_DESCRIPTION_TABLES = (
+    "owner_authored_descriptions",
+    "automatic_description_decisions",
+)
+
+
+def _authored_description_sql(select: str) -> str:
+    """`select`, naming `{table}`, over both halves of the description decisions."""
+    return " UNION ALL ".join(
+        select.replace("{table}", table) for table in _AUTHORED_DESCRIPTION_TABLES
+    )
+
+
+# The display title Activity reads for a report, the first target field's
+# value, copied onto the ledger rows that name the report (ADR-0108). Each
+# binds the report or the case whose report it is.
+# An owner's cover choice copies the facts the taste profile counts it by: the
+# chosen offer's digest and size, the comparison's art count and the report's
+# format (ADR-0108). Each copy reads `selection`, `consideration` and `facts`
+# as the join below names them, so the writer and open validation read alike.
+_OFFERED_COPY_SQL = (
+    "(SELECT json_extract(offered.value,'$.{key}') "
+    "FROM json_each(consideration.document,'$.candidates') offered "
+    "WHERE json_extract(offered.value,'$.reference')="
+    "json_extract(selection.document,'$.candidate_reference') "
+    "AND json_extract(offered.value,'$.candidate_kind')='candidate' "
+    "AND json_type(offered.value,'$.{key}')='{kind}' "
+    "ORDER BY offered.key LIMIT 1)"
+)
+_OWNER_SELECTION_COPIES = (
+    *(
+        (key, _OFFERED_COPY_SQL.format(key=key, kind=kind))
+        for key, kind in (
+            ("transport_sha256", "text"),
+            ("width", "integer"),
+            ("height", "integer"),
+        )
+    ),
+    (
+        "offered_arts",
+        "CASE WHEN json_type(consideration.currentness_document,"
+        "'$.cover_stage.arts')='integer' THEN json_extract("
+        "consideration.currentness_document,'$.cover_stage.arts') END",
+    ),
+    ("report_format", "CASE WHEN typeof(facts.format)='text' THEN facts.format END"),
+)
+_OWNER_SELECTION_COPY_JOIN_SQL = (
+    "LEFT JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=selection.consideration_id "
+    "LEFT JOIN metadata_report_browse_facts facts "
+    "ON facts.report_id=consideration.report_id"
+)
+# The display title a ledger row copies from the report it names as `report`:
+# the writers below and open validation read the same text (ADR-0108).
+_REPORT_TITLE_VALUE_SQL = "json_extract(report.document,'$.target.fields[0].value')"
+_REPORT_TITLE_SQL = (
+    "(SELECT " + _REPORT_TITLE_VALUE_SQL + " "
+    "FROM metadata_reports report WHERE report_id=?)"
+)
+_CASE_TITLE_SQL = (
+    "(SELECT " + _REPORT_TITLE_VALUE_SQL + " "
+    "FROM review_cases review JOIN metadata_reports report "
+    "ON report.report_id=review.report_id WHERE review.review_case_id=?)"
+)
+# The report of the case a write plan's decision names, by whichever decision
+# table holds it: Activity's join for a plan's rows. Joins `effect.decision_id`.
+_PLAN_REPORT_JOIN_SQL = (
+    "\n         LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id"
+    "\n         LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id"
+    "\n         LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id"
+    "\n         LEFT JOIN review_cases automatic_review ON automatic_review.review_case_id=automatic.review_case_id"
+    "\n         LEFT JOIN automatic_cover_selections cover_selection ON cover_selection.decision_id=effect.decision_id"
+    "\n         LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id"
+    "\n         LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id"
+    "\n         LEFT JOIN owner_authored_descriptions owner_description ON owner_description.decision_id=effect.decision_id"
+    "\n         LEFT JOIN automatic_description_decisions automatic_description ON automatic_description.decision_id=effect.decision_id"
+    "\n         LEFT JOIN review_cases description_review ON description_review.review_case_id=COALESCE(owner_description.review_case_id,automatic_description.review_case_id)"
+    "\n         LEFT JOIN metadata_reports report ON report.report_id=COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id)"
+)
+# The title Activity shows for a plan's rows, binding its decision id.
+_PLAN_TITLE_SQL = (
+    "(SELECT " + _REPORT_TITLE_VALUE_SQL + " "
+    "FROM (SELECT ? AS decision_id) effect" + _PLAN_REPORT_JOIN_SQL + ")"
+)
 # When the work was last written: its latest verified effect, of any origin
 # and destination, covers included. Admission keeps a case on a recent write
 # and preparation sends that case back to admission once it is old (#1523).
@@ -327,14 +415,20 @@ _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     + " AND NOT "
     + _PIN_CHANGED_SQL
     + ") "
-    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current_selection "
-    "JOIN cover_selection_authorities selection "
+    "AND NOT EXISTS (SELECT 1 FROM owner_cover_pointers current_selection "
+    "JOIN current_cover_considerations current_cover "
+    "ON current_cover.review_case_id=rc.review_case_id "
+    "WHERE result.destination='cover' "
+    "AND current_selection.connection_name=c.connection_name "
+    "AND current_selection.library_name=c.library_name "
+    "AND current_selection.item_id=c.item_id AND NOT " + _PIN_CHANGED_SQL + ") "
+    "AND NOT EXISTS (SELECT 1 FROM automatic_cover_pointers current_selection "
+    "JOIN automatic_cover_selections selection "
     "ON selection.selection_id=current_selection.selection_id "
     "JOIN current_cover_considerations current_cover "
     "ON current_cover.review_case_id=rc.review_case_id "
     "WHERE result.destination='cover' "
-    "AND (selection.kind='owner' OR (selection.kind='automatic' "
-    "AND current_cover.consideration_id=selection.consideration_id)) "
+    "AND current_cover.consideration_id=selection.consideration_id "
     "AND current_selection.connection_name=c.connection_name "
     "AND current_selection.library_name=c.library_name "
     "AND current_selection.item_id=c.item_id AND NOT " + _PIN_CHANGED_SQL + ") "

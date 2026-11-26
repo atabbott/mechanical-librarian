@@ -67,7 +67,8 @@ def _record(
 
 def _decisions(repository) -> int:
     return repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
+        "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+        "+(SELECT count(*) FROM automatic_description_decisions)"
     ).fetchone()[0]
 
 
@@ -163,7 +164,7 @@ def test_the_pipeline_decides_no_description_without_a_record(
     qualify_description_advice(monkeypatch)
     admit_staged_description(repository, action)
     assert repository._connection.execute(
-        "SELECT json_extract(document,'$.origin') FROM description_decisions"
+        "SELECT json_extract(document,'$.origin') FROM automatic_description_decisions"
     ).fetchall() == [("automatic_policy",)]
     repository.close()
 

@@ -92,6 +92,22 @@ class _CaseWithTargetFields:
         return _Case()
 
 
+def _stored_counts_are_the_items(repository: Any) -> int:
+    """Every transition's stored completed and failed counts are what its
+    items count now, which the header counted before it kept them (#2038)."""
+    rows = repository._connection.execute(
+        "SELECT t.completed,t.failed,"
+        "(SELECT COUNT(*) FROM metadata_policy_transition_items i "
+        "WHERE i.transition_id=t.transition_id AND i.state='complete'),"
+        "(SELECT COUNT(*) FROM metadata_policy_transition_items i "
+        "WHERE i.transition_id=t.transition_id AND i.state='failed') "
+        "FROM metadata_policy_transitions t"
+    ).fetchall()
+    for completed, failed, counted_complete, counted_failed in rows:
+        assert (completed, failed) == (counted_complete, counted_failed)
+    return len(rows)
+
+
 def test_unrelated_verified_cover_effect_does_not_block_another_decision() -> None:
     """The replacement predicate binds every state branch to its decision."""
     connection = sqlite3.connect(":memory:")
@@ -903,6 +919,7 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
     assert repository._connection.execute(
         "SELECT state,failure_code FROM metadata_policy_transition_items"
     ).fetchone() == ("failed", "pipeline_unavailable")
+    assert _stored_counts_are_the_items(repository) == 2
     repository.request_review_scan(
         report.target.connection, report.target.library, "lib-1", _PRODUCER, 41
     )
@@ -925,6 +942,7 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
     repository.advance_review_pipeline_action(extraction, report.report_id, 45)
     retried = repository.retry_metadata_policy_transition(transition.transition_id, 46)
     assert (retried.state, retried.failed, retried.total) == ("processing", 0, 1)
+    assert _stored_counts_are_the_items(repository) == 2
     provider_action = repository.claim_review_pipeline_action(47)
     assert provider_action is not None
     assert provider_action.stage == "provider"
@@ -957,6 +975,11 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
         1,
         1,
     )
+    assert _stored_counts_are_the_items(repository) == 2
+    # The header is the transition's own row: it reads the same with its
+    # items gone.
+    repository._connection.execute("DELETE FROM metadata_policy_transition_items")
+    assert repository.metadata_policy_transition() == completed
     with pytest.raises(MetadataReportError):
         repository.activate_metadata_policy(
             MetadataPolicyProfile.builtin().policy_id,
@@ -1191,6 +1214,7 @@ def test_atomic_extraction_callback_updates_fixed_transition_failure(
         proposal = repository.claim_review_pipeline_action(28)
         assert proposal is not None
         assert proposal.stage == "proposal"
+    assert _stored_counts_are_the_items(repository) == 2
     repository.close()
 
 
@@ -1293,6 +1317,7 @@ def test_extraction_publication_rebinds_an_item_read_again_after_a_write(
     else:
         assert item == ("failed", "stale", report.report_id)
         assert (current.state, current.failed) == ("completed_with_failures", 1)
+    assert _stored_counts_are_the_items(repository) == 2
     repository.close()
 
 
@@ -1402,6 +1427,9 @@ def test_a_discovery_that_drops_a_work_releases_its_transition_items(
         repository._connection.execute(
             "UPDATE metadata_policy_transition_items SET state='complete'"
         )
+        repository._connection.execute(
+            "UPDATE metadata_policy_transitions SET completed=1 WHERE generation=2"
+        )
     repository._connection.execute(
         "UPDATE review_preparation_scans SET state='completed'"
     )
@@ -1428,6 +1456,7 @@ def test_a_discovery_that_drops_a_work_releases_its_transition_items(
         transition = repository.metadata_policy_transition()
         assert transition is not None
         assert (transition.state, transition.failed) == ("completed_with_failures", 1)
+    assert _stored_counts_are_the_items(repository) == 2
     repository.close()
 
 
@@ -1786,6 +1815,7 @@ def test_retry_resolves_an_item_superseded_by_a_newer_report(
             "SELECT stage,state,report_id FROM review_preparation_work"
         ).fetchone()
     )
+    assert _stored_counts_are_the_items(repository) == 2
     assert notebook.acknowledge(failed.transition_id, 29).acknowledged
     repository.close()
 

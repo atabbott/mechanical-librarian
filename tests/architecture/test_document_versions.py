@@ -211,7 +211,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.human_decision",
         "HUMAN_DECISION_SCHEMA",
-        "human-decision-v7",
+        "human-decision-v8",
     ),
     (
         "mechanical_librarian.adapters.persistence.field_effect_validation",

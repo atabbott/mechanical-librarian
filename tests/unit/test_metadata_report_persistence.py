@@ -50,6 +50,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 from tests.support.metadata_report_schemas import (
+    PRE_2038_COVER_SELECTION_AUTHORITIES_SQL,
     PRIOR_ATTENTION_FACT_OBJECTS,
     PRIOR_ATTENTION_FACT_SOURCE_SQL,
     PRIOR_AUTOMATIC_DECISIONS_SQL,
@@ -68,10 +69,13 @@ from tests.support.metadata_report_schemas import (
     create_prior_schema,
     forged_latin_work_report_json,
     leave_hot_journal,
+    pre_2038_attention_objects,
     prior_report_browse_fact_pairs,
+    set_pre_2038_schema,
     synthetic_latin_work_report,
     synthetic_reordered_work_report,
     synthetic_report,
+    undo_2038_tables,
 )
 from tests.support.report_schema_version import (
     CURRENT_REPORT_SCHEMA,
@@ -633,19 +637,20 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
         ).fetchone()
         connection.close()
         assert tables == [
+            ("automatic_cover_pointers",),
+            ("automatic_cover_selections",),
             ("automatic_decisions",),
+            ("automatic_description_decisions",),
             ("automatic_safety_state",),
             ("browse_fact_identity",),
             ("cover_automatic_held",),
             ("cover_consideration_events",),
             ("cover_considerations",),
-            ("cover_selection_authorities",),
             ("cover_taste_builds",),
             ("cover_taste_judgements",),
             ("cover_taste_profile_versions",),
             ("cover_taste_verdicts",),
             ("current_cover_considerations",),
-            ("current_cover_selection_authorities",),
             ("current_description_advice",),
             ("current_description_decisions",),
             ("current_metadata_report_lineages",),
@@ -654,7 +659,6 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("current_review_packages",),
             ("description_advice_attempts",),
             ("description_advice_candidates",),
-            ("description_decisions",),
             ("description_preparation_pending",),
             ("field_effect_actions",),
             ("field_effect_authorities",),
@@ -683,6 +687,12 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("metadata_report_cover_references",),
             ("metadata_report_value_flags",),
             ("metadata_reports",),
+            ("owner_answer_ordinal",),
+            ("owner_authored_descriptions",),
+            ("owner_cover_pointers",),
+            ("owner_cover_selections",),
+            ("owner_field_answers",),
+            ("owner_field_events",),
             ("owner_links",),
             ("owner_setting_secrets",),
             ("owner_settings",),
@@ -702,6 +712,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("review_preparation_absences",),
             ("review_preparation_connection_conditions",),
             ("review_preparation_control",),
+            ("review_preparation_owner_control",),
             ("review_preparation_presentation",),
             ("review_preparation_scans",),
             ("review_preparation_work",),
@@ -869,6 +880,7 @@ def test_the_dd568e2_episode_and_follows_schema_is_rejected_without_change(
 
     path = tmp_path / "prior-episodes.sqlite"
     with monkeypatch.context() as prior:
+        set_pre_2038_schema(prior)
         prior.setattr(
             persistence_schema,
             "_REVIEW_CASE_EPISODES_SQL",
@@ -882,6 +894,7 @@ def test_the_dd568e2_episode_and_follows_schema_is_rejected_without_change(
         repository = open_repository(path)
         if populated:
             repository.publish(_case_report(1), lambda: True)
+        undo_2038_tables(repository._connection)
         repository.close()
     before = path.read_bytes()
     with pytest.raises(MetadataReportError):
@@ -909,6 +922,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         ).read_text()
     )
     with monkeypatch.context() as old:
+        set_pre_2038_schema(old)
         old.setattr(
             persistence_schema,
             "_COVER_CONSIDERATIONS_SQL",
@@ -939,11 +953,6 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         )
         old.setattr(
             schema,
-            "_COVER_SELECTION_AUTHORITIES_SQL",
-            cover_fixture["cover_selection_authorities_sql"],
-        )
-        old.setattr(
-            schema,
             "_SHADOW_DECISION_OUTCOMES_SQL",
             fixture["shadow_decision_outcomes_sql"],
         )
@@ -971,6 +980,9 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         )
         old.setattr(schema, "_PACKAGE_POSITION_OBJECTS", ())
         with closing(open_repository(path)) as repository:
+            undo_2038_tables(
+                repository._connection, cover_fixture["cover_selection_authorities_sql"]
+            )
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes, #1232's
             # attention facts, #1363's retained cover tables and #1355's
@@ -979,7 +991,9 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "".join(
                     f"DROP {kind.upper()} {name};"
                     for kind, name, _ in reversed(
-                        persistence_schema._ATTENTION_FACT_OBJECTS
+                        pre_2038_attention_objects(
+                            persistence_schema._ATTENTION_FACT_OBJECTS
+                        )
                     )
                 )
                 + "DROP TABLE retained_cover_listings;"
@@ -1865,8 +1879,7 @@ def test_dependent_open_borrows_a_root_that_is_mid_transaction() -> None:
         root = open_repository(path)
         root._connection.execute("BEGIN IMMEDIATE")
         root._connection.execute(
-            "UPDATE review_preparation_control SET paused=1,updated_at=7 "
-            "WHERE singleton=1"
+            "UPDATE review_preparation_owner_control SET paused=1 WHERE singleton=1"
         )
         if not sys.platform.startswith("linux"):
             # Off Linux the rollback journal sits beside the configured name,
@@ -1908,8 +1921,7 @@ def test_portable_dependent_open_requires_the_authoritys_configured_path(
         assert type(authority) is persistence_binding._PortableDatabaseAuthority
         owner._connection.execute("BEGIN IMMEDIATE")
         owner._connection.execute(
-            "UPDATE review_preparation_control SET paused=1,updated_at=7 "
-            "WHERE singleton=1"
+            "UPDATE review_preparation_owner_control SET paused=1 WHERE singleton=1"
         )
         try:
             assert Path(f"{configured}-journal").is_file()
@@ -1950,8 +1962,8 @@ def test_dependent_opens_continue_while_a_writer_thread_churns_journals() -> Non
                     writer._connection.execute("BEGIN IMMEDIATE")
                     writer._connection.execute(
                         "UPDATE review_preparation_control "
-                        "SET paused=?,updated_at=? WHERE singleton=1",
-                        (updated_at % 2 == 0, updated_at),
+                        "SET updated_at=? WHERE singleton=1",
+                        (updated_at,),
                     )
                     writer._connection.execute("COMMIT")
             except BaseException as error:
@@ -2577,9 +2589,8 @@ def test_genuine_qualification_predecessor_refused_without_mutation(
 
 @pytest.mark.parametrize("populated", (False, True))
 def test_cover_authority_v2_schema_rejects_empty_and_populated_store_before_mutation(
-    tmp_path, monkeypatch, populated
+    tmp_path, populated
 ):
-    from mechanical_librarian.adapters.persistence import schema
     from tests.unit.test_policy_impact_persistence import _case_report
 
     fixture = json.loads(
@@ -2587,16 +2598,11 @@ def test_cover_authority_v2_schema_rejects_empty_and_populated_store_before_muta
     )
     assert fixture["source_sha"] == "9867cdafd5f42f7282980e20b607189826498c11"
     path = tmp_path / "prior-cover.sqlite"
-    with monkeypatch.context() as prior:
-        prior.setattr(
-            schema,
-            "_COVER_SELECTION_AUTHORITIES_SQL",
-            fixture["cover_selection_authorities_sql"],
-        )
-        repository = open_repository(path)
-        if populated:
-            repository.publish(_case_report(1), lambda: True)
-        repository.close()
+    repository = open_repository(path)
+    if populated:
+        repository.publish(_case_report(1), lambda: True)
+    undo_2038_tables(repository._connection, fixture["cover_selection_authorities_sql"])
+    repository.close()
     before = path.read_bytes()
     with pytest.raises(MetadataReportError):
         open_repository(path, create=False)
@@ -2683,6 +2689,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
         ).read_text()
     )
     with monkeypatch.context() as old:
+        set_pre_2038_schema(old)
         old.setattr(
             persistence_schema, "_PROPOSAL_SETS_SQL", predecessor["proposal_sets_ddl"]
         )
@@ -2764,18 +2771,6 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     ).read_text()
                 )["cover_considerations_sql"],
             )
-        # Their owner selection CHECK named v2, before #1363's Put back, and
-        # their automatic one decision v3, before the measured rules' reason.
-        old.setattr(
-            persistence_schema,
-            "_COVER_SELECTION_AUTHORITIES_SQL",
-            persistence_schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
-                f"'{COVER_SELECTION_AUTHORITY_SCHEMA}'",
-                "'cover-selection-authority-v2'",
-            ).replace(
-                f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v3'"
-            ),
-        )
         # The earlier producers predate #1245's report discriminator; the v20
         # producer wrote report v54.
         old.setattr(
@@ -2789,6 +2784,18 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             ),
         )
         with closing(open_repository(path)) as repository:
+            # Their owner selection CHECK named v2, before #1363's Put back, and
+            # their automatic one decision v3, before the measured rules' reason.
+            undo_2038_tables(
+                repository._connection,
+                PRE_2038_COVER_SELECTION_AUTHORITIES_SQL.replace(
+                    f"'{COVER_SELECTION_AUTHORITY_SCHEMA}'",
+                    "'cover-selection-authority-v2'",
+                ).replace(
+                    f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'",
+                    "'cover-automatic-decision-v3'",
+                ),
+            )
             if not current_scaffolding:
                 # The earlier producers predate #1199's report browse facts,
                 # #1202's history indexes, #1204's indexes, #1211's case indexes,
@@ -2798,7 +2805,9 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "".join(
                         f"DROP {kind.upper()} {name};"
                         for kind, name, _ in reversed(
-                            persistence_schema._ATTENTION_FACT_OBJECTS
+                            pre_2038_attention_objects(
+                                persistence_schema._ATTENTION_FACT_OBJECTS
+                            )
                         )
                     )
                     + "DROP TABLE retained_cover_listings;"

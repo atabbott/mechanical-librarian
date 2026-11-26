@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- **Clean rebuild required.** The application database now keeps the owner's
+  decisions, choices, controls and write plans apart from what preparation
+  rebuilds, and records each field's latest answer in one place. Only today's
+  holds still link to review cases, until that record replaces them. Nothing
+  you see changes yet (#2038).
 - A library whose write was stopped while SQLite was still writing its journal
   now starts again, and a partly written store is rolled back. Before, it
   refused with "database recovery state is unsupported" (#2052).

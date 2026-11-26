@@ -61,6 +61,7 @@ from tests.support.field_effects import (
 from tests.support.field_effects import (
     effects as effects,
 )
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.unit.test_cover_retention import _automatic_cover
 from tests.unit.test_cover_retention import (
     _measured_record as _measured_record,  # autouse: a switch is the measured replacement
@@ -386,10 +387,10 @@ def _owner_put_back(
     connection = sqlite3.connect(effects.database_path)
     try:
         connection.execute(
-            "INSERT INTO cover_selection_authorities(selection_id,connection_name,"
-            "library_name,item_id,kind,decision_id,consideration_id,"
-            "supersedes_selection_id,occurred_at,document) "
-            "VALUES(?,?,?,?,'owner',?,?,NULL,1,?)",
+            "INSERT INTO owner_cover_selections(selection_id,connection_name,"
+            "library_name,item_id,decision_id,consideration_id,"
+            "supersedes_selection_id,occurred_at,document,cover_took_over) "
+            "VALUES(?,?,?,?,?,?,NULL,1,?,0)",
             (
                 "cover_selection_" + "5" * 64,
                 "primary",

@@ -64,6 +64,8 @@ from tests.support.cover_operations import (
     retained_source,
 )
 from tests.support.cover_producers import _preview, _qualified_cover_report
+from tests.support.cover_selections import ALL_COVER_SELECTIONS
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
@@ -936,7 +938,7 @@ def test_a_chosen_cover_not_yet_written_is_your_choice_under_all_only(
             assert response.status_code == 200, response.text
             if answer == "written":
                 decision_id = library.repository._connection.execute(
-                    "SELECT decision_id FROM cover_selection_authorities "
+                    "SELECT decision_id FROM " + ALL_COVER_SELECTIONS + " "
                     "WHERE kind='owner'"
                 ).fetchone()[0]
                 library.repository._connection.execute(
@@ -1072,10 +1074,10 @@ def _owner_answer(
     connection.execute("PRAGMA foreign_keys=OFF")
     try:
         connection.execute(
-            "INSERT INTO cover_selection_authorities(selection_id,connection_name,"
-            "library_name,item_id,kind,decision_id,consideration_id,"
-            "supersedes_selection_id,occurred_at,document) "
-            "VALUES(?,'primary','ebooks',?,'owner',?,?,NULL,?,?)",
+            "INSERT INTO owner_cover_selections(selection_id,connection_name,"
+            "library_name,item_id,decision_id,consideration_id,"
+            "supersedes_selection_id,occurred_at,document,cover_took_over) "
+            "VALUES(?,'primary','ebooks',?,?,?,NULL,?,?,0)",
             (
                 selection_id,
                 item,
@@ -1085,8 +1087,15 @@ def _owner_answer(
                 json.dumps(document),
             ),
         )
+        # The owner's answer takes the work from Automatic, as recording
+        # one does.
         connection.execute(
-            "INSERT OR REPLACE INTO current_cover_selection_authorities("
+            "DELETE FROM automatic_cover_pointers WHERE connection_name='primary' "
+            "AND library_name='ebooks' AND item_id=?",
+            (item,),
+        )
+        connection.execute(
+            "INSERT OR REPLACE INTO owner_cover_pointers("
             "connection_name,library_name,item_id,selection_id) "
             "VALUES('primary','ebooks',?,?)",
             (item, selection_id),
@@ -1216,7 +1225,7 @@ def test_put_back_records_the_original_only_while_its_copy_is_listed(
             owner = library.repository._connection.execute(
                 "SELECT json_extract(document,'$.candidate_kind'),"
                 "json_extract(document,'$.retained_plan_id') "
-                "FROM cover_selection_authorities WHERE kind='owner'"
+                "FROM " + ALL_COVER_SELECTIONS + " WHERE kind='owner'"
             ).fetchall()
             switched = client.get("/api/v1/covers?view=switched").json()["items"]
             if released:
@@ -1309,7 +1318,7 @@ def test_an_original_that_does_not_decode_shows_no_preview_and_can_be_put_back(
                 "SELECT json_extract(document,'$.candidate_kind'),"
                 "json_extract(document,'$.retained_plan_id'),"
                 "json_extract(document,'$.candidate_artifact_id') "
-                "FROM cover_selection_authorities WHERE kind='owner'"
+                "FROM " + ALL_COVER_SELECTIONS + " WHERE kind='owner'"
             ).fetchall()
             assert owner == [("retained", plan_id, _ORIGINAL.artifact_id)]
             (row,) = client.get("/api/v1/covers?view=switched").json()["items"]

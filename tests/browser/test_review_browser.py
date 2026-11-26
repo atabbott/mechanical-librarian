@@ -128,6 +128,7 @@ from tests.support.cover_operations import (
     record_cover_operation,
     retained_source,
 )
+from tests.support.cover_selections import ALL_COVER_SELECTIONS
 from tests.support.metadata_report_doubles import audio_result
 from tests.support.ports import ReservedPort, bind_loopback
 from tests.support.proposal_evidence import _fields as _bibliographic_fields
@@ -1798,7 +1799,8 @@ def _server(
                 "SELECT count(*) FROM description_advice_candidates"
             ).fetchone() == (0,)
             assert repository._connection.execute(
-                "SELECT count(*) FROM description_decisions"
+                "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+                "+(SELECT count(*) FROM automatic_description_decisions)"
             ).fetchone() == (0,)
         if candidate is not None and description_fixture.startswith("retry_"):
             selected = store.admit(
@@ -2160,7 +2162,7 @@ def _end_put_back_stale(database: Path) -> None:
     with closing(sqlite3.connect(database)) as connection:
         decision_id, case_id, switched = connection.execute(
             "SELECT owner.decision_id,decision.review_case_id,switch.document "
-            "FROM cover_selection_authorities owner "
+            "FROM " + ALL_COVER_SELECTIONS + " owner "
             "JOIN human_decisions decision ON decision.decision_id=owner.decision_id "
             "JOIN field_effects switch "
             "ON switch.plan_id=json_extract(owner.document,'$.retained_plan_id') "

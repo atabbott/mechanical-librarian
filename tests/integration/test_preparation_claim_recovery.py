@@ -1491,6 +1491,7 @@ def _preparation_rows(root: SQLiteMetadataReportRepository) -> tuple[object, ...
             "review_preparation_scans",
             "review_preparation_work",
             "review_preparation_control",
+            "review_preparation_owner_control",
         )
     )
 

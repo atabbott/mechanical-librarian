@@ -333,7 +333,8 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
         "description_advice_attempts",
         "description_advice_candidates",
         "current_description_advice",
-        "description_decisions",
+        "owner_authored_descriptions",
+        "automatic_description_decisions",
         "current_description_decisions",
         "description_preparation_pending",
     ):
@@ -493,6 +494,18 @@ def test_prior_v22_output_is_rejected_without_mutating_any_file(
                     and name != "sqlite_sequence"
                 ):
                     connection.execute(f'DROP {kind.upper()} "{name}"')
+        # The tables #2038 split it kept whole, created as it created them.
+        present = {
+            name for (name,) in connection.execute("SELECT name FROM sqlite_master")
+        }
+        for creation_kind in ("table", "index", "trigger"):
+            for kind, name, statement in predecessor:
+                if (
+                    kind == creation_kind
+                    and statement is not None
+                    and name not in present
+                ):
+                    connection.execute(statement)
         connection.execute("PRAGMA writable_schema=ON")
         # SQLite refuses to drop its sequence table, which the predecessor
         # never had (#1351).

@@ -28,6 +28,7 @@ from mechanical_librarian.bootstrap.composition import (
     run_review_activity,
 )
 from mechanical_librarian.interfaces.cli import main
+from tests.support.cover_selections import ALL_COVER_SELECTIONS
 
 
 def test_activity_composition_calls_the_shared_query_only_projection() -> None:
@@ -703,7 +704,7 @@ def test_installed_cover_commands_persist_explicit_confirmation_and_revision(
             "SELECT count(*) FROM human_decisions"
         ).fetchone() == (3,)
         assert reopened._connection.execute(
-            "SELECT count(*) FROM cover_selection_authorities"
+            "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
         ).fetchone() == (3,)
     finally:
         reopened.close()

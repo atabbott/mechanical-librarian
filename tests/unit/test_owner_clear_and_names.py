@@ -15,7 +15,12 @@ from pathlib import Path
 import pytest
 
 from mechanical_librarian.adapters.persistence import schema
+from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    HUMAN_DECISION_INSERT_SQL,
+    decision_copies,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
@@ -218,11 +223,9 @@ def test_previous_names_are_offered_once_the_field_moved_on(store: OwnerStore) -
 
 def _insert(store: OwnerStore, outcome: str, selected: str) -> None:
     store.repository._connection.execute(
-        "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
-        "target_fingerprint,destination,actor,outcome,selected_value_document,"
-        "idempotency_digest,request_digest,occurred_at,document) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        HUMAN_DECISION_INSERT_SQL,
         (
+            next_ordinal(store.repository._connection),
             "human_decision_" + "f" * 64,
             store.case.review_case_id,
             "review_proposal_" + "e" * 64,
@@ -235,6 +238,8 @@ def _insert(store: OwnerStore, outcome: str, selected: str) -> None:
             "b" * 64,
             1,
             "{}",
+            *decision_copies(store.case, "subtitle"),
+            None,
         ),
     )
 

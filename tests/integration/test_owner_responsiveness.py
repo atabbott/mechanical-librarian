@@ -32,6 +32,7 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.infrastructure.settings_authority import (
     REVIEW_BOOTSTRAP_SCHEMA,
 )
+from tests.support.cover_selections import ALL_COVER_SELECTIONS
 from tests.support.owner_responsiveness import (
     OwnerResponsivenessFixture,
     running_owner_fixture,
@@ -1290,7 +1291,8 @@ def test_authored_description_acknowledgement_retries_only_postcommit_confirmati
         )
         assert not repository._connection.in_transaction
         assert repository._connection.execute(
-            "SELECT count(*) FROM description_decisions"
+            "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+            "+(SELECT count(*) FROM automatic_description_decisions)"
         ).fetchone() == (1,)
         if fail_readback:
             raise RuntimeError("synthetic postcommit readback failure")
@@ -1321,7 +1323,8 @@ def test_authored_description_acknowledgement_retries_only_postcommit_confirmati
         )
         assert reads == 2 and not admission.held
         assert repository._connection.execute(
-            "SELECT count(*) FROM description_decisions"
+            "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+            "+(SELECT count(*) FROM automatic_description_decisions)"
         ).fetchone() == (1,)
     finally:
         application.stop()
@@ -1380,7 +1383,8 @@ def test_authored_description_chosen_after_the_channel_closes_names_no_position(
         confirmation = chosen["confirmation"]
         assert type(confirmation) is dict and confirmation["status"] == "confirmed"
         assert repository._connection.execute(
-            "SELECT count(*) FROM description_decisions"
+            "SELECT (SELECT count(*) FROM owner_authored_descriptions)"
+            "+(SELECT count(*) FROM automatic_description_decisions)"
         ).fetchone() == (1,)
     finally:
         application.stop()
@@ -2195,7 +2199,7 @@ def test_cover_confirmation_refreshes_reviewer_authority_before_transaction(
                 with pytest.raises(ReviewWebError, match="stale"):
                     second.result(timeout=5)
                 assert fixture.repository._connection.execute(
-                    "SELECT count(*) FROM cover_selection_authorities"
+                    "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
                 ).fetchone() == (0,)
                 fresh = fixture.application.prepare_cover_consideration(
                     case.review_case_id
@@ -2206,7 +2210,7 @@ def test_cover_confirmation_refreshes_reviewer_authority_before_transaction(
                 second.result(timeout=5)
         assert calls
         assert fixture.repository._connection.execute(
-            "SELECT count(*) FROM cover_selection_authorities"
+            "SELECT count(*) FROM " + ALL_COVER_SELECTIONS
         ).fetchone() == (1,)
         assert not fixture.repository._connection.in_transaction
     finally:

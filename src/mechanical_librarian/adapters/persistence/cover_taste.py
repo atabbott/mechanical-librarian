@@ -61,15 +61,14 @@ VERSIONS_SHOWN = 50
 # larger copy) and the report must name a file format, so the count shown and
 # the 25/10 thresholds read exactly the decisions `_decision_source` keeps.
 _ELIGIBLE = (
-    "FROM current_cover_selection_authorities current "
-    "JOIN cover_selection_authorities selection "
+    "FROM owner_cover_pointers current "
+    "JOIN owner_cover_selections selection "
     "ON selection.selection_id=current.selection_id "
     "JOIN cover_considerations consideration "
     "ON consideration.consideration_id=selection.consideration_id "
     "JOIN metadata_report_browse_facts facts "
     "ON facts.report_id=consideration.report_id "
-    "WHERE selection.kind='owner' "
-    "AND json_extract(selection.document,'$.preview_sha256') IS NOT NULL "
+    "WHERE json_extract(selection.document,'$.preview_sha256') IS NOT NULL "
     "AND json_extract(selection.document,'$.candidate_kind') IS NOT 'retained' "
     "AND json_extract(consideration.currentness_document,'$.cover_stage.arts')>=? "
     "AND typeof(facts.format)='text' "
@@ -203,7 +202,7 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
     ) -> str:
         build_id = "taste_build_" + uuid.uuid4().hex
         watermark = self._connection.execute(
-            "SELECT coalesce(max(rowid),0) FROM cover_selection_authorities"
+            "SELECT coalesce(max(rowid),0) FROM owner_cover_selections"
         ).fetchone()[0]
         refusal = self._refusal(now, daily_limit)
         self._connection.execute(

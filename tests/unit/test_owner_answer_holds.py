@@ -30,6 +30,7 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.evidence_led_titles import isbn_title_report
 from tests.support.genre_reports import genre_report
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 from tests.support.owner_values import OwnerStore, rewritten
 
 ORIGINAL = "Example Series 03 - Example Title"  # what the library holds
@@ -480,7 +481,7 @@ def test_a_withdrawal_that_restores_an_earlier_hold_still_refuses_automatic(
         (transition,),
     )
     connection.execute(
-        "UPDATE metadata_policy_transitions SET state='completed' "
+        "UPDATE metadata_policy_transitions SET state='completed',completed=total,failed=0 "
         "WHERE transition_id=?",
         (transition,),
     )

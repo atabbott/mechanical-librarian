@@ -249,6 +249,9 @@ def test_current_authority_and_predecessor_refusal_without_history(
         PRIOR_REVIEW_SCANS_SQL,
         PRIOR_REVIEW_TRANSITIONS_SQL,
         PRIOR_REVIEW_WORK_SQL,
+        pre_2038_attention_objects,
+        set_pre_2038_schema,
+        undo_2038_tables,
     )
 
     from mechanical_librarian.adapters.persistence import schema
@@ -265,6 +268,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
     )
     old_path = tmp_path / "prior.sqlite"
     with monkeypatch.context() as old_schema:
+        set_pre_2038_schema(old_schema)
         old_schema.setattr(
             schema,
             "_COVER_CONSIDERATIONS_SQL",
@@ -281,11 +285,6 @@ def test_current_authority_and_predecessor_refusal_without_history(
             schema,
             "_REVIEWER_ACCESS_SQL",
             "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144))",
-        )
-        old_schema.setattr(
-            schema,
-            "_COVER_SELECTION_AUTHORITIES_SQL",
-            cover_fixture["cover_selection_authorities_sql"],
         )
         old_schema.setattr(
             schema,
@@ -341,6 +340,9 @@ def test_current_authority_and_predecessor_refusal_without_history(
             ),
         )
         with closing(open_repository(old_path)) as repository:
+            undo_2038_tables(
+                repository._connection, cover_fixture["cover_selection_authorities_sql"]
+            )
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes, #1232's
             # attention facts, #1363's retained cover tables, #1355's level
@@ -348,7 +350,9 @@ def test_current_authority_and_predecessor_refusal_without_history(
             repository._connection.executescript(
                 "".join(
                     f"DROP {kind.upper()} {name};"
-                    for kind, name, _ in reversed(schema._ATTENTION_FACT_OBJECTS)
+                    for kind, name, _ in reversed(
+                        pre_2038_attention_objects(schema._ATTENTION_FACT_OBJECTS)
+                    )
                 )
                 + "DROP VIEW current_owner_links;"
                 "DROP TABLE owner_links;"

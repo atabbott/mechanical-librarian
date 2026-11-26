@@ -28,7 +28,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.description_advice import (
@@ -36,10 +36,19 @@ from mechanical_librarian.adapters.persistence.description_advice import (
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    HUMAN_DECISION_INSERT_SQL,
     case_level_unreconciled,
     current_level_offer,
+    decision_copies,
     stored_level_offer_documents,
     target_level,
+)
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    case_episode,
+    mark_pin,
+    next_ordinal,
+    record_answer,
+    withdraw_answer,
 )
 from mechanical_librarian.adapters.persistence.owner_links import (
     OwnerLinkItem,
@@ -51,9 +60,11 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _AUTOMATIC_SAFETY_ROW_SQL,
+    _REPORT_TITLE_SQL,
     _SHADOW_OUTCOME_HISTORY_SQL,
     _WORK_LATEST_MANUAL_HOLDS_SQL,
     _active_generation_automatic_sql,
+    _authored_description_sql,
     _episode_decision_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -169,10 +180,15 @@ def _field_effect_authorities_sql(case: str, destination: str) -> str:
         + _episode_decision_sql("waiting_human")
         + " UNION ALL SELECT waiting_automatic.decision_id FROM automatic_decisions "
         f"waiting_automatic WHERE waiting_automatic.review_case_id={case} "
-        f"AND waiting_automatic.destination={destination} "
-        "UNION ALL SELECT waiting_authored.decision_id FROM description_decisions "
-        f"waiting_authored WHERE waiting_authored.review_case_id={case} "
-        f"AND {destination}='description'"
+        f"AND waiting_automatic.destination={destination} UNION ALL "
+        + _authored_description_sql(
+            "SELECT waiting_authored.decision_id FROM {table} waiting_authored "
+            "WHERE waiting_authored.review_case_id="
+            + case
+            + " AND "
+            + destination
+            + "='description'"
+        )
     )
 
 
@@ -298,10 +314,9 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
         # The owner's own choice of the advised description is recorded
         # apart from the field's answers, and a pin would replace it.
         + f" OR ({destination}='description' AND EXISTS (SELECT 1 FROM "
-        "current_description_decisions chosen_advice JOIN description_decisions "
+        "current_description_decisions chosen_advice JOIN owner_authored_descriptions "
         "advice ON advice.decision_id=chosen_advice.decision_id "
-        f"WHERE chosen_advice.review_case_id={case} "
-        "AND json_extract(advice.document,'$.origin')='human'))) END)"
+        f"WHERE chosen_advice.review_case_id={case}))) END)"
     )
 
 
@@ -380,9 +395,9 @@ def _automatic_decision_documents(
             "UNION ALL SELECT selection.decision_id,'cover',"
             "json_extract(json_extract(selection.document,'$.decision_document'),'$.idempotency_digest'),"
             "selection.occurred_at,json_extract(selection.document,'$.decision_document') "
-            "FROM cover_selection_authorities selection JOIN cover_considerations consideration "
+            "FROM automatic_cover_selections selection JOIN cover_considerations consideration "
             "ON consideration.consideration_id=selection.consideration_id "
-            "WHERE selection.kind='automatic' AND consideration.review_case_id=? "
+            "WHERE consideration.review_case_id=? "
             "ORDER BY occurred_at,decision_id",
             (review_case_id, review_case_id),
         ).fetchall()
@@ -721,8 +736,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 _automatic_decision_documents(self._connection, review_case_id)
             )
             for row in self._connection.execute(
-                "SELECT d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id WHERE p.review_case_id=?",
-                (review_case_id,),
+                _authored_description_sql(
+                    "SELECT d.document FROM current_description_decisions p JOIN {table} d ON d.decision_id=p.decision_id WHERE p.review_case_id=?"
+                ),
+                (review_case_id, review_case_id),
             ):
                 authored = AuthoredDescriptionDecision.from_json(row[0])
                 if (
@@ -805,8 +822,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self._connection.execute(
             "INSERT INTO field_effect_no_changes(decision_id,review_case_id,"
             "report_id,connection_name,library_name,work_id,destination,"
-            "target_fingerprint,target_version,origin,occurred_at,event_id) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            "target_fingerprint,target_version,origin,occurred_at,event_id,"
+            "display_title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?," + _REPORT_TITLE_SQL + ")",
             (
                 record.decision_id,
                 record.review_case_id,
@@ -820,6 +837,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 record.origin,
                 record.occurred_at,
                 record.event_id,
+                record.report_id,
             ),
         )
 
@@ -902,7 +920,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
             # planning reads now, so neither a later return nor a later write
             # changes what it replaced or a keep goes back on (#1523, #1973).
             follows, nothing_to_write = self._recorded_follows(decision)
-            decision = replace(decision, follows=follows)
+            decision = replace(
+                decision,
+                follows=follows,
+                episode=case_episode(self._connection, case.review_case_id),
+            )
             if (
                 decision.outcome == "keep_current"
                 and decision.follows is not None
@@ -942,13 +964,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 else self._replacement_authorities(decision, case)
             )
             selected = _canonical_json(decision.selected_value)
+            copies = decision_copies(case, decision.destination)
             self._connection.execute(
-                "INSERT INTO human_decisions("
-                "decision_id,review_case_id,proposal_id,target_fingerprint,"
-                "destination,actor,outcome,selected_value_document,"
-                "idempotency_digest,request_digest,occurred_at,document) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                HUMAN_DECISION_INSERT_SQL,
                 (
+                    next_ordinal(self._connection),
                     decision.decision_id,
                     decision.review_case_id,
                     decision.proposal_id,
@@ -961,12 +981,22 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     decision.request_digest,
                     decision.occurred_at,
                     decision.to_json(),
+                    *copies,
+                    # What review history shows an accepted description
+                    # chose, read from its offer now (#2003, ADR-0108).
+                    self._chosen_form(decision, case)
+                    if decision.destination == "description"
+                    and decision.outcome == "accept"
+                    else None,
                 ),
             )
             self._record_cover_decision_outcome(
-                decision, cover_consideration_id, cover_confirmation
+                decision,
+                cover_consideration_id,
+                cover_confirmation,
+                took_over=automatic is not None,
             )
-            self._record_human_decision_event(decision)
+            self._record_human_decision_event(decision, copies[:3])
             if annotation:
                 self._annotate_hold(decision, pin)
             else:
@@ -1003,8 +1033,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
             transaction.rollback()
             raise MetadataReportError("human decision persistence failed") from error
 
-    def _record_human_decision_event(self, decision: HumanDecision) -> None:
-        """Write the `human_decision_recorded` audit event."""
+    def _record_human_decision_event(
+        self, decision: HumanDecision, item: tuple[str, ...]
+    ) -> None:
+        """Write the `human_decision_recorded` audit event with the decision's
+        item key (ADR-0108)."""
         event_id = (
             "human_decision_event_"
             + hashlib.sha256(
@@ -1029,7 +1062,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self._connection.execute(
             "INSERT INTO human_decision_events("
             "event_id,decision_id,review_case_id,destination,actor,kind,"
-            "occurred_at,document) VALUES(?,?,?,?,?,'human_decision_recorded',?,?)",
+            "occurred_at,document,connection_name,library_name,item_id) "
+            "VALUES(?,?,?,?,?,'human_decision_recorded',?,?,?,?,?)",
             (
                 event_id,
                 decision.decision_id,
@@ -1038,6 +1072,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 decision.actor,
                 decision.occurred_at,
                 event_document,
+                *item,
             ),
         )
 
@@ -1079,6 +1114,17 @@ class SQLiteDecisionRepository(ConnectionScoped):
         if automatic is not None and (previous is None or automatic[0] != previous[0]):
             self._revoke_field_effect_authority_in_transaction(
                 automatic[0], decision.occurred_at, required=False
+            )
+        # The record of the owner's answers is written beside the hold, in
+        # this transaction; nothing reads it yet (ADR-0108, C2a).
+        if decision.outcome == "withdraw":
+            withdraw_answer(self._connection, decision.decision_id)
+        else:
+            record_answer(
+                self._connection,
+                "human",
+                decision.decision_id,
+                pin_fingerprint=None if pin is None else cast(str, pin["fingerprint"]),
             )
         if decision.outcome == "withdraw":
             self._withdraw_manual_hold(decision, previous, case)
@@ -1208,6 +1254,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
         would not, since a re-admitted case keeps its old row. The explicit
         DELETE fires the attention delete trigger.
         """
+        mark_pin(
+            self._connection,
+            decision.decision_id,
+            None if pin is None else cast(str, pin["fingerprint"]),
+        )
         active, document = self._connection.execute(
             "SELECT active,document FROM field_effect_manual_holds "
             "WHERE review_case_id=? AND destination=?",
@@ -1365,13 +1416,16 @@ class SQLiteDecisionRepository(ConnectionScoped):
         if decision.destination == "cover":
             target = case.target
             cover_automatic = self._connection.execute(
-                "SELECT selection.decision_id,selection.kind "
-                "FROM current_cover_selection_authorities current "
-                "JOIN cover_selection_authorities selection "
-                "ON selection.selection_id=current.selection_id "
-                "WHERE current.connection_name=? AND current.library_name=? "
-                "AND current.item_id=?",
-                (target["connection"], target["library"], target["item"]),
+                " UNION ALL ".join(
+                    f"SELECT selection.decision_id,'{kind}' "
+                    f"FROM {kind}_cover_pointers current "
+                    f"JOIN {kind}_cover_selections selection "
+                    "ON selection.selection_id=current.selection_id "
+                    "WHERE current.connection_name=? AND current.library_name=? "
+                    "AND current.item_id=?"
+                    for kind in ("owner", "automatic")
+                ),
+                (target["connection"], target["library"], target["item"]) * 2,
             ).fetchone()
         # Only this episode's decision is replaced; an earlier
         # episode's is history (#1358).
@@ -2012,8 +2066,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
             candidate_document,
             selected_current,
         ) in self._connection.execute(
-            "SELECT d.document,c.document,EXISTS(SELECT 1 FROM current_description_decisions current WHERE current.decision_id=d.decision_id) FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.review_case_id=? ORDER BY json_extract(d.document,'$.occurred_at') DESC,d.decision_id DESC LIMIT ?",
-            (review_case_id, limit),
+            "SELECT document,candidate_document,selected_current FROM ("
+            + _authored_description_sql(
+                "SELECT d.decision_id,d.document,c.document candidate_document,EXISTS(SELECT 1 FROM current_description_decisions current WHERE current.decision_id=d.decision_id) selected_current FROM {table} d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.review_case_id=?"
+            )
+            + ") ORDER BY json_extract(document,'$.occurred_at') DESC,decision_id DESC LIMIT ?",
+            (review_case_id, review_case_id, limit),
         ):
             authored = AuthoredDescriptionDecision.from_json(document)
             candidate = DescriptionAdviceCandidate.from_json(candidate_document)
@@ -2042,16 +2100,19 @@ class SQLiteDecisionRepository(ConnectionScoped):
             document,
             candidate_document,
         ) in self._connection.execute(
-            "SELECT event.event_id,event.occurred_at,event.kind,decision.document,candidate.document "
-            "FROM field_effect_events event JOIN field_effects effect ON effect.plan_id=event.plan_id "
-            "JOIN description_decisions decision ON decision.decision_id=effect.decision_id "
-            "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
-            "WHERE decision.review_case_id=? UNION ALL "
-            "SELECT event.event_id,event.occurred_at,'no_change_required',decision.document,candidate.document "
-            "FROM field_effect_no_changes event JOIN description_decisions decision ON decision.decision_id=event.decision_id "
-            "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
-            "WHERE decision.review_case_id=? ORDER BY 2 DESC,1 DESC LIMIT ?",
-            (review_case_id, review_case_id, limit),
+            _authored_description_sql(
+                "SELECT event.event_id,event.occurred_at,event.kind,decision.document,candidate.document "
+                "FROM field_effect_events event JOIN field_effects effect ON effect.plan_id=event.plan_id "
+                "JOIN {table} decision ON decision.decision_id=effect.decision_id "
+                "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
+                "WHERE decision.review_case_id=? UNION ALL "
+                "SELECT event.event_id,event.occurred_at,'no_change_required',decision.document,candidate.document "
+                "FROM field_effect_no_changes event JOIN {table} decision ON decision.decision_id=event.decision_id "
+                "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
+                "WHERE decision.review_case_id=?"
+            )
+            + " ORDER BY 2 DESC,1 DESC LIMIT ?",
+            (review_case_id,) * 4 + (limit,),
         ):
             authored = AuthoredDescriptionDecision.from_json(document)
             candidate = DescriptionAdviceCandidate.from_json(candidate_document)

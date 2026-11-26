@@ -10,6 +10,9 @@ from collections.abc import Callable
 from typing import Literal, TypeVar
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.owner_field_answers import (
+    SETUP_OWNER_ANSWER_ORDINAL_ROW,
+)
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _load_owner_settings_authority,
     _settings_view,
@@ -22,6 +25,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _SETUP_POLICY_STATE_ROW,
     _SETUP_POLICY_TRANSITION_ROW,
     _SETUP_REVIEW_CONTROL_ROW,
+    _SETUP_REVIEW_OWNER_CONTROL_ROW,
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError, SettingsView
@@ -48,11 +52,13 @@ _SETUP_ROW_TABLES = frozenset(
         "automatic_safety_state",
         "browse_fact_identity",
         "field_effect_control",
+        "owner_answer_ordinal",
         "owner_setting_secrets",
         "owner_settings",
         "reviewer_access",
         "reviewer_access_secrets",
         "review_preparation_control",
+        "review_preparation_owner_control",
     }
 )
 
@@ -652,9 +658,18 @@ class SetupStateStore(ConnectionScoped):
         ).fetchall() != [_SETUP_BROWSE_FACT_IDENTITY_ROW]:
             return False
         if "review_preparation_control" in tables and self._connection.execute(
-            "SELECT singleton,paused,claim_sequence,first_boot_acknowledged,last_library,circuit_failures,"
+            "SELECT singleton,claim_sequence,last_library,circuit_failures,"
             "circuit_open_until,updated_at FROM review_preparation_control"
         ).fetchall() != [_SETUP_REVIEW_CONTROL_ROW]:
+            return False
+        if "owner_answer_ordinal" in tables and self._connection.execute(
+            "SELECT singleton,ordinal FROM owner_answer_ordinal"
+        ).fetchall() != [SETUP_OWNER_ANSWER_ORDINAL_ROW]:
+            return False
+        if "review_preparation_owner_control" in tables and self._connection.execute(
+            "SELECT singleton,paused,first_boot_acknowledged "
+            "FROM review_preparation_owner_control"
+        ).fetchall() != [_SETUP_REVIEW_OWNER_CONTROL_ROW]:
             return False
         return True
 

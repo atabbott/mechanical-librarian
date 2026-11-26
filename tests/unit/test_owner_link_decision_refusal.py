@@ -178,7 +178,9 @@ def test_an_owner_description_choice_is_refused_after_a_link_change(
     connection = repository._connection
     if linked:
         _link(connection, binding.review_case_id)
-    count = connection.execute("SELECT count(*) FROM description_decisions").fetchone()
+    count = connection.execute(
+        "SELECT count(*) FROM owner_authored_descriptions"
+    ).fetchone()
     if not linked:
         store.admit(candidate.candidate_id, binding, "human", "b" * 64, 11)
         return
@@ -186,6 +188,8 @@ def test_an_owner_description_choice_is_refused_after_a_link_change(
         store.admit(candidate.candidate_id, binding, "human", "b" * 64, 11)
     assert error.value.code == "link_changed"
     assert (
-        connection.execute("SELECT count(*) FROM description_decisions").fetchone()
+        connection.execute(
+            "SELECT count(*) FROM owner_authored_descriptions"
+        ).fetchone()
         == count
     )

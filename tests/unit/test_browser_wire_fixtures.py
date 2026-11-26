@@ -159,7 +159,8 @@ class _Live:
         # An authored decision's identity binds the random candidate it chose.
         for index, (value,) in enumerate(
             self.repository._connection.execute(
-                "SELECT decision_id FROM description_decisions ORDER BY rowid"
+                "SELECT decision_id FROM owner_authored_descriptions UNION ALL "
+                "SELECT decision_id FROM automatic_description_decisions"
             ).fetchall(),
             start=1,
         ):

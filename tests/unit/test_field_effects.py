@@ -127,6 +127,7 @@ from tests.support.audiobookshelf_targets import (
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.cover_images import synthetic_image
 from tests.support.cover_producers import _qualified_cover_report, adapter_cover_value
+from tests.support.cover_selections import ALL_COVER_POINTERS
 from tests.support.field_effects import (
     CAPABILITY,
     DEPENDENCY,
@@ -140,6 +141,7 @@ from tests.support.field_effects import (
 from tests.support.field_effects import (
     effects as effects,
 )
+from tests.support.ledger_partition import reopen_without_derived_rows
 from tests.support.proposal_evidence import (
     _target_work_candidate,
     _target_work_report,
@@ -6043,6 +6045,32 @@ def test_audiobook_pair_happy_pair_scheduler_reopen_and_activity(audiobook_pair)
     )
 
 
+def test_audiobook_pair_live_plan_keeps_its_decisions_through_a_regeneration(
+    audiobook_pair, tmp_path
+):
+    """A pair still to write is refused without the decisions it was planned
+    from, since a regeneration revokes it first; once verified, the pair
+    stands without them (ADR-0108)."""
+    lane = ContinuousGuardedApplication(
+        audiobook_pair.repo,
+        {("primary", "audio"): audiobook_pair.service},
+        {("primary", "audio"): audiobook_pair.env.capabilities},
+        audiobook_pair.authority,
+        (("primary", "audio"),),
+        audiobook_pair.env.clock,
+        lambda *_: None,
+    )
+    assert lane.schedule() == 1
+    (plan_id,) = audiobook_pair.repo._connection.execute(
+        "SELECT plan_id FROM field_effects"
+    ).fetchone()
+    with pytest.raises(MetadataReportError):
+        reopen_without_derived_rows(audiobook_pair.repo, tmp_path / "planned")
+    assert audiobook_pair.service.apply(plan_id).state == "verified"
+    decoded = reopen_without_derived_rows(audiobook_pair.repo, tmp_path / "verified")
+    assert decoded["field_effects"] == 1
+
+
 def test_audiobook_pair_keep_on_the_companion_subtitle_writes_it_back(
     audiobook_pair,
 ):
@@ -6877,7 +6905,7 @@ def test_guarded_audiobook_cover_replacement_boundaries(
                     cover_consideration_id=state.consideration["consideration_id"],
                     cover_confirmation={
                         "expected_selection_id": state.repo._connection.execute(
-                            "SELECT selection_id FROM current_cover_selection_authorities"
+                            "SELECT selection_id FROM " + ALL_COVER_POINTERS
                         ).fetchone()[0],
                         "confirm_unverified_match": False,
                     },

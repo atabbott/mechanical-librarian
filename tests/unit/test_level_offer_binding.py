@@ -24,9 +24,12 @@ from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    HUMAN_DECISION_INSERT_SQL,
     current_level_offer,
+    decision_copies,
     stored_level_offer_documents,
 )
+from mechanical_librarian.adapters.persistence.owner_field_answers import next_ordinal
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
@@ -240,12 +243,9 @@ def resealed(decision: HumanDecision, **changes: object) -> HumanDecision:
 def seed(store: OwnerStore, decision: HumanDecision) -> None:
     """Insert a retained row as an earlier writer left it."""
     store.repository._connection.execute(
-        "INSERT INTO human_decisions("
-        "decision_id,review_case_id,proposal_id,target_fingerprint,"
-        "destination,actor,outcome,selected_value_document,"
-        "idempotency_digest,request_digest,occurred_at,document) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        HUMAN_DECISION_INSERT_SQL,
         (
+            next_ordinal(store.repository._connection),
             decision.decision_id,
             decision.review_case_id,
             decision.proposal_id,
@@ -258,6 +258,8 @@ def seed(store: OwnerStore, decision: HumanDecision) -> None:
             decision.request_digest,
             decision.occurred_at,
             decision.to_json(),
+            *decision_copies(store.case, decision.destination),
+            None,
         ),
     )
     store.repository._connection.commit()

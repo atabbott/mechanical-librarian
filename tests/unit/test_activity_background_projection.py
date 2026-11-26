@@ -743,7 +743,7 @@ def test_a_step_reads_no_authority_composition_binds_later(
     repository, advice, binding, candidate, _ = _prepared(tmp_path)
     advice.admit(candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11)
     (document,) = repository._connection.execute(
-        "SELECT document FROM description_decisions"
+        "SELECT document FROM automatic_description_decisions"
     ).fetchone()
     authored = AuthoredDescriptionDecision.from_json(document)
     path = tmp_path / "reports.sqlite"

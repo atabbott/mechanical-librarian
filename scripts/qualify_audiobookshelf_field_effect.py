@@ -4158,8 +4158,9 @@ def _owner_link_case(
                 (case_id,),
             ).fetchall(),
             connection.execute(
-                "SELECT count(*) FROM cover_selection_authorities WHERE item_id=?",
-                (item,),
+                "SELECT (SELECT count(*) FROM owner_cover_selections WHERE item_id=?)"
+                "+(SELECT count(*) FROM automatic_cover_selections WHERE item_id=?)",
+                (item, item),
             ).fetchone()[0],
         )
 

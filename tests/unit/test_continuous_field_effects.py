@@ -49,6 +49,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 )
 from tests.support.field_effects import _EffectEnvironment, _plan, effects  # noqa: F401
 from tests.support.metadata_report_schemas import synthetic_report
+from tests.support.owner_field_record import record_recomputes  # noqa: F401
 
 if TYPE_CHECKING:
     # Imported for the `cast` calls below only. The doubles in this module

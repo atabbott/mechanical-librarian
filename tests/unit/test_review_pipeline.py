@@ -2622,6 +2622,7 @@ def test_recovery_rolls_back_corrupt_completion_authority_and_releases_writer(
     repository._connection.commit()
     tables = (
         "review_preparation_control",
+        "review_preparation_owner_control",
         "review_preparation_scans",
         "review_preparation_work",
         "review_preparation_connection_conditions",
@@ -3330,6 +3331,7 @@ def test_library_addition_drain_rolls_back_keyboard_interrupt_exactly(
         repository.set_review_pipeline_paused(False, 103)
     tables = (
         "review_preparation_control",
+        "review_preparation_owner_control",
         "review_preparation_scans",
         "review_preparation_work",
         "review_preparation_presentation",
@@ -4727,6 +4729,7 @@ def test_f32_transaction_scopes_rollback_baseexceptions_at_commit_boundary(
     operation = _f32_transaction_operation(repository, scope)
     tables = (
         "review_preparation_control",
+        "review_preparation_owner_control",
         "review_preparation_scans",
         "review_preparation_work",
         "review_preparation_connection_conditions",
@@ -8030,6 +8033,7 @@ def test_terminal_recovery_reconciliation_rolls_back_with_its_owner(
     repository._connection.commit()
     tables = (
         "review_preparation_control",
+        "review_preparation_owner_control",
         "review_preparation_scans",
         "review_preparation_work",
         "review_preparation_presentation",

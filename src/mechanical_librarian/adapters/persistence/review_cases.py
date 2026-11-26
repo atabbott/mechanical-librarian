@@ -586,15 +586,20 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         ):
             # The work returned to this case's content, so the case starts
             # a new episode: the owner decisions recorded on it so far are
-            # history and word, settle and hold nothing now (#1358).
+            # history and word, settle and hold nothing now (#1358). The floor
+            # is the case's latest owner answer, an authored description's
+            # too, so an answer in the new episode never shares one with it
+            # (ADR-0108); no human decision of the case lies between the two.
             self._connection.execute(
                 "INSERT INTO review_case_episodes(review_case_id,decision_floor,"
-                "event_floor) VALUES(?,COALESCE((SELECT MAX(ordinal) FROM "
+                "event_floor) VALUES(?,MAX(COALESCE((SELECT MAX(ordinal) FROM "
                 "human_decisions WHERE review_case_id=?),0),COALESCE((SELECT "
-                "MAX(rowid) FROM field_effect_events),0)) ON CONFLICT(review_case_id) "
+                "MAX(ordinal) FROM owner_authored_descriptions WHERE "
+                "review_case_id=?),0)),COALESCE((SELECT MAX(rowid) FROM "
+                "field_effect_events),0)) ON CONFLICT(review_case_id) "
                 "DO UPDATE SET decision_floor=excluded.decision_floor,"
                 "event_floor=excluded.event_floor",
-                (case.review_case_id, case.review_case_id),
+                (case.review_case_id,) * 3,
             )
         return case, existing is not None
 
