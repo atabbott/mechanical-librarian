@@ -48,6 +48,7 @@ from mechanical_librarian.domain import (
 from mechanical_librarian.domain.audio_inspection import AudioEvidenceSurface
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
+from mechanical_librarian.domain.human_decision import HUMAN_DECISION_EVENT_SCHEMA
 from mechanical_librarian.domain.metadata_report import (
     CLAIM_BASES,
     SUPPORTED_FILE_FORMATS,
@@ -799,7 +800,7 @@ def _history_decision(**overrides: object) -> dict[str, object]:
         "outcome": "accept",
         "previous_value": {"kind": "text", "value": "Before."},
         "review_case_id": "case",
-        "schema_version": "human-decision-event-v1",
+        "schema_version": HUMAN_DECISION_EVENT_SCHEMA,
         "selected_value": {"kind": "text", "value": "Words."},
     }
     return item | overrides

@@ -39,7 +39,10 @@ from mechanical_librarian.application.field_effects import GuardedFieldApplicati
 from mechanical_librarian.domain.cover_automatic_decision import (
     SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
 )
-from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_EVENT_SCHEMA,
+    HumanDecision,
+)
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     human_review_destinations,
@@ -137,7 +140,7 @@ def _decision(
 
 def _event_id(decision: HumanDecision) -> str:
     digest = hashlib.sha256(
-        ("human-decision-event-v1:" + decision.decision_id).encode()
+        (HUMAN_DECISION_EVENT_SCHEMA + ":" + decision.decision_id).encode()
     ).hexdigest()
     return "human_decision_event_" + digest
 

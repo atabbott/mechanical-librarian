@@ -644,6 +644,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("automatic_description_decisions",),
             ("automatic_safety_state",),
             ("browse_fact_identity",),
+            ("carry_outcomes",),
             ("cover_automatic_held",),
             ("cover_consideration_events",),
             ("cover_considerations",),

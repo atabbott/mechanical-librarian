@@ -445,6 +445,9 @@ def test_only_a_retained_recorded_decision_is_kept_out_of_pending_work() -> None
                 retained.to_json(),
                 *decision_copies(case, retained.destination),
                 None,
+                None,
+                None,
+                None,
             ),
         )
         repository._connection.commit()

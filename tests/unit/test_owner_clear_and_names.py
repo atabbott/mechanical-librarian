@@ -239,6 +239,9 @@ def _insert(store: OwnerStore, outcome: str, selected: str) -> None:
             "{}",
             *decision_copies(store.case, "subtitle"),
             None,
+            None,
+            None,
+            None,
         ),
     )
 

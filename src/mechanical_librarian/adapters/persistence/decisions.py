@@ -106,10 +106,12 @@ from mechanical_librarian.domain.field_effect import (
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import (
+    CARRIED_OUTCOMES,
     HUMAN_DECISION_EVENT_SCHEMA,
     DecisionScope,
     HumanDecision,
     HumanDecisionError,
+    case_question,
     chosen_value_fingerprint,
     description_unrestorable,
     pinned_field_fingerprint,
@@ -125,6 +127,25 @@ from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
     ShadowOutcomeSet,
 )
+
+
+def _question_halves(
+    decision: HumanDecision, case: ReviewCase, offer: tuple[dict[str, object], ...]
+) -> tuple[str | None, str | None]:
+    """The question an owner answer is given against, for the question check
+    at the book's next case or episode (ADR-0108): its offer part and target
+    part. A cover, a pin, an unpin and a withdrawal have none."""
+    question = (
+        case_question(case, offer, decision.destination)
+        if decision.outcome in CARRIED_OUTCOMES and decision.destination != "cover"
+        else None
+    )
+    return (
+        (None, None)
+        if question is None
+        else (question.offer_part, question.target_part)
+    )
+
 
 _REPLACEMENT_BLOCKING_EFFECT_SQL = (
     "(state IN ('claimed','applying','reconciling') OR (state='verified' AND ?))"
@@ -978,6 +999,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     if decision.destination == "description"
                     and decision.outcome == "accept"
                     else None,
+                    None,
+                    *_question_halves(decision, case, offer),
                 ),
             )
             self._record_cover_decision_outcome(

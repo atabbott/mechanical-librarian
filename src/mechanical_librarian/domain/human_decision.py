@@ -9,6 +9,12 @@ import unicodedata
 from dataclasses import dataclass, replace
 from typing import Final, Literal, Mapping, Self, cast
 
+from mechanical_librarian.domain.decision_question import (
+    DecisionQuestion,
+    OfferShapeError,
+    decision_question,
+    offer_members,
+)
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
@@ -21,7 +27,6 @@ from mechanical_librarian.domain.field_effect import (
     project_decision_value,
 )
 from mechanical_librarian.domain.review_case import (
-    LEVEL_COMBINATION_DESTINATIONS,
     ReviewCase,
     ReviewCaseValueError,
     compose_offer,
@@ -35,10 +40,16 @@ COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v3"
 # An automatic cover choice keeps the first selection version.
 AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v1"
 
-HUMAN_DECISION_SCHEMA: Final = "human-decision-v8"
-HumanDecisionEventSchemaVersion = Literal["human-decision-event-v1"]
+HUMAN_DECISION_SCHEMA: Final = "human-decision-v9"
+HumanDecisionEventSchemaVersion = Literal["human-decision-event-v2"]
 HUMAN_DECISION_EVENT_SCHEMA: Final[HumanDecisionEventSchemaVersion] = (
-    "human-decision-event-v1"
+    "human-decision-event-v2"
+)
+# The audit event's kinds: an owner request's decision, and an answer the
+# question check carried to a later case or episode (ADR-0108).
+HUMAN_DECISION_EVENT_KINDS: Final = (
+    "human_decision_recorded",
+    "human_decision_carried",
 )
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
@@ -83,7 +94,10 @@ UNREVERSIBLE_DESTINATIONS = frozenset({"cover", "description"})
 # What a recorded decision may go on to do. Every decision formed since F47
 # carries `apply` on both media; `recorded_only` survives only as the F45
 # history of decisions taken before audiobook writes existed (#968).
-APPLICATIONS = ("apply", "recorded_only")
+# `settled` is a carried copy of a written answer or a refusal: it settles the
+# field and plans nothing, on both media, and only a carried row has it
+# (ADR-0108, ADR-0071).
+APPLICATIONS = ("apply", "recorded_only", "settled")
 RECORDED_ONLY_REASON = (
     "recorded, not applied — decided before audiobook writes were available"
 )
@@ -92,6 +106,9 @@ HumanDecisionAction = Literal["accept", "keep_current"]
 # owner choice; `matching_changed` for the reconciliation's valueless row that
 # asks a field again after Book matching changed its offer (#1355, S10).
 DECISION_CAUSES = frozenset({"matching_changed"})
+# What the question check carries: an answer with a value or a refusal, never
+# a withdrawal, a pin or an unpin (ADR-0108).
+CARRIED_OUTCOMES = frozenset({"accept", "keep_current", "reject", "owner_entered"})
 # Why a choice's offer no longer stands (#1355): the case still waits for its
 # Book matching check, or the field's offer is not the one the choice saw.
 OFFER_CHANGED_REASONS = frozenset({"unreconciled_case", "digest_mismatch"})
@@ -116,47 +133,12 @@ def offer_digest(
     no rule. The title, subtitle and series group has one digest over all its
     members. A field offering nothing still has a digest: the empty offer's.
     """
-    members = (
-        LEVEL_COMBINATION_DESTINATIONS
-        if destination in LEVEL_COMBINATION_DESTINATIONS
-        else (destination,)
-    )
-    by_destination = {proposal.get("destination"): proposal for proposal in offer}
-    if destination not in by_destination:
+    try:
+        data = offer_members(offer, destination)
+    except OfferShapeError as error:
+        raise HumanDecisionError("invalid") from error
+    if data is None:
         raise HumanDecisionError("invalid")
-    data: list[dict[str, object]] = []
-    for member in (value for value in members if value in by_destination):
-        proposal = by_destination[member]
-        result = proposal.get("result")
-        lineage = proposal.get("lineage", {})
-        if (
-            type(result) is not dict
-            or type(result.get("alternatives")) is not list
-            or type(proposal.get("proposal_id")) is not str
-            or type(lineage) is not dict
-        ):
-            raise HumanDecisionError("invalid")
-        data.append(
-            {
-                "alternatives": sorted(
-                    (
-                        {
-                            "rule": cast(
-                                "dict[str, object]",
-                                lineage.get(alternative["alternative_id"], {}),
-                            ).get("rule"),
-                            "value": alternative["value"],
-                        }
-                        for alternative in cast(
-                            "list[dict[str, object]]", result["alternatives"]
-                        )
-                    ),
-                    key=_canonical,
-                ),
-                "destination": member,
-                "proposal_id": proposal["proposal_id"],
-            }
-        )
     return hashlib.sha256(
         _canonical({"members": data, "schema": OFFER_DIGEST_SCHEMA}).encode("utf-8")
     ).hexdigest()
@@ -573,6 +555,14 @@ def _target_field(case: ReviewCase, destination: str) -> dict[str, object] | Non
         ),
         None,
     )
+
+
+def case_question(
+    case: ReviewCase, offer: tuple[dict[str, object], ...], destination: str
+) -> DecisionQuestion | None:
+    """The field's question on ``case`` in ``offer``, its current offer: what
+    an answer recorded now is given against (ADR-0108)."""
+    return decision_question(offer, _target_field(case, destination), destination)
 
 
 def target_value(case: ReviewCase, destination: str) -> object:
@@ -1025,6 +1015,9 @@ class HumanDecision:
     # The case episode it was recorded in, the case's decision floor then
     # (0 before any re-admission), frozen like `follows` (ADR-0108).
     episode: int = 0
+    # The root original an answer the question check carried copies; absent
+    # on every decision an owner request formed (ADR-0108).
+    carried_from: str | None = None
 
     @staticmethod
     def idempotency_digest_for(idempotency_key: str) -> str:
@@ -1136,6 +1129,92 @@ class HumanDecision:
         return value
 
     @classmethod
+    def carried(
+        cls,
+        case: ReviewCase,
+        original: HumanDecision,
+        *,
+        offer: tuple[dict[str, object], ...],
+        expected: DecisionQuestion,
+        written: bool,
+        episode: int,
+        occurred_at: int,
+        previous: object = None,
+        case_written: tuple[object] | None = None,
+    ) -> Self:
+        """The question check's copy of ``original`` on a later case or
+        episode of the same book asking the same question (ADR-0108, step 4).
+
+        ``offer`` is the new case's current offer and ``expected`` the
+        question ``original`` was given against: its offer part and the
+        expected target (the written value's, else the target it saw). The
+        copy keeps the original's outcome, value and cause and names its root
+        original. An unwritten accept or owner entry keeps the original's
+        application and the full validation of an owner's choice in the new
+        offer, so it plans under every guard; ``previous`` and
+        ``case_written`` are as `validate_owner_value` reads them. A written
+        answer, and every keep or reject, is `settled`: the question's own
+        equality and the original's outcome shape validate it, not the new
+        case's choices, which a written value has turned (questions R2).
+        Its idempotency digest names the root, the case and the episode, so
+        each visit of a work gets one carried row.
+        """
+        if (
+            type(original) is not cls
+            or original.cause is not None
+            or original.outcome not in CARRIED_OUTCOMES
+            or original.destination in _UNBOUND_OFFER_DESTINATIONS
+            or type(episode) is not int
+            or episode < 0
+            or type(occurred_at) is not int
+            or occurred_at < 0
+        ):
+            raise HumanDecisionError("invalid")
+        destination = original.destination
+        proposal = next(
+            (value for value in offer if value["destination"] == destination), None
+        )
+        if proposal is None or case_question(case, offer, destination) != expected:
+            raise HumanDecisionError("stale")
+        settled = (
+            written
+            or original.outcome not in VALUE_OUTCOMES
+            or original.application == "settled"
+        )
+        if not settled:
+            _require_owner_medium(case, proposal, original.outcome)
+            validate_decision_action(
+                proposal, original.outcome, original.selected_value
+            )
+            if original.outcome == "owner_entered":
+                validate_owner_value(
+                    case, proposal, original.selected_value, previous, case_written
+                )
+        root = original.carried_from or original.decision_id
+        value = cls._formed(
+            case.review_case_id,
+            cast("str", proposal["proposal_id"]),
+            case.target_fingerprint,
+            destination,
+            original.outcome,
+            original.selected_value,
+            _sha256(f"carried-v1:{root}:{case.review_case_id}:{episode}"),
+            occurred_at,
+            offer_digest(offer, destination),
+            None,
+            application="settled" if settled else original.application,
+            carried_from=root,
+        )
+        value = replace(value, episode=episode)
+        value._validate_for(
+            case.review_case_id,
+            case.target_fingerprint,
+            (offer,),
+            applications=admitted_applications(case.media_kind),
+        )
+        return value
+
+    @classmethod
     def matching_changed(
         cls,
         case: ReviewCase,
@@ -1205,6 +1284,9 @@ class HumanDecision:
         occurred_at: int,
         offered_alternatives_digest: str,
         cause: str | None,
+        *,
+        application: str = "apply",
+        carried_from: str | None = None,
     ) -> Self:
         value = cls(
             "",
@@ -1218,9 +1300,10 @@ class HumanDecision:
             idempotency_digest,
             "",
             occurred_at,
-            "apply",
+            application,
             offered_alternatives_digest,
             cause,
+            carried_from=carried_from,
         )
         request_digest = value._expected_request_digest()
         return replace(
@@ -1230,23 +1313,24 @@ class HumanDecision:
         )
 
     def _expected_request_digest(self) -> str:
-        return _sha256(
-            _canonical(
-                {
-                    "actor": self.actor,
-                    "application": self.application,
-                    "cause": self.cause,
-                    "destination": self.destination,
-                    "idempotency_digest": self.idempotency_digest,
-                    "offered_alternatives_digest": self.offered_alternatives_digest,
-                    "outcome": self.outcome,
-                    "proposal_id": self.proposal_id,
-                    "review_case_id": self.review_case_id,
-                    "selected_value": self.selected_value,
-                    "target_fingerprint": self.target_fingerprint,
-                }
-            )
-        )
+        request: dict[str, object] = {
+            "actor": self.actor,
+            "application": self.application,
+            "cause": self.cause,
+            "destination": self.destination,
+            "idempotency_digest": self.idempotency_digest,
+            "offered_alternatives_digest": self.offered_alternatives_digest,
+            "outcome": self.outcome,
+            "proposal_id": self.proposal_id,
+            "review_case_id": self.review_case_id,
+            "selected_value": self.selected_value,
+            "target_fingerprint": self.target_fingerprint,
+        }
+        # Only a carried row names its root, so every other decision keeps
+        # the request digest, and so the id, it had before (contract T7).
+        if self.carried_from is not None:
+            request["carried_from"] = self.carried_from
+        return _sha256(_canonical(request))
 
     def validate_for(
         self, case: ReviewCase, offer_documents: tuple[str, ...] = ()
@@ -1329,12 +1413,20 @@ class HumanDecision:
         offer; a retained fact may also stand in a stored level offer.
         """
         live = offers[0]
+        settled = self.application == "settled"
         if (
             self.review_case_id != review_case_id
             or self.target_fingerprint != target_fingerprint
             or _proposal(live, self.destination, self.proposal_id) is None
-            or self.application not in applications
-            or (new_command and (self.application != "apply" or self.cause))
+            or (self.application not in applications and not settled)
+            or (
+                new_command
+                and (
+                    self.application != "apply"
+                    or self.cause
+                    or self.carried_from is not None
+                )
+            )
         ):
             raise HumanDecisionError("stale")
         offer = self._bound_offer(offers, new_command)
@@ -1344,6 +1436,11 @@ class HumanDecision:
             # A cause row is valueless and withdraws whatever the field held,
             # description and cover included (#1355, AC2).
             if self.outcome != "withdraw" or self.selected_value is not None:
+                raise HumanDecisionError("invalid")
+        elif settled:
+            # A carried copy of a written answer or a refusal stands on the
+            # question check's equality, on both media (ADR-0108, step 4).
+            if self.carried_from is None or self.outcome not in CARRIED_OUTCOMES:
                 raise HumanDecisionError("invalid")
         elif new_command:
             validate_decision_action(proposal, self.outcome, self.selected_value)
@@ -1389,6 +1486,7 @@ class HumanDecision:
         return {
             "actor": self.actor,
             "application": self.application,
+            "carried_from": self.carried_from,
             "cause": self.cause,
             "decision_id": self.decision_id,
             "destination": self.destination,
@@ -1436,6 +1534,7 @@ class HumanDecision:
                 raw["cause"],
                 raw["follows"],
                 raw["episode"],
+                raw["carried_from"],
             )
             if (
                 re.fullmatch(r"human_decision_[0-9a-f]{64}", value.decision_id) is None
@@ -1489,6 +1588,20 @@ class HumanDecision:
                         or _FOLLOWED.fullmatch(value.follows) is None
                     )
                 )
+                or (value.application == "settled" and value.carried_from is None)
+                or (
+                    value.carried_from is not None
+                    and (
+                        type(value.carried_from) is not str
+                        or re.fullmatch(
+                            r"human_decision_[0-9a-f]{64}", value.carried_from
+                        )
+                        is None
+                        or value.carried_from == value.decision_id
+                        or value.cause is not None
+                        or value.outcome not in CARRIED_OUTCOMES
+                    )
+                )
             ):
                 raise ValueError
             return value
@@ -1500,6 +1613,7 @@ _DOCUMENT_KEYS = frozenset(
     {
         "actor",
         "application",
+        "carried_from",
         "cause",
         "decision_id",
         "destination",

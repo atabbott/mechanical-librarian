@@ -3742,7 +3742,7 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
     }
   // Only an owner decision states what it may go on to do; a retained F45
   // decision is the only one that carries a reason (#968).
-  if (item.schema_version === 'human-decision-event-v1')
+  if (item.schema_version === 'human-decision-event-v2')
     return {
       category: 'owner',
       applicationReason: item.application_reason,
