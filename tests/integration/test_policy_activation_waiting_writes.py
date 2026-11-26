@@ -237,7 +237,8 @@ def test_a_policy_change_closes_a_waiting_field_write(
     assert (waiting_id, "superseded") in lane.waiting_rows()
     assert (waiting_id, "stale") not in lane.waiting_rows()
 
-    # The successor is another case, and nothing transfers to it.
+    # The successor is another case, and the closed plan does not transfer
+    # to it.
     library.now[0] = 30
     library.drain()
     assert library.case_id() != case_before
@@ -245,7 +246,23 @@ def test_a_policy_change_closes_a_waiting_field_write(
     assert _decision_plans(library.root, decision_id) == [(waiting_id, *_CLOSED)]
     assert waiting_id not in lane.sent
     if origin == "owner":
-        assert lane.sent == []
+        # A policy change never clears the record (ADR-0108), and the
+        # successor asks the same question, so the question check carries
+        # the unwritten accept there with its own application: it plans
+        # afresh under the consent current now, and only that plan is sent
+        # (step 4).
+        carried = library.root._connection.execute(
+            "SELECT decision_id FROM human_decisions WHERE carried_from=?",
+            (decision_id,),
+        ).fetchall()
+        assert len(carried) == 1
+        assert lane.sent == [
+            plan_id
+            for (plan_id,) in library.root._connection.execute(
+                "SELECT plan_id FROM field_effects WHERE decision_id=?", carried[0]
+            )
+        ]
+        assert len(lane.sent) == 1
     _reopen_fields(library, tmp_path)
 
 

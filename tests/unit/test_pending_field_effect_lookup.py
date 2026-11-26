@@ -27,11 +27,13 @@ from mechanical_librarian.adapters.persistence.field_effect_activity import (
     _ACTIVE_GENERATION_DESCRIPTION_SQL,
     _AUTOMATIC_POSTURE_SQL,
     _AUTOMATIC_UNANSWERED_SQL,
+    _CARRIED_PUBLISHED_SQL,
     _COVER_UNANSWERED_SQL,
     _DESCRIPTION_UNANSWERED_SQL,
     _FIELD_EFFECT_HOLDS_DECISION_SQL,
     _RECORD_NAMES_AUTHORED_SQL,
     _RECORD_NAMES_HUMAN_SQL,
+    _RECORDED_ONLY_EXCLUDED_SQL,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
@@ -1650,6 +1652,21 @@ def _before_2038b(statement: str) -> str:
     return statement
 
 
+def _before_2040(statement: str) -> str:
+    """Remove the question check's owner-arm tests (#2040): a `settled` row
+    plans nothing, and a carried row waits for its case's package. The counts
+    statement joins the packages already, so only the plan's statements
+    carry that second test."""
+    assert statement.count(_RECORDED_ONLY_EXCLUDED_SQL) == 1
+    assert statement.count(_CARRIED_PUBLISHED_SQL) == (
+        "SELECT human.decision_id,human.occurred_at,human.document" in statement
+    )
+    return statement.replace(_CARRIED_PUBLISHED_SQL, "").replace(
+        _RECORDED_ONLY_EXCLUDED_SQL,
+        "json_extract(human.document,'$.application') IS NOT 'recorded_only' AND ",
+    )
+
+
 def _before_1568(statement: str) -> str:
     """Remove the Automatic-posture test #1568 added to each automatic arm."""
     held = "hold.active=1) AND " + _AUTOMATIC_POSTURE_SQL + "))"
@@ -1733,7 +1750,10 @@ def test_lineage_membership_restores_the_1204_text(
                 _before_frozen_follows(
                     _before_1568(
                         _before_1573(
-                            _before_1205(name, _before_2038(_before_2038b(statement)))
+                            _before_1205(
+                                name,
+                                _before_2038(_before_2038b(_before_2040(statement))),
+                            )
                         )
                     )
                 )

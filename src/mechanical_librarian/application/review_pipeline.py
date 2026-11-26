@@ -1039,6 +1039,12 @@ class ReviewPreparationPipeline:
                         )
                     )
                 )
+                # A refused or never-run question check is retried at startup
+                # and dormant start, once recovery has reset the pipeline
+                # (ADR-0108).
+                retry = getattr(repository, "retry_question_checks", None)
+                if retry is not None:
+                    retry(None, self._clock())
             except ReviewPipelineError:
                 raise
             except Exception as error:
@@ -1348,6 +1354,10 @@ class ReviewPreparationPipeline:
                 return None
             output_id: str | None = None
             if action.stage == "discovery":
+                # And at scan start, for the library the scan reads (ADR-0108).
+                retry = getattr(repository, "retry_question_checks", None)
+                if retry is not None:
+                    retry((action.connection, action.library), self._clock())
                 requires_qualification = getattr(
                     repository, "discovery_requires_qualification", None
                 )

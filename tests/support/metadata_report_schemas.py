@@ -738,7 +738,7 @@ _RECORD_ANSWER_STEPS = (
     ),
     (
         "AND NOT ("
-        + review_sql._record_case_answer_sql(own=True)
+        + review_sql._record_case_answer_sql()
         + " AND "
         + review_sql._AUTOMATIC_DECIDED_SQL
         + ") ",
@@ -747,6 +747,8 @@ _RECORD_ANSWER_STEPS = (
 )
 _RECORD_ATTENTION_STEPS = (
     *_RECORD_ANSWER_STEPS,
+    # Nor did a question check leave a field waiting, settled (#2040).
+    (review_sql._CARRY_WAITING_CLEAR_SQL, ""),
     (
         " AND NOT " + review_sql._resumed_decision_sql("c") + " ORDER BY",
         " ORDER BY",
@@ -803,8 +805,13 @@ assert any(
 _PRE_2038_ATTENTION_CLEAR_SQL = pre_2038_record_attention_sql(
     review_sql._REVIEW_FIELD_ATTENTION_CLEAR_SQL
 )
-# Nor did any attention object watch the record.
-_RECORD_ATTENTION_OBJECTS = ("owner_field_answers_", "owner_field_events_")
+# Nor did any attention object watch the record, or the question check's
+# outcomes, which had no table (#2040).
+_RECORD_ATTENTION_OBJECTS = (
+    "owner_field_answers_",
+    "owner_field_events_",
+    "carry_outcomes_",
+)
 
 
 # Nor did it keep the owner's cover choices apart from Automatic's: one table

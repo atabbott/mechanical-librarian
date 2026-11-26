@@ -2047,6 +2047,13 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
         "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,"
         "{row}.destination",
     ),
+    # C4' question check (#2040): its outcome asks a field again or leaves it
+    # waiting, settled meanwhile (ADR-0108, Attention).
+    "carry_outcomes": (
+        ("insert", "update"),
+        "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,"
+        "{row}.destination",
+    ),
 }
 
 
@@ -2108,6 +2115,19 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
         "answer_id",
         "open_resume_id",
         "pin_fingerprint",
+        # C4' question check (#2040).
+        "carry_eligible",
+    ),
+    # C4' question check (#2040).
+    "carry_outcomes": (
+        "answer_id",
+        "review_case_id",
+        "episode",
+        "connection_name",
+        "library_name",
+        "item_id",
+        "destination",
+        "outcome",
     ),
 }
 

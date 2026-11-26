@@ -170,6 +170,9 @@ _OFFER_READERS = {
     "adapters/persistence/review_projections.py": "review_projections",
     # The executor's authority check (`_authority_source`).
     "adapters/persistence/field_effect_activity.py": "executor_authority",
+    # The question check's offer part of the new case's question (ADR-0108,
+    # step 3), read only once the case's level is reconciled.
+    "adapters/persistence/question_check_runner.py": "question_check",
 }
 _OFFER_COMPOSERS = {
     "domain/review_case.py": "composition",

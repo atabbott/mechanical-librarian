@@ -92,6 +92,19 @@ def hold_token(repository: Any, review_case_id: str, destination: str) -> str | 
     return None if row is None else str(row[0])
 
 
+def hold_root(repository: Any, review_case_id: str, destination: str) -> str | None:
+    """The root original of the answer the record holds for the field: the
+    answer itself, or the one the question check carried it from when the
+    work's later case asked the same question (ADR-0108, step 4)."""
+    token = hold_token(repository, review_case_id, destination)
+    if token is None:
+        return None
+    row = repository._connection.execute(
+        "SELECT carried_from FROM human_decisions WHERE decision_id=?", (token,)
+    ).fetchone()
+    return token if row is None or row[0] is None else str(row[0])
+
+
 def hold_context(
     repository: Any, review_case_id: str, destination: str
 ) -> tuple[str, str] | None:

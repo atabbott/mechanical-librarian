@@ -548,36 +548,89 @@ def _read_as_own_sql(answer: str, case: str, destination: str) -> str:
     )
 
 
-def _record_case_answer_sql(own: bool, item: str = "c") -> str:
+def _record_case_answer_sql() -> str:
     """Whether the record holds an answer for the field of case `rc` (book
-    row `c`) that the case reads as its own (`own`, `_read_as_own_sql`), or
-    one that it does not: pinned, given on an earlier case or episode and
-    carried by nothing here, or withdrawn on this one (C2b-15, S16). A pinned answer
-    is never the case's own: its pin settles or asks the field ahead of this
-    (ADR-0085, Amendment 2), and once unpinned an answer of the case is its
-    own. The case page's `_record_answered_elsewhere` leaves pins out; the
-    two agree, since a pin in force clears the field and a changed one asks
-    it by its own reason. A cover's answer is the book's own pointer, so
-    neither reads it (ADR-0108). `item` names a row with the book's item key
-    columns."""
+    row `c`) that the case reads as its own (`_read_as_own_sql`). A pinned
+    answer is never the case's own: its pin settles or asks the field ahead
+    of this (ADR-0085, Amendment 2), and once unpinned an answer of the case
+    is its own. A cover's answer is the book's own pointer, so this never
+    reads it (ADR-0108). An answer from elsewhere asks by
+    `asked_again_sql`."""
     return (
         "EXISTS (SELECT 1 FROM owner_field_answers answered WHERE "
         "result.destination<>'cover' AND "
-        + _record_key_sql("answered", item, "result.destination")
-        + (" AND " if own else " AND NOT ")
+        + _record_key_sql("answered", "c", "result.destination")
+        + " AND "
         + _read_as_own_sql("answered", "rc.review_case_id", "result.destination")
         + ")"
     )
 
 
-# The record's answer from an earlier case or episode that nothing carried
-# asks its field only where the case offers the owner a decision on it; with
-# none, the answer settles the field (C2b-15, C2b-18, S16).
+def _carry_outcome_sql(answer: str, case: str, outcomes: str) -> str:
+    """Whether the question check's outcome for the record row `answer` on
+    case `case` in its current episode is one of `outcomes`, an SQL list."""
+    return (
+        "EXISTS (SELECT 1 FROM carry_outcomes checked WHERE "
+        f"checked.answer_id={answer}.answer_id AND checked.review_case_id={case} "
+        "AND checked.episode=COALESCE((SELECT checked_episode.decision_floor "
+        "FROM review_case_episodes checked_episode "
+        f"WHERE checked_episode.review_case_id={case}),0) "
+        f"AND checked.outcome IN ({outcomes}))"
+    )
+
+
+def asked_again_sql(answer: str, case: str, destination: str) -> str:
+    """Whether case `case` asks the field `destination` again over the
+    record row `answer` (ADR-0108, Attention, `asked_again`): an unpinned
+    answer the case does not read as its own (`_read_as_own_sql`), which the
+    question check did not carry here (the choices or the value changed, it
+    was asked again, or the carried row was refused), or which is no longer
+    carried at all (withdrawn, retired, superseded by Book matching, or a
+    failed Resume closed over it). An answer the check has not yet reached,
+    or left waiting, does not ask by itself (contract Q14)."""
+    return (
+        f"({answer}.pin_fingerprint IS NULL AND NOT "
+        + _read_as_own_sql(answer, case, destination)
+        + f" AND ({answer}.carry_eligible=0 OR "
+        + _carry_outcome_sql(
+            answer,
+            case,
+            "'question_changed','target_changed','asked_again','invalid'",
+        )
+        + "))"
+    )
+
+
+def carry_waiting_sql(answer: str, case: str) -> str:
+    """Whether the question check left the record row `answer` waiting on
+    case `case` in its current episode: its plan is still in flight
+    (`deferred`), or a Resume over it is open and has not failed
+    (`resume_pending`). The field counts as settled meanwhile (ADR-0108,
+    Attention)."""
+    return (
+        "("
+        + _carry_outcome_sql(answer, case, "'deferred'")
+        + " OR ("
+        + _carry_outcome_sql(answer, case, "'resume_pending'")
+        + f" AND {answer}.open_resume_id IS NOT NULL AND NOT EXISTS (SELECT 1 "
+        "FROM owner_field_events waiting_failed "
+        f"WHERE waiting_failed.request_id={answer}.open_resume_id "
+        "AND waiting_failed.kind='resume_failed')))"
+    )
+
+
+# The record's answer from an earlier case or episode that the question check
+# asks again asks its field only where the case offers the owner a decision
+# on it; with none, the answer settles the field (C2b-15, C2b-18, S16;
+# ADR-0108).
 def _record_asks_sql(item: str = "c") -> str:
     return (
-        "(result.has_owner_decision_actions=1 AND "
-        + _record_case_answer_sql(own=False, item=item)
-        + ")"
+        "(result.has_owner_decision_actions=1 AND EXISTS (SELECT 1 FROM "
+        "owner_field_answers answered WHERE result.destination<>'cover' AND "
+        + _record_key_sql("answered", item, "result.destination")
+        + " AND "
+        + asked_again_sql("answered", "rc.review_case_id", "result.destination")
+        + "))"
     )
 
 
@@ -675,6 +728,17 @@ _AUTOMATIC_DECIDED_SQL = (
 )
 
 
+# A field the question check left waiting is settled meanwhile (ADR-0108).
+_CARRY_WAITING_CLEAR_SQL = (
+    " AND NOT EXISTS (SELECT 1 FROM owner_field_answers waiting WHERE "
+    "result.destination<>'cover' AND "
+    + _record_key_sql("waiting", "c", "result.destination")
+    + " AND "
+    + carry_waiting_sql("waiting", "rc.review_case_id")
+    + ")"
+)
+
+
 # A field is decided by its latest owner decision of the case's episode unless
 # that withdrew it (ADR-0085); an earlier decision never settles a field the
 # owner took back, nor one the work has since left and returned to, nor one a
@@ -705,13 +769,13 @@ _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     + _resumed_decision_sql("c")
     + " ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
     "AND NOT ("
-    + _record_case_answer_sql(own=True)
+    + _record_case_answer_sql()
     + " AND "
     + _AUTOMATIC_DECIDED_SQL
     + ") AND NOT "
     + _pin_record_sql("rc.review_case_id", "result.destination", True, item="c")
-    + " "
-    "AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description'"
+    + _CARRY_WAITING_CLEAR_SQL
+    + " AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description'"
     " AND NOT " + _PIN_CHANGED_SQL + " AND (EXISTS (SELECT 1 FROM "
     "owner_authored_descriptions owner_authored WHERE "
     "owner_authored.decision_id=authored.decision_id) OR NOT "
@@ -1006,6 +1070,8 @@ __all__ = [
     "_episode_decision_sql",
     "_withdrawn_automatic_sql",
     "_own_answer_sql",
+    "asked_again_sql",
+    "carry_waiting_sql",
     "_read_as_own_sql",
 ]
 

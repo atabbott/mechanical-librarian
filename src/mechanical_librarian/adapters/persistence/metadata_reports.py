@@ -96,6 +96,10 @@ from mechanical_librarian.adapters.persistence.proposal_sets import (
     SQLiteProposalSetRepository,
     _validate_proposal_row,
 )
+from mechanical_librarian.adapters.persistence.question_check_runner import (
+    check_case_answers,
+    retry_cases,
+)
 from mechanical_librarian.adapters.persistence.recovery_outbox import (
     SQLiteRecoveryOutboxRepository,
 )
@@ -2244,15 +2248,20 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 # because abstaining is an answer (#966). Once a record
                 # qualifies one identity the ordinary projection runs and
                 # withdraws Automatic from every destination that record does
-                # not name (#967).
+                # not name (#967). The question check still runs on the case
+                # under the projection's guard; where the guard fails it is
+                # left to the retry, and the work still completes.
+                try:
+                    self._require_shadow_projection_current(
+                        review_case_id, staged_action
+                    )
+                except ReviewAdmissionStaleError:
+                    pass
+                else:
+                    self._check_record_answers(case_for_recovery, evaluated_at)
                 transaction.commit()
                 return "inactive"
-            if staged_action is not None:
-                self._require_staged_shadow_projection_current(
-                    review_case_id, staged_action
-                )
-            else:
-                self._require_shadow_case_current(review_case_id)
+            self._require_shadow_projection_current(review_case_id, staged_action)
             state = self._connection.execute(
                 "SELECT s.generation,s.posture,d.document FROM metadata_policy_state s "
                 "JOIN metadata_policy_drafts d ON d.policy_id=s.active_policy_id "
@@ -2261,6 +2270,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             if state is None or state[1] not in {"review", "preview", "automatic"}:
                 raise MetadataReportError("shadow posture is unavailable")
             if state[1] == "review":
+                self._check_record_answers(case_for_recovery, evaluated_at)
                 transaction.commit()
                 return "inactive"
             case, packet, report, proposal = self._persisted_shadow_sources(
@@ -2365,6 +2375,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     else:
                         admission.commit()
                         break
+            # After the automatic block, so mint and carry commit together.
+            self._check_record_answers(case, evaluated_at)
             if self._binding is not None:
                 self._binding.require_current()
             transaction.commit()
@@ -2394,10 +2406,87 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 raise
             raise MetadataReportError("shadow outcome persistence failed") from error
 
+    def _require_shadow_projection_current(
+        self, review_case_id: str, staged_action: PipelineAction | None
+    ) -> None:
+        if staged_action is not None:
+            self._require_staged_shadow_projection_current(
+                review_case_id, staged_action
+            )
+        else:
+            self._require_shadow_case_current(review_case_id)
+
     def _record_automatic_outcomes(
         self, outcome: ShadowOutcomeSet, occurred_at: int
     ) -> None:
         self._decisions._record_automatic_outcomes(outcome, occurred_at)
+
+    def _check_record_answers(self, case: ReviewCase, checked_at: int) -> None:
+        """The question check on a case the projection reached, inside its
+        transaction and under its guard, on every path out of it (ADR-0108)."""
+        check_case_answers(
+            self._connection,
+            case,
+            checked_at,
+            self._decisions.record_carried_decision,
+        )
+
+    @local_operation
+    def retry_question_checks(
+        self,
+        library: tuple[str, str] | None,
+        retried_at: int,
+        *,
+        provisional_only: bool = False,
+    ) -> int:
+        """Run the question check again on each published current case that
+        still owes an outcome, in one transaction per case under the current
+        case checks an owner's request has: at startup, dormant start and
+        scan start, and from the schedule (``provisional_only``) once a
+        deferring plan or a Resume has ended (ADR-0108, contract T12).
+        Returns how many cases it checked."""
+        if type(retried_at) is not int or retried_at < 0:
+            raise MetadataReportError("question check retry is invalid")
+        try:
+            cases = retry_cases(
+                self._connection, library, provisional_only=provisional_only
+            )
+        except sqlite3.Error as error:
+            raise MetadataReportError("question check retry failed") from error
+        checked = 0
+        for review_case_id in cases:
+            transaction = self._transaction("retry_question_check")
+            try:
+                transaction.begin()
+                try:
+                    self._require_shadow_case_current(review_case_id)
+                except ReviewAdmissionStaleError:
+                    transaction.rollback()
+                    continue
+                raw = self._connection.execute(
+                    "SELECT document FROM review_cases WHERE review_case_id=?",
+                    (review_case_id,),
+                ).fetchone()
+                if raw is None:
+                    transaction.rollback()
+                    continue
+                check_case_answers(
+                    self._connection,
+                    ReviewCase.from_json(raw[0]),
+                    retried_at,
+                    self._decisions.record_carried_decision,
+                    retry=True,
+                )
+                if self._binding is not None:
+                    self._binding.require_current()
+                transaction.commit()
+                checked += 1
+            except (sqlite3.Error, MetadataReportError, ReviewCaseValueError) as error:
+                transaction.rollback()
+                if isinstance(error, MetadataReportError):
+                    raise
+                raise MetadataReportError("question check retry failed") from error
+        return checked
 
     @local_operation
     def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]:

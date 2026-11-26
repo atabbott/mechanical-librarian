@@ -65,7 +65,12 @@ from tests.support.audiobook_reports import (
     publish_audiobook_preview,
     synthetic_audiobook_bibliographic_report,
 )
-from tests.support.owner_field_record import record_recomputes, resume  # noqa: F401
+from tests.support.owner_field_record import (  # noqa: F401
+    hold_root,
+    hold_token,
+    record_recomputes,
+    resume,
+)
 from tests.support.prepared_library import LINEAGE as _LINEAGE
 from tests.support.prepared_library import PRODUCER as _PRODUCER
 from tests.support.prepared_library import Library as _Library
@@ -327,15 +332,17 @@ def test_a_held_field_keeps_its_hold_and_resume_after_automatic_is_left_and_conf
     assert again.decision_id not in library.pending()
     field = _read_fields(library)["authors"]
     assert field["manual_hold"] is True
-    # An answer of the case's earlier episode decides nothing on it, and
-    # nothing carried settles the field: the record's answer asks it, never
-    # reading as nothing to decide (V3, C2b-15).
+    # An answer of the case's earlier episode decides nothing on it by
+    # itself; the projection's question check finds the same question in the
+    # new episode and carries it there, so the field reads as the owner's
+    # answer, never as nothing to decide (ADR-0108, step 4; V3 final).
     assert (field["classification"], field["classification_cause"]) == (
-        ("needs_attention", "review_needed")
-        if episode == "earlier"
-        else ("human_recorded", "human_decided")
+        "human_recorded",
+        "human_decided",
     )
-    assert (field["human_decision"] is None) is (episode == "earlier")
+    decision = field["human_decision"]
+    assert decision is not None
+    assert (decision["decision_id"] == owner.decision_id) is (episode != "earlier")
 
     assert resume(library.root, case_id, "authors", 42)
     assert again.decision_id in library.pending()
@@ -1107,7 +1114,6 @@ _HELD = (
     "Your earlier decision still holds this field, so turning on Automatic "
     "leaves it as it is."
 )
-_REVIEW_NEEDED = "This field needs your review."
 
 
 @pytest.mark.parametrize(
@@ -1125,9 +1131,9 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
     Automatic decides under it and writes nothing until Resume (ADR-0085,
     Amendment 4), as does a pin taken back in Preview, whose hold stays.
     Once Resume released the answer's hold, Automatic decides and writes.
-    The first episode's answer asks the field in Preview, and the pin's
-    answer, the case's own, reads held, as on main: neither says nothing to
-    decide (C2b-15)."""
+    The first episode's answer is carried into the new episode, which asks
+    the same question (ADR-0108, step 4), and the pin's answer, the case's
+    own, reads held, as on main: neither says nothing to decide (C2b-15)."""
     with _prepared(tmp_path, automatic=True, library_model="publication") as library:
         root, held = library.root, library.held
         assert held is not None
@@ -1153,7 +1159,17 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
                 root.record_human_decision(_owner(library, outcome, at))
 
         preview = _read_fields(library)["authors"]
-        assert preview["human_decision"] is None
+        # The first episode's answer asks the question the work asks again on
+        # its return, so the question check carries it into the new episode
+        # (ADR-0108, step 4; V3 final): Preview shows the owner's answer.
+        carried = preview["human_decision"]
+        if owner == "earlier_episode":
+            assert carried is not None
+            assert carried["decision_id"] == hold_token(root, first, "authors")
+            assert hold_root(root, first, "authors") == answer.decision_id
+            assert carried["decision_id"] != answer.decision_id
+        else:
+            assert carried is None
         shown = preview["earlier_automatic_value"]
         held_on = owner in {"earlier_episode", "unpinned"}
         # Without Resume: nothing of Automatic's is held yet in Preview.
@@ -1165,11 +1181,11 @@ def test_preview_shows_an_earlier_choice_only_where_automatic_decides_again(
             preview["needs_attention"],
         ) == {
             "earlier_episode": (
-                "needs_attention",
-                "review_needed",
-                _REVIEW_NEEDED,
+                "human_recorded",
+                "human_decided",
+                "You decided this field. You can change it here.",
                 False,
-                True,
+                False,
             ),
             "unpinned": ("unsupported", "held_in_preview", _HELD, False, False),
         }.get(

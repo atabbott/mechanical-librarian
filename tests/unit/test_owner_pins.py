@@ -1269,8 +1269,21 @@ def test_an_owner_write_in_the_same_second_outranks_a_carried_pin(
     if ending == "unpin":
         assert _asked(store) is True
     else:
-        assert _hold(store) == decision.decision_id
+        # The third case asks the same title question, so the question check
+        # carries the keep there (ADR-0108, step 4).
+        assert _carried_root(store) == decision.decision_id
     store.close()
+
+
+def _carried_root(store: OwnerStore) -> str | None:
+    """The root original of the record's title answer: the answer itself,
+    or the one a carried row copies (ADR-0108)."""
+    row = store.repository._connection.execute(
+        "SELECT COALESCE(decision.carried_from,decision.decision_id) "
+        "FROM owner_field_answers answer JOIN human_decisions decision "
+        "ON decision.decision_id=answer.answer_id WHERE answer.destination='title'"
+    ).fetchone()
+    return None if row is None else str(row[0])
 
 
 # The two Resume writers take a fresh rowid too, so a Resume asked or
@@ -1291,8 +1304,13 @@ def test_a_resume_in_the_same_second_outranks_a_carried_hold(
     store.ticks += 1
     held = store.decide("keep_current")
     store.publish(rewritten(report, publisher="Changed Elsewhere"))
-    assert _hold(store) == held.decision_id
+    # Each later case asks the same title question, so the question check
+    # carries the keep to it (ADR-0108, step 4).
+    assert _carried_root(store) == held.decision_id
     assert store.publish(report).review_case_id == first
+    assert _carried_root(store) == held.decision_id
+    carried = _hold(store)
+    assert carried is not None and carried != held.decision_id
     if resume == "requested":
         scan = store.repository.request_review_scan(
             report.target.connection,
@@ -1302,7 +1320,7 @@ def test_a_resume_in_the_same_second_outranks_a_carried_hold(
             ticks,
         )
         assert store.repository.request_owner_field_resume(
-            first, "title", held.decision_id, scan.scan_id, ticks, ticks
+            first, "title", carried, scan.scan_id, ticks, ticks
         )
     else:
         assert resume_field(store.repository, first, "title", ticks)
