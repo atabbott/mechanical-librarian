@@ -225,10 +225,10 @@ canonical documents, not a cache and not an alternate authority.
   ([ADR-0084](decisions/0084-persisted-attention-facts.md)).
 
 `browse_fact_identity` records the Unicode version the facts were folded
-under and the Looks wrong rule list the flags were derived by. Open refuses
-any other version of either. A Python upgrade that changes Unicode data needs
-a clean rebuild; a build with a different rule list has a new derived
-version, so startup names `regenerate-derived`.
+under and the Looks wrong rule list the flags were derived by. Its one row is
+derived: open refuses any other version of either as another build's derived
+partition and names `regenerate-derived`, whether a Python upgrade changed
+Unicode data or a build changed the rule list.
 
 Open compares every derived relation with its canonical documents. A partial
 write, manual edit or interrupted projection refuses the database rather than
@@ -428,12 +428,18 @@ lock:
    journal, a journal whose alias is missing, or a file that is not a `0600`
    regular file owned by the runtime refuses.
 2. It validates the journal's segment geometry and checksums without letting
-   SQLite touch the source.
+   SQLite touch the source. It admits the states a write killed before its
+   journal sync leaves: an empty journal, an unsynced (zeroed) header, and one
+   record torn at a write boundary at the end of an unsynced segment
+   ([ADR-0078 Amendment 1](decisions/0078-preparation-claim-and-crash-recovery.md#amendment-1-admit-what-a-killed-write-leaves-before-its-journal-sync-2026-11-26)).
 3. It copies the database and journal into an owner-only scratch directory,
    verifies the copies by digest, lets SQLite roll the copy back, and runs full
    read-only schema validation on the result.
 4. Only then does it let SQLite roll back the real file through the retained
-   alias, and removes the scratch directory and stale aliases.
+   alias, and removes the scratch directory and stale aliases. An empty
+   journal, or one whose first header was never synced, is one SQLite neither
+   replays nor removes; recovery removes it once its bytes are confirmed
+   unchanged.
 
 Under `regenerate-derived` step 3 validates the ledger alone, so a journal a
 killed server left is rolled back even though the derived state is from

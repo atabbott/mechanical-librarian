@@ -432,7 +432,7 @@ def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
     )
     # The subtitle write Audiobookshelf may have received stops
     # `regenerate-derived` at its gate, even with its flag, until it finishes
-    # on the previous image (ADR-0108, "The offline command"); so no
+    # on the previous build (ADR-0108, "The offline command"); so no
     # regeneration meets this store as it stands.
     outcome = run_regeneration(
         copied_store(effects.repository, effects.database_path.parent / "copy"),

@@ -301,6 +301,7 @@ def prepared(
     before_projection: Callable[[ReviewPipelineRepository, Any], None] | None = None,
     cover_order: str | None = None,
     library_model: Literal["publication", "advance"] | None = None,
+    keeps_recent_writes: bool = False,
 ) -> Iterator[Library]:
     """One work prepared under a qualified Automatic contributor-names policy.
 
@@ -316,6 +317,10 @@ def prepared(
     and admission check currentness as production does. Extraction completes
     through `complete_review_extraction_publication`, as production does,
     with "publication", and through the pipeline's advance with "advance".
+
+    `keeps_recent_writes` admits at the pipeline's clock, as production
+    does, so a work written in the last 30 days keeps its case though
+    nothing is left to decide (#1523); without it the window never applies.
     """
     database = tmp_path / "application.sqlite3"
     report = author_report(tmp_path / "media", "supported")
@@ -423,7 +428,11 @@ def prepared(
             held.require_current(
                 MetadataReport.from_json(concrete.get(proposal.report_id))
             )
-        result = ReviewAdmissionResult.from_json(concrete.admit_review_case(proposal))
+        result = ReviewAdmissionResult.from_json(
+            concrete.admit_review_case(
+                proposal, now=now[0] if keeps_recent_writes else None
+            )
+        )
         admissions.append((result.status, result.review_case_id))
         return result.status, result.review_case_id
 
@@ -570,6 +579,7 @@ def regenerate(
     *,
     retire_pending: bool = False,
     epoch_never_increments: bool = False,
+    read_again: bool = True,
 ) -> list[str]:
     """Stop the store, run `regenerate-derived` over it as an upgrade leaves it
     (the ledger names another derived version), start the store again (its
@@ -579,7 +589,10 @@ def regenerate(
 
     `epoch_never_increments` is the epoch negative control (contract S9): a
     test-side rewrite puts the ledger's epoch back after the run, so every
-    real reader addresses derived rows as before it."""
+    real reader addresses derived rows as before it.
+
+    With `read_again` false the store starts again and recovers, and no scan
+    is requested: the test reads the libraries itself."""
     library.close()
     database = library.database
     assert database is not None
@@ -602,9 +615,10 @@ def regenerate(
         )
     library.reopen()
     library.pipeline.recover()
-    library.root.request_review_scan("primary", "ebooks", "lib-1", PRODUCER, at)
-    library.now[0] = at + 1
-    library.drain()
+    if read_again:
+        library.root.request_review_scan("primary", "ebooks", "lib-1", PRODUCER, at)
+        library.now[0] = at + 1
+        library.drain()
     return lines
 
 

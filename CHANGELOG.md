@@ -32,13 +32,16 @@ brackets are GitHub issues.
   Automatic offers while Automatic is on. Withdraw works beside Automatic's
   decision (#2038).
 - **Clean rebuild required.** After this rebuild, an upgrade that changes only
-  what preparation rebuilds keeps your answers, settings, consents, cover
-  choices and write history. Startup says when one is needed: stop the
-  container and run
+  what preparation rebuilds keeps your settings, consents and write history,
+  and each answer and cover choice as its report lists. Startup says when one
+  is needed: stop the container and run
   `docker compose run --rm mechanical-librarian regenerate-derived` (#2040).
 - A later read, an upgrade included, keeps your answer when it asks the same
   question and writes a choice not yet written once; it asks again when the
   choices or the value in Audiobookshelf changed (#2038, #2040).
+- A library whose write was stopped while SQLite was still writing its journal
+  now starts again, and a partly written store is rolled back. Before, it
+  refused with "database recovery state is unsupported" (#2052).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).

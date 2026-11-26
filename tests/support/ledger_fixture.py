@@ -21,8 +21,11 @@ leaves the ledger at epoch 1 beside an empty derived partition.
 
 `tests/fixtures/ledger/v<LEDGER_FORMAT_VERSION>.sqlite3` is that store, frozen.
 A ledger change after the cutover is a migration from this file (C6), so the
-file never changes for its format version; `ledger_dump` is what a later
-generator run must still equal. To write it for a new format version:
+file never changes for its format version. A later generator run writes other
+ledger ids wherever derived content moved (a decision's id names its case), so
+what it must still equal is `ledger_projection`: each ledger table's row count
+and each document's schema label and kind, which no derived-only change moves.
+To write it for a new format version:
 `uv run python -m tests.support.ledger_fixture`.
 """
 
@@ -33,6 +36,7 @@ import json
 import sqlite3
 import tempfile
 import uuid
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -100,6 +104,7 @@ from mechanical_librarian.domain.setup_state import (
 )
 from tests.support.cover_taste import record_owner_cover_decisions
 from tests.support.description_advice import _preserved_description_report
+from tests.support.ledger_documents import DOCUMENTS
 from tests.support.ledger_partition import regenerate
 from tests.support.owner_field_record import assert_record_recomputes, resume
 from tests.support.prepared_library import (
@@ -657,6 +662,40 @@ def ledger_dump(path: Path) -> dict[str, list[tuple[object, ...]]]:
                 )
             ]
         return dump
+    finally:
+        connection.close()
+
+
+def ledger_projection(path: Path) -> dict[str, object]:
+    """What the ledger at ``path`` holds, apart from its content: each ledger
+    table's row count, and for each registered document column how many
+    documents carry each JSON type, `schema_version` and `kind`."""
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        rows = {
+            table: connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
+            for table in sorted(schema.LEDGER_TABLES)
+        }
+        documents: dict[str, list[tuple[object, ...]]] = {}
+        for table, column in sorted(DOCUMENTS):
+            shapes: Counter[tuple[str, object, object]] = Counter()
+            for (stored,) in connection.execute(
+                f'SELECT "{column}" FROM "{table}" WHERE "{column}" IS NOT NULL'
+            ):
+                value = json.loads(stored)
+                shapes[
+                    (
+                        type(value).__name__,
+                        value.get("schema_version"),
+                        value.get("kind"),
+                    )
+                    if type(value) is dict
+                    else (type(value).__name__, None, None)
+                ] += 1
+            documents[f"{table}.{column}"] = sorted(
+                (*shape, count) for shape, count in shapes.items()
+            )
+        return {"rows": rows, "documents": documents}
     finally:
         connection.close()
 

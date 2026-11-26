@@ -314,7 +314,8 @@ def test_a_retired_answer_is_asked_again_after_the_upgrade(tmp_path: Path) -> No
 
         lines = regenerate(library, 20, retire_pending=True)
 
-        assert lines[-1] == cli.REGENERATED, lines
+        assert "  " + cli.RETIRED.format(n=1) in lines, lines
+        assert lines[-1] == cli.REGENERATED_AS_LISTED, lines
         state = library.root.get_field_effect(plan_id)
         assert (state.state, state.failure) == ("superseded", "authority_superseded")
         assert library.root._connection.execute(

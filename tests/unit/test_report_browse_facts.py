@@ -40,7 +40,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _terminal_library_sql,
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    DerivedRegenerationRequired,
+    MetadataReportError,
+)
 from mechanical_librarian.application.review_web import LibraryLensFilter
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
@@ -1040,11 +1043,9 @@ def test_open_refuses_facts_folded_under_another_unicode_version(
     connection.commit()
     connection.close()
     before = database.read_bytes()
-    with pytest.raises(
-        MetadataReportError,
-        match="^database browse facts were folded under a different Unicode "
-        "version; a clean rebuild is required$",
-    ):
+    # Browse facts are derived: another Unicode version needs a regeneration
+    # (ADR-0108), refused with startup's own family line.
+    with pytest.raises(DerivedRegenerationRequired):
         open_repository(database, create=False)
     assert database.read_bytes() == before
 

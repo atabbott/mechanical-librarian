@@ -74,17 +74,25 @@ def _zeros(descriptor: int, start: int, end: int) -> None:
         start += chunk
 
 
-def validate_journal(descriptor: int, length: int, database_length: int) -> None:
+def validate_journal(descriptor: int, length: int, database_length: int) -> bool:
     """Check finite segment geometry and SQLite's sparse nonce checksum.
 
     A new nonce per segment is legitimate. Repeated pages across segments are
     also legitimate; this is not a uniqueness or rollback implementation.
-    Complete records in the terminal unsynced header are checked even though
-    native recovery can ignore that tail.
+    SQLite writes a segment header with zeroed magic and count, appends each
+    record as page number, page and checksum, and writes the magic only when it
+    syncs. A kill before that sync leaves an unsynced terminal segment, the
+    first one included, ending in at most one torn record. Native recovery
+    ignores that tail; its complete records and any torn page number are still
+    checked. Returns whether native SQLite treats the journal as hot: false for
+    an empty journal or an unsynced first header, which it never reads.
     """
+    if not length:
+        return False
     position = 0
     geometry: tuple[int, int, int] | None = None
     segments = 0
+    hot = True
     while position < length:
         if length - position < 28:
             _refuse()
@@ -105,12 +113,15 @@ def validate_journal(descriptor: int, length: int, database_length: int) -> None
             _refuse()
         geometry = shape
         _zeros(descriptor, position + 28, position + sector)
-        unsynced = header[:8] == bytes(8) and count == 0 and segments > 0
+        unsynced = header[:8] == bytes(8) and count == 0
+        if not segments:
+            hot = not unsynced
         position += sector
+        torn = 0
         if unsynced:
-            if (length - position) % (size + 8):
+            count, torn = divmod(length - position, size + 8)
+            if torn not in (0, 4, size + 4):
                 _refuse()
-            count = (length - position) // (size + 8)
         elif header[:8] != _MAGIC or not 0 < count < 0xFFFFFFFF:
             _refuse()
         if count > (length - position) // (size + 8):
@@ -124,6 +135,10 @@ def validate_journal(descriptor: int, length: int, database_length: int) -> None
             if not 0 < page <= pages or checksum != int.from_bytes(record[-4:], "big"):
                 _refuse()
             position += size + 8
+        if torn:
+            if not 0 < int.from_bytes(_read(descriptor, 4, position), "big") <= pages:
+                _refuse()
+            position += torn
         segments += 1
         if position == length:
             break
@@ -134,8 +149,7 @@ def validate_journal(descriptor: int, length: int, database_length: int) -> None
             _refuse()
         _zeros(descriptor, position, aligned)
         position = aligned
-    if not segments:
-        _refuse()
+    return hot
 
 
 def _digest(
@@ -267,6 +281,7 @@ def recover_private_bindings(
     journal = -1
     scratch_name: str | None = None
     scratch_fd = -1
+    inert: tuple[str, os.stat_result, bytes] | None = None
     source = Path(f"/proc/self/fd/{parent}/{configured_name}")
     try:
         if journals:
@@ -276,7 +291,9 @@ def recover_private_bindings(
             if _identity(expected_journal) != _identity(journals[journal_name]):
                 _refuse()
             _regular(expected_journal, copy=True)
-            validate_journal(journal, expected_journal.st_size, expected_db.st_size)
+            hot = validate_journal(
+                journal, expected_journal.st_size, expected_db.st_size
+            )
             candidate = f".metadata-report-recovery-{secrets.token_hex(16)}"
             os.mkdir(candidate, 0o700, dir_fd=parent)
             scratch_name = candidate
@@ -345,8 +362,24 @@ def recover_private_bindings(
                 Path(f"/proc/self/fd/{parent}/{journal_name.removesuffix('-journal')}"),
                 database,
             )
+            if not hot:
+                inert = journal_name, expected_journal, digests[1]
         validate(source, database)
         current()
+        if inert is not None:
+            # SQLite neither replays nor removes a journal it does not treat as
+            # hot. Left without its alias, it would refuse every later start.
+            # Opening it as root may change its owner metadata (ctime), never
+            # its bytes, so the check is inode, size, mtime and digest.
+            name, expected_journal, digest = inert
+            information = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            _regular(information, copy=True)
+            if (
+                _identity(information)[:4] != _identity(expected_journal)[:4]
+                or _digest(journal, information) != digest
+            ):
+                _refuse()
+            os.unlink(name, dir_fd=parent)
         for name in aliases:
             information = os.stat(name, dir_fd=parent, follow_symlinks=False)
             _regular(information)
