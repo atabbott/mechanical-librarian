@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,6 +21,7 @@ from mechanical_librarian.adapters.persistence.ledger_meta import derived_epoch
 from mechanical_librarian.adapters.persistence.regeneration import (
     SQLiteRegenerationStore,
 )
+from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import ApplicationConfiguration
 from mechanical_librarian.application.regenerate_derived import regenerate_derived
 from mechanical_librarian.application.regeneration_notice import (
@@ -39,6 +41,9 @@ from tests.unit.test_owner_answer_holds import _store
 
 _FIRST_FINISHED = 1_700_000_000
 _SECOND_FINISHED = 1_700_000_500
+# The book's library, as the settings name it.
+_CONFIGURED = frozenset({("primary", "ebooks")})
+_PRODUCER = "f" * 64
 
 
 def _store_mode() -> ApplicationConfiguration:
@@ -116,7 +121,7 @@ def test_no_regeneration_yet_reads_no_notice_and_dismisses_nothing(
     try:
         store.publish(report)
         store.decide("keep_current")
-        assert _notices(store).read_regeneration_notice() is None
+        assert _notices(store).read_regeneration_notice(_CONFIGURED) is None
         with pytest.raises(RegenerationNoticeDismissalInvalid):
             _notices(store).dismiss_regeneration_notice(1, _FIRST_FINISHED)
         assert store.repository._connection.execute(
@@ -149,7 +154,9 @@ def test_the_notice_counts_its_first_new_cases_and_a_second_regeneration_superse
     _regenerate(path, _FIRST_FINISHED)
     store = _reopened(root, resolved)
     try:
-        assert _notices(store).read_regeneration_notice() == RegenerationNotice(
+        assert _notices(store).read_regeneration_notice(
+            _CONFIGURED
+        ) == RegenerationNotice(
             regeneration_id=1,
             derived_epoch=1,
             finished_at=_FIRST_FINISHED,
@@ -160,13 +167,13 @@ def test_the_notice_counts_its_first_new_cases_and_a_second_regeneration_superse
         )
         _read_at_this_epoch(store, report)
         assert _outcomes(store) == [("carried", 1)]
-        first = _notices(store).read_regeneration_notice()
+        first = _notices(store).read_regeneration_notice(_CONFIGURED)
         assert first == RegenerationNotice(1, 1, _FIRST_FINISHED, 1, 0, 0, False)
         # The carried answer was given after the regeneration, so a later case
         # asking it again is no first new case of it.
         _read_at_this_epoch(store, rewritten(report, title="Another Title"))
         assert _outcomes(store) == [("carried", 1), ("target_changed", 1)]
-        assert _notices(store).read_regeneration_notice() == first
+        assert _notices(store).read_regeneration_notice(_CONFIGURED) == first
 
         # One dismissal, never before the regeneration finished.
         with pytest.raises(RegenerationNoticeDismissalInvalid):
@@ -178,7 +185,7 @@ def test_the_notice_counts_its_first_new_cases_and_a_second_regeneration_superse
         assert store.repository._connection.execute(
             "SELECT regeneration_id,dismissed_at FROM regeneration_notice_dismissals"
         ).fetchall() == [(1, _FIRST_FINISHED + 5)]
-        notice = _notices(store).read_regeneration_notice()
+        notice = _notices(store).read_regeneration_notice(_CONFIGURED)
         assert notice is not None and notice.dismissed
     finally:
         store.close()
@@ -187,22 +194,22 @@ def test_the_notice_counts_its_first_new_cases_and_a_second_regeneration_superse
     _regenerate(path, _SECOND_FINISHED)
     store = _reopened(root, resolved)
     try:
-        second = _notices(store).read_regeneration_notice()
+        second = _notices(store).read_regeneration_notice(_CONFIGURED)
         assert second == RegenerationNotice(2, 2, _SECOND_FINISHED, 0, 0, 1, False)
         first_case = _read_at_this_epoch(
             store, rewritten(report, title="Another Title")
         )
         assert _outcomes(store)[2:] == [("target_changed", 2)]
-        assert _notices(store).read_regeneration_notice() == RegenerationNotice(
-            2, 2, _SECOND_FINISHED, 0, 1, 0, False
-        )
+        assert _notices(store).read_regeneration_notice(
+            _CONFIGURED
+        ) == RegenerationNotice(2, 2, _SECOND_FINISHED, 0, 1, 0, False)
         # Only the first new case counts: a later case of the same epoch
         # asking again leaves the counts as they are.
         _read_at_this_epoch(store, rewritten(report, title="Third Title"))
         assert _outcomes(store)[2:] == [("target_changed", 2)] * 2
-        assert _notices(store).read_regeneration_notice() == RegenerationNotice(
-            2, 2, _SECOND_FINISHED, 0, 1, 0, False
-        )
+        assert _notices(store).read_regeneration_notice(
+            _CONFIGURED
+        ) == RegenerationNotice(2, 2, _SECOND_FINISHED, 0, 1, 0, False)
 
         # Negative control: a field with nothing to answer on is not asked
         # again in the notice's count (contract R1), read on the derived fact.
@@ -212,7 +219,165 @@ def test_the_notice_counts_its_first_new_cases_and_a_second_regeneration_superse
             "WHERE review_case_id=? AND destination='title'",
             (first_case,),
         )
-        notice = _notices(store).read_regeneration_notice()
+        notice = _notices(store).read_regeneration_notice(_CONFIGURED)
         assert notice is not None and notice.asked_again == 0
+    finally:
+        store.close()
+
+
+def _discovery(store: OwnerStore, at: int) -> Any:
+    """Start a scan of the book's library and claim its discovery."""
+    store.repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, at)
+    action = store.repository.claim_review_pipeline_action(at + 1)
+    assert action is not None and action.stage == "discovery"
+    return action
+
+
+def _scans(store: OwnerStore) -> list[tuple[str, str | None]]:
+    return [
+        tuple(row)
+        for row in store.repository._connection.execute(
+            "SELECT state,discovery_failure FROM review_preparation_scans"
+        )
+    ]
+
+
+def _unread(item_id: str) -> CatalogueEntry:
+    """A work the library lists but cannot give: it gets preparation work,
+    which fails, so no new case comes yet."""
+    return CatalogueEntry(
+        "primary",
+        "ebooks",
+        "lib-1",
+        item_id,
+        1,
+        "Synthetic work",
+        ("Ada Example",),
+        True,
+        False,
+        "needs-attention",
+        unread="no_media",
+    )
+
+
+@pytest.mark.parametrize(
+    "listed",
+    [(), (_unread("item-2"),)],
+    ids=["library_now_empty", "another_work_listed"],
+)
+def test_an_answer_whose_work_a_completed_scan_left_out_stops_counting(
+    tmp_path: Path, listed: tuple[CatalogueEntry, ...]
+) -> None:
+    """An answer still counts while its library's first scan since the
+    regeneration runs, and stops once that scan completed without its work:
+    no new case can come for it (review round 1, finding 3). A scan whose
+    discovery failed, or one that lists the work, keeps it counting."""
+    root = tmp_path / "data"
+    root.mkdir(mode=0o700)
+    path = root / "owner.sqlite"
+    store, report, _ = _store(root, posture="preview")
+    assert {(report.target.connection, report.target.library)} == _CONFIGURED
+    store.publish(report)
+    store.decide("keep_current")
+    resolved = store.resolved
+    assert resolved is not None
+    store.close()
+    _regenerate(path, _FIRST_FINISHED)
+    store = _reopened(root, resolved)
+    counting = RegenerationNotice(1, 1, _FIRST_FINISHED, 0, 0, 1, False)
+    try:
+        notices = _notices(store)
+        assert notices.read_regeneration_notice(_CONFIGURED) == counting
+        # A discovery that fails tells nothing about the work.
+        failed = _discovery(store, _FIRST_FINISHED + 10)
+        store.repository.fail_review_pipeline_action(
+            failed, "library_unavailable", False, _FIRST_FINISHED + 12
+        )
+        assert _scans(store) == [("completed_with_failures", "library_unavailable")]
+        assert notices.read_regeneration_notice(_CONFIGURED) == counting
+        # The first scan that can list the work is still discovering.
+        action = _discovery(store, _FIRST_FINISHED + 20)
+        assert notices.read_regeneration_notice(_CONFIGURED) == counting
+        store.repository.complete_review_discovery(
+            action, 1, "a" * 64, listed, _FIRST_FINISHED + 22
+        )
+        assert (
+            store.repository.claim_review_pipeline_action(_FIRST_FINISHED + 23) is None
+        )
+        assert _scans(store) == [("completed", None)]
+        assert notices.read_regeneration_notice(_CONFIGURED) == RegenerationNotice(
+            1, 1, _FIRST_FINISHED, 0, 0, 0, False
+        )
+    finally:
+        store.close()
+    assert opens(path)
+
+
+def test_an_answer_whose_work_appeared_still_counts_until_its_case_comes(
+    tmp_path: Path,
+) -> None:
+    """Negative control: a completed scan that lists the work, whose
+    preparation could not finish, leaves the answer not yet checked."""
+    root = tmp_path / "data"
+    root.mkdir(mode=0o700)
+    path = root / "owner.sqlite"
+    store, report, _ = _store(root, posture="preview")
+    store.publish(report)
+    store.decide("keep_current")
+    resolved = store.resolved
+    assert resolved is not None
+    store.close()
+    _regenerate(path, _FIRST_FINISHED)
+    store = _reopened(root, resolved)
+    try:
+        action = _discovery(store, _FIRST_FINISHED + 20)
+        store.repository.complete_review_discovery(
+            action, 1, "a" * 64, (_unread(report.target.item),), _FIRST_FINISHED + 22
+        )
+        assert (
+            store.repository.claim_review_pipeline_action(_FIRST_FINISHED + 23) is None
+        )
+        assert _scans(store) == [("completed", None)]
+        assert store.repository._connection.execute(
+            "SELECT state FROM review_preparation_work WHERE item_id=?",
+            (report.target.item,),
+        ).fetchall() == [("failed",)]
+        assert _notices(store).read_regeneration_notice(
+            _CONFIGURED
+        ) == RegenerationNotice(1, 1, _FIRST_FINISHED, 0, 0, 1, False)
+    finally:
+        store.close()
+
+
+def test_an_answer_whose_library_is_no_longer_configured_stops_counting(
+    tmp_path: Path,
+) -> None:
+    """With no scan since the regeneration, the answer counts while its
+    library is configured and not once the settings no longer name it."""
+    root = tmp_path / "data"
+    root.mkdir(mode=0o700)
+    path = root / "owner.sqlite"
+    store, report, _ = _store(root, posture="preview")
+    store.publish(report)
+    store.decide("keep_current")
+    resolved = store.resolved
+    assert resolved is not None
+    store.close()
+    _regenerate(path, _FIRST_FINISHED)
+    store = _reopened(root, resolved)
+    try:
+        notices = _notices(store)
+        both = _CONFIGURED | {("primary", "audiobooks")}
+        assert notices.read_regeneration_notice(both) == RegenerationNotice(
+            1, 1, _FIRST_FINISHED, 0, 0, 1, False
+        )
+        for configured in (
+            frozenset({("primary", "audiobooks")}),
+            frozenset({("other", "ebooks")}),
+            frozenset(),
+        ):
+            assert notices.read_regeneration_notice(configured) == RegenerationNotice(
+                1, 1, _FIRST_FINISHED, 0, 0, 0, False
+            )
     finally:
         store.close()

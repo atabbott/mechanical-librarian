@@ -32,8 +32,10 @@ class RegenerationNotice:
     `target_changed`, `asked_again` or `invalid`) on a field with decision
     actions; `not_yet_checked` counts answers the record still holds from
     before the regeneration that no new case has checked yet, a Resume or a
-    plan still in flight included. Pins and covers are never checked, so
-    they are in no count.
+    plan still in flight included, while a new case can still come: an
+    answer stops counting once its library is no longer configured, or has
+    completed a scan since the regeneration in which its work did not
+    appear. Pins and covers are never checked, so they are in no count.
     """
 
     regeneration_id: int
@@ -46,8 +48,12 @@ class RegenerationNotice:
 
 
 class RegenerationNoticeStore(Protocol):
-    def read_regeneration_notice(self) -> RegenerationNotice | None:
-        """The latest regeneration's notice, or None before the first."""
+    def read_regeneration_notice(
+        self, configured: frozenset[tuple[str, str]]
+    ) -> RegenerationNotice | None:
+        """The latest regeneration's notice, or None before the first.
+        `configured` is the (connection, library) pairs the settings name
+        now."""
         ...
 
     def dismiss_regeneration_notice(
