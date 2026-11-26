@@ -12,6 +12,9 @@ brackets are GitHub issues.
 
 ## 0.39.0 — Owner trust (in progress)
 
+- A library whose write was stopped before SQLite first synced its journal now
+  starts again. Before, it refused with "database recovery state is
+  unsupported" until the journal was dealt with by hand (#2052).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).

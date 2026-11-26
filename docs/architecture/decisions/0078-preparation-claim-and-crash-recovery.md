@@ -90,3 +90,39 @@ repository closure while they remain active. Actual container signal and restart
 qualification is required in addition to dispatcher and source-level tests. The
 reliability correction does not establish completion of a real-library metadata
 measurement or change decision, consent, backup or target-write authority.
+
+## Amendment 1: admit what a killed write leaves before its journal sync (2026-11-26)
+
+- Status: proposed. Only the owner's own answer makes this amendment
+  accepted; until then the body above stays the accepted record.
+
+SQLite writes a journal segment header with zeroed magic and count, appends
+each record as page number, page and checksum in three writes, and writes the
+magic only when it syncs the journal, before it writes any database page. A
+process killed before that sync leaves a state the reader above refused: an
+empty journal, a zeroed first header, or a torn final record. A store killed
+during a small write, or in the last segment of a large one, then would not
+start. In the large case the database is already partly written, so removing
+the journal by hand would corrupt it.
+
+The envelope reader now admits exactly those states and no others:
+
+- An empty journal, and an unsynced header (zeroed magic and count) in any
+  segment, the first included. An unsynced segment stays terminal.
+- In an unsynced segment, complete records are checked as before, and the
+  only tail allowed is one record torn at a write boundary: a page number
+  alone, or a page number and page without checksum. A torn page number must
+  be in range.
+
+Everything else still refuses, including a non-zero first byte that is not the
+magic (SQLite would treat it as hot), a zeroed header with a non-zero count,
+any other tail length and a synced segment with an incomplete tail.
+
+Native SQLite treats a journal as hot only when its first byte is non-zero. An
+empty journal or one with a zeroed first header is never read and never
+removed by SQLite, and its database was never written. After the full
+copy-first admission and source validation above, recovery removes such a
+journal itself, checking that its inode, size, modification time and digest are
+unchanged; opening it as root may change only its owner metadata. Without this,
+the journal would outlive its alias and refuse every later start. A hot journal
+is still rolled back and removed only by native SQLite, never by hand.
