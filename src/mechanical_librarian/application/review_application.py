@@ -2292,6 +2292,7 @@ class ReviewApplication:
             self._preparation_running(),
             notice.kept,
             notice.asked_again,
+            notice.not_yet_checked,
         )
 
     def _preparation_running(self) -> bool:

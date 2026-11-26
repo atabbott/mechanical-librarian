@@ -2048,6 +2048,7 @@ def test_upgrade_notice_reads_nothing_before_the_first_regeneration(
                 "preparing": False,
                 "kept": 12,
                 "asked_again": 3,
+                "not_yet_checked": 0,
             },
         ),
         (
@@ -2057,10 +2058,12 @@ def test_upgrade_notice_reads_nothing_before_the_first_regeneration(
                 "preparing": False,
                 "kept": 0,
                 "asked_again": 0,
+                "not_yet_checked": 0,
             },
         ),
         # Answers not yet checked can stay so for good, so they never make it
-        # preparing: only preparation running does (below).
+        # preparing: only preparation running does (below). The count is
+        # sent, so an idle notice can say no total.
         (
             _regeneration(kept=1, asked_again=1, not_yet_checked=4),
             {
@@ -2068,6 +2071,7 @@ def test_upgrade_notice_reads_nothing_before_the_first_regeneration(
                 "preparing": False,
                 "kept": 1,
                 "asked_again": 1,
+                "not_yet_checked": 4,
             },
         ),
         (replace(_regeneration(kept=2, asked_again=1), dismissed=True), None),

@@ -146,7 +146,7 @@ export const ownerRefusalCopy = (
           : 'That is already the current value.',
     nothing_to_withdraw: 'No decision is recorded for this field.',
     automatic_hold:
-      'Resume automatic handling was requested for this field, so this choice can’t be withdrawn.',
+      'You asked to resume automatic handling for this field, so this choice can’t be withdrawn.',
     decision_written: writtenRefusal,
     pinned: 'This field is pinned. Unpin it to withdraw the decision.',
     link_changed: linkChangedNotice,

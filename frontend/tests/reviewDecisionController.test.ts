@@ -678,7 +678,7 @@ describe('a pin after a value command', () => {
   // read and the press; the page never offers Withdraw in that state (W1).
   it('says a withdrawal refused by a Resume asked meanwhile in the owner’s words', () => {
     expect(ownerRefusalCopy(new ApiError(409, 'automatic_hold'), offered)).toBe(
-      'Resume automatic handling was requested for this field, so this choice can’t be withdrawn.',
+      'You asked to resume automatic handling for this field, so this choice can’t be withdrawn.',
     )
   })
 

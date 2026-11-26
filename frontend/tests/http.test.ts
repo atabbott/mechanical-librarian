@@ -8302,6 +8302,7 @@ describe('the upgrade notice wire (#2039)', () => {
     preparing: false,
     kept: 12,
     asked_again: 3,
+    not_yet_checked: 0,
   }
 
   it('reads the notice, and nothing once there is none', async () => {

@@ -26,6 +26,15 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.domain.upgrade_notice import UPGRADE_NOTICE_SCHEMA
 from tests.integration.test_owner_field_record import _regenerated
+from tests.integration.test_screens_across_regeneration import _AFTER as _SCREENS_AFTER
+from tests.integration.test_screens_across_regeneration import (
+    _B_AGAIN,
+    _answer_six_fields,
+)
+from tests.integration.test_screens_across_regeneration import (
+    _client as _screens_client,
+)
+from tests.integration.test_screens_across_regeneration import _store as _screens_store
 from tests.support.owner_values import OwnerStore, rewritten
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
@@ -108,6 +117,7 @@ def test_the_notice_reads_the_ledger_after_a_real_regeneration(
                 "preparing": False,
                 "kept": 0,
                 "asked_again": 0,
+                "not_yet_checked": 1,
             }
 
             store.publish(
@@ -127,6 +137,7 @@ def test_the_notice_reads_the_ledger_after_a_real_regeneration(
                 "preparing": False,
                 "kept": kept,
                 "asked_again": asked_again,
+                "not_yet_checked": 0,
             }
 
             headers = {
@@ -226,5 +237,41 @@ def test_an_answer_asked_again_after_a_real_regeneration_says_why_on_the_wire(
         assert title["asked_again"] is not None
         assert title["asked_again"]["reason"] == "target_changed"
         assert title["resume_failed"] is False
+    finally:
+        store.close()
+
+
+def test_an_idle_notice_with_answers_not_yet_checked_sends_their_count(
+    tmp_path: Path,
+) -> None:
+    """T-N against the real store: after only one of three books is read
+    again, with no preparation running, the notice counts that book's kept
+    and asked-again answers and sends the answers still unchecked, so the
+    browser says no total."""
+    store = _screens_store(tmp_path)
+    _answer_six_fields(store)
+    store = _regenerated(store)
+    store.ticks = _SCREENS_AFTER
+    try:
+        store.publish(_B_AGAIN)
+        partial = (
+            store.repository.regeneration_notice_store().read_regeneration_notice()
+        )
+        assert partial is not None
+        # B's two answers were checked (one kept, one asked again); A's and
+        # C's four wait for their books.
+        assert (partial.kept, partial.asked_again, partial.not_yet_checked) == (
+            1,
+            1,
+            4,
+        )
+        with _screens_client(store, tmp_path) as client:
+            assert _notice(client) == {
+                "regeneration_id": str(partial.regeneration_id),
+                "preparing": False,
+                "kept": 1,
+                "asked_again": 1,
+                "not_yet_checked": 4,
+            }
     finally:
         store.close()

@@ -2860,6 +2860,8 @@ class _UpgradeNotice(_ClosedModel):
     preparing: bool
     kept: int = Field(ge=0)
     asked_again: int = Field(ge=0)
+    # Answers no new case has checked yet; some can stay so for good.
+    not_yet_checked: int = Field(ge=0)
 
 
 class _UpgradeNoticeResponse(_ClosedModel):

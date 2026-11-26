@@ -63,6 +63,7 @@ from tests.integration.test_screens_across_regeneration import (
     _B_AGAIN,
     _C,
     _NOW,
+    _answer_six_fields,
     _proposed_title,
     _store,
 )
@@ -261,6 +262,14 @@ def test_an_answer_asked_again_says_why_under_the_question_and_in_attention(
 
 
 _NOTICE = "1 of your answers is asked again after the upgrade. The other one was kept."
+# The Attention rail says only the first sentence, with Dismiss beside it.
+_NOTICE_BRIEF = "1 of your answers is asked again after the upgrade."
+_BESIDE_DISMISS = """(notice) => {
+  const text = notice.querySelector('p').getBoundingClientRect()
+  const button = notice.querySelector('button').getBoundingClientRect()
+  return button.top < text.bottom && text.top < button.bottom
+    && button.left >= text.right
+}"""
 
 
 def test_the_upgrade_notice_shows_on_activity_and_in_attention_until_dismissed() -> (
@@ -293,9 +302,12 @@ def test_the_upgrade_notice_shows_on_activity_and_in_attention_until_dismissed()
             page.goto(f"{origin}/library?lens=all&attention=open")
             rail = page.get_by_label("Attention queue", exact=True)
             in_rail = rail.locator(".cm-upgrade-notice")
-            expect(in_rail).to_contain_text(_NOTICE)
+            expect(in_rail.locator("p")).to_have_text(_NOTICE_BRIEF)
+            assert in_rail.evaluate(_BESIDE_DISMISS)
             in_rail.get_by_role("button", name="Dismiss", exact=True).click()
             expect(in_rail).to_have_count(0)
+            # Focus goes to the rail's heading, not to the page.
+            expect(rail.get_by_role("heading", name="Attention")).to_be_focused()
 
             # In the same page, Activity no longer shows it either.
             page.get_by_role("navigation", name="Primary workspace").get_by_role(
@@ -313,6 +325,54 @@ def test_the_upgrade_notice_shows_on_activity_and_in_attention_until_dismissed()
             assert connection.execute(
                 "SELECT count(*) FROM regeneration_notice_dismissals"
             ).fetchone() == (1,)
+
+
+@pytest.mark.parametrize("width", (1440, 390))
+def test_an_idle_notice_with_answers_not_yet_checked_says_no_total(
+    width: int,
+) -> None:
+    """Only book B is read again and nothing is preparing: one answer was
+    kept, one is asked again and four are not yet checked. Activity says the
+    two counts with no total; the rail says the same one sentence beside
+    Dismiss, and Dismiss on Activity leaves focus on its heading."""
+    sentence = "1 of your answers is asked again after the upgrade and 1 was kept."
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        store = _store(root)
+        _answer_six_fields(store)
+        store = _regenerated(store)
+        store.ticks = _AFTER
+        try:
+            store.publish(_B_AGAIN)
+            notice = (
+                store.repository.regeneration_notice_store().read_regeneration_notice()
+            )
+            assert notice is not None
+            assert (notice.kept, notice.asked_again, notice.not_yet_checked) == (
+                1,
+                1,
+                4,
+            )
+        finally:
+            store.close()
+        with _served(root) as origin, _page(width) as page:
+            _login(page, origin)
+            page.goto(f"{origin}/library?lens=all&attention=open")
+            rail = page.get_by_label("Attention queue", exact=True)
+            in_rail = rail.locator(".cm-upgrade-notice")
+            expect(in_rail.locator("p")).to_have_text(sentence)
+            assert in_rail.evaluate(_BESIDE_DISMISS), width
+            assert page.evaluate(_NO_SIDEWAYS_SCROLL), width
+
+            page.goto(f"{origin}/activity")
+            heading = page.get_by_role("heading", name="Activity", level=1)
+            expect(heading).to_be_visible()
+            on_activity = page.locator(".cm-upgrade-notice")
+            expect(on_activity.locator("p")).to_have_text(sentence)
+            assert page.evaluate(_NO_SIDEWAYS_SCROLL), width
+            on_activity.get_by_role("button", name="Dismiss", exact=True).click()
+            expect(on_activity).to_have_count(0)
+            expect(page.locator("header[data-route-focus]")).to_be_focused()
 
 
 def test_a_carried_answer_says_in_history_which_choice_it_kept() -> None:
