@@ -490,6 +490,7 @@ def test_a_carried_row_plans_only_once_its_case_is_published(
         _read_back(library, ("Someone Else",), 12)
 
         seen: list[tuple[str, bool]] = []
+        counted: list[bool] = []
         check = metadata_reports.SQLiteMetadataReportRepository._check_record_answers
 
         def observed(self: Any, case: Any, checked_at: int) -> None:
@@ -510,6 +511,11 @@ def test_a_carried_row_plans_only_once_its_case_is_published(
                         },
                     )
                 )
+                # Nor is it counted as a prepared change.
+                counted.append(
+                    str(decision_id)
+                    in self.prepared_field_effect_decisions((str(decision_id),))
+                )
 
         monkeypatch.setattr(
             metadata_reports.SQLiteMetadataReportRepository,
@@ -519,6 +525,7 @@ def test_a_carried_row_plans_only_once_its_case_is_published(
         _read_back(library, original, 14)
         assert library.case_id() == first
         assert seen and all(pending is False for _, pending in seen)
+        assert counted and not any(counted)
         carried = seen[0][0]
         assert carried in library.pending()
         assert owner.decision_id not in library.pending()

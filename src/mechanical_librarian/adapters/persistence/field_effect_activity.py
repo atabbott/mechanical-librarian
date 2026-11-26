@@ -497,20 +497,31 @@ _ACTIVE_GENERATION_DESCRIPTION_SQL = (
 )
 
 
+# A case the projection has published as its book's current case: its
+# lineage and its package agree.
+_PUBLISHED_JOIN_SQL = (
+    "current_review_case_lineages lineage JOIN "
+    "current_review_packages package ON package.connection_name=lineage.connection_name "
+    "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
+    "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
+    "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint"
+)
+_PUBLISHED_CASES_SQL = "SELECT lineage.review_case_id FROM " + _PUBLISHED_JOIN_SQL
+# A row the question check carried plans only once the projection has
+# published its case, as an automatic decision does (ADR-0108, "The owner's
+# arm after Resume"). It is tested per carried row only, so the owner arm
+# still builds no list of its own.
+_CARRIED_PUBLISHED_SQL = (
+    "(human.carried_from IS NULL OR EXISTS (SELECT 1 FROM "
+    + _PUBLISHED_JOIN_SQL
+    + " WHERE package.review_case_id=human.review_case_id)) AND "
+)
 # The planning query's record clauses (ADR-0108, "The owner's arm after
 # Resume" and "Readers"): an owner's row, human or authored description,
 # plans only while the record names it; an automatic decision, description
 # or cover plans only while the record holds no answer for the field of its
 # case's book, and a field decision only while no owner decision on its case
 # still keeps Automatic off it (one Resume has not taken back).
-# Every case the projection has published as its book's current case.
-_PUBLISHED_CASES_SQL = (
-    "SELECT lineage.review_case_id FROM current_review_case_lineages lineage JOIN "
-    "current_review_packages package ON package.connection_name=lineage.connection_name "
-    "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
-    "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
-    "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint"
-)
 _RECORD_NAMES_HUMAN_SQL = (
     "EXISTS (SELECT 1 FROM owner_field_answers record WHERE "
     "record.source='human' AND record.answer_id=human.decision_id)"
@@ -2934,13 +2945,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
                 + _RECORDED_ONLY_EXCLUDED_SQL
-                # A carried row also takes the automatic arm's package join:
-                # it plans only once the projection published its case
-                # (ADR-0108, "The owner's arm after Resume").
-                + "(human.carried_from IS NULL OR human.review_case_id IN ("
-                + _PUBLISHED_CASES_SQL
-                + ")) AND "
-                "(human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) OR ("
+                + _CARRIED_PUBLISHED_SQL
+                + "(human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) OR ("
                 "human.destination='cover' AND EXISTS (SELECT 1 FROM "
                 "cover_consideration_events selected JOIN current_cover_considerations current "
                 "ON current.consideration_id=selected.consideration_id "
