@@ -1,9 +1,11 @@
 """Startup's persisted-state table and its one refusal family (ADR-0108).
 
 Startup reads `ledger_meta` first. An absent file is created; an exact one
-opens; another build's derived partition asks for `regenerate-derived`;
-another ledger format, or no ledger record, asks for a clean rebuild; and an
-extra or altered object in either partition refuses as it did before.
+opens; another build's derived partition, or an earlier ledger format this
+build's migrations reach, asks for `regenerate-derived`; any other ledger
+format, or no ledger record, asks for a clean rebuild; and an extra or
+altered object in either partition refuses as it did before. Startup never
+migrates.
 """
 
 from __future__ import annotations
@@ -21,11 +23,13 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.application.metadata_report import (
     DerivedRegenerationRequired,
+    LedgerMigrationRequired,
     LedgerRebuildRequired,
     MetadataReportError,
     PersistedStateRefusal,
 )
 from tests.support.ledger_partition import _derived_setup, opens, rewrite
+from tests.unit.test_ledger_migrations import chain, identity
 
 _TODAY = "database is unavailable or incompatible"
 _REGENERATION = (
@@ -171,6 +175,63 @@ def test_the_shadow_preview_open_raises_the_same_family(
     with pytest.raises(family):
         open_shadow_preview_repository(store)
     assert _state(store) == before
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "",
+        # An earlier format is decided on its version alone, before any
+        # object or the derived record is compared.
+        "ALTER TABLE owner_links ADD COLUMN planted TEXT",
+        "UPDATE ledger_meta SET derived_version=2",
+        "CREATE TABLE planted(value TEXT)",
+    ],
+    ids=["exact", "altered_ledger_object", "another_derived", "planted_derived"],
+)
+def test_an_earlier_ledger_the_chain_reaches_asks_for_a_regeneration(
+    store: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    """Startup never migrates: it names the command, in the words another
+    build's derived partition gets, and changes nothing."""
+    connection = sqlite3.connect(store)
+    try:
+        connection.executescript(change)
+    finally:
+        connection.close()
+    chain(monkeypatch, identity(1), current=2)
+    refusal = _refusal(store)
+    assert type(refusal) is LedgerMigrationRequired
+    assert isinstance(refusal, DerivedRegenerationRequired)
+    assert str(refusal) == _REGENERATION
+    before = _state(store)
+    with pytest.raises(LedgerMigrationRequired):
+        open_shadow_preview_repository(store)
+    assert _state(store) == before
+
+
+@pytest.mark.parametrize(
+    ("sources", "current", "stored"),
+    [
+        ((2,), 3, 1),
+        ((1,), 3, 1),
+        ((1,), 2, 3),
+        ((), 2, 1),
+    ],
+    ids=["first_step_missing", "last_step_missing", "newer", "no_chain"],
+)
+def test_a_ledger_the_chain_does_not_reach_needs_a_clean_rebuild(
+    store: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sources: tuple[int, ...],
+    current: int,
+    stored: int,
+) -> None:
+    assert rewrite(store, f"UPDATE ledger_meta SET ledger_format_version={stored}")
+    chain(monkeypatch, *(identity(source) for source in sources), current=current)
+    refusal = _refusal(store)
+    assert type(refusal) is LedgerRebuildRequired
+    assert str(refusal) == _REBUILD
 
 
 def test_the_build_partition_is_the_fresh_schema_split_by_ownership() -> None:
