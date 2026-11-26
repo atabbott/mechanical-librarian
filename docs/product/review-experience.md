@@ -13,7 +13,8 @@ This is the product contract for the workspace you sign in to.
 - Review makes no destructive changes ([PRODUCT.md](../../PRODUCT.md)).
 - The server holds every decision. A refresh, another device, a restart or an
   upgrade cannot lose an acknowledged one, unless the upgrade needs a clean
-  rebuild. Browser storage holds preferences only.
+  rebuild or you confirm regenerate-derived's report. Browser storage holds
+  preferences only.
 
 ## Review cases
 
@@ -21,8 +22,8 @@ A review case covers one library item as it stood at one moment: its library
 connection, its internal identity, its fingerprint and its proposals
 ([review cases](../operations/review-case.md)). A new fingerprint or any change
 to its proposals replaces an unresolved case. Mechanical Librarian never
-changes a recorded case or decision. The same item in two libraries is two
-items, and titles and authors never decide identity.
+changes a recorded case or decision. An item in two libraries is two items;
+titles and authors never decide identity.
 
 A case holds the current metadata and cover, and says when either is missing
 or not loaded. It holds the field proposals, the cover and series choices and
@@ -30,9 +31,8 @@ references to their evidence. It holds the rule-based recommendation and
 your decision. Identical
 proposed values become one choice that keeps every source and
 disagreement. Evidence alone never adds a row to Attention. A field that needs
-you never holds back a field that is ready on the same item. Rejected
-alternatives and those that change nothing stay on record and
-are never written.
+you never holds back a field that is ready on the same item. Rejected and
+no-change alternatives stay on record and are never written.
 
 An ebook and its audiobook are separate works with separate cases.
 
