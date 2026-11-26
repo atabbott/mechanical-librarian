@@ -1,7 +1,6 @@
 # Review experience
 
-This is the product contract for the workspace you sign in to: first run,
-Library, Attention, Evidence and History, Policy, Activity and Settings.
+This is the product contract for the workspace you sign in to.
 [PRODUCT.md](../../PRODUCT.md) sets the boundaries, and the
 [automation policy](automation-policy.md) decides which work can be automatic.
 
@@ -35,8 +34,7 @@ you never holds back a field that is ready on the same item. Rejected
 alternatives and those that change nothing stay on record and
 are never written.
 
-An ebook and its audiobook are separate works with separate cases. Deciding one
-never changes the other.
+An ebook and its audiobook are separate works with separate cases.
 
 Mechanical Librarian keeps these apart: the evidence, the recommendation, what
 your policy does with the field, your decision, write permission, and the
@@ -121,8 +119,8 @@ address while signed in goes straight to Library. Attention has no page of its
 own: an old `/attention` address opens Library with Attention open.
 
 The masthead holds still while the live-update and preparation status change.
-It stays at the top only while it takes at most a sixth of the window. Taller,
-it scrolls away, so it never covers content or focus. The
+It stays at the top unless taller than a sixth of the window, so it never
+covers content or focus. The
 masthead marks the current destination, and Library stays marked while a
 review or Attention is open.
 
@@ -149,16 +147,16 @@ and "in progress". Ready to browse and in progress always show. The others hide
 at zero; an unknown count reads `…`. Counts describe the run's books as
 they stand. Each stage bar counts books that first reached it in this run.
 A book that could not finish stops at its last stage. Bars glide to each new
-count unless reduced motion is set. The status line's wipe plays only when the
-run's state changes. Recent completions record each book's first finish, one
-row each: the title, linked into Library, then "Prepared" or "Couldn't
+count. The status line's wipe plays only when the run's state changes. Recent
+completions record each book's first finish, one row each: the title, linked
+into Library, then "Prepared" or "Couldn't
 finish". A rate in works a minute appears only while running.
 
 The masthead's background-work icon fills while libraries are prepared and
 marks what needs you. Its popover shows each library's scan state and works
 checked, or why it stopped, marks a library outside the current run, and offers
 Scan now and Pause. Pause stops new scans. Waiting source lookups keep their schedule. The popover fits the window
-below the masthead and scrolls inside itself if needed. `Escape` closes it
+below the masthead and scrolls inside itself. `Escape` closes it
 and returns focus to its trigger. The popover disables a pending command
 instead of removing it, so focus stays put and a second press sends nothing.
 When no answer confirms a command's result, the popover shows the refreshed
@@ -232,10 +230,10 @@ An audiobook's iTunes listing is only its cover, so an audiobook only iTunes
 found reads "No source matched". An iTunes failure never makes its sources unavailable or puts it under "Some
 lookups gave no usable answer".
 
-A work whose latest preparation could not finish reads Could not finish and
-sits under that heading, counted beside Works as `2 could not
-finish`. This holds even with an earlier report. A
-decision still open on its earlier case keeps it in Needs attention. An ebook
+A work whose latest preparation could not finish reads Could not finish,
+counted beside Works as `2 could not finish`. This holds even with an earlier
+report. A decision still open on its earlier case keeps it in Needs attention.
+An ebook
 that a source matched without offering a change worth proposing stays in No
 attention needed.
 
@@ -263,7 +261,8 @@ Attention is the queue of undecided fields inside Library. Each work appears
 once with its field count, and its fields follow. The open work shows its
 Needs you and Automatic counts. The queue follows the search,
 reading `Matching: f of a works needing a decision`, and keeps its own place.
-Load more attention moves focus to the first new row.
+Load more attention moves focus to the first new row. A field asked again
+says why, with your earlier answer and its day.
 
 ## Deciding a field
 
@@ -283,9 +282,9 @@ Each tab names the field's status:
   such field shows its value, never a selectable `Not set`. In Preview, a
   field Automatic chose earlier reads No change, shows that choice and says
   turning on Automatic decides it, unless your answer or pin holds it. Beside
-  another offered value, an earlier case's or episode's answer asks it; a pin
-  taken back reads Decided only in Preview or where Automatic decided the
-  field.
+  another offered value, an earlier read's answer stands only while the same
+  choices are offered; a pin taken back reads Decided only in Preview or where
+  Automatic decided the field.
 
 Empty fields with no proposal sit behind one `Show N more fields` tab, and
 fields with nothing to decide in one closed panel headed `No change:` and their
@@ -304,13 +303,13 @@ shown, and a decision carries no reminder that writes are protected. A
 disclosure never chooses a value.
 
 At a wider [Book matching](../reference/configuration.md#book-matching) value,
-a field needing you may offer "same title and author" values; History says
-when it asked again.
+a field needing you may offer "same title and author" values.
 
 When a field set to Automatic gets no automatic choice, the canvas says why
 until the cause goes. An unknown reason reads as unknown. A hold says an
 earlier decision keeps Automatic off for the field. Until requested fresh
-checks finish, the field says they were requested, also after a reload. If no
+checks finish, the field says they were requested, also after a reload. If
+they fail, it says so, Resume offered or not. If no
 answer confirms the request, Library reloads the case and says whether it shows
 the request.
 
@@ -358,17 +357,14 @@ writes it back, then reads Keep current value. A description with a link or
 formatting Mechanical Librarian can't write has no such card: restore it in
 Audiobookshelf. A written work
 keeps its case for 30 days with nothing to decide, outside Attention unless a
-pin changed. A work returning to earlier content reads as new, and its
-earlier decisions are history.
+pin changed. A work returning to earlier content reads as new.
 
 ### Pinning a value
 
 Pressing a value's pin chooses that value and pins it, and the page stays on
 the field; if only the choice was recorded, the page says so. Pressing it
-again unpins. The pinned card says Pinned. When Audiobookshelf shows another
-value, the field needs you again and shows what you pinned, with Unpin. Covers
-have no pin. A field pinned under `No change:` stays there. A Library row
-counts its work's pinned fields
+again unpins. The pinned card says Pinned. A field pinned under `No change:`
+stays there. A Library row counts its work's pinned fields
 ([pinned fields](automation-policy.md#pinned-fields)).
 
 ### Audiobooks
@@ -504,7 +500,7 @@ fifth tab is [Taste profile](cover-taste-profile.md); its
 ## Evidence and History
 
 `/review/{case}` is a read-only page with Evidence and History tabs. Neither
-has decision controls or shows internal identifiers.
+shows internal identifiers.
 
 - Evidence lists what each source said for each field, with each lookup's
   result under Sources. When source answers are no longer available, it says
@@ -513,7 +509,9 @@ has decision controls or shows internal identifiers.
   and in the comparison footer. An audiobook's iTunes lookup
   is for a cover only, so a listing it finds reads "Cover found".
 - History lists your choices and automatic outcomes for the case, each with
-  its time. It shows a value only where the record links it exactly.
+  its time. It shows a value only where the record links it exactly. An
+  answer kept from an earlier read names that read's day and adds no Activity
+  row.
 
 Both keep your place in Library, and Back to work returns to the same work and
 field. In Library, History is under More; Activity holds it across
@@ -540,14 +538,15 @@ results. Results that read the same under both policies are listed apart and
 not counted. "Not previewed" holds what the preview could not reach, each
 with its reason. An edited draft is named "Custom policy". Activation names
 the libraries that keep write permission, or says none has it and activating
-grants none.
+grants none. Retry failed works shows only while some remain.
 
 ## Activity
 
-Activity is always in the masthead and has no badge. While a change waits for
+Activity is always in the masthead, with no badge. While a change waits for
 you, such as a description to restore in Audiobookshelf, the page never says
 no action is needed. Pausing writes and removing a library's write
-permission are in a section you open.
+permission are in a section you open. An upgrade notice here and in Attention
+counts answers kept and asked again until dismissed.
 
 ### Write permission
 
@@ -572,9 +571,10 @@ The ledger shows one row per change: the work or setting, the field, the exact
 before and after, who chose it, and whether Audiobookshelf confirmed it.
 Categories are your choice, automatic choice, policy change and recovery.
 Values come from the record made at the time, so later changes never alter
-history. A record that was no change, such as a paused preparation, says
-what happened. Automatic checks with nothing to write gather into one
-row, "Checked N fields, no changes". Each Details control names its row's
+history. Details on an answer asked again say why. A record that was no
+change, such as a paused preparation, says what happened. Automatic checks
+with nothing to write gather into one row, "Checked N fields, no changes".
+Each Details control names its row's
 field, work, result and time. Search, filters, a 7, 30 or 90-day range and 25,
 50 or 100-row pages run on the server. An unknown filter shows every event and
 says so.

@@ -41,11 +41,14 @@ A ledger row's result is history and never changes. A row can carry a note
 from current state under it, read for the returned page only and never
 cached, searched or filtered (#1711):
 
-- **Asked again**: an owner choice made before the book last came back for
-  review (its content returned, or a policy change brought the case back), so
-  it no longer counts and the field is asking again. When Book matching asked
-  again over a choice already written and verified, Details adds that
-  Audiobookshelf keeps the value already written.
+- **Asked again**: the owner choice the field's record holds, or the one a
+  carried answer was kept from, while the work's current case asks the field
+  again. Details says why: the choices or the value in Audiobookshelf changed,
+  a later choice was withdrawn, Resume automatic handling did not finish, the
+  choice was not written before the upgrade, Book matching changed what the
+  field offers, or the choice no longer counts. When Book matching asked again
+  over a choice already written and verified, Details adds that Audiobookshelf
+  keeps the value already written. A carried answer has no row of its own.
 - **Held back**: a planned automatic write while the posture is not Automatic;
   it will not be written unless Automatic is turned back on.
 - **Held by you**: an automatic choice on a field your earlier decision holds,
