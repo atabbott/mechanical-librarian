@@ -84,9 +84,10 @@ value, the field returns to Attention with the pinned value beside it, and
 Automatic still decides nothing; pinning the new value or Unpin settles it.
 Unpin removes the pin but keeps your answer, so Automatic writes nothing for the
 field until Resume automatic handling. Where the field is Automatic and you
-only pinned it, Automatic still decides it on that work and later ones, and the
-field reads as decided. Otherwise a pin taken back reads as if you had not
-pinned it, or in Preview as held. Choosing another value ends the pin. A field has no pin while a change that is not your own standing answer waits to be written, after
+only pinned it, Automatic still decides it on that work and later ones where
+it has something to decide, and the field then reads as decided. Otherwise a
+pin taken back reads as if you had not pinned it, or, for a field set to
+Automatic, in Preview as held. Choosing another value ends the pin. A field has no pin while a change that is not your own standing answer waits to be written, after
 Resume automatic handling until you choose again, on a description while your
 choice of the adviser's text stands, where the library's value could not be
 read, and on covers
