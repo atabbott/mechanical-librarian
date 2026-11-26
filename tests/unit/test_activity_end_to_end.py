@@ -518,10 +518,11 @@ def _regenerated_reading(path: Path) -> tuple[dict[str, str], set[str]]:
         moved = after[row_id]
         for key in ("work_label", "library", "destination", "category", "state"):
             assert moved[key] == event[key], (row_id, key)
-        # Automatic's rows keep no copy of their value or authors, a reading
-        # ADR-0108 accepts; the owner's read as they did.
+        # Every row says the same change; Automatic's rows keep no copy of
+        # their authors, a reading ADR-0108 accepts, and the owner's read as
+        # they did.
+        assert moved["change"] == event["change"], row_id
         if row_id in owner:
-            assert moved["change"] == event["change"], row_id
             assert moved["author_label"] == event["author_label"], row_id
             assert json.dumps(moved["evidence"]) == json.dumps(event["evidence"])
     for row_id, event in before.items():
@@ -575,9 +576,14 @@ def test_activity_keeps_every_ledger_row_across_a_regeneration(
         lambda: 10,
         lambda *_: None,
     ).schedule()
-    owner, automatic = _regenerated_reading(
-        copied_store(effects.repository, tmp_path / "automatic-store")
+    automatic_path = copied_store(effects.repository, tmp_path / "automatic-store")
+    (kept,) = (
+        event["change"]
+        for event in _activity_paths(automatic_path).values()
+        if event["state"] == "no_change_required"
     )
+    assert kept == "Kept Secret History"
+    owner, automatic = _regenerated_reading(automatic_path)
     assert not owner and len(automatic) == 1
     # The owner's authored description, settled with no change.
     (tmp_path / "authored").mkdir(mode=0o700)
