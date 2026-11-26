@@ -467,10 +467,12 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         ADR-0108), in force or not as read on this case (S15).
 
         The pinned value is the chosen value where the pinned answer chose
-        one, and otherwise the value of that answer's case. The chosen value
-        is parsed here, not extracted in SQL, which would read a JSON boolean
-        as an integer. Kept apart so `read_current_review_case` stays under
-        the code-size guide.
+        one, and otherwise the value of that answer's case, read from the
+        answer's own copy of its case's target field (ADR-0108), never from
+        the case, which a regeneration deletes. The chosen value is parsed
+        here, not extracted in SQL, which would read a JSON boolean as an
+        integer. Kept apart so `read_current_review_case` stays under the
+        code-size guide.
         """
         return tuple(
             (
@@ -489,15 +491,13 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             for row in self._connection.execute(
                 "SELECT pinned.destination,"
                 + pin_in_force_sql(":case", "pinned.destination")
-                + ",human.outcome,human.selected_value_document,target.value FROM "
+                + ",human.outcome,human.selected_value_document,"
+                "human.target_field_document FROM "
                 + _CASE_RECORD_ROWS_SQL.format(alias="pinned")
                 + " JOIN human_decisions human ON human.decision_id=pinned.answer_id "
                 "AND human.outcome IN ('pin','keep_current','accept','owner_entered') "
-                "JOIN review_cases review "
-                "ON review.review_case_id=human.review_case_id,"
-                "json_each(review.document,'$.target.fields') target "
                 "WHERE pinned.pin_fingerprint IS NOT NULL "
-                "AND json_extract(target.value,'$.destination')=pinned.destination "
+                "AND json_type(human.target_field_document)='object' "
                 "ORDER BY pinned.destination",
                 {"case": review_case_id},
             )

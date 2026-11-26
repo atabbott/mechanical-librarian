@@ -31,7 +31,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
@@ -556,15 +555,6 @@ def _activity_keeps_every_owner_row(
     assert after["search_labels"] == before["search_labels"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "#2039 P6c finding: the case page reads a pin's value from the pinned "
-        "answer's own case (review_projections._pins joins review_cases), "
-        "which a regeneration removes, so the pin is not shown on the new "
-        "case although the record keeps it in force"
-    ),
-)
 def test_a_pin_reads_in_force_on_the_first_case_after_a_regeneration(
     tmp_path: Path,
 ) -> None:
