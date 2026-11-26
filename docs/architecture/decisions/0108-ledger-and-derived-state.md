@@ -582,7 +582,7 @@ a provider, and is composed with no network client.
    instead. It names, per blocking item,
    the reasons it can compute offline (writes paused, a destination or
    connection suspended, preparation paused, the library no longer
-   configured), and otherwise says to start the previous image and read
+   configured), and otherwise says to start the previous build and read
    Activity.
 3. **The report**, per library, naming items only by item key and
    destination, never a title, author, path or value: (1) unwritten answers,
@@ -607,7 +607,11 @@ a provider, and is composed with no network client.
    private scratch copy with `VACUUM INTO`, syncs it, verifies it with
    `integrity_check` and a digest of every table against the source, and renames
    it to `/data/regeneration-backup/epoch-<n>.sqlite3` (directory `0700`, file
-   `0600`, an unsafe existing entry refused), replacing any earlier copy. Crash
+   `0600`, an unsafe existing entry refused), replacing any earlier copy. When
+   the volume is short only because it holds the copy of this same epoch (a
+   killed or failed earlier run), and that copy's ledger digest equals the
+   database's, its size counts as free and it is removed immediately before
+   the new copy is taken; otherwise the free-space refusal stands. Crash
    recovery ignores that directory, and first-boot detection ignores it when it
    is a private (`0700`) directory of the runtime user, failing closed on any
    other entry under that name. The artifact sweep
