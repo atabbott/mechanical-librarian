@@ -222,7 +222,7 @@ def test_unsynced_journal_refusals_preserve_original_bytes_and_inodes(
     assert set(tmp_path.iterdir()) == {path, alias, journal}
 
 
-@pytest.mark.parametrize("change", ["appended", "rewritten", "mode"])
+@pytest.mark.parametrize("change", ["appended", "mtime", "content", "mode"])
 def test_inert_journal_changed_after_admission_is_kept_and_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
 ) -> None:
@@ -242,9 +242,16 @@ def test_inert_journal_changed_after_admission_is_kept_and_refused(
         if change == "appended":
             with journal.open("ab") as stream:
                 stream.write(bytes(1))
-        elif change == "rewritten":
+        elif change == "mtime":
             # Same bytes, new modification time.
             os.utime(journal, ns=(journal.stat().st_atime_ns, 1))
+        elif change == "content":
+            # One header padding byte, same size and modification time.
+            before = journal.stat()
+            with journal.open("r+b") as stream:
+                stream.seek(100)
+                stream.write(b"\x01")
+            os.utime(journal, ns=(before.st_atime_ns, before.st_mtime_ns))
         else:
             journal.chmod(0o644)
 
