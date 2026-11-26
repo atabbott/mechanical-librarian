@@ -1352,6 +1352,11 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .cm-library-handoff-action { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem .9rem; }
 .cm-library-handoff-action > a:not(.button-primary) { display:inline-flex; min-height:44px; align-items:center; font-size:.78rem; font-weight:650; }
 .cm-library-handoff-reason, .cm-library-handoff [role='alert'] { grid-column:1 / -1; margin:0; color:var(--soft); font-size:.78rem; line-height:1.4; }
+/* The upgrade notice has one short action: it sits at the inline end beside
+   the sentence, and wraps under it, full width on phones, when there is no room. */
+.cm-library-handoff.cm-upgrade-notice { display:flex; flex-wrap:wrap; justify-content:space-between; }
+.cm-upgrade-notice > div:first-child { flex:1 1 min(100%,18rem); min-width:0; }
+.cm-upgrade-notice > [role='alert'] { flex-basis:100%; }
 @media (max-width:760px) {
   .cm-write-consent-summary { gap:.75rem; }
   .cm-write-consent-summary dl { gap:.3rem 0; }
@@ -1362,6 +1367,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
   .cm-library-handoff-action { align-items:stretch; flex-direction:column; }
   .cm-library-handoff-action > a.button-primary { padding-inline:.4rem; }
   .cm-library-handoff-action button { width:100%; }
+  .cm-upgrade-notice > .cm-library-handoff-action { flex-basis:100%; }
 }
 @media (prefers-reduced-motion:reduce) { .live-state i { animation:none!important; } }
 

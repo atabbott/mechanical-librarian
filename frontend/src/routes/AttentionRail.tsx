@@ -245,7 +245,7 @@ export const AttentionRail = ({
         </div>
         <button onClick={closeAttention}>Close</button>
       </header>
-      <UpgradeNotice http={http} />
+      <UpgradeNotice http={http} focusAfterDismiss={attentionHeading} />
       {attention.data === undefined && attention.error instanceof BuildMismatchError ? (
         <StaleBuildRead lead="Attention was not loaded." ref={attentionRetry} />
       ) : attention.data === undefined ? (

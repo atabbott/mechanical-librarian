@@ -536,6 +536,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   })
   const confirmBusy = mutation.isPending || permissions.isFetching
   const commandStatusRef = useRef<HTMLParagraphElement>(null)
+  const pageHeading = useRef<HTMLElement>(null)
   useEffect(() => {
     if (!mutation.isError || !status) return
     commandStatusRef.current?.focus({ preventScroll: true })
@@ -780,7 +781,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         focusedEntry.current = event.target.hasAttribute('data-consent-entry') ? event.target : null
       }}
     >
-      <header className="cm-page-heading" tabIndex={-1} data-route-focus>
+      <header ref={pageHeading} className="cm-page-heading" tabIndex={-1} data-route-focus>
         <div>
           <h1>Activity</h1>
         </div>
@@ -812,7 +813,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                                   : 'No action needed'}
         </StatusPill>
       </header>
-      <UpgradeNotice http={http} />
+      <UpgradeNotice http={http} focusAfterDismiss={pageHeading} />
       <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
         <header className="cm-activity-ledger-heading">
           <div>

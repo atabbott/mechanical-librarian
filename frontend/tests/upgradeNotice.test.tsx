@@ -111,6 +111,17 @@ describe('upgrade notice dismissal', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull())
   })
 
+  it('is no live region, so the counts are not announced again on each read', async () => {
+    const http = httpWith(notice(12, 3, true))
+    const { container } = renderNotice(http)
+    await screen.findByRole('button', { name: 'Dismiss' })
+    const section = container.querySelector('.cm-upgrade-notice')
+    expect(section).not.toHaveAttribute('aria-live')
+    expect(section?.closest('[aria-live]')).toBeNull()
+    expect(within(section as HTMLElement).queryByRole('status')).toBeNull()
+    expect(within(section as HTMLElement).queryByRole('alert')).toBeNull()
+  })
+
   it('reads a stale notice again and says nothing more', async () => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -204,6 +215,44 @@ describe('upgrade notice placement', () => {
     expect(within(rail).queryByText(sentence)).toBeNull()
     expect(within(rail).queryByRole('button', { name: 'Dismiss' })).toBeNull()
     expect(http.dismissUpgradeNotice).toHaveBeenCalledTimes(1)
+  })
+
+  it('a dismissal on Activity moves focus to the Activity heading', async () => {
+    const user = userEvent.setup()
+    renderRoute('/activity', httpWith(notice(12, 3)))
+    await screen.findByText(sentence)
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.queryByText(sentence)).toBeNull())
+    const heading = screen.getByRole('heading', { level: 1, name: 'Activity' })
+    expect(document.activeElement).toBe(heading.closest('header'))
+    expect(document.activeElement).toHaveAttribute('data-route-focus')
+  })
+
+  it('a dismissal in the Attention rail moves focus to the Attention heading', async () => {
+    const user = userEvent.setup()
+    renderRoute('/library?lens=all&attention=open', httpWith(notice(12, 3)))
+    const rail = await screen.findByLabelText('Attention queue')
+    await within(rail).findByText(sentence)
+    await user.click(within(rail).getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(within(rail).queryByText(sentence)).toBeNull())
+    expect(document.activeElement).toBe(within(rail).getByRole('heading', { name: 'Attention' }))
+  })
+
+  it('a dismissal leaves focus the owner moved elsewhere while it ran', async () => {
+    const user = userEvent.setup()
+    const http = httpWith(notice(12, 3))
+    let answer: (() => void) | undefined
+    http.dismissUpgradeNotice = vi.fn(
+      () => new Promise<void>((resolve) => (answer = () => resolve())),
+    )
+    renderRoute('/activity', http)
+    await screen.findByText(sentence)
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }))
+    const [elsewhere] = screen.getAllByRole('link')
+    elsewhere?.focus()
+    await act(async () => answer?.())
+    await waitFor(() => expect(screen.queryByText(sentence)).toBeNull())
+    expect(document.activeElement).toBe(elsewhere)
   })
 
   it('a dismissal in the Attention rail hides it on Activity', async () => {

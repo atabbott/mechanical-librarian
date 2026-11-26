@@ -1,4 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useRef } from 'react'
+import type { RefObject } from 'react'
 
 import { ApiError, refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type { ReviewHttp, UpgradeNotice as UpgradeNoticeData, UpgradeNoticeView } from '../api/http'
@@ -57,12 +59,16 @@ const noticeText = (notice: UpgradeNoticeData, showAllKept: boolean): string | n
 
 export const UpgradeNotice = ({
   http,
+  focusAfterDismiss,
   showAllKept = SHOW_ALL_KEPT_NOTICE,
 }: {
   http: ReviewHttp
+  /** The surface's heading, which takes focus when a dismissal removes the notice. */
+  focusAfterDismiss?: RefObject<HTMLElement | null>
   showAllKept?: boolean
 }) => {
   const queryClient = useQueryClient()
+  const section = useRef<HTMLElement>(null)
   const query = useQuery({
     queryKey: upgradeNoticeKey,
     queryFn: (context) => http.getUpgradeNotice(context.signal, queryWorkClass(context)),
@@ -74,9 +80,14 @@ export const UpgradeNotice = ({
     mutationFn: (regenerationId: string) => http.dismissUpgradeNotice(regenerationId),
     retry: false,
     onSuccess: () => {
+      // The dismissed notice takes its focused button with it; focus moved
+      // elsewhere while the request ran is left where it is.
+      const active = document.activeElement
+      const hadFocus = active === document.body || !!section.current?.contains(active)
       queryClient.setQueryData<UpgradeNoticeView>(upgradeNoticeKey, (current) =>
         current ? { ...current, notice: null } : current,
       )
+      if (hadFocus) focusAfterDismiss?.current?.focus()
     },
     // A notice dismissed elsewhere, or replaced by a newer regeneration, is
     // read again: it goes, or says the newer counts.
@@ -88,7 +99,9 @@ export const UpgradeNotice = ({
   if (text === null) return null
   const stale = dismissal.error instanceof ApiError && dismissal.error.code === 'stale'
   return (
-    <section className="cm-library-handoff cm-upgrade-notice" aria-live="polite">
+    // No live region: the counts re-read every 15 s while preparing and are
+    // not announced again; only the dismissal's error is, as an alert.
+    <section ref={section} className="cm-library-handoff cm-upgrade-notice">
       <div>
         <p>{text}</p>
       </div>
