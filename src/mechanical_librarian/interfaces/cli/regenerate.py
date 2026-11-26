@@ -131,20 +131,18 @@ UPPER_LIMITS = (
 REPLACES = "The restore point already in /data/regeneration-backup will be replaced."
 REPLACED = "The earlier restore point in /data/regeneration-backup was replaced."
 GO_AHEAD = "Nothing was changed. To go ahead, run regenerate-derived --retire-pending."
-# Success, option A of each draft (the owner's choice is one constant each):
-# with no report printed, and after a printed report, whose lists say which
-# answers are kept.
+# Success (owner's choice, option B): with no report printed, and after a
+# printed report, whose lists say which answers are kept.
 REGENERATED = (
-    "Regenerated. Start the server and preparation reads every library again. "
-    "Your answers, settings and write history are kept. A restore point is in "
-    "/data/regeneration-backup. Delete it once you are satisfied; until then "
-    "unused cover files are kept."
+    "Regenerated. Your answers, settings and write history are kept. Start the "
+    "server to read every library again. Delete /data/regeneration-backup once "
+    "you are satisfied; while it is there, unused cover files are kept."
 )
 REGENERATED_AS_LISTED = (
-    "Regenerated. Start the server and preparation reads every library again. "
-    "Your settings and write history are kept, and your answers as listed "
-    "above. A restore point is in /data/regeneration-backup. Delete it once "
-    "you are satisfied; until then unused cover files are kept."
+    "Regenerated. Your settings and write history are kept, and your answers as "
+    "listed above. Start the server to read every library again. Delete "
+    "/data/regeneration-backup once you are satisfied; while it is there, "
+    "unused cover files are kept."
 )
 
 
