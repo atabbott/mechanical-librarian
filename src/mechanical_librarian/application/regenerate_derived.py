@@ -158,7 +158,8 @@ class RegenerationSession(Protocol):
     def derived_is_current(self) -> bool: ...
 
     def free_space(self) -> tuple[int, int]:
-        """Bytes free on the volume and bytes the run needs."""
+        """Bytes free on the volume, counting a held restore point the run
+        replaces, and bytes the run needs."""
         ...
 
     def store_libraries(self) -> Libraries | None:

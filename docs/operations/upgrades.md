@@ -137,8 +137,10 @@ The volume needs free space for four times the application database: the
 copy, the rollback journal, and crash recovery's copies of the file and
 journal. The command checks this before its first write, and a volume that
 fills while it runs stops it with the same message. After an interrupted run,
-the free-space check counts the copy that run left; deleting
-`/data/regeneration-backup` frees it.
+while nothing has changed the database since, the copy that run left counts as
+free space, since running the command again replaces it: the command removes
+it just before taking the new copy. Any other earlier copy takes space;
+deleting `/data/regeneration-backup` frees it.
 
 While the folder holds anything, unused cover files in `/data/artifacts` are
 kept and released cover originals are not removed, so the copy and the

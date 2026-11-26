@@ -10,7 +10,10 @@ empty derived partition, the state the next startup validates.
 
 The gate, the report and the cover pointer plan read ledger rows only. The
 retained backup is a verified `VACUUM INTO` copy renamed into
-`regeneration-backup`. The regeneration itself is one transaction.
+`regeneration-backup`. On a short volume, a held copy of the same epoch whose
+ledger matches the database's, as an interrupted run leaves it, counts as
+free space and is removed just before the new copy is taken. The
+regeneration itself is one transaction.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ import sys
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
-from typing import NoReturn
+from typing import NamedTuple, NoReturn
 from urllib.parse import quote
 
 from mechanical_librarian._version import __version__
@@ -368,10 +371,10 @@ class SQLiteRegenerationStore:
         connection: sqlite3.Connection | None = None
         try:
             with _named_failures(binding.parent_descriptor, binding.descriptor):
-                connection = self._admitted(binding)
+                connection, held = self._admitted(binding)
             # Admission is never lent to a dependent: no schema attestation.
             session = SQLiteRegenerationSession(
-                connection, binding, self._clock, started_at
+                connection, binding, self._clock, started_at, held
             )
         except BaseException:
             if connection is not None:
@@ -381,9 +384,12 @@ class SQLiteRegenerationStore:
         return session
 
     @staticmethod
-    def _admitted(binding: _LinuxDatabaseBinding) -> sqlite3.Connection:
+    def _admitted(
+        binding: _LinuxDatabaseBinding,
+    ) -> tuple[sqlite3.Connection, _HeldCopy | None]:
         """Validation points 2 and 3 over the bound database; the connection
-        they admit, ready for the run."""
+        they admit, ready for the run, and the held restore point the
+        free-space gate counted as free, if it needed to."""
         _validate_ledger_read_only(binding.alias_path, binding.descriptor)
         binding.require_current()
         connection = _connect_bound(
@@ -399,6 +405,7 @@ class SQLiteRegenerationStore:
                 "PRAGMA busy_timeout=5000",
             ):
                 connection.execute(pragma)
+            held = None
             # A database of this build has nothing to regenerate: the run
             # writes nothing, so it needs neither the reserve nor the copy.
             if not _derived_is_current(connection):
@@ -406,14 +413,129 @@ class SQLiteRegenerationStore:
                 # refusal comes before it, never a full volume met while copying.
                 free, needed = _space(binding.parent_descriptor, binding.descriptor)
                 if free < needed:
-                    raise InsufficientSpace(
-                        free, needed, backup_held(binding.parent_descriptor)
-                    )
+                    # Only a short volume pays for reading the held copy.
+                    held = _replaced_copy(connection, binding.parent_descriptor)
+                    if held is None or free + held.size < needed:
+                        raise InsufficientSpace(
+                            free, needed, backup_held(binding.parent_descriptor)
+                        )
                 _validate_ledger_content(connection, binding)
         except BaseException:
             connection.close()
             raise
-        return connection
+        return connection, held
+
+
+# --- A held restore point the run replaces ---------------------------------
+
+
+class _HeldCopy(NamedTuple):
+    """The held restore point as admission checked it: its name and its
+    device, inode, size and modification time."""
+
+    name: str
+    identity: tuple[int, int, int, int]
+
+    @property
+    def size(self) -> int:
+        return self.identity[2]
+
+
+def _identity(information: os.stat_result) -> tuple[int, int, int, int]:
+    return (
+        information.st_dev,
+        information.st_ino,
+        information.st_size,
+        information.st_mtime_ns,
+    )
+
+
+def _retained_name(connection: sqlite3.Connection) -> str:
+    """The name `back_up` gives the copy of the database as it stands."""
+    (epoch,) = connection.execute(
+        "SELECT derived_epoch FROM ledger_meta WHERE singleton=1"
+    ).fetchone()
+    return f"epoch-{epoch}.sqlite3"
+
+
+def _open_held(directory: int, name: str) -> int | None:
+    """`name` in the restore point folder, opened read-only without following
+    a link or waiting on a pipe, when it is a regular file of ours."""
+    try:
+        held = os.open(
+            name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+        )
+    except OSError:
+        return None
+    try:
+        information = os.fstat(held)
+    except OSError:
+        information = None
+    if (
+        information is None
+        or not stat.S_ISREG(information.st_mode)
+        or information.st_uid != os.geteuid()
+    ):
+        os.close(held)
+        return None
+    return held
+
+
+def _open_held_in_folder(parent: int, name: str) -> int | None:
+    """`_open_held` in `regeneration-backup`, read without creating it, when
+    the folder is one `_backup_directory` keeps: `0700` and ours."""
+    try:
+        directory = os.open(
+            BACKUP_DIRECTORY,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=parent,
+        )
+    except OSError:
+        return None
+    try:
+        folder = os.fstat(directory)
+        if folder.st_uid != os.geteuid() or stat.S_IMODE(folder.st_mode) != 0o700:
+            return None
+        return _open_held(directory, name)
+    finally:
+        os.close(directory)
+
+
+def _ledger_digests(connection: sqlite3.Connection) -> list[str]:
+    return [
+        _table_digest(connection, name, sql)
+        for kind, name, _, sql in build_partition().ledger_objects
+        if kind == "table"
+    ]
+
+
+def _replaced_copy(connection: sqlite3.Connection, parent: int) -> _HeldCopy | None:
+    """The held restore point this run replaces, which the free-space gate
+    counts as free: the copy `back_up` would write over, of the database's
+    current epoch, whose every ledger table holds exactly the database's
+    rows, so the run that took it changed nothing. A copy that cannot be
+    read, or lacks a ledger table, is not one. Reads the whole copy."""
+    name = _retained_name(connection)
+    held = _open_held_in_folder(parent, name)
+    if held is None:
+        return None
+    try:
+        identity = _identity(os.fstat(held))
+        uri = f"file:/proc/self/fd/{held}?mode=ro"
+        copy = sqlite3.connect(uri, uri=True, isolation_level=None)
+        try:
+            _prepare(copy)
+            copy.execute("BEGIN")
+            same = _ledger_digests(copy) == _ledger_digests(connection)
+        finally:
+            copy.close()
+        if not same or _identity(os.fstat(held)) != identity:
+            return None
+    except (OSError, sqlite3.Error):
+        return None
+    finally:
+        os.close(held)
+    return _HeldCopy(name, identity)
 
 
 def _derived_is_current(connection: sqlite3.Connection) -> bool:
@@ -536,11 +658,14 @@ class SQLiteRegenerationSession:
         binding: _LinuxDatabaseBinding,
         clock: Callable[[], int],
         started_at: int,
+        held: _HeldCopy | None,
     ) -> None:
         self._connection = connection
         self._binding = binding
         self._clock = clock
         self._started_at = started_at
+        self._held = held
+        self._credited = False
         self._backup_sha256: str | None = None
 
     def close(self) -> None:
@@ -561,8 +686,32 @@ class SQLiteRegenerationSession:
             return _derived_is_current(self._connection)
 
     def free_space(self) -> tuple[int, int]:
+        """Free space counts the held restore point admission found the run
+        replaces, while it is unchanged and the volume is short without it;
+        `back_up` then removes it just before taking the new copy."""
         with self._named_failures():
-            return _space(self._binding.parent_descriptor, self._binding.descriptor)
+            free, needed = _space(
+                self._binding.parent_descriptor, self._binding.descriptor
+            )
+            held = self._held
+            self._credited = (
+                free < needed
+                and held is not None
+                and free + held.size >= needed
+                and self._held_unchanged(held)
+            )
+            if self._credited and held is not None:
+                return free + held.size, needed
+            return free, needed
+
+    def _held_unchanged(self, held: _HeldCopy) -> bool:
+        descriptor = _open_held_in_folder(self._binding.parent_descriptor, held.name)
+        if descriptor is None:
+            return False
+        try:
+            return _identity(os.fstat(descriptor)) == held.identity
+        finally:
+            os.close(descriptor)
 
     def store_libraries(self) -> Libraries | None:
         """The stored settings' libraries, decoded without their secrets;
@@ -765,13 +914,12 @@ class SQLiteRegenerationSession:
             self._back_up()
 
     def _back_up(self) -> None:
-        (epoch,) = self._connection.execute(
-            "SELECT derived_epoch FROM ledger_meta WHERE singleton=1"
-        ).fetchone()
-        retained = f"epoch-{epoch}.sqlite3"
+        retained = _retained_name(self._connection)
         directory = self._backup_directory()
         try:
             with _scratch(self._binding) as (scratch, path):
+                if self._credited:
+                    self._remove_held(directory, retained)
                 self._connection.execute("VACUUM INTO ?", (str(path),))
                 copy = os.open(
                     _SCRATCH_COPY, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=scratch
@@ -796,6 +944,23 @@ class SQLiteRegenerationSession:
         finally:
             os.close(directory)
         self._backup_sha256 = digest.hexdigest()
+
+    def _remove_held(self, directory: int, retained: str) -> None:
+        """Remove the held copy the free-space gate counted as free, only if
+        it is still the file admission checked; otherwise refuse for space,
+        as without it, and leave it."""
+        held = self._held
+        if held is not None and held.name == retained:
+            descriptor = _open_held(directory, retained)
+            if descriptor is not None:
+                try:
+                    same = _identity(os.fstat(descriptor)) == held.identity
+                finally:
+                    os.close(descriptor)
+                if same:
+                    os.unlink(retained, dir_fd=directory)
+                    return
+        raise _no_space(self._binding.parent_descriptor, self._binding.descriptor)
 
     # --- The one transaction ------------------------------------------------
 
