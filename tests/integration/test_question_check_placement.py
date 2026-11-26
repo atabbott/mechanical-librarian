@@ -137,6 +137,14 @@ def test_the_same_question_carries_the_answer_on_every_projection_path(
     assert store.repository._connection.execute(
         "SELECT kind FROM human_decision_events WHERE decision_id=?", (carried_id,)
     ).fetchall() == [("human_decision_carried",)]
+    # The carry writes no no-change row of its own (ADR-0108; agreed with C3).
+    assert (
+        store.repository._connection.execute(
+            "SELECT COUNT(*) FROM field_effect_no_changes WHERE decision_id=?",
+            (carried_id,),
+        ).fetchone()[0]
+        == 0
+    )
     # A settled row plans nothing.
     assert carried_id not in {
         json.loads(document)["decision_id"]
