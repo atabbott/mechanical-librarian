@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, displayValue } from '../src/api/http'
+import { ApiError, displayValue, ReviewApiClient } from '../src/api/http'
 import type {
   CaseDetailView,
   DecisionCommand,
@@ -23,6 +23,7 @@ import {
   renderRoute,
   loadRouteModules,
 } from './fixtures'
+import { caseHistory, historyDecisionItem } from './wireFixtures'
 
 beforeAll(loadRouteModules)
 
@@ -2210,5 +2211,34 @@ describe('an earlier answer asked again', () => {
     )
     const subtitle = screen.getByRole('heading', { name: 'Subtitle' }).closest('article')
     expect(subtitle).not.toHaveTextContent('Kept from your choice')
+  })
+
+  it('reads a carried history event off the wire as an owner row with its kept-from line', async () => {
+    // The wire's own `human_decision_carried` event, through the client's
+    // decoder and mapper, is the row History words (#2039).
+    const document = caseHistory({
+      items: [
+        historyDecisionItem({
+          application: 'settled',
+          kind: 'human_decision_carried',
+          kept_from: at,
+          occurred_at: at + 86_400,
+          outcome: 'keep_current',
+          previous_value: { kind: 'text', value: 'Kept title' },
+          selected_value: { kind: 'text', value: 'Kept title' },
+        }),
+      ],
+    })
+    const client = new ReviewApiClient({
+      csrf: { current: () => 'a'.repeat(32), renew: async () => 'b'.repeat(32) },
+      fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+    })
+    const getHistory = vi.fn<ReviewHttp['getHistory']>((...read) => client.getHistory(...read))
+    renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
+    const title = (await screen.findByRole('heading', { name: 'Title' })).closest('article')
+    expect(title).toHaveTextContent('You kept the current value.')
+    expect(title).toHaveTextContent(
+      `Kept from your choice on ${formatDate(at, new Date())}, because the same choices were offered.`,
+    )
   })
 })

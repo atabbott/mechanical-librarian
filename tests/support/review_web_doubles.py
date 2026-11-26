@@ -17,7 +17,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Generic, NoReturn, TypeVar, cast
+from typing import Any, Generic, NoReturn, TypeVar, cast
 
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
@@ -39,6 +39,10 @@ from mechanical_librarian.application.metadata_policy import (
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.owner_search import OwnerSearchRefused
+from mechanical_librarian.application.regeneration_notice import (
+    RegenerationNotice,
+    RegenerationNoticeStore,
+)
 from mechanical_librarian.application.review_covers import (
     CalibrationRow,
     CoverKey,
@@ -100,10 +104,6 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
-)
-from mechanical_librarian.domain.upgrade_notice import (
-    DerivedRegeneration,
-    UpgradeNoticeError,
 )
 from mechanical_librarian.domain.value_flags import report_source_titles, value_flags
 from mechanical_librarian.interfaces.web import StoreOwnerPassword
@@ -234,9 +234,9 @@ class FakeReviewRepository:
         self.dismissed_preparation_runs: list[str] = []
         self.dismiss_preparation_error: Exception | None = None
         # The latest regeneration of the derived rows (#2039); none by
-        # default, as the stub store answers until #2040 records them.
-        self.derived_regeneration: DerivedRegeneration | None = None
-        self.dismissed_regenerations: list[str] = []
+        # default, as the ledger's store answers before the first.
+        self.regeneration_notice: RegenerationNotice | None = None
+        self.dismissed_regenerations: list[int] = []
         self.upgrade_notice_error: Exception | None = None
         # Each recorded use of Library, and what the next one answers (#1351).
         self.library_visits: list[tuple[ListingPositions | None, int]] = []
@@ -320,25 +320,34 @@ class FakeReviewRepository:
         self.dismissed_preparation_runs.append(run_id)
         self.preparation_presentation_value = None
 
-    def latest_derived_regeneration(self) -> DerivedRegeneration | None:
-        if self.upgrade_notice_error is not None:
-            raise self.upgrade_notice_error
-        return self.derived_regeneration
+    def regeneration_notice_store(self) -> RegenerationNoticeStore:
+        return self
 
-    def dismiss_derived_regeneration(
-        self, regeneration_id: str, _dismissed_at: int
-    ) -> None:
-        # One dismissal per regeneration: the latest one's is recorded once,
-        # and dismissing it again is accepted and changes nothing. Any other
-        # id is stale, as the stub store refuses every id.
+    def read_regeneration_notice(self) -> RegenerationNotice | None:
         if self.upgrade_notice_error is not None:
             raise self.upgrade_notice_error
-        regeneration = self.derived_regeneration
-        if regeneration is None or regeneration.regeneration_id != regeneration_id:
-            raise UpgradeNoticeError("stale")
-        if not regeneration.dismissed:
-            self.dismissed_regenerations.append(regeneration_id)
-            self.derived_regeneration = replace(regeneration, dismissed=True)
+        return self.regeneration_notice
+
+    def dismiss_regeneration_notice(
+        self, regeneration_id: int, dismissed_at: int
+    ) -> bool:
+        # As the ledger's store answers: one dismissal per regeneration, a
+        # second one changes nothing, and an unknown regeneration or one not
+        # finished at `dismissed_at` is refused.
+        if self.upgrade_notice_error is not None:
+            raise self.upgrade_notice_error
+        notice = self.regeneration_notice
+        if (
+            notice is None
+            or notice.regeneration_id != regeneration_id
+            or dismissed_at < notice.finished_at
+        ):
+            raise MetadataReportError("regeneration notice dismissal is invalid")
+        if notice.dismissed:
+            return False
+        self.dismissed_regenerations.append(regeneration_id)
+        self.regeneration_notice = replace(notice, dismissed=True)
+        return True
 
     def record_library_visit(self, listing: ListingPositions | None, now: int) -> bool:
         if isinstance(self.library_visit_moves, Exception):
@@ -1608,11 +1617,13 @@ def review_web_context(
     *,
     mode: str = "direct",
     store_mode: bool = False,
+    review_preparation: FakePreparation | None = None,
 ) -> Iterator[ReviewWebContext[RepositoryT]]:
     """Yield one signed-out transport application over `repository_factory`.
 
     ``store_mode`` serves the owner verifier from an in-memory store, as a
-    store deployment does, instead of from the hash file.
+    store deployment does, instead of from the hash file;
+    ``review_preparation`` is the preparation lane, none by default.
     """
 
     temporary = tempfile.TemporaryDirectory()
@@ -1645,6 +1656,7 @@ def review_web_context(
             configuration,
             clock=lambda: context.now,
             owner_password=owner_password,
+            review_preparation=cast(Any, review_preparation),
         ),
         base_url="http://review.test" if mode == "proxy" else origin,
         client=("127.0.0.1", 12345),

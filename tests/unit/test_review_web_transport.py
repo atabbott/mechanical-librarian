@@ -55,6 +55,7 @@ from mechanical_librarian.application.owner_settings import (
     FileOwnerSettingsRepository,
     OwnerSettingsOperations,
 )
+from mechanical_librarian.application.regeneration_notice import RegenerationNotice
 from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
     ReviewApplication,
@@ -104,11 +105,7 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_OPTION_DISPOSITIONS,
 )
-from mechanical_librarian.domain.upgrade_notice import (
-    UPGRADE_NOTICE_SCHEMA,
-    DerivedRegeneration,
-    UpgradeNoticeError,
-)
+from mechanical_librarian.domain.upgrade_notice import UPGRADE_NOTICE_SCHEMA
 from mechanical_librarian.interfaces.web.app import (
     _BODY_PATH_LIMITS,
     METADATA_POLICY_TRANSITION_SCHEMA,
@@ -118,6 +115,7 @@ from mechanical_librarian.interfaces.web.app import (
 from tests.support.proposal_evidence import _report as _proposal_report
 from tests.support.review_web_doubles import (
     FakeActivityApplication,
+    FakePreparation,
     FakeReviewRepository,
     ReviewWebContext,
     review_web_context,
@@ -2009,10 +2007,10 @@ def test_preparation_dismissal_is_authenticated_guarded_and_stale_safe(
 
 def _regeneration(
     *, kept: int, asked_again: int, not_yet_checked: int = 0
-) -> DerivedRegeneration:
-    return DerivedRegeneration(
-        regeneration_id="regeneration_1",
-        epoch=2,
+) -> RegenerationNotice:
+    return RegenerationNotice(
+        regeneration_id=7,
+        derived_epoch=2,
         finished_at=900,
         kept=kept,
         asked_again=asked_again,
@@ -2021,15 +2019,17 @@ def _regeneration(
     )
 
 
-def test_upgrade_notice_reads_nothing_from_the_stub_store_until_2040(
+def test_upgrade_notice_reads_nothing_before_the_first_regeneration(
     tmp_path: Path,
 ) -> None:
+    """The real repository's store: no regeneration has run in a new store,
+    so there is no notice and no regeneration to dismiss."""
     repository = open_repository(tmp_path / "application.sqlite3")
     try:
-        assert repository.latest_derived_regeneration() is None
-        with pytest.raises(UpgradeNoticeError) as refused:
-            repository.dismiss_derived_regeneration("regeneration_1", 10)
-        assert refused.value.code == "stale"
+        store = repository.regeneration_notice_store()
+        assert store.read_regeneration_notice() is None
+        with pytest.raises(MetadataReportError, match="dismissal is invalid"):
+            store.dismiss_regeneration_notice(1, 10)
     finally:
         repository.close()
 
@@ -2041,7 +2041,7 @@ def test_upgrade_notice_reads_nothing_from_the_stub_store_until_2040(
         (
             _regeneration(kept=12, asked_again=3),
             {
-                "regeneration_id": "regeneration_1",
+                "regeneration_id": "7",
                 "preparing": False,
                 "kept": 12,
                 "asked_again": 3,
@@ -2050,17 +2050,19 @@ def test_upgrade_notice_reads_nothing_from_the_stub_store_until_2040(
         (
             _regeneration(kept=0, asked_again=0),
             {
-                "regeneration_id": "regeneration_1",
+                "regeneration_id": "7",
                 "preparing": False,
                 "kept": 0,
                 "asked_again": 0,
             },
         ),
+        # Answers not yet checked can stay so for good, so they never make it
+        # preparing: only preparation running does (below).
         (
             _regeneration(kept=1, asked_again=1, not_yet_checked=4),
             {
-                "regeneration_id": "regeneration_1",
-                "preparing": True,
+                "regeneration_id": "7",
+                "preparing": False,
                 "kept": 1,
                 "asked_again": 1,
             },
@@ -2070,11 +2072,11 @@ def test_upgrade_notice_reads_nothing_from_the_stub_store_until_2040(
 )
 def test_upgrade_notice_reads_the_latest_regeneration_until_dismissed(
     web: ReviewWebContext[FakeReviewRepository],
-    regeneration: DerivedRegeneration | None,
+    regeneration: RegenerationNotice | None,
     notice: dict[str, object] | None,
 ) -> None:
     path = "/api/v1/upgrade-notice"
-    web.repository.derived_regeneration = regeneration
+    web.repository.regeneration_notice = regeneration
     anonymous = web.client.get(path)
     assert anonymous.status_code == 401
     assert anonymous.headers["cache-control"] == "no-store, private"
@@ -2088,16 +2090,57 @@ def test_upgrade_notice_reads_the_latest_regeneration_until_dismissed(
         "notice": notice,
     }
 
-    web.repository.upgrade_notice_error = RuntimeError("database unavailable")
+    web.repository.upgrade_notice_error = MetadataReportError(
+        "regeneration notice is unavailable"
+    )
     unavailable = web.client.get(path)
     assert unavailable.status_code == 503
     assert unavailable.json()["error"]["code"] == "persistence"
 
 
+@pytest.mark.parametrize(
+    ("state", "recovery_required", "preparing"),
+    [
+        ("processing", False, True),
+        ("queued", False, True),
+        ("discovering", False, True),
+        ("completed", False, False),
+        ("completed_with_failures", False, False),
+        ("processing", True, False),
+    ],
+)
+def test_upgrade_notice_is_preparing_only_while_preparation_runs(
+    state: str, recovery_required: bool, preparing: bool
+) -> None:
+    """`preparing` is the preparation read's `active`: a library queued,
+    discovering or processing, with no recovery required. The notice's own
+    not-yet-checked count does not decide it."""
+    lane = FakePreparation()
+    lane.recovery_required = recovery_required
+    running = lane.progress("primary", "fiction")
+    assert running is not None
+    lane.progress = lambda *_: replace(running, state=state)  # type: ignore[method-assign]
+    contexts = review_web_context(FakeReviewRepository, review_preparation=lane)
+    web = next(contexts)
+    try:
+        web.repository.regeneration_notice = _regeneration(
+            kept=3, asked_again=2, not_yet_checked=0
+        )
+        web.login()
+        notice = web.client.get("/api/v1/upgrade-notice").json()["notice"]
+        assert notice["preparing"] is preparing
+        assert (notice["kept"], notice["asked_again"]) == (3, 2)
+        assert (
+            web.client.get("/api/v1/review-preparation").json()["active"] is preparing
+        )
+    finally:
+        next(contexts, None)
+
+
 def test_upgrade_notice_dismissal_is_authenticated_guarded_and_stale_safe(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
-    path = "/api/v1/upgrade-notice/regeneration_1/dismiss"
+    path = "/api/v1/upgrade-notice/7/dismiss"
     anonymous = web.client.post(path, headers=web.origin)
     assert anonymous.status_code == 401
     assert anonymous.headers["cache-control"] == "no-store, private"
@@ -2118,20 +2161,32 @@ def test_upgrade_notice_dismissal_is_authenticated_guarded_and_stale_safe(
     assert bad_origin.status_code == 403
     assert bad_origin.json()["error"]["code"] == "origin"
 
-    # No regeneration has run, as the stub store answers: every id is stale.
+    # No regeneration has run: the store refuses the id, so it is stale.
     nothing = web.client.post(path, headers=headers)
     assert nothing.status_code == 409
     assert nothing.json()["error"]["code"] == "stale"
 
-    web.repository.derived_regeneration = _regeneration(kept=12, asked_again=3)
-    for unknown in ("regeneration_0", "x" * 129, "regeneration.1"):
+    web.repository.regeneration_notice = _regeneration(kept=12, asked_again=3)
+    # An id the store does not know, or a segment that names no ledger id
+    # (zero, a leading zero, beyond a SQLite integer, not decimal).
+    for unknown in ("6", "0", "07", "9" * 19, "regeneration_1", "7.0", "-7"):
         stale = web.client.post(
             f"/api/v1/upgrade-notice/{unknown}/dismiss", headers=headers
         )
         assert stale.status_code == 409, unknown
         assert stale.json()["error"]["code"] == "stale"
 
-    web.repository.upgrade_notice_error = RuntimeError("database unavailable")
+    # A dismissal before the regeneration finished is refused as stale.
+    web.repository.regeneration_notice = replace(
+        _regeneration(kept=12, asked_again=3), finished_at=web.now + 1
+    )
+    early = web.client.post(path, headers=headers)
+    assert (early.status_code, early.json()["error"]["code"]) == (409, "stale")
+    web.repository.regeneration_notice = _regeneration(kept=12, asked_again=3)
+
+    web.repository.upgrade_notice_error = MetadataReportError(
+        "regeneration notice is unavailable"
+    )
     unavailable = web.client.post(path, headers=headers)
     assert unavailable.status_code == 503
     assert unavailable.json()["error"]["code"] == "persistence"
@@ -2146,7 +2201,7 @@ def test_upgrade_notice_dismissal_is_authenticated_guarded_and_stale_safe(
     # records nothing more.
     again = web.client.post(path, headers=headers)
     assert again.status_code == 204
-    assert web.repository.dismissed_regenerations == ["regeneration_1"]
+    assert web.repository.dismissed_regenerations == [7]
 
 
 def test_library_visit_is_guarded_and_publishes_only_a_moved_boundary(

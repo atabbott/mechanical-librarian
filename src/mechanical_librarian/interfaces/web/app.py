@@ -1177,7 +1177,7 @@ class _ReviewField(_ClosedModel):
     # The record's open Resume for the field failed, offered or not (ADR-0108).
     resume_failed: bool
     # Why the record's earlier answer is asked again, on a field asked for
-    # that reason (ADR-0108; v16).
+    # that reason (ADR-0108; v17).
     asked_again: _AskedAgain | None
     manual_required: bool
     needs_attention: bool
