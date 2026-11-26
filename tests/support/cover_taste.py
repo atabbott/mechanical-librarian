@@ -110,7 +110,8 @@ def record_owner_cover_decisions(
             cover_sources=base.cover_sources,
         )
         repository.publish(report, lambda: True)
-        proposal_set = evaluate_report(report)
+        # Over the ledger's derived epoch, which a regeneration moves on.
+        proposal_set = evaluate_report(report, derived_epoch=repository.derived_epoch())
         repository.publish_proposal(proposal_set)
         case_id = json.loads(repository.admit_review_case(proposal_set))[
             "review_case_id"

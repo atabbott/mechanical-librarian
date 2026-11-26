@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 
 from mechanical_librarian.adapters.operational_evidence import SupportBundle
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
-from mechanical_librarian.adapters.persistence.cover_taste import _ELIGIBLE
+from mechanical_librarian.adapters.persistence.cover_taste import _ELIGIBLE, _USABLE
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -39,6 +39,7 @@ from mechanical_librarian.application.cover_taste_contract import (
     AdmittedTasteBuildRequest,
     TasteBuildReply,
 )
+from mechanical_librarian.application.cover_taste_inputs import assemble_taste_inputs
 from mechanical_librarian.application.operations import support_preparation_incidents
 from mechanical_librarian.application.reviewer_access import (
     OpenRouterFactory,
@@ -48,7 +49,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     ReviewerProvisioningStatus,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
-from mechanical_librarian.domain.cover_taste import TASTE_MIN_ARTS
+from mechanical_librarian.domain.cover_taste import TASTE_MIN_ARTS, TasteProfile
 from mechanical_librarian.interfaces.web.app import REVIEW_TASTE_PROFILE_SCHEMA
 from tests.support.cover_selections import ALL_COVER_SELECTIONS
 from tests.support.cover_taste import record_owner_cover_decisions
@@ -599,12 +600,13 @@ def _client(built: _Built) -> Iterator[tuple[TestClient, dict[str, str]]]:
 
 
 def _taste_reading(path: Path, watermark: int) -> tuple[object, ...]:
-    """Which choices count, the count shown, those since `watermark`, and
-    whether a cadence build is then due."""
+    """Which choices were made, then those a build can use: the count, the
+    count shown, those since `watermark`, and whether a cadence build is then
+    due."""
     repository = open_repository(path, create=False)
     try:
         store = repository.cover_taste_store()
-        eligible = [
+        made = [
             row[0]
             for row in repository._connection.execute(
                 f"SELECT selection.selection_id {_ELIGIBLE} ORDER BY selection.rowid",
@@ -612,11 +614,11 @@ def _taste_reading(path: Path, watermark: int) -> tuple[object, ...]:
             )
         ]
         new = repository._connection.execute(
-            f"SELECT count(*) {_ELIGIBLE} AND selection.rowid>?",
+            f"SELECT count(*) {_USABLE} AND selection.rowid>?",
             (TASTE_MIN_ARTS, watermark),
         ).fetchone()[0]
         return (
-            eligible,
+            made,
             store.eligible_count(),
             store.read()["eligible"],
             new,
@@ -626,37 +628,139 @@ def _taste_reading(path: Path, watermark: int) -> tuple[object, ...]:
         repository.close()
 
 
-def test_earlier_choices_keep_counting_after_a_regeneration(tmp_path) -> None:
-    """ADR-0108: profile eligibility reads the owner selection's copies, so
-    the count shown and the 25 and 10 thresholds read the same choices
-    after the real `regenerate-derived` as before it."""
+def _decide_then_regenerate(
+    tmp_path: Path, count: int, at_25: Callable[[Any], None]
+) -> tuple[Path, Path]:
+    """`count` owner keeps, calling `at_25` with the store once 25 are made,
+    and a copy of the store after the real `regenerate-derived`. Keeps: a
+    regeneration keeps the owner's pointer to a keep, but repoints or clears
+    one to a choice never written."""
     path = tmp_path / "reports.sqlite"
     repository = open_repository(path, cross_thread=True)
     try:
         store = repository.cover_taste_store()
 
         def first_build(_case_id: str) -> None:
-            # After 25 choices the first build is due; it fails, so the next
-            # one is due 10 choices later.
             if store.eligible_count() == 25 and not store.read()["versions"]:
                 assert store.schedule(NOW, True, 8)
-                (build_id,) = repository._connection.execute(
-                    "SELECT build_id FROM cover_taste_builds"
-                ).fetchone()
-                store.fail(build_id, NOW, "unavailable")
+                at_25(store)
 
-        # Keeps: a regeneration keeps the owner's pointer to a keep, but
-        # repoints or clears one to a choice never written.
         record_owner_cover_decisions(
-            tmp_path, repository, 35, keep=True, before_decision=first_build
+            tmp_path, repository, count, keep=True, before_decision=first_build
         )
-        (watermark,) = repository._connection.execute(
-            "SELECT selection_watermark FROM cover_taste_builds"
-        ).fetchone()
         regenerated = copied_store(repository, tmp_path / "regenerated")
     finally:
         repository.close()
     regenerate_as_the_command(regenerated)
+    return path, regenerated
+
+
+def test_a_build_waits_for_choices_it_can_use_after_a_regeneration(
+    tmp_path,
+) -> None:
+    """ADR-0108: after a regeneration a new profile is built from choices
+    made since. The copies still name every earlier choice, but the count
+    shown, the thresholds and Try again read only choices a build can use:
+    no build is due and no failure is shown, as before 25 picks, until 25 new
+    choices make one due with inputs to send."""
+    failed: list[str] = []
+
+    def fail(store: Any) -> None:
+        # The first build fails, so the next one is due 10 choices later.
+        build_id = store.pending()
+        store.fail(build_id, NOW, "unavailable")
+        failed.append(build_id)
+
+    path, regenerated = _decide_then_regenerate(tmp_path, 35, fail)
+    (build_id,) = failed
+    repository = open_repository(path, create=False)
+    try:
+        (watermark,) = repository._connection.execute(
+            "SELECT selection_watermark FROM cover_taste_builds"
+        ).fetchone()
+    finally:
+        repository.close()
     before = _taste_reading(path, watermark)
     assert before[1:] == (35, 35, 10, True)
-    assert _taste_reading(regenerated, watermark) == before
+    assert _taste_reading(regenerated, watermark) == (before[0], 0, 0, 0, False)
+
+    repository = open_repository(regenerated, create=False, cross_thread=True)
+    try:
+        store = repository.cover_taste_store()
+        shown = store.read()
+        # Today's state before 25 picks: no profile, no build, no failure.
+        assert (shown["eligible"], shown["build"], shown["versions"]) == (0, None, [])
+        assert store.request_retry(build_id, NOW + 86_400, 8) is None
+        assert store.decisions() == ()
+        record_owner_cover_decisions(tmp_path, repository, 24, start=35, keep=True)
+        assert (store.eligible_count(), store.schedule(NOW + 86_400, True, 8)) == (
+            24,
+            False,
+        )
+        record_owner_cover_decisions(tmp_path, repository, 1, start=59, keep=True)
+        assert store.schedule(NOW + 86_400, True, 8)
+        inputs = assemble_taste_inputs(
+            store.decisions(),
+            CoverArtifactStore(
+                tmp_path / "artifacts", create=False
+            ).read_preview_digest,
+            kept=(),
+            left_out=(),
+        )
+        assert inputs is not None
+        assert (inputs.record["eligible"], inputs.record["included"]) == (25, 25)
+    finally:
+        repository.close()
+
+
+def test_a_profile_is_kept_after_a_regeneration(tmp_path) -> None:
+    """A store with a profile keeps it after a regeneration, shows no
+    failure, and rebuilds once it has 25 new choices a build can use."""
+
+    def succeed(store: Any) -> None:
+        build_id = store.pending()
+        assert store.claim(build_id, NOW, MODEL, 8) is None
+        assert (
+            store.succeed(
+                build_id,
+                NOW,
+                TasteProfile.from_output(
+                    {
+                        "sections": {
+                            "drawn_to": ["Calm colour."],
+                            "avoid": [],
+                            "trade_offs": [],
+                            "keep_or_switch": [],
+                        }
+                    }
+                ),
+                {
+                    "corrections": 0,
+                    "dropped": 0,
+                    "eligible": 25,
+                    "images": 50,
+                    "included": 25,
+                    "input_sha256": "0" * 64,
+                    "truncated": False,
+                },
+                failure="invalid_output",
+            )
+            == 1
+        )
+
+    _path, regenerated = _decide_then_regenerate(tmp_path, 26, succeed)
+    repository = open_repository(regenerated, create=False, cross_thread=True)
+    try:
+        store = repository.cover_taste_store()
+        shown = store.read()
+        assert [version for version, *_ in shown["versions"]] == [1]
+        assert (shown["eligible"], shown["build"]) == (0, None)
+        assert not store.schedule(NOW + 86_400, True, 8)
+        # As before a first profile, a build is due on 25 it can use.
+        record_owner_cover_decisions(tmp_path, repository, 24, start=26, keep=True)
+        assert not store.schedule(NOW + 86_400, True, 8)
+        record_owner_cover_decisions(tmp_path, repository, 1, start=50, keep=True)
+        assert store.schedule(NOW + 86_400, True, 8)
+        assert [version for version, *_ in store.read()["versions"]] == [1]
+    finally:
+        repository.close()
