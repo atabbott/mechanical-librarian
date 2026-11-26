@@ -3911,13 +3911,14 @@ def test_combined_browse_validates_empty_marker_and_totals(
     from mechanical_librarian.application.metadata_report import MetadataReportError
 
     repository = open_repository(tmp_path / "review.sqlite")
-    # An attention row carries its pin-changed flag before the marker (#1346).
-    marker = 8 if surface == "library" else 9
+    # An attention row carries its pin-changed flag (#1346) and its
+    # asked-again reason (#2039) before the marker.
+    marker = 8 if surface == "library" else 10
     reached = False
 
     def corrupt_row(cursor, row):
         nonlocal reached
-        if len(cursor.description) != (18 if surface == "library" else 11):
+        if len(cursor.description) != (18 if surface == "library" else 12):
             return row
         reached = True
         values = list(row)
