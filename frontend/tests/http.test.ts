@@ -33,6 +33,7 @@ import {
 } from './wireFixtures'
 import activationCapture from './wire/post-metadata-policy-activate.200.json'
 import libraryProgressCapture from './wire/get-library-progress.200.json'
+import upgradeNoticeCapture from './wire/get-upgrade-notice.200.json'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import {
@@ -8234,6 +8235,62 @@ describe('taste preview decoder (#1372 PR 5)', () => {
     await expect(readTastePreview({ ...previewDocument, ...change })).rejects.toMatchObject({
       status: 502,
       code: 'invalid_taste_preview',
+    })
+  })
+})
+
+describe('the upgrade notice wire (#2039)', () => {
+  const answering = (body: unknown, status = 200) => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      body === undefined ? new Response(null, { status }) : Response.json(body, { status }),
+    )
+    return {
+      client: new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) }),
+      fetchMock,
+    }
+  }
+  const notice = {
+    regeneration_id: 'regeneration_1',
+    preparing: false,
+    kept: 12,
+    asked_again: 3,
+  }
+
+  it('reads the notice, and nothing once there is none', async () => {
+    for (const body of [
+      upgradeNoticeCapture.body,
+      { schema_version: 'upgrade-notice-v1', notice },
+    ]) {
+      const { client, fetchMock } = answering(body)
+      await expect(client.getUpgradeNotice()).resolves.toEqual(body)
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/upgrade-notice')
+    }
+  })
+
+  it('refuses a notice with a negative count', async () => {
+    await expect(
+      answering({
+        schema_version: 'upgrade-notice-v1',
+        notice: { ...notice, kept: -1 },
+      }).client.getUpgradeNotice(),
+    ).rejects.toMatchObject({ name: 'ResponseDecodeError' })
+  })
+
+  it('dismisses the named regeneration and accepts the 204', async () => {
+    const { client, fetchMock } = answering(undefined, 204)
+    await expect(client.dismissUpgradeNotice('regeneration/1')).resolves.toBeUndefined()
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/upgrade-notice/regeneration%2F1/dismiss')
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('POST')
+  })
+
+  it('reads a stale dismissal as a refusal', async () => {
+    const { client } = answering(
+      { schema_version: 'review-error-v1', error: { code: 'stale' } },
+      409,
+    )
+    await expect(client.dismissUpgradeNotice('regeneration_1')).rejects.toMatchObject({
+      status: 409,
+      code: 'stale',
     })
   })
 })

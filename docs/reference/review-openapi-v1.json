@@ -15332,6 +15332,66 @@
         "title": "_UnavailableDecisionConfirmation",
         "type": "object"
       },
+      "_UpgradeNotice": {
+        "additionalProperties": false,
+        "description": "The answers a regeneration kept and asked again, until dismissed.",
+        "properties": {
+          "asked_again": {
+            "minimum": 0.0,
+            "title": "Asked Again",
+            "type": "integer"
+          },
+          "kept": {
+            "minimum": 0.0,
+            "title": "Kept",
+            "type": "integer"
+          },
+          "preparing": {
+            "title": "Preparing",
+            "type": "boolean"
+          },
+          "regeneration_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Regeneration Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "regeneration_id",
+          "preparing",
+          "kept",
+          "asked_again"
+        ],
+        "title": "_UpgradeNotice",
+        "type": "object"
+      },
+      "_UpgradeNoticeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "notice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_UpgradeNotice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "const": "upgrade-notice-v1",
+            "default": "upgrade-notice-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "notice"
+        ],
+        "title": "_UpgradeNoticeResponse",
+        "type": "object"
+      },
       "_WillLinkRow": {
         "additionalProperties": false,
         "description": "A row the import links: the work as Library names it, and its record.",
@@ -25104,6 +25164,145 @@
           }
         ],
         "summary": "Subscribe to ordered invalidation for this session"
+      }
+    },
+    "/api/v1/upgrade-notice": {
+      "get": {
+        "operationId": "upgrade_notice_api_v1_upgrade_notice_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_UpgradeNoticeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Upgrade Notice"
+      }
+    },
+    "/api/v1/upgrade-notice/{regeneration_id}/dismiss": {
+      "post": {
+        "operationId": "dismiss_upgrade_notice_api_v1_upgrade_notice__regeneration_id__dismiss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "regeneration_id",
+            "required": true,
+            "schema": {
+              "title": "Regeneration Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Dismiss Upgrade Notice"
       }
     }
   }

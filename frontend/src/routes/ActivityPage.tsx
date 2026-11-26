@@ -20,6 +20,7 @@ import type {
 import { activityOutcome, ledgerRows } from '../activityState'
 import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
+import { UpgradeNotice } from '../components/UpgradeNotice'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
 import { destinationLabel, destinationPhrase, writeHoldReasons } from '../labels'
@@ -811,6 +812,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                                   : 'No action needed'}
         </StatusPill>
       </header>
+      <UpgradeNotice http={http} />
       <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
         <header className="cm-activity-ledger-heading">
           <div>

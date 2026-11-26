@@ -6,9 +6,11 @@ import { BuildMismatchError } from '../api/http'
 import type { AttentionItemView, AttentionView, LibrarySearch } from '../api/http'
 import { drawerQuery } from '../attentionRail'
 import { StaleBuildRead } from '../components/StaleBuildRead'
+import { UpgradeNotice } from '../components/UpgradeNotice'
 import { focusAfterRetry } from '../focusAfterRetry'
 import type { ReviewField } from '../fieldDecision'
 import { destinationLabel, mediaKindLabels } from '../labels'
+import { useReviewContext } from '../router'
 
 /** An attention row, with the cursor of the page that listed it. */
 export type AttentionQueueItem = AttentionItemView & { attentionCursor: string | undefined }
@@ -197,6 +199,7 @@ export const AttentionRail = ({
    */
   restartSentence: string
 }) => {
+  const { http } = useReviewContext()
   const attentionRetry = useRef<HTMLButtonElement>(null)
   const loadMoreButton = useRef<HTMLButtonElement>(null)
   const { moreRetry, fetchMore } = useAttentionLoadMore(
@@ -241,6 +244,7 @@ export const AttentionRail = ({
         </div>
         <button onClick={closeAttention}>Close</button>
       </header>
+      <UpgradeNotice http={http} />
       {attention.data === undefined && attention.error instanceof BuildMismatchError ? (
         <StaleBuildRead lead="Attention was not loaded." ref={attentionRetry} />
       ) : attention.data === undefined ? (

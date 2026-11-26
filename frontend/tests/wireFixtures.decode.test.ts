@@ -66,8 +66,9 @@ const roundTrip = (decode: D<unknown>, body: unknown) => {
 }
 
 describe('captured wire fixtures', () => {
+  // 2a-i's 30, and the upgrade notice read (#2039).
   it('has a capture for every operation 2a-i records', () => {
-    expect(Object.keys(captures)).toHaveLength(30)
+    expect(Object.keys(captures)).toHaveLength(31)
   })
 
   it.each(Object.entries(captures))('%s decodes by operation and status', (_file, wire) => {

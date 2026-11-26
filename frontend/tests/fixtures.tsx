@@ -488,6 +488,11 @@ export const createHttp = (): ReviewHttp => ({
   getPreparation: vi.fn(async (): Promise<PreparationView> => idlePreparation),
   preparationAction: vi.fn(async (): Promise<PreparationView> => idlePreparation),
   dismissPreparation: vi.fn(async (): Promise<PreparationView> => idlePreparation),
+  getUpgradeNotice: vi.fn(async () => ({
+    schema_version: 'upgrade-notice-v1' as const,
+    notice: null,
+  })),
+  dismissUpgradeNotice: vi.fn(async () => undefined),
   retryProviderRecovery: vi.fn(async () => {
     throw new Error('not configured')
   }),

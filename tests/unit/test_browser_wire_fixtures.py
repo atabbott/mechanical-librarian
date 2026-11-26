@@ -818,3 +818,14 @@ def test_identifier_import(tmp_path: Path) -> None:
     }
     for slug, wire in captures.items():
         _expect_wire(slug, wire, placeholders)
+
+
+def test_upgrade_notice(tmp_path: Path) -> None:
+    """#2039: the notice read; no regeneration is recorded until #2040."""
+    repository = open_repository(tmp_path / "reports.sqlite", cross_thread=True)
+    try:
+        with _signed_in(tmp_path, repository) as live:
+            capture = live.call("GET", "/api/v1/upgrade-notice")
+    finally:
+        repository.close()
+    _expect_wire("get-upgrade-notice", capture, {})

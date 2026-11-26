@@ -100,6 +100,10 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
 )
+from mechanical_librarian.domain.upgrade_notice import (
+    DerivedRegeneration,
+    UpgradeNoticeError,
+)
 from mechanical_librarian.domain.value_flags import report_source_titles, value_flags
 from mechanical_librarian.interfaces.web import StoreOwnerPassword
 from tests.support.activity_seed import seed_activity  # noqa: E402
@@ -228,6 +232,11 @@ class FakeReviewRepository:
         self.preparation_presentation_value: PreparationPresentation | None = None
         self.dismissed_preparation_runs: list[str] = []
         self.dismiss_preparation_error: Exception | None = None
+        # The latest regeneration of the derived rows (#2039); none by
+        # default, as the stub store answers until #2040 records them.
+        self.derived_regeneration: DerivedRegeneration | None = None
+        self.dismissed_regenerations: list[str] = []
+        self.upgrade_notice_error: Exception | None = None
         # Each recorded use of Library, and what the next one answers (#1351).
         self.library_visits: list[tuple[ListingPositions | None, int]] = []
         self.library_visit_moves: bool | Exception = False
@@ -309,6 +318,26 @@ class FakeReviewRepository:
             raise PreparationPresentationError("not_dismissible")
         self.dismissed_preparation_runs.append(run_id)
         self.preparation_presentation_value = None
+
+    def latest_derived_regeneration(self) -> DerivedRegeneration | None:
+        if self.upgrade_notice_error is not None:
+            raise self.upgrade_notice_error
+        return self.derived_regeneration
+
+    def dismiss_derived_regeneration(
+        self, regeneration_id: str, _dismissed_at: int
+    ) -> None:
+        # One dismissal per regeneration: the latest one's is recorded once,
+        # and dismissing it again is accepted and changes nothing. Any other
+        # id is stale, as the stub store refuses every id.
+        if self.upgrade_notice_error is not None:
+            raise self.upgrade_notice_error
+        regeneration = self.derived_regeneration
+        if regeneration is None or regeneration.regeneration_id != regeneration_id:
+            raise UpgradeNoticeError("stale")
+        if not regeneration.dismissed:
+            self.dismissed_regenerations.append(regeneration_id)
+            self.derived_regeneration = replace(regeneration, dismissed=True)
 
     def record_library_visit(self, listing: ListingPositions | None, now: int) -> bool:
         if isinstance(self.library_visit_moves, Exception):

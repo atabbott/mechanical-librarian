@@ -1218,6 +1218,8 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 /* Protected Activity ledger */
 .cm-activity-route { display:flex; flex-direction:column; width:min(100%,82rem); margin:auto; }
 .cm-activity-route > .cm-page-heading { order:1; }
+/* The upgrade notice reads directly under the heading (#2039). */
+.cm-activity-route > .cm-upgrade-notice { order:1; width:100%; }
 .cm-activity-route > .connection-notice { order:2; }
 .cm-activity-route > .cm-write-consent, .cm-activity-route > .activity-consent-ledger { order:3; }
 .cm-activity-route > .activity-consent-ledger { margin-bottom:1rem; }

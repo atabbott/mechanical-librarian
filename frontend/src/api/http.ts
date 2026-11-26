@@ -1125,6 +1125,10 @@ export interface WorkAddress {
   item: string
 }
 export type PreparationView = ResponseSchema<'_PreparationResponse'>
+// The notice after an upgrade (#2039): null when no regeneration has run or
+// its notice was dismissed.
+export type UpgradeNoticeView = ResponseSchema<'_UpgradeNoticeResponse'>
+export type UpgradeNotice = NonNullable<UpgradeNoticeView['notice']>
 // The preparation controls `preparationAction` sends, under
 // `/api/v1/review-preparation/`; each segment hole is one encoded name.
 export type PreparationActionPath =
@@ -1468,6 +1472,8 @@ export interface ReviewHttp {
    * showed; every other use sends null, which keeps the visit going.
    */
   recordLibraryVisit(listing: LibraryListing | null, signal?: AbortSignal): Promise<void>
+  getUpgradeNotice(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<UpgradeNoticeView>
+  dismissUpgradeNotice(regenerationId: string, signal?: AbortSignal): Promise<void>
   getReportDetail(
     detailUrl: string,
     signal?: AbortSignal,
@@ -2631,6 +2637,23 @@ export class ReviewApiClient implements ReviewHttp {
   // Recording a use twice is the same use, so a CSRF renewal sends it again.
   async recordLibraryVisit(listing: LibraryListing | null, signal?: AbortSignal) {
     await this.mutate('/api/v1/library/visit', { listing }, signal, undefined, 'POST', true)
+  }
+
+  async getUpgradeNotice(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return await this.read('/api/v1/upgrade-notice', signal, workClass)
+  }
+  // One dismissal per regeneration, so a CSRF renewal sends it again; a
+  // notice another tab dismissed or a newer regeneration replaced is a 409
+  // `stale` refusal.
+  async dismissUpgradeNotice(regenerationId: string, signal?: AbortSignal) {
+    await this.mutate(
+      `/api/v1/upgrade-notice/${encodeURIComponent(regenerationId)}/dismiss`,
+      undefined,
+      signal,
+      undefined,
+      'POST',
+      true,
+    )
   }
 
   private async read<P extends RoutablePath<'GET'>>(

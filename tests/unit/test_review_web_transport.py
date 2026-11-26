@@ -104,6 +104,11 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_OPTION_DISPOSITIONS,
 )
+from mechanical_librarian.domain.upgrade_notice import (
+    UPGRADE_NOTICE_SCHEMA,
+    DerivedRegeneration,
+    UpgradeNoticeError,
+)
 from mechanical_librarian.interfaces.web.app import (
     _BODY_PATH_LIMITS,
     METADATA_POLICY_TRANSITION_SCHEMA,
@@ -2002,6 +2007,148 @@ def test_preparation_dismissal_is_authenticated_guarded_and_stale_safe(
     assert current.json()["presentation"] is None
 
 
+def _regeneration(
+    *, kept: int, asked_again: int, not_yet_checked: int = 0
+) -> DerivedRegeneration:
+    return DerivedRegeneration(
+        regeneration_id="regeneration_1",
+        epoch=2,
+        finished_at=900,
+        kept=kept,
+        asked_again=asked_again,
+        not_yet_checked=not_yet_checked,
+        dismissed=False,
+    )
+
+
+def test_upgrade_notice_reads_nothing_from_the_stub_store_until_2040(
+    tmp_path: Path,
+) -> None:
+    repository = open_repository(tmp_path / "application.sqlite3")
+    try:
+        assert repository.latest_derived_regeneration() is None
+        with pytest.raises(UpgradeNoticeError) as refused:
+            repository.dismiss_derived_regeneration("regeneration_1", 10)
+        assert refused.value.code == "stale"
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    ("regeneration", "notice"),
+    [
+        (None, None),
+        (
+            _regeneration(kept=12, asked_again=3),
+            {
+                "regeneration_id": "regeneration_1",
+                "preparing": False,
+                "kept": 12,
+                "asked_again": 3,
+            },
+        ),
+        (
+            _regeneration(kept=0, asked_again=0),
+            {
+                "regeneration_id": "regeneration_1",
+                "preparing": False,
+                "kept": 0,
+                "asked_again": 0,
+            },
+        ),
+        (
+            _regeneration(kept=1, asked_again=1, not_yet_checked=4),
+            {
+                "regeneration_id": "regeneration_1",
+                "preparing": True,
+                "kept": 1,
+                "asked_again": 1,
+            },
+        ),
+        (replace(_regeneration(kept=2, asked_again=1), dismissed=True), None),
+    ],
+)
+def test_upgrade_notice_reads_the_latest_regeneration_until_dismissed(
+    web: ReviewWebContext[FakeReviewRepository],
+    regeneration: DerivedRegeneration | None,
+    notice: dict[str, object] | None,
+) -> None:
+    path = "/api/v1/upgrade-notice"
+    web.repository.derived_regeneration = regeneration
+    anonymous = web.client.get(path)
+    assert anonymous.status_code == 401
+    assert anonymous.headers["cache-control"] == "no-store, private"
+
+    web.login()
+    response = web.client.get(path)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json() == {
+        "schema_version": UPGRADE_NOTICE_SCHEMA,
+        "notice": notice,
+    }
+
+    web.repository.upgrade_notice_error = RuntimeError("database unavailable")
+    unavailable = web.client.get(path)
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"]["code"] == "persistence"
+
+
+def test_upgrade_notice_dismissal_is_authenticated_guarded_and_stale_safe(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    path = "/api/v1/upgrade-notice/regeneration_1/dismiss"
+    anonymous = web.client.post(path, headers=web.origin)
+    assert anonymous.status_code == 401
+    assert anonymous.headers["cache-control"] == "no-store, private"
+
+    login = web.login()
+    headers = {**web.origin, "x-csrf-token": login["csrf_token"]}
+    missing_csrf = web.client.post(path, headers=web.origin)
+    assert missing_csrf.status_code == 422
+    bad_csrf = web.client.post(path, headers={**web.origin, "x-csrf-token": "wrong"})
+    assert bad_csrf.status_code == 403
+    bad_origin = web.client.post(
+        path,
+        headers={
+            "Origin": "https://elsewhere.invalid",
+            "x-csrf-token": login["csrf_token"],
+        },
+    )
+    assert bad_origin.status_code == 403
+    assert bad_origin.json()["error"]["code"] == "origin"
+
+    # No regeneration has run, as the stub store answers: every id is stale.
+    nothing = web.client.post(path, headers=headers)
+    assert nothing.status_code == 409
+    assert nothing.json()["error"]["code"] == "stale"
+
+    web.repository.derived_regeneration = _regeneration(kept=12, asked_again=3)
+    for unknown in ("regeneration_0", "x" * 129, "regeneration.1"):
+        stale = web.client.post(
+            f"/api/v1/upgrade-notice/{unknown}/dismiss", headers=headers
+        )
+        assert stale.status_code == 409, unknown
+        assert stale.json()["error"]["code"] == "stale"
+
+    web.repository.upgrade_notice_error = RuntimeError("database unavailable")
+    unavailable = web.client.post(path, headers=headers)
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"]["code"] == "persistence"
+    web.repository.upgrade_notice_error = None
+    assert web.repository.dismissed_regenerations == []
+
+    accepted = web.client.post(path, headers=headers)
+    assert accepted.status_code == 204
+    assert accepted.content == b""
+    assert web.client.get("/api/v1/upgrade-notice").json()["notice"] is None
+    # One dismissal per regeneration: dismissing it again is accepted and
+    # records nothing more.
+    again = web.client.post(path, headers=headers)
+    assert again.status_code == 204
+    assert web.repository.dismissed_regenerations == ["regeneration_1"]
+
+
 def test_library_visit_is_guarded_and_publishes_only_a_moved_boundary(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
@@ -3201,6 +3348,8 @@ def test_openapi_is_deterministic_and_secret_free(
         ("get", "/api/v1/review-preparation"),
         ("post", "/api/v1/review-preparation/dismiss"),
         ("post", "/api/v1/review-preparation/first-boot/acknowledge"),
+        ("get", "/api/v1/upgrade-notice"),
+        ("post", "/api/v1/upgrade-notice/{regeneration_id}/dismiss"),
         # The live invalidation stream is a protected read like any other.
         ("get", "/api/v1/updates"),
         ("get", "/api/v1/review-cases/{review_case_id}"),

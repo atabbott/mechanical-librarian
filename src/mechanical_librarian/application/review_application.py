@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from _thread import RLock
 from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -127,6 +128,11 @@ from mechanical_librarian.domain.preparation_presentation import (
 )
 from mechanical_librarian.domain.proposal_set import work_route_cover_offered
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
+from mechanical_librarian.domain.upgrade_notice import (
+    DerivedRegeneration,
+    UpgradeNotice,
+    UpgradeNoticeError,
+)
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 if TYPE_CHECKING:
@@ -141,6 +147,8 @@ REVIEW_PREPARATION_SCHEMA: Final[ReviewPreparationSchemaVersion] = (
 )
 
 _Result = TypeVar("_Result")
+# A regeneration id as a path segment can carry it; any other is unknown.
+_REGENERATION_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 
 class SerializedGate(Protocol):
@@ -184,6 +192,14 @@ class BrowserStateOwner(IdentifierImportStore, Protocol):
 
     def dismiss_preparation_presentation(
         self, run_id: str, dismissed_at: int
+    ) -> None: ...
+
+    # The upgrade notice (#2039): the latest regeneration of the derived rows
+    # and its one dismissal, both recorded by the regeneration (#2040).
+    def latest_derived_regeneration(self) -> DerivedRegeneration | None: ...
+
+    def dismiss_derived_regeneration(
+        self, regeneration_id: str, dismissed_at: int
     ) -> None: ...
 
     def record_library_visit(
@@ -2255,6 +2271,24 @@ class ReviewApplication:
             raise ReviewApplicationError(code) from error
         self._updates.publish("preparation")
         return self.preparation()
+
+    def upgrade_notice(self) -> UpgradeNotice | None:
+        return UpgradeNotice.of(
+            self.serialized(self._state_owner.latest_derived_regeneration)
+        )
+
+    def dismiss_upgrade_notice(self, regeneration_id: str) -> None:
+        # Refused as stale when the id is not the latest regeneration.
+        if not _REGENERATION_ID.fullmatch(regeneration_id):
+            raise ReviewApplicationError("stale")
+        try:
+            self.serialized(
+                lambda: self._state_owner.dismiss_derived_regeneration(
+                    regeneration_id, self._clock()
+                )
+            )
+        except UpgradeNoticeError as error:
+            raise ReviewApplicationError(error.code) from error
 
     def acknowledge_first_boot_preparation(self) -> PreparationView:
         if self._acknowledge_first_boot is None:

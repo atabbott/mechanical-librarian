@@ -248,6 +248,10 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
     ShadowReviewValueError,
 )
+from mechanical_librarian.domain.upgrade_notice import (
+    DerivedRegeneration,
+    UpgradeNoticeError,
+)
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 if sys.platform.startswith("linux"):
@@ -1492,6 +1496,18 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             transaction.rollback()
             failure = error
         raise failure from None
+
+    # Stub until #2040 records regenerations: none has run, so the read is
+    # empty and every dismissal names an unknown regeneration.
+    @local_operation
+    def latest_derived_regeneration(self) -> DerivedRegeneration | None:
+        return None
+
+    @local_operation
+    def dismiss_derived_regeneration(
+        self, regeneration_id: str, dismissed_at: int
+    ) -> None:
+        raise UpgradeNoticeError("stale")
 
     @local_operation
     def record_library_visit(self, listing: ListingPositions | None, now: int) -> bool:

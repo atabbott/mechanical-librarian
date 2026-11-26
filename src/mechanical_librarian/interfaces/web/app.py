@@ -169,6 +169,10 @@ from mechanical_librarian.domain.reviewer_access import (
     DescriptionModelMetadata,
     OpenRouterModelId,
 )
+from mechanical_librarian.domain.upgrade_notice import (
+    UPGRADE_NOTICE_SCHEMA,
+    UpgradeNoticeSchemaVersion,
+)
 from mechanical_librarian.domain.value_flags import ValueFlagDestination, ValueFlagRule
 from mechanical_librarian.interfaces.web import (
     find_this_book,
@@ -2801,6 +2805,21 @@ class _PreparationPresentation(_ClosedModel):
     now: _PreparationNow | None = None
 
 
+class _UpgradeNotice(_ClosedModel):
+    """The answers a regeneration kept and asked again, until dismissed."""
+
+    regeneration_id: StrictStr = Field(min_length=1, max_length=128)
+    # The first new cases are still being checked; the counts are so far.
+    preparing: bool
+    kept: int = Field(ge=0)
+    asked_again: int = Field(ge=0)
+
+
+class _UpgradeNoticeResponse(_ClosedModel):
+    notice: _UpgradeNotice | None
+    schema_version: UpgradeNoticeSchemaVersion = UPGRADE_NOTICE_SCHEMA
+
+
 class _PreparationDismissRequest(_ClosedModel):
     run_id: StrictStr = Field(pattern=r"^preparation_run_[0-9a-f]{64}$")
 
@@ -3938,6 +3957,9 @@ def _register_routes(
     )
     identifier_import.register_routes(
         app, application, session_cookie, authenticated_session_cookie, _require_session
+    )
+    _register_upgrade_notice_routes(
+        app, application, session_cookie, authenticated_session_cookie
     )
     _register_taste_routes(
         app, application, session_cookie, authenticated_session_cookie
@@ -6248,6 +6270,56 @@ def _register_browse_and_preparation_routes(
         return _HistoryResponse.model_validate(
             _case_call(lambda: application.history(review_case_id))
         )
+
+
+def _register_upgrade_notice_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    session_cookie: APIKeyCookie,
+    authenticated_session_cookie: _SessionDependency,
+) -> None:
+    """The notice after an upgrade, and its one dismissal (#2039)."""
+    sessions = application
+
+    @app.get(
+        "/api/v1/upgrade-notice",
+        response_model=_UpgradeNoticeResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def upgrade_notice(
+        ml_session: str | None = Security(session_cookie),
+    ) -> _UpgradeNoticeResponse:
+        _require_session(sessions, ml_session)
+        try:
+            notice = application.upgrade_notice()
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        return _UpgradeNoticeResponse.model_validate(
+            {"notice": None if notice is None else notice.to_data()}
+        )
+
+    @app.post(
+        "/api/v1/upgrade-notice/{regeneration_id}/dismiss",
+        status_code=204,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def dismiss_upgrade_notice(
+        regeneration_id: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> Response:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            application.dismiss_upgrade_notice(regeneration_id)
+        except ReviewApplicationError as error:
+            if error.code == "stale":
+                raise HTTPException(409, detail={"code": "stale"}) from None
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        return Response(status_code=204)
 
 
 def _register_live_update_route(
