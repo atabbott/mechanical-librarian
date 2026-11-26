@@ -101,6 +101,36 @@ _CASE_AUTHORS_SQL = (
     "FROM review_cases review JOIN metadata_reports report "
     "ON report.report_id=review.report_id WHERE review.review_case_id=?)"
 )
+# The value an automatic no-change row kept, which Activity reads from the
+# report it names as `named`: the report's field for the row's destination as
+# JSON ('null' where it holds none), a published date falling back to the
+# published year as `canonical_target_fields` reads it (ADR-0108). The owner's
+# rows keep none: theirs is their decision's.
+_REPORT_FIELD_SQL = (
+    "(SELECT field.value FROM json_each(report.document,'$.target.fields') field "
+    "WHERE json_extract(field.value,'$.destination')={} "
+    "ORDER BY field.key LIMIT 1)"
+)
+_REPORT_KEPT_VALUE_SQL = (
+    "COALESCE(CASE WHEN named.destination='publishedDate' AND "
+    + _REPORT_FIELD_SQL.format("'publishedDate'")
+    + "->>'$.state' IS NOT 'value' AND "
+    + _REPORT_FIELD_SQL.format("'publishedYear'")
+    + "->>'$.state'='value' AND json_type("
+    + _REPORT_FIELD_SQL.format("'publishedYear'")
+    + ",'$.value')='text' THEN "
+    + _REPORT_FIELD_SQL.format("'publishedYear'")
+    + "->'$.value' ELSE "
+    + _REPORT_FIELD_SQL.format("named.destination")
+    + "->'$.value' END,'null')"
+)
+# Binds the row's origin, destination and report id.
+_REPORT_KEPT_SQL = (
+    "CASE WHEN ?='automatic_policy' THEN (SELECT "
+    + _REPORT_KEPT_VALUE_SQL
+    + " FROM (SELECT ? AS destination) named "
+    "JOIN metadata_reports report ON report.report_id=?) END"
+)
 # The report of the case a write plan's decision names, by whichever decision
 # table holds it: Activity's join for a plan's rows. Joins `effect.decision_id`.
 _PLAN_REPORT_JOIN_SQL = (

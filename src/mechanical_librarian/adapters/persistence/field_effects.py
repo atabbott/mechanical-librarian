@@ -78,6 +78,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _PLAN_AUTHORS_SQL,
     _PLAN_TITLE_SQL,
     _REPORT_AUTHORS_SQL,
+    _REPORT_KEPT_SQL,
     _REPORT_TITLE_SQL,
     _active_generation_automatic_sql,
 )
@@ -244,12 +245,15 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 else "automatic_policy",
             )
             inserted = self._connection.execute(
-                # The owner's row keeps its authors too (ADR-0108).
-                "INSERT OR IGNORE INTO field_effect_no_changes(decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id,display_title,display_authors) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,"
+                # The owner's row keeps its authors too, Automatic's the
+                # value it kept (ADR-0108).
+                "INSERT OR IGNORE INTO field_effect_no_changes(decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id,display_title,display_authors,kept_value_document) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,"
                 + _REPORT_TITLE_SQL
                 + ",CASE WHEN ?='human' THEN "
                 + _REPORT_AUTHORS_SQL
-                + " END)",
+                + " END,"
+                + _REPORT_KEPT_SQL
+                + ")",
                 (
                     record.decision_id,
                     record.review_case_id,
@@ -265,6 +269,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     record.event_id,
                     record.report_id,
                     record.origin,
+                    record.report_id,
+                    record.origin,
+                    record.destination,
                     record.report_id,
                 ),
             ).rowcount

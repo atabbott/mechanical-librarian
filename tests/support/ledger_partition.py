@@ -43,7 +43,11 @@ _COPIES = {
         "selected_form",
     ),
     "field_effects": ("display_title", "display_authors"),
-    "field_effect_no_changes": ("display_title", "display_authors"),
+    "field_effect_no_changes": (
+        "display_title",
+        "display_authors",
+        "kept_value_document",
+    ),
     "owner_authored_descriptions": ("candidate_document", "display_authors"),
     "owner_cover_selections": (
         "transport_sha256",

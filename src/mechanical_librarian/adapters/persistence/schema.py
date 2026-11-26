@@ -82,6 +82,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _PLAN_OWNER_SQL,
     _PLAN_REPORT_JOIN_SQL,
     _REPORT_AUTHORS_VALUE_SQL,
+    _REPORT_KEPT_VALUE_SQL,
     _REPORT_TITLE_VALUE_SQL,
 )
 from mechanical_librarian.application.cover_consideration import (
@@ -1552,7 +1553,10 @@ _FIELD_EFFECT_NO_CHANGES_SQL = (
     "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'), "
     # The owner's row keeps its authors for its author label; Automatic's
     # keeps none.
-    "display_authors TEXT CHECK(display_authors IS NULL OR (origin='human' AND typeof(display_authors)='text' AND json_valid(display_authors) AND json_type(display_authors)='array'))) WITHOUT ROWID"
+    "display_authors TEXT CHECK(display_authors IS NULL OR (origin='human' AND typeof(display_authors)='text' AND json_valid(display_authors) AND json_type(display_authors)='array')), "
+    # Automatic's row keeps the value it kept, as JSON; the owner's keeps
+    # none, as its decision holds it.
+    "kept_value_document TEXT CHECK(kept_value_document IS NULL OR (origin='automatic_policy' AND typeof(kept_value_document)='text' AND json_valid(kept_value_document)))) WITHOUT ROWID"
 )
 _FIELD_EFFECT_ACTIONS_SQL = (
     "CREATE TABLE field_effect_actions ("
@@ -3203,7 +3207,8 @@ _OWNER_ITEM_KEY_DISAGREES_SQL = (
 # fingerprint, title, authors and target field are its case's; an authored
 # description's title and authors its case's; a plan's and a no-change row's
 # title the report they name, and the owner's their authors too (Automatic's
-# keep none); and a transition's size and settled counts its items'.
+# keep none); Automatic's no-change row's kept value that report's; and a
+# transition's size and settled counts its items'.
 # Items or not, an owner decision's event names the decision's case and a
 # transition's state is the one its counts give.
 _CASE_FACT_SQL = "json_extract(review.document,'$.{}')"
@@ -3241,6 +3246,9 @@ _LEDGER_COPY_DISAGREES_SQL = (
     + _REPORT_TITLE_VALUE_SQL
     + " OR named.display_authors IS NOT CASE WHEN named.origin='human' THEN "
     + _REPORT_AUTHORS_VALUE_SQL
+    + " END OR json(named.kept_value_document) IS NOT CASE WHEN "
+    "named.origin='automatic_policy' THEN "
+    + _REPORT_KEPT_VALUE_SQL
     + " END UNION ALL SELECT 1 FROM field_effects effect"
     + _PLAN_REPORT_JOIN_SQL
     + " WHERE report.report_id IS NOT NULL AND (effect.display_title IS NOT "
