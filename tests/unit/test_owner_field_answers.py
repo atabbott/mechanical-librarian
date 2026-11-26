@@ -34,6 +34,7 @@ from mechanical_librarian.adapters.persistence.owner_field_answers import (
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.human_decision import (
+    case_question,
     chosen_value_fingerprint,
     field_fingerprint,
     pinned_field_fingerprint,
@@ -87,10 +88,16 @@ def _decision(
     episode: int = 0,
     cause: str | None = None,
     key: tuple[str, str, str] = _KEY,
+    carried_from: str | None = None,
+    halves: tuple[str, str] | None = None,
 ) -> str:
     """A ledger decision row as the store writes its columns; the document
     carries only what the record reads."""
     decision_id = _id(tag)
+    document: dict[str, object] = {"cause": cause, "episode": episode}
+    if carried_from is not None:
+        document["carried_from"] = carried_from
+        halves = halves or ("1" * 64, "2" * 64)
     connection.execute(
         HUMAN_DECISION_INSERT_SQL,
         (
@@ -106,11 +113,13 @@ def _decision(
             hashlib.sha256(("idempotency" + tag).encode()).hexdigest(),
             "f" * 64,
             7,
-            json.dumps({"cause": cause, "episode": episode}),
+            json.dumps(document),
             *key,
             case,
             "null",
             None,
+            carried_from,
+            *(halves or (None, None)),
         ),
     )
     return decision_id
@@ -747,7 +756,11 @@ def _row(
     value: str = '{"kind":"text","value":"Chosen"}',
     shown: str = '{"destination":"title","state":"value","value":"Shown"}',
     selection: str | None = None,
+    halves: tuple[str, str] | None = None,
+    carried: OwnerAnswerRow | None = None,
 ) -> OwnerAnswerRow:
+    root = carried
+    offer, seen = halves or (None, None)
     return OwnerAnswerRow(
         source,  # type: ignore[arg-type]  # reason: a literal of the row's source vocabulary.
         _id(tag),
@@ -763,6 +776,11 @@ def _row(
         ordinal * 10,
         shown,
         selection,
+        offer,
+        seen,
+        None if root is None else root.answer_id,
+        case if root is None else root.review_case_id,
+        episode if root is None else root.episode,
     )
 
 
@@ -1046,6 +1064,76 @@ def test_completion_hands_back_what_its_request_covers_by_position() -> None:
     assert _resumed((a, matching), (request, late)) is None
 
 
+def test_a_failed_resume_closed_over_its_answer_hands_the_field_back() -> None:
+    """Step 0: the request closes `resume_superseded` naming the answer it
+    covers; the answer stays, no longer carried (ADR-0108)."""
+    a = _row("a", 1)
+    request = _ev("r", "resume_requested", 1)
+    failed = _ev("f", "resume_failed", 1, request=request)
+    closed = _ev("s", "resume_superseded", 1, request=request, answer="a")
+    assert _resumed((a,), (request, failed, closed)) == (_id("a"), None, False)
+    # Asked again, the request names no answer: the answer stays carried.
+    again = _ev("s2", "resume_superseded", 1, request=request)
+    assert _resumed((a,), (request, again)) == (_id("a"), None, True)
+
+
+def test_a_retired_answer_stays_and_is_no_longer_carried() -> None:
+    a = _row("a", 1)
+    assert _resumed((a,), (_ev("t", "retired", 1, answer="a"),)) == (
+        _id("a"),
+        None,
+        False,
+    )
+    # Retiring another answer leaves the record alone.
+    b = _row("b", 2, case=_OTHER_CASE)
+    assert _resumed((a, b), (_ev("t", "retired", 2, answer="a"),)) == (
+        _id("b"),
+        None,
+        True,
+    )
+
+
+def test_the_record_copies_the_answers_question_halves() -> None:
+    a = _row("a", 1, halves=("1" * 64, "2" * 64))
+    folded = next(iter(fold_owner_field_answers((a,), ()).values()))
+    assert (folded.offer_digest, folded.seen_target_digest) == ("1" * 64, "2" * 64)
+    # A pin over the answer marks it and keeps its halves.
+    pin = _row("p", 2, "pin")
+    folded = next(iter(fold_owner_field_answers((a, pin), ()).values()))
+    assert (folded.offer_digest, folded.seen_target_digest) == ("1" * 64, "2" * 64)
+    # The next answer brings its own.
+    b = _row("b", 3, "keep_current", case=_OTHER_CASE)
+    folded = next(iter(fold_owner_field_answers((a, pin, b), ()).values()))
+    assert (folded.offer_digest, folded.seen_target_digest) == (None, None)
+
+
+def test_a_carried_answer_restores_its_root_and_counts_as_given_there() -> None:
+    a = _row("a", 1, halves=("1" * 64, "2" * 64))
+    carried = _row(
+        "c", 2, case=_OTHER_CASE, episode=1, halves=("3" * 64, "4" * 64), carried=a
+    )
+    record = fold_owner_field_answers((a, carried), ())
+    answer = next(iter(record.values()))
+    # The record takes the new case, episode and halves, and restores the root.
+    assert (answer.answer_id, answer.previous_answer_id, answer.carry_eligible) == (
+        _id("c"),
+        _id("a"),
+        True,
+    )
+    assert (answer.review_case_id, answer.episode, answer.offer_digest) == (
+        _OTHER_CASE,
+        1,
+        "3" * 64,
+    )
+    # An answer on the new case replaces an answer from the root's case: a
+    # withdrawal of it restores the carried row.
+    b = _row("b", 3, case=_OTHER_CASE, episode=1)
+    assert _record(a, carried, b)["previous"] == _id("c")
+    # Back on the root's case in a later episode, the same holds.
+    back = _row("k", 3, episode=2)
+    assert _record(a, carried, back)["previous"] == _id("c")
+
+
 def test_resume_asked_again_supersedes_the_open_request() -> None:
     a = _row("a", 1)
     first = _ev("r1", "resume_requested", 1)
@@ -1106,6 +1194,40 @@ def test_each_owner_answer_writes_the_record_and_a_withdrawal_takes_it_back(
         store.decide("withdraw", destination="genres")
         assert "genres" not in _stored(store)
         assert_record_recomputes(store.repository._connection)
+    finally:
+        store.close()
+
+
+def test_an_owner_answer_stores_the_question_it_was_given_against(
+    tmp_path: Path,
+) -> None:
+    """The owner command site writes the offer part of the case's current
+    offer and the target part of the case's field; the record copies them
+    from the ledger row. A pin and a withdrawal store none (ADR-0108)."""
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        connection = store.repository._connection
+        accepted = store.decide("accept", json.loads(_GENRES), destination="genres")
+        question = case_question(store.case, store.case.proposals, "genres")
+        assert question is not None
+        assert connection.execute(
+            "SELECT carried_from,offer_digest,seen_target_digest FROM human_decisions "
+            "WHERE decision_id=?",
+            (accepted.decision_id,),
+        ).fetchone() == (None, question.offer_part, question.target_part)
+        record = _stored(store)["genres"]
+        assert (record.offer_digest, record.seen_target_digest) == (
+            question.offer_part,
+            question.target_part,
+        )
+        assert_record_recomputes(connection)
+        withdrawn = store.decide("withdraw", destination="genres")
+        assert connection.execute(
+            "SELECT offer_digest,seen_target_digest FROM human_decisions "
+            "WHERE decision_id=?",
+            (withdrawn.decision_id,),
+        ).fetchone() == (None, None)
+        assert_record_recomputes(connection)
     finally:
         store.close()
 

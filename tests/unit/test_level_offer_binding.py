@@ -260,6 +260,9 @@ def seed(store: OwnerStore, decision: HumanDecision) -> None:
             decision.to_json(),
             *decision_copies(store.case, decision.destination),
             None,
+            None,
+            None,
+            None,
         ),
     )
     store.repository._connection.commit()

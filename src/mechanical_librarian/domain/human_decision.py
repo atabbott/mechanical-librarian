@@ -551,6 +551,14 @@ def _target_field(case: ReviewCase, destination: str) -> dict[str, object] | Non
     )
 
 
+def case_question(
+    case: ReviewCase, offer: tuple[dict[str, object], ...], destination: str
+) -> DecisionQuestion | None:
+    """The field's question on ``case`` in ``offer``, its current offer: what
+    an answer recorded now is given against (ADR-0108)."""
+    return decision_question(offer, _target_field(case, destination), destination)
+
+
 def target_value(case: ReviewCase, destination: str) -> object:
     """The case's recorded target value for one destination; ``None`` if empty."""
     field = _target_field(case, destination)
@@ -1160,11 +1168,7 @@ class HumanDecision:
         proposal = next(
             (value for value in offer if value["destination"] == destination), None
         )
-        if (
-            proposal is None
-            or decision_question(offer, _target_field(case, destination), destination)
-            != expected
-        ):
+        if proposal is None or case_question(case, offer, destination) != expected:
             raise HumanDecisionError("stale")
         settled = (
             written

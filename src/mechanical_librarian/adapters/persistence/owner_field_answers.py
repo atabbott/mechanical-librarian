@@ -160,7 +160,8 @@ OWNER_FIELD_EVENT_TRIGGERS = {
     for operation in ("update", "delete")
 }
 # One row per field of a book: the owner's latest answer there. The question
-# halves stay null until the question check (C4'), both or neither.
+# halves are the answer's own (null for a cover, a pin, an authored
+# description), both or neither.
 OWNER_FIELD_ANSWERS_SQL = (
     "CREATE TABLE owner_field_answers ("
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
@@ -209,7 +210,9 @@ _UPSERT_SQL = (
 )
 # The ledger rows the record folds, in `OwnerAnswerRow`'s field order: every
 # owner decision, each cover answer naming its owner selection, and every
-# owner authored description. `{human}` and `{authored}` narrow each arm.
+# owner authored description, with its question halves and where it counts as
+# given (a carried row's root's case and episode). `{human}` and `{authored}`
+# narrow each arm.
 _LEDGER_ANSWERS_SQL = (
     "SELECT 'human',decision.decision_id,decision.ordinal,decision.connection_name,"
     "decision.library_name,decision.item_id,decision.destination,"
@@ -217,12 +220,18 @@ _LEDGER_ANSWERS_SQL = (
     "decision.outcome,json_extract(decision.document,'$.cause'),"
     "decision.selected_value_document,decision.display_title,decision.occurred_at,"
     "decision.target_field_document,(SELECT selection.selection_id FROM "
-    "owner_cover_selections selection WHERE selection.decision_id=decision.decision_id) "
-    "FROM human_decisions decision WHERE {human} UNION ALL "
+    "owner_cover_selections selection WHERE selection.decision_id=decision.decision_id),"
+    "decision.offer_digest,decision.seen_target_digest,decision.carried_from,"
+    "COALESCE(root.review_case_id,decision.review_case_id),"
+    "COALESCE(json_extract(root.document,'$.episode'),"
+    "json_extract(decision.document,'$.episode')) "
+    "FROM human_decisions decision LEFT JOIN human_decisions root "
+    "ON root.decision_id=decision.carried_from WHERE {human} UNION ALL "
     "SELECT 'authored_description',authored.decision_id,authored.ordinal,"
     "authored.connection_name,authored.library_name,authored.item_id,'description',"
     "authored.review_case_id,authored.episode,'authored',NULL,'null',"
-    "authored.display_title,json_extract(authored.document,'$.occurred_at'),'null',NULL "
+    "authored.display_title,json_extract(authored.document,'$.occurred_at'),'null',NULL,"
+    "NULL,NULL,NULL,authored.review_case_id,authored.episode "
     "FROM owner_authored_descriptions authored WHERE {authored}"
 )
 
@@ -310,8 +319,8 @@ def record_differences(
     The fold takes the owner's answers and Resume's events, so every column
     compares, `open_resume_id` included: a completion the record missed, a
     request it does not name as open or one it names after the request
-    closed all differ. `offer_digest` and `seen_target_digest` compare as the
-    fold gives them, null, until the question check (C4') writes them.
+    closed all differ. `offer_digest` and `seen_target_digest` are the
+    answer's own question halves, copied from its ledger row.
     """
     stored = {answer.key: answer for answer in stored_answers(connection)}
     folded = fold_owner_field_answers(
@@ -370,6 +379,7 @@ def record_answer(
     so an open request never covers less than the record's answer (S10).
     """
     row = _ledger_row(connection, source, answer_id)
+    current = _current(connection, row.key)
     request = _open_request(connection, row.key)
     if request is not None:
         _append_event(
@@ -381,7 +391,17 @@ def record_answer(
             answer_id=answer_id,
             at=row.recorded_at,
         )
-    _write(connection, answer_from(row, _current(connection, row.key), pin_fingerprint))
+    _write(
+        connection,
+        answer_from(
+            row,
+            current,
+            pin_fingerprint,
+            None
+            if current is None
+            else _ledger_row(connection, current.source, current.answer_id).given_on,
+        ),
+    )
 
 
 def _decision(connection: sqlite3.Connection, decision_id: str) -> tuple[ItemKey, int]:

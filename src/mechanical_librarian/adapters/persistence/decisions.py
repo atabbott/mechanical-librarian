@@ -106,10 +106,12 @@ from mechanical_librarian.domain.field_effect import (
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import (
+    CARRIED_OUTCOMES,
     HUMAN_DECISION_EVENT_SCHEMA,
     DecisionScope,
     HumanDecision,
     HumanDecisionError,
+    case_question,
     chosen_value_fingerprint,
     description_unrestorable,
     pinned_field_fingerprint,
@@ -955,6 +957,15 @@ class SQLiteDecisionRepository(ConnectionScoped):
             )
             selected = _canonical_json(decision.selected_value)
             copies = decision_copies(case, decision.destination)
+            # The question the answer is given against, for the question
+            # check at the book's next case or episode (ADR-0108); a cover,
+            # a pin, an unpin and a withdrawal have none.
+            question = (
+                case_question(case, offer, decision.destination)
+                if decision.outcome in CARRIED_OUTCOMES
+                and decision.destination != "cover"
+                else None
+            )
             self._connection.execute(
                 HUMAN_DECISION_INSERT_SQL,
                 (
@@ -978,6 +989,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     if decision.destination == "description"
                     and decision.outcome == "accept"
                     else None,
+                    None,
+                    None if question is None else question.offer_part,
+                    None if question is None else question.target_part,
                 ),
             )
             self._record_cover_decision_outcome(

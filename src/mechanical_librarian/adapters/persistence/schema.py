@@ -964,6 +964,14 @@ _HUMAN_DECISIONS_SQL = (
     "display_title TEXT CHECK(display_title IS NULL OR typeof(display_title)='text'), "
     "target_field_document TEXT NOT NULL CHECK(typeof(target_field_document)='text' AND json_valid(target_field_document) AND json_type(target_field_document) IN ('object','null')), "
     "selected_form TEXT CHECK(selected_form IS NULL OR (typeof(selected_form)='text' AND destination='description' AND outcome='accept')), "
+    # C4' question check (#2040): a carried row names its root original, as
+    # its document does, and every answer keeps the question halves it was
+    # given against, both or neither; a carried row always has them
+    # (ADR-0108).
+    "carried_from TEXT CHECK(carried_from IS NULL OR (carried_from GLOB 'human_decision_[0-9a-f]*' "
+    "AND length(carried_from)=79 AND carried_from<>decision_id)), "
+    "offer_digest TEXT CHECK(offer_digest IS NULL OR (length(offer_digest)=64 AND offer_digest NOT GLOB '*[^0-9a-f]*')), "
+    "seen_target_digest TEXT CHECK(seen_target_digest IS NULL OR (length(seen_target_digest)=64 AND seen_target_digest NOT GLOB '*[^0-9a-f]*')), "
     # The selected value is null or one closed kind; the owner's empty value
     # carries no value and only an owner-entered decision selects it (ADR-0105).
     "CHECK(selected_value_document='null' OR (json_valid(selected_value_document) "
@@ -974,7 +982,11 @@ _HUMAN_DECISIONS_SQL = (
     "OR (outcome='owner_entered' AND json_type(selected_value_document,'$.value')='null')), "
     # A decision names the write it follows, frozen when it is recorded
     # (ADR-0105).
-    "CHECK(json_valid(document)=0 OR json_type(document,'$.follows') IN ('null','text')))"
+    "CHECK(json_valid(document)=0 OR json_type(document,'$.follows') IN ('null','text')), "
+    # C4' question check (#2040): see the carried_from column.
+    "CHECK((offer_digest IS NULL)=(seen_target_digest IS NULL)), "
+    "CHECK(carried_from IS NULL OR offer_digest IS NOT NULL), "
+    "CHECK(json_valid(document)=0 OR json_extract(document,'$.carried_from') IS carried_from))"
 )
 # Browse, counts and detail ask for a case's decisions per destination, and the
 # latest by ordinal (the rowid, so the index carries it); without this every

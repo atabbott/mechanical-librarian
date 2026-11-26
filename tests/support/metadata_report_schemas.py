@@ -485,8 +485,26 @@ def _undone(current: str, *steps: tuple[str, str]) -> str:
     return current
 
 
+# Nor did any producer before #2040 keep a carried row's root or an answer's
+# question halves on its owner decisions (ADR-0108).
+_QUESTION_COLUMNS = (
+    "carried_from TEXT CHECK(carried_from IS NULL OR (carried_from GLOB "
+    "'human_decision_[0-9a-f]*' AND length(carried_from)=79 AND "
+    "carried_from<>decision_id)), offer_digest TEXT CHECK(offer_digest IS NULL OR "
+    "(length(offer_digest)=64 AND offer_digest NOT GLOB '*[^0-9a-f]*')), "
+    "seen_target_digest TEXT CHECK(seen_target_digest IS NULL OR "
+    "(length(seen_target_digest)=64 AND seen_target_digest NOT GLOB '*[^0-9a-f]*')), "
+)
+_QUESTION_CHECKS = (
+    ", CHECK((offer_digest IS NULL)=(seen_target_digest IS NULL)), "
+    "CHECK(carried_from IS NULL OR offer_digest IS NOT NULL), "
+    "CHECK(json_valid(document)=0 OR json_extract(document,'$.carried_from') "
+    "IS carried_from))"
+)
 PRE_2038_HUMAN_DECISIONS_SQL = _undone(
     persistence_schema._HUMAN_DECISIONS_SQL,
+    (_QUESTION_COLUMNS, ""),
+    (_QUESTION_CHECKS, ")"),
     (_CASE_SHAPE, _CASE_REFERENCE),
     (
         _ITEM_KEY
