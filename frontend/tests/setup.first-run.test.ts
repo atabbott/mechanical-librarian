@@ -3024,7 +3024,9 @@ it.each(['usable access at load', 'a usable automatic check over failed access']
     expect(await screen.findByText('Signed in')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Use Codex' }))
 
-    expect(await screen.findByText('Not signed in')).toBeVisible()
+    expect(
+      await screen.findByText('Not signed in', { selector: '[data-codex-status]' }),
+    ).toBeVisible()
     expect(screen.getByText(remedyCopy)).toBeVisible()
     expect(screen.getByRole('alert')).toHaveTextContent(
       'You’re not signed in to ChatGPT. Sign in with ChatGPT, then choose Codex again.',
@@ -3121,7 +3123,7 @@ it('shows a failed automatic check under Sign in with ChatGPT without moving foc
   const signIn = screen.getByRole('button', { name: 'Sign in with ChatGPT' })
   expect(alert.previousElementSibling).toBe(signIn)
   expect(signIn).toBeEnabled()
-  expect(screen.getByText('Not signed in')).toBeVisible()
+  expect(screen.getByText('Not signed in', { selector: '[data-codex-status]' })).toBeVisible()
   expect(screen.getByRole('heading', { name: 'Cover reviewer (optional)' })).toHaveFocus()
 })
 
@@ -3375,7 +3377,7 @@ it('shows the sandbox remedy and stops polling when a sign-in meets a refused sa
   expect(scrolled(remedy)).toBe(true)
   expect(screen.queryByRole('button', { name: 'Sign in with ChatGPT' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Cancel sign-in' })).toBeNull()
-  expect(screen.getByText('Not signed in')).toBeVisible()
+  expect(screen.getByText('Not signed in', { selector: '[data-codex-status]' })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Check key and use OpenRouter' })).toBeEnabled()
   const reads = fetch.mock.calls.length
   await new Promise((resolve) => setTimeout(resolve, 1200))
@@ -3510,7 +3512,7 @@ it('blocks sign-in with the sandbox remedy when the automatic check meets a refu
       'Codex could not start its sandbox on this host. The container log says why.',
     ),
   ).toBeVisible()
-  expect(screen.getByText('Not signed in')).toBeVisible()
+  expect(screen.getByText('Not signed in', { selector: '[data-codex-status]' })).toBeVisible()
   expect(screen.queryByRole('button', { name: 'Sign in with ChatGPT' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Use Codex' })).toBeNull()
 })
