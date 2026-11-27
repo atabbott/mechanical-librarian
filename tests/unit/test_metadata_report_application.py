@@ -67,6 +67,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetSnapshot,
     UnsupportedMediaError,
+    asin_fallback_permitted,
     provider_discovery_lane_order,
     provider_observation,
     qualify_provider_lane,
@@ -4618,8 +4619,12 @@ class _CarryingCatalogue:
         self._plans.append(plan)
         results: list[ProviderLaneResult] = []
         for lane in provider_discovery_lane_order(plan):
-            self._order.append(lane.kind)
             work = lane.kind is ProviderQueryKind.WORK
+            # The catalogue asks the fallback beside an item's own ASIN only
+            # when that lookup kept nothing (#1879).
+            if work and not asin_fallback_permitted(plan, results):
+                continue
+            self._order.append(lane.kind)
             asin = self._search_asin if work else cast("str", lane.canonical_asin)
             lane_answer = qualify_provider_lane(
                 ProviderObservation(
@@ -4807,7 +4812,11 @@ def test_an_item_that_names_its_own_asin_carries_nothing() -> None:
 
     assert not any(value.basis == "prior_admission" for value in second.local_claims)
     assert [ProviderQueryKind.ASIN] == order
-    assert ["B0OWNASIN1"] == [value.canonical_asin for value in plans[0].lanes]
+    assert ["B0OWNASIN1"] == [
+        value.canonical_asin
+        for value in plans[0].lanes
+        if value.kind is ProviderQueryKind.ASIN
+    ]
 
 
 def test_the_persisted_discovery_titles_are_the_ones_a_lane_may_ask() -> None:
