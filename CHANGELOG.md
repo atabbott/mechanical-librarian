@@ -42,6 +42,11 @@ brackets are GitHub issues.
 - A library whose write was stopped while SQLite was still writing its journal
   now starts again, and a partly written store is rolled back. Before, it
   refused with "database recovery state is unsupported" (#2052).
+- In Library, the line saying a work is being checked against a new Book
+  matching setting, or could not be checked, now sits above the field tabs
+  with the comparison notice, spaced from them, instead of touching the tabs
+  between the selected tab and its field. Evidence and Find this book now
+  line up under Needs you and Automatic (#2057).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).

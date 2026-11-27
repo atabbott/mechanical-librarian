@@ -1310,6 +1310,13 @@ export default function LibraryPage({
                   ))}
                 </aside>
               ) : null}
+              {/* About the whole work, so it sits with the comparison notice above
+                  the field tabs, not between a tab and its content (#2057). */}
+              <CaseCheckingLine
+                checking={detail.data.checking}
+                givenUp={detail.data.checkGivenUp}
+                http={http}
+              />
               <FieldFilmstrip
                 title={displayedIdentity.title}
                 fields={renderedRailFields}
@@ -1331,11 +1338,6 @@ export default function LibraryPage({
                     [selectedReviewCaseId]: true,
                   }))
                 }}
-              />
-              <CaseCheckingLine
-                checking={detail.data.checking}
-                givenUp={detail.data.checkGivenUp}
-                http={http}
               />
               {staleCoverNotice}
               {complete?.id === selectedReviewCaseId && completionInspection === null ? (
