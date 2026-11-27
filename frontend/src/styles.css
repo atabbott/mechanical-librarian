@@ -2225,14 +2225,19 @@ dialog.first-review-guide::backdrop { background:rgb(23 32 30 / .42); }
    never wraps them. Their column is as wide as the counts or a fixed width,
    whichever is wider, and never as wide as a link pill: a long pill's label
    wraps inside the pill, within the 44px row, so no link state narrows the
-   title or moves a field. */
+   title or moves a field. Evidence takes the same first column as Needs
+   you, so it sits under Needs you and Find this book, or its pill, starts
+   under Automatic, in the same 15rem, where the longest pill still keeps
+   two lines (#2057). */
 @media (min-width:761px) {
   @container shell (width >= 50rem) {
     .selected-work-header { display:grid; grid-template-columns:auto minmax(0,1fr) auto; grid-template-rows:auto auto; align-items:center; row-gap:0; }
     .selected-work-header > .library-book-mark { grid-column:1; grid-row:1 / span 2; }
     .selected-work-header > div { grid-column:2; grid-row:1 / span 2; }
     .selected-work-header > .selected-work-status { grid-column:3; grid-row:1; align-self:end; }
-    .selected-work-header > .selected-work-diagnostics { grid-column:3; grid-row:2; align-self:start; width:auto; flex-wrap:nowrap; white-space:nowrap; margin:-7px 0 -15px -2px; padding:0; border:0; contain:inline-size; min-width:15rem; }
+    .selected-work-header > .selected-work-diagnostics { grid-column:3; grid-row:2; align-self:start; width:auto; flex-wrap:nowrap; white-space:nowrap; margin:-7px 0 -15px; padding:0; border:0; contain:inline-size; min-width:15rem; }
+    .selected-work-header > :is(.selected-work-status, .selected-work-diagnostics) { column-gap:.75rem; }
+    .selected-work-header > .selected-work-status > div:first-child, .selected-work-header > .selected-work-diagnostics > a:first-child { min-width:4rem; }
     .selected-work-diagnostics > .work-action-pill { min-width:0; padding-block:.1rem; white-space:normal; overflow-wrap:normal; line-height:1.15; border-radius:.75rem; }
   }
 }
