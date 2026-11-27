@@ -271,9 +271,11 @@ def _migrates_through_the_command(fixture: Path, root: Path) -> None:
 
 
 def test_each_older_fixture_migrates_through_the_command(tmp_path: Path) -> None:
+    """Every older fixture the chain reaches; one behind a **Clean rebuild
+    required** version has no step and is refused at startup instead."""
     for version in range(1, schema.LEDGER_FORMAT_VERSION):
-        assert ledger_migrations.steps_from(version, schema.LEDGER_FORMAT_VERSION)
-        _migrates_through_the_command(_fixture(version), tmp_path / f"v{version}")
+        if ledger_migrations.steps_from(version, schema.LEDGER_FORMAT_VERSION):
+            _migrates_through_the_command(_fixture(version), tmp_path / f"v{version}")
 
 
 def test_an_older_fixture_migrates_through_a_synthetic_chain(

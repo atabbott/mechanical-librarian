@@ -644,7 +644,7 @@ def _changes_the_record(connection: sqlite3.Connection) -> None:
     [
         (lambda _connection: None, "regenerated"),
         (_changes_the_record, "failed"),
-        (_raises_in_the_dry_run, None),
+        (_raises_in_the_dry_run, "failed"),
     ],
     ids=["success", "refused", "exception"],
 )
@@ -652,18 +652,15 @@ def test_the_scratch_copy_is_removed_on_every_exit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     migrate: Callable[[sqlite3.Connection], None],
-    kind: str | None,
+    kind: str,
 ) -> None:
     path = _copy(tmp_path / "data")
     chain(monkeypatch, LedgerMigration(1, migrate), current=2)
     entered = _scratch_entries(monkeypatch)
-    if kind is None:
-        before = _sha(path)
-        with pytest.raises(ValueError, match="a step failed"):
-            _run(path)
+    before = _sha(path)
+    assert _run(path)[2].kind == kind
+    if kind == "failed":
         assert _sha(path) == before
-    else:
-        assert _run(path)[2].kind == kind
     # The dry run's copy; a run that goes ahead takes its restore point
     # through a second one.
     assert entered == ["scratch"] * (2 if kind == "regenerated" else 1)

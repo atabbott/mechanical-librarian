@@ -565,7 +565,7 @@ a provider, and is composed with no network client.
    rebuild required. After C6 admission also accepts a ledger at an earlier
    version that this build's chain reaches, validated at that version without
    changing it (its content is proved by migrating a private scratch copy,
-   per the design ruling of 2026-11-26, Q1); the migration itself runs only
+   #2041); the migration itself runs only
    in step 6, after the retained backup. `integrity_check` and a foreign-key
    check of every ledger table must pass. It refuses with
    nothing to do only when no ledger migration is pending and the derived

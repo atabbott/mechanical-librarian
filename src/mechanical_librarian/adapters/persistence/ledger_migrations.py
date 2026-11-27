@@ -141,7 +141,14 @@ def migrate_ledger(connection: sqlite3.Connection, version: int, current: int) -
             "SELECT ledger_format_version FROM ledger_meta WHERE singleton=1"
         ).fetchone() != (step.source,):
             raise MetadataReportError(_INCOMPATIBLE)
-        step.migrate(connection)
+        try:
+            step.migrate(connection)
+        except (sqlite3.Error, MetadataReportError):
+            raise
+        except Exception as error:
+            # A step's own failure is the run's one value-free refusal, on
+            # admission's dry run as in the transaction, never internal text.
+            raise MetadataReportError(_INCOMPATIBLE) from error
         connection.execute(
             "UPDATE ledger_meta SET ledger_format_version=? WHERE singleton=1",
             (step.source + 1,),
