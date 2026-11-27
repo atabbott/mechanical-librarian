@@ -7,8 +7,9 @@ supports and the exact versions it accepts. Support terms are in
 ## The clean-state rule
 
 Every database, report, configuration and internal document accepts only two
-states: absent, or its exact current version. This build has no migration,
-import, conversion, adoption or downgrade.
+states: absent, or its exact current version. The one exception is the
+ledger, which `regenerate-derived` converts from an earlier format. This build
+has no other migration, import, conversion, adoption or downgrade.
 
 The application database has two parts. The **ledger** holds the owner's
 answers, settings, consents, cover choices, write plans and their history.
@@ -17,8 +18,10 @@ providers and the ledger. A build that changes only derived state is marked
 **Derived regeneration required**: startup refuses the database and names the
 offline `regenerate-derived` command, which keeps the ledger and drops derived
 state for preparation to rebuild. A build that changes the ledger is marked
-**Clean rebuild required**; the other stores and documents keep the rule
-above.
+**Ledger migration**, and the same command converts the ledger in its run. A
+ledger change that cannot be converted is marked **Clean rebuild required**.
+Startup refuses a ledger from a newer build or one this build cannot convert.
+The other stores and documents keep the rule above.
 [Upgrades](../operations/upgrades.md) says how to do each.
 [ADR-0108](../architecture/decisions/0108-ledger-and-derived-state.md) records
 the two parts and the command, and

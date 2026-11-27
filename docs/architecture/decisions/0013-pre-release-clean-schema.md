@@ -10,8 +10,9 @@
   cutover, and every other store, report, configuration and document schema
   keeps it; from then startup admits a ledger and names the offline
   `regenerate-derived` for derived state, the derived-only adoption route is
-  retired, and the ledger later takes code-defined exact-predecessor
-  migrations run only by that command)
+  retired, and the ledger takes code-defined exact-predecessor migrations run
+  only by that command,
+  [as ADR-0108 sets out](0108-ledger-and-derived-state.md#ledger-format-and-migrations))
 
 ## Context
 

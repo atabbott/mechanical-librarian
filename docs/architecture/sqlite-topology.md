@@ -32,12 +32,13 @@ tables stay separate is recorded in
   extra object, altered SQL or a failed integrity check refuses before any
   mutation; the provider-response store checks each row's integrity when it
   reads it instead. Nothing is migrated, imported or repaired
-  ([ADR-0013](decisions/0013-pre-release-clean-schema.md)). What open-time
-  admission checks is stated once in
-  [Schema admission](security.md#schema-admission). Recovery from a refusal
-  is `regenerate-derived` when only the application database's derived state
-  is from another build, and otherwise a clean rebuild; both are in
-  [Upgrades](../operations/upgrades.md).
+  ([ADR-0013](decisions/0013-pre-release-clean-schema.md)), apart from the
+  application database's ledger migrations. What open-time admission checks
+  is stated once in [Schema admission](security.md#schema-admission).
+  Recovery from a refusal is `regenerate-derived` when only the application
+  database's derived state is from another build, or when its ledger is an
+  earlier format this build migrates, and otherwise a clean rebuild; both are
+  in [Upgrades](../operations/upgrades.md).
 - **Owner-only files.** The application, session, provider-response and
   catalogue databases are created `0600` and must be owned by the runtime
   user. The application and catalogue databases refuse a parent directory
@@ -563,9 +564,9 @@ and a distinct authority, key, lifecycle or restart rule
 proposal to merge or remove tables must name the tables removed, the single
 transaction that keeps results equal, and how rollback, restart, stale
 currentness, idempotency, audit retention and exact-schema rejection still
-hold. A schema change to derived state only is a derived regeneration; any
-other is a clean rebuild until ledger migrations exist
-([ADR-0108](decisions/0108-ledger-and-derived-state.md)).
+hold. A schema change to derived state only is a derived regeneration; a
+ledger change is a ledger migration, or a clean rebuild when it cannot keep
+its meaning ([ADR-0108](decisions/0108-ledger-and-derived-state.md)).
 
 To see which tables a bounded set of public tests writes, run:
 
@@ -578,9 +579,7 @@ cannot see update-only changes or rolled-back work.
 
 ### Ledger and derived state
 
-[ADR-0108](decisions/0108-ledger-and-derived-state.md), proposed, records
-this split. Ledger migrations are not built yet, so a ledger change is still a
-clean rebuild.
+[ADR-0108](decisions/0108-ledger-and-derived-state.md) records this split.
 
 - The application database keeps one file in two partitions. The **ledger**
   holds owner authority and its audit, safety budgets and paid artefacts
@@ -611,15 +610,20 @@ clean rebuild.
   and `regeneration_notice_dismissals` records one dismissal of each run's
   notice.
 - Startup reads `ledger_meta` first. Derived state from another build refuses
-  and names the offline `regenerate-derived` command; a missing record or
-  another ledger format refuses as needing a clean rebuild; an extra or
-  altered object refuses as before. Startup never drops or regenerates.
+  and names the offline `regenerate-derived` command, and an earlier ledger
+  format this build's migrations reach also names it; a missing record or any
+  other ledger format refuses as needing a clean rebuild; an extra or altered
+  object refuses as before. Startup never drops, regenerates or migrates.
 - `regenerate-derived` opens the file through the server's binding, so it
   refuses while a server holds it, and validates the ledger alone. It keeps a
   verified copy in `regeneration-backup/`, then in one `BEGIN EXCLUSIVE`
   transaction drops every object outside the ledger, revokes every current
   authority, repoints owner cover pointers, advances the epoch, recreates the
   derived objects and their seed rows, appends its audit row and runs the
-  open's full validation over the result. Ledger migrations will run inside
-  it, after the copy. The owner's steps are in
+  open's full validation over the result. For an earlier ledger, admission
+  checks it at its own format and proves the migrated ledger on its scratch
+  copy, and the transaction runs each exact-predecessor step in
+  `ledger_migrations.py` straight after the drop. A step that changes an owner
+  decision, its order, the record or its events, or makes authority current,
+  stops the run and leaves the file as it was. The owner's steps are in
   [Upgrades](../operations/upgrades.md#upgrading-with-a-regeneration).
