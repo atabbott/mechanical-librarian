@@ -26,7 +26,7 @@ one fixed, bounded diagnostic with no paths, credentials, target values,
 provider bodies or EPUB text. A report's cover evidence is a source outcome
 and a private artifact reference. The cover preview is a private
 digest-addressed artifact that contacts nothing and cannot fetch originals.
-Each decoded artifact also records `measures`: perceptual, difference, colour
+Each decoded artifact records `measures`: perceptual, difference, colour
 and layout measures computed inside the constrained decoder from the oriented
 320×480 preview, never from stated sizes or embedded metadata (#1363).
 
@@ -158,7 +158,8 @@ tracks keep both values; disagreeing ASINs each get a discovery lane.
 
 An audiobook holding one EPUB (a supplementary ebook) records it in
 `companion`: identity, digest, and the title, creator, ISBN and publisher the
-EPUB inspector read. An unreadable EPUB keeps only its identity, and changing the EPUB
+EPUB inspector read. These corroborate the work but are never the recording's
+own claims. An unreadable EPUB keeps only its identity, and changing the EPUB
 makes the report stale. Other reports have a null `companion`.
 
 The companion helps find the book, never states a value (#1468). When its ISBN
@@ -381,7 +382,7 @@ where the exact band found nothing.
 - A promoted, asserted or carried candidate keeps edition-scope claims only
   when the recording's running time corroborates it; otherwise it is demoted to
   work scope. On the carried lane, a product whose narrators share nobody with
-  the recording's own credits is also refused. A recording or product with no
+  the recording's own credits is refused. A recording or product with no
   narrator credits is never disjoint.
 - Band productions admit only on an audiobook plan's asserted work lane, inside
   the tight band of a single runtime, with no language or format conflict. The
@@ -428,7 +429,7 @@ Further audiobook records grant nothing by themselves:
   narrator tags rule out. Only their narrators may be offered, for an empty
   narrator field
   ([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)).
-  The audio-edition read also states each edition's image and language. They
+  The audio-edition read states each edition's image and language. They
   feed only the square covers Hardcover offers for the audiobook, never a
   kept edition or a witness outcome.
 - **`dispatch`**: each lane's `outcome` (`admitted`, `empty`, `refused`,
@@ -508,7 +509,7 @@ goes live.
   [provider recovery](provider-recovery.md) retry ask live and replace what
   is held.
 - A held answer the decoder or the adapter refuses when it is reused is
-  removed, so that request is asked live the next time.
+  removed, and that request next goes live.
 - Losing or refusing the store costs only requests: every request goes live.
 
 ### Dates, titles and creators
@@ -595,8 +596,8 @@ title, subtitle, authors, description, genres, tags, series and cover.
 Narrators, dates, publisher, identifiers, language and the explicit flag
 never read the level.
 
-Where the live decision for a field is left to the owner, and the level would
-offer other alternatives, review shows the level's alternatives under the
+Where a field is left to the owner and the level would offer other
+alternatives, review shows the level's alternatives under the
 live proposal, each naming the rule that admitted it
 (`work_identity:<level>`). Title, subtitle and series are offered together or
 not at all. A field decided automatically keeps its live proposal. Where the

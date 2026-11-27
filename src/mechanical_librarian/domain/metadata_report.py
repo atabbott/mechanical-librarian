@@ -5462,8 +5462,9 @@ def _identity_refused_set_admitted(
 ) -> bool:
     """Whether exact work-identity set admission admits a retained refused set.
 
-    Read against the target's stored title and authors with the closed
-    comparison and no dispatch lineage, the way an untruncated set is checked
+    Read against the target's stored title and authors, each compared
+    without a producer suffix (#1880), with the closed comparison and no
+    dispatch lineage, the way an untruncated set is checked
     at readback (#1355): a set it admits was never a refusal, so a report
     never keeps it as one.
     """
@@ -5480,7 +5481,9 @@ def _identity_refused_set_admitted(
         provider.identity_refused_candidates,
         target.current_title or "",
         (
-            cast("tuple[str, ...]", authors)
+            tuple(
+                comparison_author(value) for value in cast("tuple[str, ...]", authors)
+            )
             if type(authors) is tuple and all(type(value) is str for value in authors)
             else ()
         ),

@@ -4503,11 +4503,16 @@ def provider_candidate_bound_identifiers(
 
 
 def _target_stored_authors(report: MetadataReport) -> tuple[str, ...]:
-    """The target's AUTHORS value as stored, in order; empty when not a value."""
+    """The target's AUTHORS value as stored, in order, each compared without a
+    producer suffix (#1880); empty when not a value."""
     for field in report.target.fields:
         if field.destination is TargetDestination.AUTHORS:
             if field.state is TargetFieldState.VALUE and type(field.value) is tuple:
-                return tuple(value for value in field.value if type(value) is str)
+                return tuple(
+                    comparison_author(value)
+                    for value in field.value
+                    if type(value) is str
+                )
             return ()
     return ()
 
