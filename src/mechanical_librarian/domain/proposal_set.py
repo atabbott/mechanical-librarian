@@ -6313,10 +6313,19 @@ def _alternatives(
             )
             != target.value
             and (
-                _matches(destination, folded, proposal_value)
+                folded_spellings := _value(
+                    destination,
+                    _incumbent_spellings(
+                        folded, cast("tuple[str, ...]", proposal_value.value)
+                    ),
+                )
+            )
+            is not None
+            and (
+                _matches(destination, folded, folded_spellings)
                 or (
                     report.audio is not None
-                    and creator_list_reordered(folded, proposal_value.value)
+                    and creator_list_reordered(folded, folded_spellings.value)
                 )
             )
         ):
@@ -6327,6 +6336,7 @@ def _alternatives(
             proposal_value = _value(
                 destination, tuple(cast("tuple[str, ...]", target.value))
             )
+            respelled = True
         if (
             destination is TargetDestination.LANGUAGE
             and type(proposal_value.value) is str

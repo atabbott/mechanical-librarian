@@ -1466,3 +1466,63 @@ def test_only_a_producer_credits_bare_name_preserves_it(
         assert result.outcome is ProposalOutcome.KEEP
     else:
         assert result.outcome is not ProposalOutcome.KEEP
+
+
+def test_a_marks_stripped_bare_name_still_preserves_a_producer_credit() -> None:
+    """A source that drops a mark and the producer suffix together names the
+    same author, so the stored credit is kept, suffix and marks (#1880)."""
+    target = TargetField(
+        TargetDestination.AUTHORS,
+        TargetFieldState.VALUE,
+        ("Seán Writer - Graphic Audio",),
+    )
+    providers = tuple(
+        _provider(
+            name,
+            f"{name}-edition",
+            (
+                _claim(
+                    name,
+                    f"{name}-edition",
+                    ClaimKind.CREATOR,
+                    "Sean Writer",
+                    scope=ClaimScope.WORK,
+                    role="author",
+                    order=0,
+                ),
+            ),
+            authority=name,
+        )
+        for name in ("hardcover", "open_library")
+    )
+    result = _result(
+        evaluate_report(
+            _report(fields=_fields(None, authors=target), providers=providers)
+        ),
+        TargetDestination.AUTHORS,
+    )
+    assert result.outcome is ProposalOutcome.KEEP
+    assert result.selected_alternative_id is None
+    assert [(alt.assessment, alt.value.value) for alt in result.alternatives] == [
+        (ProposalAssessment.PRESERVES_TARGET, ("Seán Writer - Graphic Audio",))
+    ]
+
+
+def test_a_bare_name_and_the_full_credit_are_one_preserving_alternative() -> None:
+    """One source gives the bare name and another the full credit: both state
+    the stored credit, so they are one alternative and nothing is asked
+    (#1880)."""
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_bibliographic_report,
+    )
+
+    report = synthetic_audiobook_bibliographic_report(
+        target_authors=("X Writer - Graphic Audio",),
+        source_authors=("X Writer",),
+        second_source_authors=("X Writer - Graphic Audio",),
+    )
+    result = _result(evaluate_report(report), TargetDestination.AUTHORS)
+    assert result.outcome is ProposalOutcome.KEEP
+    assert [(alt.assessment, alt.value.value) for alt in result.alternatives] == [
+        (ProposalAssessment.PRESERVES_TARGET, ("X Writer - Graphic Audio",))
+    ]
