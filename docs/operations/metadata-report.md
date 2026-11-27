@@ -127,9 +127,9 @@ become claims.
 - `und`, `mul`, `mis`, `zxx` and `xxx` are not language claims; undetermined
   language never supports recording identity.
 - The MP4 `prID` atom is not an ASIN.
-- A producer suffix on an Audiobookshelf author (` - Graphic Audio`), or a
-  Radio Drama, Audio Drama or Hörspiel genre, is a `dramatized` performance
-  claim.
+- A value with no digit, such as `[UNABRIDGED]`, is not an ASIN.
+- A producer suffix on an author (` - Graphic Audio`), or a drama genre, is a
+  `dramatized` performance claim.
 
 A multi-file item is one unit
 ([ADR-0066](../architecture/decisions/0066-multi-file-audiobook-composition.md)).
@@ -239,9 +239,9 @@ contradiction but never admits.
 Audiobooks go to the Audible catalog, Audnexus, AudioSilo, Hardcover, iTunes
 Search and Open Library, never to Google Books or Inventaire
 ([ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md)).
-iTunes Search is asked for a cover only, and only while its `cover_enabled` is
-on: nothing else it states is read for an audiobook. Its answer never matches an audiobook and its failure never limits
-one, so an audiobook only iTunes found stays Not matched.
+iTunes Search is asked only for a cover, while its `cover_enabled` is on. Its
+answer never matches an audiobook and its failure never limits one, so an
+audiobook only iTunes found stays Not matched.
 Discovery has two phases:
 
 1. **The item's own plan.** One lane per ASIN in the tags, associated sidecars
@@ -249,6 +249,8 @@ Discovery has two phases:
    ASIN whose previous report for the same tracks admitted an edition carries
    that ASIN as a `prior_admission` claim, which Audible looks up first
    ([ADR-0088](../architecture/decisions/0088-carried-recording-admission.md)).
+   Audible alone also asks the title-and-author search, when no own-ASIN
+   lookup kept a recording and the budget has room.
 2. **The ASIN feed.** Only for an item with no ASIN of its own: providers
    that answered no lane are fed unnamed ASINs in order — carried, promoted
    from search by the runtime band, asserted by Audiobookshelf, Hardcover
@@ -257,8 +259,7 @@ Discovery has two phases:
    audio edition, fed only when the editions challenge the match or no
    recording was put forward
    ([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)).
-   The fed observation replaces the first, so each provider states one
-   observation.
+   The fed observation replaces the first, so each provider states one.
 
 At most four ASIN lanes run per item. Hardcover and Open Library have no ASIN
 lookup and record `insufficient_input` for an ASIN-only plan.
@@ -277,16 +278,15 @@ but never settles identity by itself: it admits only through the runtime gate
 below, and an answer naming another work keeps only its ASIN and leaves no
 proposal.
 
-A carried edition stays while any authority verifies it or any lookup failed,
-and is dropped only once a lookup answered, none verified it and none failed. A
-verified carried ASIN is the one proposed. The owner's current ASIN is never
+A carried edition is dropped only once a lookup answered, none verified it and
+none failed. A verified carried ASIN is the one proposed. The owner's current ASIN is never
 withheld. Regional ASINs for one recording count once.
 
 The audio section records up to two `discovery_titles` (folder leaf, then a
 single-file title tag), dropping any equal to the title, an author, a series
-name or each other. With no local ASIN, the first can drive one alternative
-work lane, which Audible alone asks after the asserted lane ends `no_match`. It
-gives recording authority only.
+name or each other. With no local ASIN, or in Audible's fallback search, the
+first can drive one alternative work lane, which Audible alone asks after the
+asserted lane ends `no_match`. It gives recording authority only.
 
 ### Owner links
 
@@ -388,10 +388,10 @@ where the exact band found nothing.
   the tight band of a single runtime, with no language or format conflict. The
   band-first and corroborated rules below apply on Audible's asserted lane
   only. A title production needs the product's own series to state what the
-  rung stripped. A local title with a variant or format term (dramatised,
-  abridged, unabridged, full cast, radio and similar) never admits.
-- A dramatised recording conflicts with a product stated `unabridged` or
-  `abridged`, and the reverse.
+  rung stripped. A local title with a variant or format term (abridged,
+  dramatised, full cast and similar) never admits.
+- A dramatised recording conflicts with an `unabridged` or `abridged`
+  product, and the reverse.
 - **Band-first:** if several products admit, one is in the tight band and the
   rest are outside the loose band, the tight one is kept unless it conflicts.
 - **Corroborated:** if nothing admits on any lane, one product may admit when
@@ -530,9 +530,9 @@ goes live.
 - A provider title or subtitle with a control or format character (such as
   U+200B) is a value-free `malformed` claim; over-long text is `oversized`.
   Safe Unicode is kept exactly and never stripped into agreement.
-- Creator agreement needs the complete ordered same-role set; an
-  Audiobookshelf author is compared without its producer suffix. Fuzzy
-  matching, token subsets, rank and repeated queries never create agreement.
+- Creator agreement needs the complete ordered same-role set; a producer
+  suffix is ignored. Fuzzy matching, token subsets, rank and repeated queries
+  never create agreement.
 
 ### Covers
 

@@ -253,7 +253,8 @@ def test_native_managed_toolchain_declarations_agree(
 ) -> None:
     workflow = (ROOT / ".github/workflows/public-gate.yml").read_text()
     workflow_pins = re.findall(manifest_pattern, workflow, re.MULTILINE)
-    assert len(workflow_pins) == 7
+    # `container-lifecycle` installs Python and uv but builds no frontend.
+    assert len(workflow_pins) == {"node": 7, "python": 8, "uv": 8}[tool]
     prefix = "ghcr.io/astral-sh/uv" if tool == "uv" else tool
     docker_pins = re.findall(
         re.escape(prefix) + r":(\d+\.\d+\.\d+)", (ROOT / "Dockerfile").read_text()

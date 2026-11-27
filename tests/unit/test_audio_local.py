@@ -843,7 +843,17 @@ def test_a_well_formed_asin_is_valid_and_canonical(shape: str, canonical: str) -
 
 @pytest.mark.parametrize(
     "shape",
-    ("B0CW1KL2Q", "B0CW1KL2QDX", "B0CW1KL-QD", "B0CW1KL2Q_", "", "not an asin"),
+    (
+        "B0CW1KL2Q",
+        "B0CW1KL2QDX",
+        "B0CW1KL-QD",
+        "B0CW1KL2Q_",
+        "",
+        "not an asin",
+        # Ten letters and no digit is a word, not an ASIN (#1879).
+        "Unabridged",
+        "ABCDEFGHIJ",
+    ),
 )
 def test_a_malformed_asin_is_retained_rather_than_filtered(shape: str) -> None:
     """The file said it. The report says the file said it, and that it is junk."""
@@ -900,6 +910,34 @@ def test_a_path_token_cannot_be_malformed_because_its_grammar_is_the_shape() -> 
     assert _asins(interpretation) == {
         ("path_file", "0641977697", "0641977697", "valid"),
         ("path_folder", "B0CW1KL2QD", "B0CW1KL2QD", "valid"),
+    }
+
+
+def test_a_bracketed_word_with_no_digit_is_not_an_asin_token() -> None:
+    """`[UNABRIDGED]` has the bracketed shape but not an ASIN's (#1879)."""
+    interpretation = _read(
+        _probe(),
+        path=AudioPathContext("Book [UNABRIDGED].m4b", "Folder [UNABRIDGED]"),
+    )
+
+    assert _asins(interpretation) == set()
+
+
+def test_a_tag_or_sidecar_word_with_no_digit_is_malformed_with_no_canonical() -> None:
+    interpretation = _read(
+        _probe(format_name="mp3", tags={"asin": "Unabridged"}),
+        sidecars=(
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
+                json.dumps({"asin": "Unabridged"}),
+            ),
+        ),
+    )
+
+    assert _asins(interpretation) == {
+        ("id3_user_text", "Unabridged", None, "malformed"),
+        ("sidecar_libation", "Unabridged", None, "malformed"),
     }
 
 

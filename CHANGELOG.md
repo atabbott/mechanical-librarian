@@ -775,6 +775,11 @@ brackets are GitHub issues.
 - When setup's step list is too narrow to hold a step's name beside its Change
   button, as it is beside the steps with 200% text, the button moves under the
   name, so words such as "Audiobookshelf" stay whole (#1508).
+- An audiobook whose own ASIN (in a tag, a sidecar or a bracketed file or
+  folder name) names a recording that doesn't match is also searched on Audible
+  by title and author, so it can still match its real recording. An audiobook
+  whose own ASIN matches sends no extra request. A tagged or bracketed value
+  with no digit, such as `[UNABRIDGED]`, is no longer read as an ASIN (#1879).
 
 ## 0.29.3 — Review fixes and hygiene (in progress)
 
