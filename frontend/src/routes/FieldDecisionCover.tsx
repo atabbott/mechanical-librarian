@@ -652,8 +652,9 @@ function CoverCard({
     reason: `${textId}-reason`,
   }
   const reason = coverCardReason(candidate, context, recommended && !shape.suggesting)
-  // The name already says Current cover, so only a Recommended or Suggested
-  // mark is named: it is the one thing on a suggested card that says so.
+  // The mark line is named only when it carries Recommended or Suggested: on a
+  // suggested card it is the one thing that says so. On the current card it
+  // reads with its label, "Current cover · Recommended", as the card shows it.
   const describedBy = [
     recommended ? describedIds.mark : null,
     describedIds.match,
