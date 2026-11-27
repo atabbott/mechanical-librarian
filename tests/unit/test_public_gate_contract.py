@@ -339,6 +339,10 @@ def test_the_documented_check_set_matches_the_gate_workflow() -> None:
 # Licences the Python closure uses beyond the frontend's accepted set: Pillow's
 # `MIT-CMU` and the `PSF-2.0` half of greenlet's `MIT AND PSF-2.0`.
 PYTHON_ONLY_LICENCES = frozenset({"MIT-CMU", "PSF-2.0"})
+# The names GitHub's dependency graph, which the review reads, gives two
+# accepted packages: typing-extensions' PSF-2.0 as `Python-2.0.1`, and uri-js's
+# BSD-2-Clause as `BSD-2-Clause AND BSD-2-Clause-Views`.
+GRAPH_LICENCE_NAMES = frozenset({"Python-2.0.1", "BSD-2-Clause-Views"})
 
 
 def test_dependency_review_checks_only_the_licences_of_changed_dependencies() -> None:
@@ -379,7 +383,8 @@ def test_dependency_review_checks_only_the_licences_of_changed_dependencies() ->
     assert licences.count(",") == len(listed) - 1
     assert listed == sorted(listed)
 
-    # The list is the frontend's accepted set plus the Python-only licences, so
+    # The list is the frontend's accepted set plus the Python-only licences and
+    # the graph's names for two accepted packages, so
     # the two policies cannot drift apart without this failing. The action
     # drops any entry holding an expression, so a frontend expression is listed
     # as its parts instead.
@@ -392,7 +397,7 @@ def test_dependency_review_checks_only_the_licences_of_changed_dependencies() ->
     frontend = re.findall(r"'([^']+)'", block[1])
     assert len(frontend) == 13
     simple = {licence for licence in frontend if " " not in licence}
-    assert set(listed) == simple | PYTHON_ONLY_LICENCES
+    assert set(listed) == simple | PYTHON_ONLY_LICENCES | GRAPH_LICENCE_NAMES
     assert len(listed) == len(set(listed))
     for expression in set(frontend) - simple:
         parts = set(re.findall(r"[A-Za-z0-9.+-]+", expression)) - {"AND", "OR"}

@@ -329,7 +329,9 @@ sets `persist-credentials: false`.
 reviews the licence of every npm and Python dependency a pull request adds or
 changes, in every scope, using GitHub's dependency graph. It fails on a
 licence outside the frontend's accepted set in
-`frontend/scripts/check-licenses.mjs` plus `MIT-CMU` and `PSF-2.0`;
+`frontend/scripts/check-licenses.mjs` plus `MIT-CMU` and `PSF-2.0`, and the
+names the dependency graph gives two accepted packages (`Python-2.0.1` for
+typing-extensions, `BSD-2-Clause-Views` for uri-js);
 `tests/unit/test_public_gate_contract.py` keeps the two lists in step. A
 dependency with no detected licence is reported but does not fail. It does
 not check advisories: those stay with the two audits above and their one
