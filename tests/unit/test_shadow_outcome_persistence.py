@@ -853,6 +853,7 @@ def _run_qualified_cover_pipeline(
     *,
     repository_factory=None,
     cover_policy_reference: str | None = None,
+    first_boot: bool = False,
 ) -> ReviewPreparationPipeline:
     database = root / "reports.sqlite"
 
@@ -922,6 +923,7 @@ def _run_qualified_cover_pipeline(
         after_advance=supervisor._pipeline._after_advance,
         clock=lambda: 10,
         cover_policy_reference=cover_policy_reference,
+        first_boot=first_boot,
     )
     pipeline.request("primary", "ebooks")
     return pipeline
