@@ -5389,6 +5389,10 @@ describe('Library route', () => {
       expect(badge).toHaveTextContent(
         chooser === 'automatic' ? /^Automatic’s choice$/u : /^Your choice$/u,
       )
+      // A screen reader hears who chose it too, not only that it is checked.
+      expect(card).toHaveAccessibleDescription(
+        chooser === 'automatic' ? 'Automatic’s choice' : 'Your choice',
+      )
       expect(
         screen
           .getByRole('radio', { name: /Choose current value/u })

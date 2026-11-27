@@ -50,6 +50,10 @@ brackets are GitHub issues.
 - A screen reader now hears each cover card's title, its reason line when it
   shows one, and Recommended or Suggested when the card is, as well as the
   action the card's name already gave (#1837).
+- A screen reader now hears what each metadata choice card shows besides its
+  value: Recommended, Your choice, Automatic's choice or Pinned, and its source
+  and recommendation lines, as well as the action the card's name already gave
+  (#2069).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).
