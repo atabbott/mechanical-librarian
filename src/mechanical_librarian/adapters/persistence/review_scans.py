@@ -141,7 +141,10 @@ def request_cover_preparation(connection: sqlite3.Connection, now: int) -> None:
     discovery queues each work whose cover comparison was prepared under
     another cover policy (#1363). A queued scan or a running one already asked
     to scan again is not asked twice, and paused preparation is not asked,
-    as for description advice; the next scan does the same.
+    as for description advice; the next scan does the same. A library whose
+    first scan has ended is asked even while the first preparation runs,
+    because nothing else would scan it before the poll, or at all after a
+    scan that ended with failures.
     """
     if connection.execute(
         "SELECT paused FROM review_preparation_owner_control WHERE singleton=1"
@@ -163,7 +166,9 @@ def request_cover_preparation(connection: sqlite3.Connection, now: int) -> None:
     ).fetchall()
     repository = SQLiteReviewScanRepository(connection)
     for target, library, library_id, producer in rows:
-        repository.request_review_scan(target, library, library_id, producer, now)
+        repository.request_review_scan(
+            target, library, library_id, producer, now, waiting_work=True
+        )
 
 
 class SQLiteReviewScanRepository(ConnectionScoped):
@@ -180,6 +185,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         *,
         first_boot: bool = False,
         trigger: PreparationTrigger | None = None,
+        waiting_work: bool = False,
     ) -> PipelineProgress:
         progress = self._request_review_scan(
             connection,
@@ -190,6 +196,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             first_boot=first_boot,
             trigger=trigger,
             defer_when_paused=False,
+            waiting_work=waiting_work,
         )
         if progress is None:
             raise MetadataReportError("review preparation state is invalid")
@@ -241,6 +248,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         first_boot: bool,
         trigger: PreparationTrigger | None,
         defer_when_paused: bool,
+        waiting_work: bool = False,
     ) -> PipelineProgress | None:
         if (
             any(
@@ -288,6 +296,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 requested_at,
                 first_boot=first_boot,
                 trigger=trigger,
+                waiting_work=waiting_work,
             )
             transaction.commit()
             return progress
@@ -317,7 +326,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         trigger: PreparationTrigger | None,
         promoting_deferred: bool = False,
         presentation_accepted_at: int | None = None,
-        description_work: bool = False,
+        waiting_work: bool = False,
     ) -> PipelineProgress:
         row = self._connection.execute(
             "SELECT scan_id,state,producer_fingerprint,rescan_requested FROM review_preparation_scans "
@@ -349,8 +358,10 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             )
             # The poll waits for the first preparation to finish before it
             # rescans a library, and never polls one that ended with failures.
-            # Description work waiting at resume has no poll to wait for.
-            if first_preparation_incomplete and not description_work:
+            # Work waiting for this library's scan (description advice, or
+            # covers to compare under a new Current covers setting) has no
+            # poll to wait for.
+            if first_preparation_incomplete and not waiting_work:
                 progress = self.review_pipeline_progress(connection, library)
                 if progress is None:
                     raise MetadataReportError("review preparation state is invalid")
@@ -821,7 +832,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 updated_at,
                 first_boot=False,
                 trigger=None,
-                description_work=True,
+                waiting_work=True,
             )
 
     @local_operation
