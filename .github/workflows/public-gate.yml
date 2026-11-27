@@ -586,6 +586,7 @@ jobs:
           license-check: true
           vulnerability-check: false
           comment-summary-in-pr: never
+          show-openssf-scorecard: false
           fail-on-scopes: runtime, development, unknown
           allow-licenses: >-
             Apache-2.0,

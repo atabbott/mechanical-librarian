@@ -179,7 +179,7 @@ from it for a manual one, so the table can be checked against the workflow.
 | Real-probe execution over generated media | gate | `scripts/run_test_tier.py probe` in `container-image` |
 | Plan and VM-step read-budget assertions run on the SQLite the image ships, never the runner's | gate | `mkdir "$RUNNER_TEMP/shipped-sqlite"`, `docker cp -L`, the `LD_LIBRARY_PATH` prefix, the `libsqlite3-0` version readback with `sqlite3.sqlite_version`, and `scripts/run_test_tier.py shipped-sqlite`, in `container-image` |
 | Advisories against the locked dependency closure | gate | `--lockfile=uv.lock` in `dependency-audit` |
-| Licences of the npm and Python dependencies a pull request adds or changes, against the frontend's accepted licences plus `MIT-CMU` and `PSF-2.0`; advisories stay with the two audits | gate | `actions/dependency-review-action` with `license-check: true` and `vulnerability-check: false` in `dependency-review`, on pull requests only |
+| Licences of the npm and Python dependencies a pull request adds or changes, against the frontend's accepted licences plus `MIT-CMU`, `PSF-2.0`, `Python-2.0.1` and `BSD-2-Clause-Views`; advisories stay with the two audits | gate | `actions/dependency-review-action` with `license-check: true` and `vulnerability-check: false` in `dependency-review`, on pull requests only |
 | Explicit slow tier: scale, endurance, resource ceilings | maintainer-manual | `qualify_exact_artifact.py --test-tier slow` |
 | One-command complete exact-head qualification | maintainer-manual | `run_test_tier.py complete` |
 | The built container image's lifecycle | maintainer-manual | `scripts/qualify_container_lifecycle.py` |

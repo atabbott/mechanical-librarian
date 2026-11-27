@@ -374,6 +374,7 @@ def test_dependency_review_checks_only_the_licences_of_changed_dependencies() ->
         "          license-check: true\n"
         "          vulnerability-check: false\n"
         "          comment-summary-in-pr: never\n"
+        "          show-openssf-scorecard: false\n"
         "          fail-on-scopes: runtime, development, unknown\n"
     )
     listed = [line.strip().removesuffix(",") for line in licences.splitlines() if line]
