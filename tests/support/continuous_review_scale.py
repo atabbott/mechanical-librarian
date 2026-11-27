@@ -1774,9 +1774,9 @@ def qualify_installed_pipeline(
     *,
     expected_total: int,
     memory_ceiling_kib: int | None = None,
-    receipt_path: Path | None = None,
     phase_observer: _InstalledPhaseObserver | None = None,
-) -> None:
+) -> dict[str, object]:
+    """Run the installed reconciliation and return its route-latency receipt."""
     with _installed_qualification_environment(counts, expected_total) as environment:
         fixture = environment.fixture
         root = environment.root
@@ -2179,10 +2179,7 @@ def qualify_installed_pipeline(
             >= _MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND
         )
         assert peak_rss_kib < 524_288
-        if receipt_path is not None:
-            receipt_path.write_text(
-                json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
-            )
+        return receipt
 
 
 @contextmanager
