@@ -416,6 +416,7 @@ link phase's observations, the import's among them (`installed_owner_link`) and,
 credentials, tokens, source metadata
 or image bytes.
 
-The container lifecycle (`scripts/qualify_container_lifecycle.py`) and the
-[recoverability envelope](recoverability-qualification.md) have their own
-maintainer-manual qualifiers.
+The container lifecycle (`scripts/qualify_container_lifecycle.py`) runs in
+the gate's `container-lifecycle` job. The
+[recoverability envelope](recoverability-qualification.md) has its own
+maintainer-manual qualifier.

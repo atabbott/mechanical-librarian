@@ -462,8 +462,8 @@ jobs:
           version: v0.38.2
 
       # The shipped image must assemble from the exact revision. The build is
-      # never pushed or run here: running the built image's lifecycle
-      # qualifier stays a documented maintainer-manual step. It is loaded into
+      # never pushed or run here; `container-lifecycle` below runs an image of
+      # the same revision through its lifecycle. It is loaded into
       # the runner's daemon for exactly one purpose -- extracting the pinned
       # probe binary (#929) and the SQLite library (#1211) the tiers below
       # execute. Layers restore
@@ -527,6 +527,42 @@ jobs:
           version="$(sed -n '/^Package: libsqlite3-0$/,/^$/s/^Version: \([0-9.]*\)-.*/\1/p' "$RUNNER_TEMP/shipped-sqlite/dpkg-status")"
           test "$(uv run python -c 'import sqlite3; print(sqlite3.sqlite_version)')" = "${version:?}"
           uv run python scripts/run_test_tier.py shipped-sqlite
+
+  # The supported container lifecycle: the qualifier builds its own image from
+  # an archive of the exact revision, then runs the file-managed sentinel and
+  # the first-run journey against it with a synthetic Audiobookshelf inside
+  # Docker. It needs no credential or private data. It shares no layer cache
+  # with `container-image`, so it builds every stage itself.
+  container-lifecycle:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15.2"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          save-cache: ${{ github.event_name == 'push' }}
+          version: "0.12.23"
+
+      - name: Install locked development dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Qualify the container lifecycle
+        run: >-
+          uv run python
+          scripts/qualify_container_lifecycle.py
+          --source-sha "${{ github.event.pull_request.head.sha || github.sha }}"
 
   dependency-audit:
     runs-on: ubuntu-26.04

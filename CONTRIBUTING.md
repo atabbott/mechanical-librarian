@@ -180,14 +180,31 @@ from it for a manual one, so the table can be checked against the workflow.
 | Advisories against the locked dependency closure | gate | `--lockfile=uv.lock` in `dependency-audit` |
 | Explicit slow tier: scale, endurance, resource ceilings | maintainer-manual | `qualify_exact_artifact.py --test-tier slow` |
 | One-command complete exact-head qualification | maintainer-manual | `run_test_tier.py complete` |
-| The built container image's lifecycle | maintainer-manual | `scripts/qualify_container_lifecycle.py` |
+| The built container image's lifecycle: the file-managed sentinel and the first-run journey, against an image built from an archive of the exact revision | gate | `scripts/qualify_container_lifecycle.py` in `container-lifecycle` |
 | Audiobookshelf field-effect qualification | maintainer-manual | `scripts/qualify_audiobookshelf_field_effect.py` |
 | Recoverability envelope | maintainer-manual | `scripts/recoverability_evaluator.py` |
 | Closing reference to an open issue, and the `tracking-exempt` exception | maintainer-manual | the trusted delivery controller, at preflight and again immediately before merge |
 | Documentation, changelog, ADR and security-review requirements | maintainer-manual | review |
 
-There is no coverage threshold. The container job builds the image only to
-extract the `ffprobe` and SQLite it ships; it never runs or pushes the image.
+There is no coverage threshold. The container-image job builds the image only
+to extract the `ffprobe` and SQLite it ships; it never runs or pushes it. The
+container-lifecycle job builds and runs its own image of the same revision and
+pushes nothing.
+
+The remaining maintainer-manual checks stay out of the gate for these reasons:
+
+- The slow tier takes about 30 minutes on a four-core machine, against about
+  9 for the longest gate job, and its timing budgets measure the host. A
+  smaller gate test covers each functional path it exercises
+  ([testing strategy](docs/development/testing-strategy.md#slow-tier)).
+- Complete exact-head qualification runs, in one command, gate tiers plus the
+  slow tier; the gate already runs each of those tiers.
+- Audiobookshelf field-effect qualification asks GitHub for the latest
+  Audiobookshelf release and fails when that release is not one it pins, so an
+  upstream release would fail every pull request until it is qualified. Its
+  continuous run uses a private batch of rights-verified EPUBs.
+- The recoverability envelope is measured on a private 50-book corpus. The
+  evaluator and its public synthetic input are tested in the fast tier.
 
 ## Fixtures and privacy
 
