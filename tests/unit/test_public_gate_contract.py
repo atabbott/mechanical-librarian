@@ -7,6 +7,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "public-gate.yml"
+FRONTEND_LICENCES = ROOT / "frontend" / "scripts" / "check-licenses.mjs"
 CONTRIBUTING = ROOT / "CONTRIBUTING.md"
 
 # Commands that prepare a job rather than check the tree, and so answer to no
@@ -211,7 +212,8 @@ def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "  container-image:\n" in workflow
     assert "  dependency-audit:\n" in workflow
-    assert workflow.count("runs-on: ubuntu-26.04") == 9
+    assert "  dependency-review:\n" in workflow
+    assert workflow.count("runs-on: ubuntu-26.04") == 10
     assert (
         "  fast-source:\n    runs-on: ubuntu-26.04\n    timeout-minutes: 25\n"
     ) in workflow
@@ -225,7 +227,7 @@ def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None
     ) in workflow
     assert workflow.count("timeout-minutes: 15") == 2
     assert "timeout-minutes: 30" not in workflow
-    assert workflow.count("timeout-minutes: 5\n") == 1
+    assert workflow.count("timeout-minutes: 5\n") == 2
     for shard in (2, 3, 4):
         assert (
             f"  fast-source-{shard}:\n    runs-on: ubuntu-26.04\n"
@@ -332,6 +334,71 @@ def test_the_documented_check_set_matches_the_gate_workflow() -> None:
         if not any(span in command for span in documented)
     }
     assert unmapped == SETUP_COMMANDS
+
+
+# Licences the Python closure uses beyond the frontend's accepted set: Pillow's
+# `MIT-CMU` and the `PSF-2.0` half of greenlet's `MIT AND PSF-2.0`.
+PYTHON_ONLY_LICENCES = frozenset({"MIT-CMU", "PSF-2.0"})
+
+
+def test_dependency_review_checks_only_the_licences_of_changed_dependencies() -> None:
+    """Hold the pull-request licence review to the one policy it was given (#674).
+
+    The job reads GitHub's dependency graph, so it needs no checkout and no
+    write scope, and posts nothing to the pull request. Advisories stay with
+    `dependency-audit` and the frontend audit and their one register, so the
+    vulnerability check stays off. The action reviews `runtime` changes alone
+    unless told otherwise, and the graph files nearly all of the frontend under
+    `development`, so every scope is named.
+    """
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    job = re.search(r"^  dependency-review:\n((?:(?:    .*)?\n)*)", workflow, re.M)
+    assert job is not None
+    head, _, licences = job[1].partition("          allow-licenses: >-\n")
+    assert head == (
+        "    if: github.event_name == 'pull_request'\n"
+        "    runs-on: ubuntu-26.04\n"
+        "    timeout-minutes: 5\n"
+        "    permissions:\n"
+        "      contents: read\n"
+        "    steps:\n"
+        "      - name: Review the licences of changed dependencies\n"
+        "        uses: actions/dependency-review-action@"
+        "bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1\n"
+        "        with:\n"
+        "          license-check: true\n"
+        "          vulnerability-check: false\n"
+        "          comment-summary-in-pr: never\n"
+        "          fail-on-scopes: runtime, development, unknown\n"
+    )
+    listed = [line.strip().removesuffix(",") for line in licences.splitlines() if line]
+    assert all(
+        line.startswith("            ") for line in licences.splitlines() if line
+    )
+    assert licences.count(",") == len(listed) - 1
+    assert listed == sorted(listed)
+
+    # The list is the frontend's accepted set plus the Python-only licences, so
+    # the two policies cannot drift apart without this failing. The action
+    # drops any entry holding an expression, so a frontend expression is listed
+    # as its parts instead.
+    block = re.search(
+        r"^const accepted = new Set\(\[\n((?:  '[^']+',\n)+)\]\)\n",
+        FRONTEND_LICENCES.read_text(encoding="utf-8"),
+        re.M,
+    )
+    assert block is not None
+    frontend = re.findall(r"'([^']+)'", block[1])
+    assert len(frontend) == 13
+    simple = {licence for licence in frontend if " " not in licence}
+    assert set(listed) == simple | PYTHON_ONLY_LICENCES
+    assert len(listed) == len(set(listed))
+    for expression in set(frontend) - simple:
+        parts = set(re.findall(r"[A-Za-z0-9.+-]+", expression)) - {"AND", "OR"}
+        assert parts <= simple, expression
+    # Only the pull request has a base to compare; a push to `main` skips it.
+    assert workflow.count("if: github.event_name == 'pull_request'\n") == 1
 
 
 def test_builds_the_shipped_container_from_the_exact_revision() -> None:
@@ -556,7 +623,7 @@ def test_every_action_is_sha_pinned_without_persisted_credentials() -> None:
         for line in workflow.splitlines()
         if line.strip().startswith("uses:")
     ]
-    assert len(uses) == 33
+    assert len(uses) == 34
     # The references are read out of the workflow at run time, so they cannot
     # become parameters without making the collected case count -- and the
     # cohort identity digest built from it -- move whenever the workflow gains

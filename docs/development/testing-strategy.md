@@ -176,10 +176,14 @@ paths, SQL, credentials or request values.
 Every pull-request head runs `fast-source`, `fast-source-2` to `fast-source-4`,
 `exact-installed`, `protected-browser`, `container-image` and
 `dependency-audit`, and all are required checks; `protected-browser` stands
-for the three browser shard jobs. The workflow also runs on every push
-to `main`, so two green pull requests cannot break `main` together unnoticed.
-Each job checks out `github.event.pull_request.head.sha || github.sha`; a newer
-head cancels only pull-request runs.
+for the three browser shard jobs. Pull requests also run `dependency-review`,
+which checks the licences of the dependencies they add or change
+([automated scanning](dependencies.md#automated-scanning)); it is not a
+required check until the owner adds it to the ruleset. The workflow also runs
+on every push to `main`, so two green pull requests cannot break `main`
+together unnoticed. Each job that checks out the tree checks out
+`github.event.pull_request.head.sha || github.sha`; a newer head cancels only
+pull-request runs.
 
 - **Fast tier.** `fast-source` runs the source checks then shard 1; the shard
   jobs run 2 to 4, each with `--workers 2 --shard K/4`. `fast-source` has 25

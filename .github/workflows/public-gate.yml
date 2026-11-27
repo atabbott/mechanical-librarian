@@ -557,3 +557,45 @@ jobs:
           scan source
           --lockfile=uv.lock
           --config=osv-scanner.toml
+
+  # Reviews the licence of every dependency a pull request adds or changes,
+  # npm and Python alike, against the frontend's accepted licences plus the
+  # two the Python closure adds (`MIT-CMU`, `PSF-2.0`). The action drops an
+  # expression from the list, so the frontend's `(MIT OR CC0-1.0)` is listed
+  # as its parts. The change set and licence data come from GitHub's
+  # dependency graph, so the job needs no checkout. Advisories stay with
+  # `dependency-audit` and the frontend audit, which read the whole closure
+  # through one acceptance register, so the vulnerability check is off. Every
+  # scope is reviewed: the graph files nearly all of the frontend under
+  # `development`, and the action otherwise reviews `runtime` alone. A push
+  # to `main` has no pull request to compare, so the job runs on pull
+  # requests only.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Review the licences of changed dependencies
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          license-check: true
+          vulnerability-check: false
+          comment-summary-in-pr: never
+          fail-on-scopes: runtime, development, unknown
+          allow-licenses: >-
+            Apache-2.0,
+            BSD-2-Clause,
+            BSD-3-Clause,
+            BlueOak-1.0.0,
+            CC-BY-4.0,
+            CC0-1.0,
+            ISC,
+            MIT,
+            MIT-0,
+            MIT-CMU,
+            MPL-2.0,
+            PSF-2.0,
+            Python-2.0,
+            Unlicense
