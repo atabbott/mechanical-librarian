@@ -56,6 +56,8 @@ from mechanical_librarian.application.metadata_report import (
     QualifiedLaneObservation,
     WorkLadderFacts,
     alternative_work_lane_permitted,
+    asin_fallback_lane,
+    asin_fallback_permitted,
     corroborated_rule_permitted,
     merge_provider_cover_descriptors,
     observe_work_ladder,
@@ -297,6 +299,11 @@ class AudibleCatalogMetadataProvider(SchemaRejections):
         Only a plan is accepted.  An ASIN lane's identity lives on the lane and
         `MetadataLookup` carries no ASIN, so a lookup-shaped call could not name
         the product it was asking about.
+
+        The title-and-author fallback beside an item's own ASIN (#1879) is
+        registered only once `asin_fallback_permitted` opens it: until then it
+        is not planned work, so an item whose own product is kept spends,
+        retries and accounts exactly as it did before the fallback existed.
         """
         self._schema_rejections = 0
         if self._called:
@@ -316,10 +323,11 @@ class AudibleCatalogMetadataProvider(SchemaRejections):
                 authority="audible_catalog",
             )
         ledger = _DiscoveryRequestLedger("audible_catalog", "catalog-1.0")
+        fallback = tuple(lane for lane in plan.lanes if asin_fallback_lane(plan, lane))
         for lane in plan.lanes:
             if lane.kind is ProviderQueryKind.ASIN and lane.canonical_asin is not None:
                 ledger.register_detail(lane.canonical_asin)
-            else:
+            elif lane not in fallback:
                 ledger.register(
                     kind=lane.kind.value,
                     matched_family=lane.matched_family,
@@ -342,6 +350,20 @@ class AudibleCatalogMetadataProvider(SchemaRejections):
         ) = None
         with provider_client_lifetime(self._client):
             for lane in provider_discovery_lane_order(plan):
+                if lane in fallback:
+                    if not asin_fallback_permitted(plan, results):
+                        continue
+                    # Every fallback lane is registered once the gate opens, so
+                    # the alternative keeps its retry reserve as in a plain plan.
+                    for pending in fallback:
+                        ledger.register(
+                            kind=pending.kind.value,
+                            matched_family=pending.matched_family,
+                            title=pending.title,
+                            authors=pending.authors,
+                            projection=_RESPONSE_GROUPS,
+                        )
+                    fallback = ()
                 if lane.title_basis is not None and not alternative_work_lane_permitted(
                     plan,
                     next(

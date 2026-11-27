@@ -48,17 +48,20 @@ from mechanical_librarian.domain.evidence_bounds import (
 )
 from mechanical_librarian.domain.identifiers import Fingerprint
 
-# The whole shape of an ASIN: ten ASCII alphanumerics, and nothing else.  It is
-# a well-formedness gate, never a filter and never prefix-based -- an
-# ISBN-10-shaped ASIN is as well-formed as a `B0` one, and a value that fails
-# it is retained as malformed rather than discarded.  Both cases are admitted
-# here because the value is matched before it is upper-cased: `"ß".upper()` is
-# `"SS"`, so a nine-character value tested after conversion would have been
-# grown into a well-formed ten-character one that no file ever held.
-_ASIN_TOKEN = re.compile(r"[A-Za-z0-9]{10}")
+# The whole shape of an ASIN: ten ASCII alphanumerics, at least one a digit,
+# and nothing else.  It is a well-formedness gate, never a filter and never
+# prefix-based -- an ISBN-10-shaped ASIN is as well-formed as a `B0` one, and
+# a value that fails it is retained as malformed rather than discarded.  Every
+# ASIN of either shape holds a digit, so a word such as `Unabridged` is not
+# one (#1879).  Both cases are admitted here because the value is matched
+# before it is upper-cased: `"ß".upper()` is `"SS"`, so a nine-character value
+# tested after conversion would have been grown into a well-formed
+# ten-character one that no file ever held.
+_ASIN_TOKEN = re.compile(r"(?=[A-Za-z]*[0-9])[A-Za-z0-9]{10}")
 # The same shape bracketed is the one path grammar Audible exports and every
-# downstream tool reproduces.
-_BRACKETED_TOKEN = re.compile(r"\[([A-Z0-9]{10})\]")
+# downstream tool reproduces; a bracketed word such as `[UNABRIDGED]` is not
+# that grammar at all, so it yields no fact.
+_BRACKETED_TOKEN = re.compile(r"\[((?=[A-Z]*[0-9])[A-Z0-9]{10})\]")
 _TONE_NAMESPACE = "com.pilabor.tone"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "y"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "n"})

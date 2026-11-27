@@ -99,6 +99,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
+    ProviderObservation,
     ProviderQueryKind,
     ProviderRequestAccounting,
     ProviderStatus,
@@ -3874,3 +3875,166 @@ def test_a_retried_work_lane_attributes_its_refused_answers(retry: _Retry) -> No
     assert 0 == merged.identity_refused_truncated
     assert (refused.identity,) == recovered.identity_refused_new
     assert () == sibling.identity_refused_new
+
+
+def _own_asin_source() -> tuple[
+    TargetSnapshot, tuple[LocalClaim, ...], MetadataDiscoveryLane, MetadataDiscoveryLane
+]:
+    """One audiobook naming its own ASIN, with the search beside it (#1879)."""
+    snapshot, claims, _plan = _fed_audio_source(asserted=False)
+    own = LocalClaim.create(
+        kind=ClaimKind.ASIN,
+        observed="B0WRONG001",
+        canonical="B0WRONG001",
+        excerpt="B0WRONG001",
+        applicability="not_applicable",
+        basis="embedded_tag",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        occurrence=2,
+    )
+    claims = (*claims, own)
+    plan = audiobook_discovery_plan(snapshot, claims, audio=_RETAINED_AUDIO)
+    lookup, search = provider_discovery_lane_order(plan)
+    assert ProviderQueryKind.ASIN is lookup.kind
+    assert ProviderQueryKind.WORK is search.kind
+    return snapshot, claims, lookup, search
+
+
+def _own_asin_retry(
+    snapshot: TargetSnapshot,
+    claims: tuple[LocalClaim, ...],
+    original: ProviderObservation,
+    seen: list[httpx.URL],
+    respond: Callable[[httpx.Request], httpx.Response],
+) -> tuple[MetadataReport, GenerateProviderRetrySuccessor]:
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item", snapshot.fields),
+        file=FileFacts(0, "b" * 64, "c" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("embedded_tag_asin",),
+        providers=(recorded_dispatch(original),),
+        audio=_RETAINED_AUDIO,
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return respond(request)
+
+    configured = ConfiguredProviderRetry(
+        ProviderBinding(
+            "audible",
+            True,
+            lambda: AudibleCatalogMetadataProvider(
+                "audible",
+                httpx.Client(transport=httpx.MockTransport(handle)),
+                262_144,
+                5.0,
+                marketplaces=("us",),
+                clock=lambda: 0.0,
+                wall_clock=lambda: 1_700_000_000.0,
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
+            ),
+            "audible_catalog",
+        ),
+        "audible_catalog",
+        2,
+    )
+    service = GenerateProviderRetrySuccessor(
+        target=_Target(snapshot),
+        inspector=_Inspector(),
+        repository_factory=lambda: cast(ReportRepository, _Repository(report)),
+        audio_inspector=cast("Any", _Inspector()),
+        provider_resolver=cast("ProviderRetryResolver", lambda *_args: configured),
+        mount=MediaMountConfiguration("audiobooks", "/container", "/service", True),
+        limits=ReportLimits(),
+        after_publication=lambda *_args: None,
+    )
+    return report, service
+
+
+def test_a_failed_own_lookup_beside_an_unopened_search_is_retried() -> None:
+    """The search the lookup never opened is planned, unobserved and not retried.
+
+    A retried lookup that now finds nothing does not open it either: the
+    successor dispatches only the selected lanes (a stated limitation).
+    """
+    snapshot, claims, lookup, search = _own_asin_source()
+    original = provider_observation(
+        "audible",
+        (ProviderLaneResult(lookup, ProviderStatus.UNAVAILABLE),),
+        authority="audible_catalog",
+    )
+    seen: list[httpx.URL] = []
+    report, service = _own_asin_retry(
+        snapshot,
+        claims,
+        original,
+        seen,
+        lambda _request: httpx.Response(404, json={"message": "not found"}),
+    )
+
+    successor = MetadataReport.from_json(
+        service.run(
+            report.report_id,
+            (lookup.identity,),
+            provider_name="audible",
+            adapter="audible_catalog",
+            generation=2,
+        )
+    )
+
+    assert [f"/1.0/catalog/products/{lookup.canonical_asin}"] == [
+        url.path for url in seen
+    ]
+    assert [(lookup.identity, ProviderStatus.NO_MATCH)] == [
+        (value.identity, value.status) for value in successor.providers[0].lanes
+    ]
+    with pytest.raises(ProviderRetrySuccessorError, match="lane is invalid"):
+        service._selected(
+            audiobook_discovery_plan(snapshot, claims, audio=_RETAINED_AUDIO),
+            original,
+            (search.identity,),
+        )
+
+
+def test_a_failed_fallback_search_after_a_lookup_that_found_nothing_is_retried() -> (
+    None
+):
+    snapshot, claims, lookup, search = _own_asin_source()
+    original = provider_observation(
+        "audible",
+        (
+            ProviderLaneResult(lookup, ProviderStatus.NO_MATCH),
+            ProviderLaneResult(search, ProviderStatus.UNAVAILABLE),
+        ),
+        authority="audible_catalog",
+    )
+    seen: list[httpx.URL] = []
+
+    def found(_request: httpx.Request) -> httpx.Response:
+        product = {
+            "asin": "B0SYNE7P1K",
+            "title": "Ember Tide Protocol",
+            "authors": [{"name": "Corin Halloway"}],
+            "runtime_length_min": 720,
+        }
+        return httpx.Response(200, json={"total_results": 1, "products": [product]})
+
+    report, service = _own_asin_retry(snapshot, claims, original, seen, found)
+
+    successor = MetadataReport.from_json(
+        service.run(
+            report.report_id,
+            (search.identity,),
+            provider_name="audible",
+            adapter="audible_catalog",
+            generation=2,
+        )
+    )
+
+    assert ["/1.0/catalog/products"] == [url.path for url in seen]
+    statuses = {value.identity: value.status for value in successor.providers[0].lanes}
+    assert ProviderStatus.NO_MATCH is statuses[lookup.identity]
+    assert ProviderStatus.CANDIDATES is statuses[search.identity]
