@@ -6300,6 +6300,34 @@ def _alternatives(
                 destination, tuple(cast("tuple[str, ...]", target.value))
             )
         if (
+            destination is TargetDestination.AUTHORS
+            and target.state is TargetFieldState.VALUE
+            and type(target.value) is tuple
+            and all(type(value) is str for value in target.value)
+            and type(proposal_value.value) is tuple
+            and (
+                folded := tuple(
+                    comparison_author(value)
+                    for value in cast("tuple[str, ...]", target.value)
+                )
+            )
+            != target.value
+            and (
+                _matches(destination, folded, proposal_value)
+                or (
+                    report.audio is not None
+                    and creator_list_reordered(folded, proposal_value.value)
+                )
+            )
+        ):
+            # Admission compares a producer-credited author by the name
+            # before the suffix, but the record keeps the stored credit: a
+            # candidate naming only that name states the stored value and
+            # preserves it, so no write strips the suffix (#1880).
+            proposal_value = _value(
+                destination, tuple(cast("tuple[str, ...]", target.value))
+            )
+        if (
             destination is TargetDestination.LANGUAGE
             and type(proposal_value.value) is str
             and (name := language_canonical_name(proposal_value.value)) is not None
