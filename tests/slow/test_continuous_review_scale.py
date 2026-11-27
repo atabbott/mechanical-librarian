@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from datetime import datetime, timezone
@@ -425,12 +426,15 @@ def test_installed_pipeline_reconciles_two_thousand_then_restarts_completed_coho
 ):
     workspace = _WorkspaceProbe()
     try:
-        qualify_installed_pipeline(
+        receipt = qualify_installed_pipeline(
             {"fiction": 3, "history": 998, "science": 998},
             expected_total=2_000,
             memory_ceiling_kib=524_288,
             phase_observer=workspace,
         )
+        # Kept in the run's output as owner-route latency evidence per phase
+        # (#919), as the other slow receipts are.
+        print(json.dumps(receipt, sort_keys=True))
         assert workspace.idle_request_evidence is not None
         assert workspace.idle_request_evidence == {
             "/api/v1/review-preparation": 20,

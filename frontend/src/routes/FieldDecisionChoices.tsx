@@ -365,6 +365,25 @@ export function MetadataChoice({
     : pinned
       ? 'Pinned'
       : null
+  // The name says what pressing does; the description says what a sighted
+  // owner reads on the card besides the value the name already carries: its
+  // eyebrow, who chose it or that it is pinned, and its source and
+  // recommendation lines, as cover cards do (#1837). Only shown lines are named.
+  const describedIds = {
+    eyebrow: `${valueId}-eyebrow`,
+    badge: `${valueId}-badge`,
+    rationale: `${valueId}-rationale`,
+    recommendation: `${valueId}-recommendation`,
+  }
+  const describedBy =
+    [
+      eyebrow ? describedIds.eyebrow : null,
+      badge ? describedIds.badge : null,
+      rationale ? describedIds.rationale : null,
+      recommendation ? describedIds.recommendation : null,
+    ]
+      .filter((id) => id !== null)
+      .join(' ') || undefined
   return (
     <article
       className={`metadata-choice${current ? ' is-current' : ''}${context?.recommendation === 'recommended' ? ' is-recommended' : ''}${selected || pinned ? ' is-selected' : ''}${expanded ? ' is-evidence-open' : ''}`}
@@ -383,6 +402,7 @@ export function MetadataChoice({
         type="button"
         className="value-choice choice-select"
         aria-label={choiceName}
+        aria-describedby={describedBy}
         {...radio}
         disabled={disabled}
         // Choosing the pinned value again would record a new decision and end the pin.
@@ -390,8 +410,16 @@ export function MetadataChoice({
       >
         <KeyBadge position={radio['aria-posinset']} />
         <small>
-          {eyebrow ? <span className="choice-eyebrow">{eyebrow}</span> : null}
-          {badge ? <b className="choice-chosen">{badge}</b> : null}
+          {eyebrow ? (
+            <span id={describedIds.eyebrow} className="choice-eyebrow">
+              {eyebrow}
+            </span>
+          ) : null}
+          {badge ? (
+            <b id={describedIds.badge} className="choice-chosen">
+              {badge}
+            </b>
+          ) : null}
         </small>
         <strong id={valueId}>
           {/* Keeps the first line clear of the key badge (styles.css). */}
@@ -403,8 +431,12 @@ export function MetadataChoice({
               : `Choose ${kind} description`
             : value}
         </strong>
-        {rationale ? <span>{rationale}</span> : null}
-        {recommendation ? <span className="choice-recommendation">{recommendation}</span> : null}
+        {rationale ? <span id={describedIds.rationale}>{rationale}</span> : null}
+        {recommendation ? (
+          <span id={describedIds.recommendation} className="choice-recommendation">
+            {recommendation}
+          </span>
+        ) : null}
       </button>
       {hasEvidence || pin ? (
         <div className="choice-foot">
