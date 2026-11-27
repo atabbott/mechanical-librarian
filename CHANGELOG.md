@@ -10,6 +10,9 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. An entry marked **Derived regeneration required** changes only what
 preparation rebuilds: stop the container and run `regenerate-derived` before
 starting the new build, as [Upgrades](docs/operations/upgrades.md) says.
+An entry marked **Ledger migration** also changes the format your answers,
+settings and write history are stored in: run `regenerate-derived` the same
+way, and it converts them.
 Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 

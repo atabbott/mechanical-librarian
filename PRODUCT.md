@@ -98,8 +98,8 @@ and metadata sources to the reviewer, background work, access and appearance.
   reading, acquisition, user management, or general library management.
 - The product is pre-release. It accepts only absent or exact-current persisted
   state, except that the owner can run regenerate-derived offline to rebuild
-  what preparation makes while keeping their answers, settings and write
-  history.
+  what preparation makes, and to convert their answers, settings and write
+  history from an earlier format, while keeping them.
 - There is no published production image or supported release yet. Planned
   adapters, formats, reviewer backends, and embedded-file writes are direction,
   not current capability.
