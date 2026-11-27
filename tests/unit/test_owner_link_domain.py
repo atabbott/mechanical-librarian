@@ -20,9 +20,11 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     default_target_fields,
+    target_performance_claims,
 )
 from mechanical_librarian.domain.owner_link import (
     OwnerLink,
+    OwnerLinkContradiction,
     OwnerLinkError,
     OwnerLinkScope,
     OwnerLinkState,
@@ -38,6 +40,7 @@ from mechanical_librarian.domain.owner_link import (
     owner_isbn,
     owner_link_anchors,
     owner_link_claim,
+    owner_link_contradiction,
     owner_search_cards,
     record_identity_valid,
 )
@@ -572,6 +575,66 @@ def test_a_work_with_authors_and_no_title_keeps_its_authors() -> None:
         "open_library", (_record("/works/OL7W", creators=("Someone Else",)),), work
     )
     assert (OwnerSearchContradiction.CREATORS_DISJOINT, {}) in card.contradictions
+
+
+def test_a_work_credited_with_its_producer_is_searched_by_the_bare_name() -> None:
+    work = OwnerSearchWork.from_report(
+        _target_report("Current title", ("Ada Example - Graphic Audio",))
+    )
+    assert work.authors == ("Ada Example",)
+    (card,), _ = owner_search_cards(
+        "open_library", (_record("/works/OL7W", creators=("Ada Example",)),), work
+    )
+    assert (OwnerSearchContradiction.CREATORS_DISJOINT, {}) not in card.contradictions
+
+
+def test_a_recording_link_to_a_reading_of_a_dramatisation_is_a_variant() -> None:
+    from dataclasses import replace
+
+    from tests.support.audiobook_reports import (
+        audio_local_claims,
+        audio_target_fields,
+        audiobook_candidate,
+    )
+
+    dramatised = target_performance_claims(
+        tuple(
+            replace(field, state=TargetFieldState.VALUE, value=("Radio Drama",))
+            if field.destination is TargetDestination.GENRES
+            else field
+            for field in audio_target_fields()
+        )
+    )
+    claims = (*dramatised, *audio_local_claims())
+    candidate = audiobook_candidate(claims)
+    stated = replace(
+        candidate,
+        evidence=tuple(
+            sorted(
+                (
+                    *candidate.evidence,
+                    ProviderEvidence(
+                        ProviderEvidenceKind.EDITION_STATEMENT,
+                        "unabridged",
+                        ClaimScope.EDITION,
+                    ),
+                ),
+                key=lambda value: (value.scope.value, value.kind.value, value.value),
+            )
+        ),
+    )
+
+    def contradiction(value: ProviderCandidate) -> OwnerLinkContradiction | None:
+        return owner_link_contradiction(
+            OwnerLinkScope.RECORDING,
+            value,
+            link_claim=None,
+            local_claims=claims,
+            work_title="Ember Tide Protocol",
+        )
+
+    assert contradiction(stated) is OwnerLinkContradiction.VARIANT
+    assert contradiction(candidate) is not OwnerLinkContradiction.VARIANT
 
 
 def test_a_work_with_a_title_and_no_authors_keeps_its_title() -> None:

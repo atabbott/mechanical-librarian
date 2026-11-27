@@ -33,6 +33,7 @@ from tests.support import ledger_documents
 # {derived version: (digest, issue whose CHANGELOG entry declares it)}
 PINNED: dict[int, tuple[str, int]] = {
     1: ("af3e3fc67bc6126866413fb7b31f11fd76a58ee9346d312a1deff9a8b8dcc1d9", 2040),
+    2: ("8dd844723b0aaa03d8e3a42d0cfe121bb892885cceb01599d0297d9680a46992", 1880),
 }
 
 _DOMAIN = "mechanical_librarian.domain."

@@ -118,7 +118,7 @@ def test_qualifies_pull_request_heads_and_merged_main() -> None:
 
 def test_every_exact_revision_reference_resolves_for_both_events() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert workflow.count(f"ref: {EXACT_SHA}") == 8
+    assert workflow.count(f"ref: {EXACT_SHA}") == 9
     assert f'--source-sha "{EXACT_SHA}"' in workflow
     # An unguarded head reference is null on a push to `main`.
     assert "${{ github.event.pull_request.head.sha }}" not in workflow
@@ -213,7 +213,7 @@ def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None
     assert "  container-image:\n" in workflow
     assert "  dependency-audit:\n" in workflow
     assert "  dependency-review:\n" in workflow
-    assert workflow.count("runs-on: ubuntu-26.04") == 10
+    assert workflow.count("runs-on: ubuntu-26.04") == 11
     assert (
         "  fast-source:\n    runs-on: ubuntu-26.04\n    timeout-minutes: 25\n"
     ) in workflow
@@ -226,6 +226,11 @@ def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None
         "  container-image:\n    runs-on: ubuntu-26.04\n    timeout-minutes: 15\n"
     ) in workflow
     assert workflow.count("timeout-minutes: 15") == 2
+    # The lifecycle qualifier builds every image stage without a layer cache.
+    assert (
+        "  container-lifecycle:\n    runs-on: ubuntu-26.04\n    timeout-minutes: 20\n"
+    ) in workflow
+    assert workflow.count("timeout-minutes: 20") == 1
     assert "timeout-minutes: 30" not in workflow
     assert workflow.count("timeout-minutes: 5\n") == 2
     for shard in (2, 3, 4):
@@ -563,7 +568,7 @@ def test_only_a_push_to_main_writes_the_actions_caches() -> None:
 
     # setup-uv keeps restoring on every event and saves only on a push.
     uv = [body for _, body in steps if "uses: astral-sh/setup-uv@" in body]
-    assert len(uv) == 7
+    assert len(uv) == 8
     for body in uv:
         assert "enable-cache: true\n" in body
         assert f"save-cache: ${{{{ {PUSH_ONLY} }}}}\n" in body
@@ -629,7 +634,7 @@ def test_every_action_is_sha_pinned_without_persisted_credentials() -> None:
         for line in workflow.splitlines()
         if line.strip().startswith("uses:")
     ]
-    assert len(uses) == 34
+    assert len(uses) == 37
     # The references are read out of the workflow at run time, so they cannot
     # become parameters without making the collected case count -- and the
     # cohort identity digest built from it -- move whenever the workflow gains

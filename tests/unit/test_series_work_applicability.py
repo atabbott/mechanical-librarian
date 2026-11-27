@@ -186,6 +186,21 @@ def test_only_target_applicable_series_survives_without_changing_ask(option, ide
         assert preview.qualified_value is None
 
 
+def test_a_producer_credited_target_is_represented_by_its_bare_name():
+    """A producer suffix is no part of the author compared, for any medium (#1880)."""
+    report = _isbn_series_report(target_author="Target Author - Graphic Audio")
+    source = report.providers[0]
+    candidate = source.candidates[0]
+    assert provider_candidate_represents_target_work(report, source, candidate)
+    assert provider_candidate_represents_target_series_work(report, source, candidate)
+    # The series fallback reads the bare, inverted name as its own test does.
+    report = _isbn_series_report(target_author="Author, Target - Graphic Audio")
+    source = report.providers[0]
+    candidate = source.candidates[0]
+    assert not provider_candidate_represents_target_work(report, source, candidate)
+    assert provider_candidate_represents_target_series_work(report, source, candidate)
+
+
 @pytest.mark.parametrize(
     "option", ("primary_narrative", "source_order", "all_qualified")
 )

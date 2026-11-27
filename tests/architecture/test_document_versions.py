@@ -39,7 +39,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.proposal_set",
         "POLICY_VERSION",
-        "fixed-conservative-v48",
+        "fixed-conservative-v49",
     ),
     (
         "mechanical_librarian.domain.metadata_policy",
@@ -277,7 +277,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.metadata_report",
         "REPORT_SCHEMA",
-        "metadata-report-v83",
+        "metadata-report-v84",
     ),
     (
         "mechanical_librarian.domain.metadata_report",

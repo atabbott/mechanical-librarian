@@ -177,7 +177,12 @@ def run_regeneration(
     owner-only, as the server's own file is. The retained copy lands in the
     folder's `regeneration-backup`, as on a volume."""
     path.chmod(0o600)
-    assert rewrite(path, "UPDATE ledger_meta SET derived_version=2") == 1
+    assert (
+        rewrite(
+            path, f"UPDATE ledger_meta SET derived_version={schema.DERIVED_VERSION + 1}"
+        )
+        == 1
+    )
     return regenerate_derived(
         SQLiteRegenerationStore(path, lambda: at),
         retire_pending=retire_pending,

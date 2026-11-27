@@ -174,10 +174,11 @@ paths, SQL, credentials or request values.
 ## The gate
 
 Every pull-request head runs `fast-source`, `fast-source-2` to `fast-source-4`,
-`exact-installed`, `protected-browser`, `container-image` and
-`dependency-audit`, and all are required checks; `protected-browser` stands
-for the three browser shard jobs. Pull requests also run `dependency-review`,
-which checks the licences of the dependencies they add or change
+`exact-installed`, `protected-browser`, `container-image`,
+`container-lifecycle` and `dependency-audit`. All but `container-lifecycle`
+are required checks; `protected-browser` stands for the three browser shard
+jobs. Pull requests also run `dependency-review`, which checks the licences of
+the dependencies they add or change
 ([automated scanning](dependencies.md#automated-scanning)); it is not a
 required check until the owner adds it to the ruleset. The workflow also runs
 on every push to `main`, so two green pull requests cannot break `main`
@@ -201,6 +202,11 @@ pull-request runs.
   revision, so a Dockerfile regression fails the gate. It extracts the pinned
   `ffprobe` and SQLite for the `probe` and `shipped-sqlite` tiers and never
   starts or pushes the image.
+- **Container lifecycle.** `container-lifecycle` builds its own image, with no
+  layer cache, from an archive of the same revision, then starts it on an
+  existing configuration, restarts it, runs the recovery fixtures inside it and
+  takes it through first-run setup over HTTPS and HTTP. It pushes nothing and
+  has 20 minutes including setup.
 - **Exact installed artifact.** `scripts/qualify_exact_artifact.py` proves that
   what merges is what the source says. It builds the wheel from a clean
   checkout at the given SHA, installs it without dependency resolution into a
@@ -420,6 +426,7 @@ link phase's observations, the import's among them (`installed_owner_link`) and,
 credentials, tokens, source metadata
 or image bytes.
 
-The container lifecycle (`scripts/qualify_container_lifecycle.py`) and the
-[recoverability envelope](recoverability-qualification.md) have their own
-maintainer-manual qualifiers.
+The container lifecycle (`scripts/qualify_container_lifecycle.py`) runs in
+the gate's `container-lifecycle` job. The
+[recoverability envelope](recoverability-qualification.md) has its own
+maintainer-manual qualifier.

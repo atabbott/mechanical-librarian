@@ -115,7 +115,7 @@ const contradictedReason = (link: OwnerLinkCurrent) => {
     case 'narrators':
       return 'The recording now credits none of this audiobook’s narrators.'
     case 'variant':
-      return `${source} now lists this recording as abridged.`
+      return `${source} now lists this recording as a different version of this audiobook.`
     default:
       // The view carries no running times, so the line cannot name them.
       return 'The recording’s running time no longer matches this audiobook.'
@@ -279,7 +279,7 @@ export const withheldLines = (card: OwnerSearchCard, provider: OwnerLinkProvider
       case 'variant':
         return listed.has('language')
           ? []
-          : ['This recording is not offered because it is abridged.']
+          : ['This recording is not offered because it is a different version of this audiobook.']
     }
   })
 }

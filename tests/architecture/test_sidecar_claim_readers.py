@@ -57,6 +57,8 @@ _READERS: dict[str, str] = {
     "domain/metadata_report.py::recording_variant_conflict": "refusal",
     "domain/metadata_report.py::local_identifier_asins": "asin_by_basis",
     "domain/metadata_report.py::_validate_sidecar_claims": "invariant",
+    # The record's dramatisation claims are exactly its derivation (#1880).
+    "domain/metadata_report.py::_validate_sections": "invariant",
     "domain/metadata_report.py::derive_field_results": "per_source",
     "domain/metadata_report.py::recording_association_references": "embedded_only",
     "domain/metadata_report.py::source_state": "per_source",

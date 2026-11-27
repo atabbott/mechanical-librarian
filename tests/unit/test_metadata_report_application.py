@@ -71,6 +71,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetSnapshot,
     UnsupportedMediaError,
+    asin_fallback_permitted,
     provider_discovery_lane_order,
     provider_observation,
     qualify_provider_lane,
@@ -129,6 +130,7 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_REPORT_BYTES,
+    TARGET_ADMISSION_BASIS,
     AudioDiscoveryTitle,
     ClaimKind,
     ClaimScope,
@@ -158,7 +160,10 @@ from mechanical_librarian.domain.metadata_report import (
     finalize_candidate_comparisons,
     normalize_title,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import (
+    evaluate_report,
+    provider_candidate_represents_target_work,
+)
 from mechanical_librarian.domain.review_browse import (
     browse_report,
     library_report_facts,
@@ -2186,6 +2191,101 @@ def test_an_asserted_asin_feeds_the_per_asin_providers_and_keeps_the_work_lane()
     assert (FieldSource.TARGET_METADATA, FieldState.VALID) in {
         (value.source, value.state) for value in asin.sources
     }
+
+
+def _dramatised_fields(title: str) -> tuple[TargetField, ...]:
+    """A record crediting its producer and naming a drama genre (#1880)."""
+    overrides = {
+        TargetDestination.AUTHORS: TargetField(
+            TargetDestination.AUTHORS,
+            TargetFieldState.VALUE,
+            (f"{_FED_AUTHOR} - Graphic Audio",),
+        ),
+        TargetDestination.GENRES: TargetField(
+            TargetDestination.GENRES, TargetFieldState.VALUE, ("Radio Drama",)
+        ),
+        TargetDestination.ASIN: TargetField(
+            TargetDestination.ASIN, TargetFieldState.VALUE, "B0ASSERTED"
+        ),
+    }
+    return tuple(
+        overrides.get(field.destination, field)
+        for field in default_target_fields(title)
+    )
+
+
+def test_a_dramatised_record_is_claimed_and_asked_by_its_bare_author() -> None:
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    snapshot = TargetSnapshot(
+        "audiobook", _FED_TITLE, (selected,), fields=_dramatised_fields(_FED_TITLE)
+    )
+    asin_plans: list[MetadataDiscoveryPlan] = []
+
+    published = MetadataReport.from_json(
+        _fed_audiobook_service(
+            FakeTarget([snapshot, snapshot]),
+            FakeReportRepository(),
+            _fed_inspector(),
+            (
+                ProviderBinding(
+                    "audnexus",
+                    True,
+                    lambda: _AsinAnsweringProvider("audnexus", asin_plans),
+                    authority="audnexus",
+                ),
+            ),
+        ).run("item-1", 0)
+    )
+
+    assert [
+        (ClaimKind.TITLE, _FED_TITLE),
+        (ClaimKind.ASIN, "B0ASSERTED"),
+        (ClaimKind.PERFORMANCE_TYPE, f"{_FED_AUTHOR} - Graphic Audio"),
+        (ClaimKind.PERFORMANCE_TYPE, "Radio Drama"),
+    ] == [
+        (claim.kind, claim.observed)
+        for claim in published.local_claims
+        if claim.basis == "target_metadata"
+    ]
+    (work,) = (
+        lane for lane in asin_plans[0].lanes if lane.kind is ProviderQueryKind.WORK
+    )
+    assert (_FED_AUTHOR,) == work.authors
+    assert (f"{_FED_AUTHOR} - Graphic Audio",) == next(
+        field.value
+        for field in published.target.fields
+        if field.destination is TargetDestination.AUTHORS
+    )
+
+
+def test_an_ebook_record_states_no_dramatisation() -> None:
+    selected = TargetFile("a" * 64, "one.epub", "epub")
+    snapshot = TargetSnapshot(
+        "ebook",
+        "Current title",
+        (selected,),
+        fields=_dramatised_fields("Current title"),
+    )
+    service = GenerateMetadataReport(
+        target=FakeTarget([snapshot, snapshot]),
+        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        repository_factory=lambda: cast(ReportRepository, FakeReportRepository()),
+        providers=(),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "ebooks", "primary", "library-id", "ebook", "books", ()
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+    )
+
+    published = MetadataReport.from_json(service.run("item-1", 0))
+
+    assert not any(
+        claim.kind is ClaimKind.PERFORMANCE_TYPE for claim in published.local_claims
+    )
 
 
 def _silo_binding(
@@ -4766,8 +4866,12 @@ class _CarryingCatalogue:
         self._plans.append(plan)
         results: list[ProviderLaneResult] = []
         for lane in provider_discovery_lane_order(plan):
-            self._order.append(lane.kind)
             work = lane.kind is ProviderQueryKind.WORK
+            # The catalogue asks the fallback beside an item's own ASIN only
+            # when that lookup kept nothing (#1879).
+            if work and not asin_fallback_permitted(plan, results):
+                continue
+            self._order.append(lane.kind)
             asin = self._search_asin if work else cast("str", lane.canonical_asin)
             lane_answer = qualify_provider_lane(
                 ProviderObservation(
@@ -4955,7 +5059,11 @@ def test_an_item_that_names_its_own_asin_carries_nothing() -> None:
 
     assert not any(value.basis == "prior_admission" for value in second.local_claims)
     assert [ProviderQueryKind.ASIN] == order
-    assert ["B0OWNASIN1"] == [value.canonical_asin for value in plans[0].lanes]
+    assert ["B0OWNASIN1"] == [
+        value.canonical_asin
+        for value in plans[0].lanes
+        if value.kind is ProviderQueryKind.ASIN
+    ]
 
 
 def test_the_persisted_discovery_titles_are_the_ones_a_lane_may_ask() -> None:
@@ -5182,6 +5290,7 @@ def _creator(value: str, role: str | None, occurrence: int) -> LocalClaim:
 
 def _creator_report(
     creators: tuple[LocalClaim, ...],
+    authors: tuple[str, ...] = (),
 ) -> tuple[MetadataReport, list[dict[str, object]]]:
     sent: list[dict[str, object]] = []
 
@@ -5214,8 +5323,19 @@ def _creator_report(
         )
 
     selected = TargetFile("a" * 64, "one.epub", "epub")
+    snapshot = TargetSnapshot(
+        "ebook",
+        "Current title",
+        (selected,),
+        fields=tuple(
+            TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, authors)
+            if field.destination is TargetDestination.AUTHORS and authors
+            else field
+            for field in default_target_fields("Current title")
+        ),
+    )
     service = GenerateMetadataReport(
-        target=FakeTarget([TargetSnapshot("ebook", "Current title", (selected,))] * 2),
+        target=FakeTarget([snapshot] * 2),
         inspector=FakeInspector(InspectionResult("c" * 64, creators)),
         repository_factory=lambda: cast(ReportRepository, FakeReportRepository()),
         providers=(
@@ -5240,6 +5360,28 @@ def _creator_report(
         limits=ReportLimits(),
     )
     return MetadataReport.from_json(service.run("item-1", 0)), sent
+
+
+def test_a_producer_credited_ebook_author_is_asked_and_admitted_bare() -> None:
+    """A producer suffix is no part of any medium's author compared (#1880)."""
+    report, sent = _creator_report((), ("Ada Example - GraphicAudio", "Bea Example"))
+
+    assert sent
+    assert all(
+        ["Ada Example", "Bea Example"]
+        == cast("dict[str, list[str]]", body["variables"])["authors"]
+        for body in sent
+    )
+    (provider,) = report.providers
+    (lane,) = provider.lanes
+    assert (ProviderQueryKind.WORK, ProviderStatus.CANDIDATES) == (
+        lane.kind,
+        lane.status,
+    )
+    assert provider_candidate_represents_target_work(
+        report, provider, provider.candidates[0]
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
 
 
 def test_an_ebook_with_no_target_author_asks_with_its_epub_creators() -> None:
@@ -5284,3 +5426,118 @@ def test_an_ebook_without_one_to_four_distinct_epub_authors_asks_nothing(
 
     assert [] == sent
     assert all(not provider.lanes for provider in report.providers)
+
+
+class _HandedPlanRecorder:
+    """A source that records the plan it was handed and asks nothing (#1879)."""
+
+    def __init__(
+        self, name: str, authority: str, plans: dict[str, MetadataDiscoveryPlan]
+    ) -> None:
+        self._name = name
+        self._authority = authority
+        self._plans = plans
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderResult:
+        self._plans[self._authority] = plan
+        return ProviderResult(
+            ProviderObservation(
+                self._name, ProviderStatus.INSUFFICIENT_INPUT, authority=self._authority
+            )
+        )
+
+
+def test_only_the_catalogue_is_handed_the_search_beside_a_wrong_own_asin() -> None:
+    """A wrong tag is searched on Audible alone, and the report publishes (#1879)."""
+    from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+        AudibleCatalogMetadataProvider,
+    )
+
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    seen: list[httpx.URL] = []
+
+    def catalogue(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        if request.url.path.endswith("/B0WRONG001"):
+            product = {
+                "asin": "B0WRONG001",
+                "title": "Another Story Entirely",
+                "authors": [{"name": _FED_AUTHOR}],
+                "runtime_length_min": 100,
+            }
+            return httpx.Response(200, json={"product": product})
+        product = {
+            "asin": "B0FOUND001",
+            "title": _FED_TITLE,
+            "authors": [{"name": _FED_AUTHOR}],
+            "runtime_length_min": 720,
+        }
+        return httpx.Response(200, json={"total_results": 1, "products": [product]})
+
+    plans: dict[str, MetadataDiscoveryPlan] = {}
+    others = ("hardcover", "open_library", "itunes_search")
+    audnexus: list[MetadataDiscoveryPlan] = []
+    published = MetadataReport.from_json(
+        _fed_audiobook_service(
+            FakeTarget([_fed_snapshot(selected), _fed_snapshot(selected)]),
+            FakeReportRepository(),
+            _fed_inspector((ClaimKind.ASIN, "B0WRONG001", "embedded_tag", None)),
+            (
+                ProviderBinding(
+                    "audible",
+                    True,
+                    lambda: AudibleCatalogMetadataProvider(
+                        "audible",
+                        httpx.Client(transport=httpx.MockTransport(catalogue)),
+                        262_144,
+                        5.0,
+                        marketplaces=("us",),
+                        clock=lambda: 0.0,
+                        wall_clock=lambda: 1_700_000_000.0,
+                        sleep=lambda _: None,
+                        jitter=lambda: 0.0,
+                    ),
+                    authority="audible_catalog",
+                ),
+                ProviderBinding(
+                    "audnexus",
+                    True,
+                    lambda: _AsinAnsweringProvider("audnexus", audnexus),
+                    authority="audnexus",
+                ),
+                *(
+                    ProviderBinding(
+                        name,
+                        True,
+                        partial(_HandedPlanRecorder, name, name, plans),
+                        authority=name,
+                        # iTunes Search is asked only while its covers are on.
+                        cover_enabled=True,
+                    )
+                    for name in others
+                ),
+            ),
+        ).run("item-1", 0)
+    )
+
+    assert ["/1.0/catalog/products/B0WRONG001", "/1.0/catalog/products"] == [
+        url.path for url in seen
+    ]
+    (audible,) = (
+        value for value in published.providers if value.authority == "audible_catalog"
+    )
+    assert {ProviderQueryKind.ASIN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in audible.lanes
+    }
+    assert [("audible-product-B0FOUND001", TARGET_ADMISSION_BASIS)] == [
+        (member.edition_identity, member.admission_basis)
+        for lane in audible.lanes
+        if lane.kind is ProviderQueryKind.WORK
+        for member in lane.candidates
+    ]
+    assert set(others) == set(plans)
+    for plan in (*plans.values(), *audnexus):
+        assert ProviderQueryKind.WORK not in {lane.kind for lane in plan.lanes}
+    assert [ProviderQueryKind.ASIN] == [lane.kind for lane in audnexus[0].lanes]

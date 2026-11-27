@@ -909,6 +909,17 @@ describe('withheld scope words', () => {
       ),
     ).toEqual(['This edition is not offered because Open Library lists it as an audiobook.'])
   })
+
+  it('names any other version of the audiobook without saying which', () => {
+    expect(
+      withheldLines(
+        card({ scopes: ['work'], withheld: [{ scope: 'recording', reason: 'variant' }] }),
+        'audible_catalog',
+      ),
+    ).toEqual([
+      'This recording is not offered because it is a different version of this audiobook.',
+    ])
+  })
 })
 
 describe('request checks', () => {

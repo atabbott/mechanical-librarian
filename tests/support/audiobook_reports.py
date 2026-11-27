@@ -46,6 +46,7 @@ from mechanical_librarian.domain.metadata_report import (
     edition_marketplace_evidence,
     finalize_candidate_comparisons,
     identifier_only_candidate,
+    target_performance_claims,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.work_identity import work_query_ladder
@@ -782,6 +783,7 @@ def synthetic_audiobook_bibliographic_report(
         ),
     )
     claims = (
+        *target_performance_claims(target.fields),
         target_title_claim(title),
         audio_claim(ClaimKind.ASIN, "B000000001", 1),
         audio_claim(ClaimKind.ASIN, "B000000002", 2),

@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from mechanical_librarian.adapters.persistence import decisions
+from mechanical_librarian.adapters.persistence import decisions, schema
 from mechanical_librarian.adapters.persistence.regeneration import (
     SQLiteRegenerationStore,
 )
@@ -493,7 +493,12 @@ def _regenerate_store(store: OwnerStore) -> OwnerStore:
     resolved, ticks = store.resolved, store.ticks
     store.close()
     path = store.root / "owner.sqlite"
-    assert rewrite(path, "UPDATE ledger_meta SET derived_version=2") == 1
+    assert (
+        rewrite(
+            path, f"UPDATE ledger_meta SET derived_version={schema.DERIVED_VERSION + 1}"
+        )
+        == 1
+    )
     lines: list[str] = []
     outcome = regenerate_derived(
         SQLiteRegenerationStore(path, lambda: 1_700_000_000 + ticks),

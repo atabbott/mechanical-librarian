@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
+from types import MappingProxyType
 
-from mechanical_librarian.domain.audio_inspection import MAX_OBSERVED_CHARACTERS
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_OBSERVED_CHARACTERS,
+    AudioPerformanceType,
+)
 from mechanical_librarian.domain.evidence_bounds import (
     _FORBIDDEN_CODEPOINTS,
     EvidenceValueError,
@@ -1500,6 +1505,49 @@ def work_title_has_variant_marker(value: str) -> bool:
     if type(value) is not str:
         raise ValueError("work title is invalid")
     return _VARIANT.search(value) is not None
+
+
+# The producers whose name at the end of a local credit says the recording is
+# a dramatisation, folded as `split_credit_suffix` folds them (#1880).
+PRODUCER_CREDIT_SUFFIXES: Mapping[str, AudioPerformanceType] = MappingProxyType(
+    {
+        "graphic audio": AudioPerformanceType.DRAMATIZED,
+        "graphicaudio": AudioPerformanceType.DRAMATIZED,
+    }
+)
+
+
+def split_credit_suffix[T](
+    value: str, suffixes: Mapping[str, T]
+) -> tuple[str, T] | None:
+    """Split one closed suffix off the end of a credit, or return `None`.
+
+    The suffix follows the credit's last spaced hyphen, en dash or em dash and
+    must equal a key of the caller's table once NFC-normalised,
+    whitespace-collapsed and case-folded; a name must stand before it. The
+    table is the caller's, so each kind of credit suffix keeps its own.
+    """
+    if type(value) is not str:
+        raise ValueError("credit is invalid")
+    index = max(value.rfind(separator) for separator in _SPACED_DASHES)
+    if index < 0:
+        return None
+    name = value[:index].strip()
+    suffix = " ".join(unicodedata.normalize("NFC", value[index + 3 :]).split())
+    meaning = suffixes.get(suffix.casefold())
+    if not name or meaning is None:
+        return None
+    return name, meaning
+
+
+def comparison_author(value: str) -> str:
+    """Return the name a local author credit is compared by (#1880).
+
+    A credit ending in a producer suffix is compared by the name before it;
+    every other credit is compared as it stands.
+    """
+    split = split_credit_suffix(value, PRODUCER_CREDIT_SUFFIXES)
+    return value if split is None else split[0]
 
 
 def work_dispatch_lineage_from_data(value: object) -> WorkDispatchLineage:

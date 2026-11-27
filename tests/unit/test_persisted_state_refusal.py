@@ -77,7 +77,7 @@ def test_an_absent_file_is_created_with_the_ledger_record(tmp_path: Path) -> Non
             "SELECT singleton,ledger_format_version,derived_epoch,derived_version,"
             "derived_schema_digest FROM ledger_meta"
         ).fetchall() == [schema.setup_ledger_meta_row()]
-        assert schema.setup_ledger_meta_row()[1:4] == (1, 0, 1)
+        assert schema.setup_ledger_meta_row()[1:4] == (1, 0, schema.DERIVED_VERSION)
         assert connection.execute(
             "SELECT count(*) FROM derived_regenerations"
         ).fetchone() == (0,)
@@ -91,7 +91,10 @@ def test_an_exact_file_opens(store: Path) -> None:
 
 @pytest.mark.parametrize(
     "assignment",
-    ["derived_version=2", "derived_schema_digest='" + "0" * 64 + "'"],
+    [
+        f"derived_version={schema.DERIVED_VERSION + 1}",
+        "derived_schema_digest='" + "0" * 64 + "'",
+    ],
     ids=["derived_version", "derived_digest"],
 )
 def test_another_builds_derived_partition_asks_for_a_regeneration(
@@ -111,7 +114,8 @@ def test_another_builds_derived_partition_asks_for_a_regeneration(
         "UPDATE ledger_meta SET ledger_format_version=2",
         # Another format comes first even when the derived partition is
         # another build's too.
-        "UPDATE ledger_meta SET ledger_format_version=2,derived_version=2",
+        "UPDATE ledger_meta SET ledger_format_version=2,"
+        f"derived_version={schema.DERIVED_VERSION + 1}",
     ],
     ids=["no_table", "no_row", "format_2", "format_2_and_derived"],
 )
@@ -134,7 +138,7 @@ def test_no_ledger_record_or_another_format_needs_a_clean_rebuild(
         "ALTER TABLE owner_links ADD COLUMN planted TEXT",
         # An altered ledger object refuses before the derived record is read.
         "ALTER TABLE owner_links ADD COLUMN planted TEXT; "
-        "UPDATE ledger_meta SET derived_version=2",
+        f"UPDATE ledger_meta SET derived_version={schema.DERIVED_VERSION + 1}",
     ],
     ids=[
         "derived_table",
@@ -158,7 +162,10 @@ def test_an_extra_or_altered_object_refuses_as_today(store: Path, change: str) -
 @pytest.mark.parametrize(
     ("change", "family"),
     [
-        ("UPDATE ledger_meta SET derived_version=2", DerivedRegenerationRequired),
+        (
+            f"UPDATE ledger_meta SET derived_version={schema.DERIVED_VERSION + 1}",
+            DerivedRegenerationRequired,
+        ),
         ("UPDATE ledger_meta SET ledger_format_version=2", LedgerRebuildRequired),
     ],
     ids=["derived", "ledger"],

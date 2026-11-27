@@ -35,6 +35,9 @@ qualification.
    builds ASIN lanes from the local ASIN claims, and falls back to the
    title-and-author `WORK` lane when the item names no identifier at all, which
    is 57.6% of the reference library.
+   Since #1879 (accepted 2026-11-27) an item that names its own ASIN also
+   carries that lane as a fallback the Audible catalogue asks when no own-ASIN
+   lookup kept a recording; see ADR-0061's #1879 amendment.
    Since #1255 that fallback may carry one conditional alternative `WORK`
    lane, from the item's first surviving discovery title, which only Audible
    dispatches and only after the asserted lane ends `NO_MATCH` (or alone, when

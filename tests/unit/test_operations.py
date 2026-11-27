@@ -14,6 +14,7 @@ from mechanical_librarian.adapters.operational_evidence import (
     LocalTimingStore,
     SupportBundle,
 )
+from mechanical_librarian.adapters.persistence import schema
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.metadata_report import (
@@ -167,7 +168,9 @@ def test_container_store_mode_prints_one_refusal_line_and_exits_1(
     root.mkdir(mode=0o700)
     database = root / "application.sqlite3"
     open_repository(database).close()
-    rewrite(database, "UPDATE ledger_meta SET derived_version=2")
+    rewrite(
+        database, f"UPDATE ledger_meta SET derived_version={schema.DERIVED_VERSION + 1}"
+    )
     with (
         _patched_volume(root),
         patch.object(container.signal, "signal"),

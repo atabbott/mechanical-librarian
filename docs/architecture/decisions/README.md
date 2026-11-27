@@ -29,7 +29,7 @@ status line that says who accepted it and when.
 | [0015](0015-isolated-shadow-reviewer.md) | superseded by 0016 | Isolate one qualification-only shadow reviewer |
 | [0016](0016-freeze-explainable-shadow-reviewer.md) | partly superseded by 0019 and 0026 | Freeze explainable publication-date shadow review |
 | [0017](0017-bounded-failure-diagnostics.md) | accepted | Bound provider and reviewer failure diagnostics |
-| [0018](0018-closed-title-creator-comparison.md) | accepted | Close title and creator comparison |
+| [0018](0018-closed-title-creator-comparison.md) | accepted; amended for #1880 | Close title and creator comparison |
 | [0019](0019-publication-date-precision-comparison.md) | accepted | Compare publication dates by precision |
 | [0020](0020-field-specific-acceptable-outcomes.md) | accepted; language rule superseded by 0065 | Model acceptable outcomes per field |
 | [0021](0021-coherent-bibliographic-combinations.md) | accepted; amended by 0075 | Bind dependent advice to coherent combinations |
