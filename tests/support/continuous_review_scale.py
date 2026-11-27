@@ -2,9 +2,10 @@
 
 `qualify_installed_pipeline` builds an installed wheel, serves a synthetic
 Audiobookshelf over TLS, reconciles a fresh cohort, then verifies a
-completed-state restart. Two tiers drive it at different sizes -- the
-installed tier at small cohorts, the slow tier at two thousand works -- so
-it lives here rather than in either tier's module: a test module
+completed-state restart, and returns its route-latency receipt. The slow
+tier drives it at two thousand works; the installed tier drives the
+decision and Activity lifecycle beside it. Both live here rather than in
+either tier's module: a test module
 never imports another test module's fixtures, because that makes one cohort
 a dependency of another (`docs/development/testing-strategy.md`).
 """
