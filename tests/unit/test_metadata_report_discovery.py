@@ -4447,3 +4447,345 @@ def test_lookup_and_plan_refuse_malformed_echoed_languages(languages: object) ->
         MetadataLookup(ProviderQueryKind.ISBN, (), echoed_languages=languages)
     with pytest.raises(MetadataReportError, match="provider discovery plan is invalid"):
         MetadataDiscoveryPlan((), (), echoed_languages=languages)
+
+
+# #1879: an item's own ASIN is a hint. Beside its own ASIN lanes the plan
+# carries its title-and-author lanes as a fallback only the Audible catalogue
+# is handed, and asks only when no own-ASIN lookup kept a recording.
+_FALLBACK_TITLE = "12 Ember Tide & More: A Novel"
+_FALLBACK_ALTERNATIVE = "Émber, Tide: A Tale"
+_FALLBACK_AUTHORS = ("Ada Author",)
+
+
+def _fallback_audio() -> dom.AudioFacts:
+    return replace(
+        single_track_audio_facts(),
+        discovery_titles=(dom.AudioDiscoveryTitle("path_leaf", _FALLBACK_ALTERNATIVE),),
+    )
+
+
+def _fallback_companion() -> dom.CompanionEbook:
+    def claim(kind: ClaimKind, value: str, **fields: Any) -> LocalClaim:
+        return LocalClaim.create(
+            kind=kind,
+            observed=value,
+            canonical=value,
+            excerpt=value,
+            applicability=str(fields.pop("applicability", "not_applicable")),
+            basis="package_metadata",
+            checksum=str(fields.pop("checksum", "not_applicable")),
+            applicability_basis=str(
+                fields.pop("applicability_basis", "not_applicable")
+            ),
+            **fields,
+        )
+
+    return dom.CompanionEbook(
+        "e" * 64,
+        "c" * 64,
+        (
+            claim(ClaimKind.TITLE, _FALLBACK_ALTERNATIVE),
+            claim(ClaimKind.CREATOR, "Ada Author", role="author", occurrence=0),
+            claim(
+                ClaimKind.ISBN,
+                "9780306406157",
+                applicability="ebook",
+                checksum="valid_isbn_13",
+                applicability_basis="ebook",
+                scope=ClaimScope.EDITION,
+            ),
+        ),
+    )
+
+
+def _fallback_claims(*asins: str) -> tuple[LocalClaim, ...]:
+    return (
+        _target_title_claim(_FALLBACK_TITLE),
+        *(
+            _audio_claim(ClaimKind.ASIN, asin, index)
+            for index, asin in enumerate(asins, start=1)
+        ),
+    )
+
+
+def _fallback_plan(
+    *asins: str, companion: bool = False, audio: bool = True
+) -> MetadataDiscoveryPlan:
+    return audiobook_discovery_plan(
+        _audio_target(_FALLBACK_TITLE, _FALLBACK_AUTHORS),
+        _fallback_claims(*asins),
+        audio=_fallback_audio() if audio else None,
+        companion=_fallback_companion() if companion else None,
+    )
+
+
+def _kinds(plan: MetadataDiscoveryPlan) -> list[ProviderQueryKind]:
+    return sorted((lane.kind for lane in plan.lanes), key=lambda kind: kind.value)
+
+
+def test_an_audiobook_with_its_own_asin_also_plans_its_search_as_a_fallback() -> None:
+    plan = _fallback_plan("B0LOCAL001")
+
+    assert not plan.overflow
+    assert [ProviderQueryKind.ASIN, ProviderQueryKind.WORK, ProviderQueryKind.WORK] == (
+        _kinds(plan)
+    )
+    searched = _fallback_plan()
+    assert {lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK} == set(
+        searched.lanes
+    )
+    assert all(
+        app.asin_fallback_lane(plan, lane)
+        for lane in plan.lanes
+        if lane.kind is ProviderQueryKind.WORK
+    )
+    assert not any(app.asin_fallback_lane(searched, lane) for lane in searched.lanes)
+    # The ASIN still leads: the lookup is dispatched before any search.
+    assert ProviderQueryKind.ASIN is provider_discovery_lane_order(plan)[0].kind
+    # A plan with no audio section is the plan it always was.
+    assert [ProviderQueryKind.ASIN] == _kinds(_fallback_plan("B0LOCAL001", audio=False))
+
+
+@pytest.mark.parametrize("companion", (False, True), ids=("plain", "companion"))
+@pytest.mark.parametrize("count", (1, 2, 3, 4))
+def test_the_fallback_fits_the_budget_all_or_nothing(
+    count: int, companion: bool
+) -> None:
+    asins = tuple(f"B0LOCAL00{index}" for index in range(1, count + 1))
+    plan = _fallback_plan(*asins, companion=companion)
+    searched = _fallback_plan(companion=companion)
+    work = tuple(lane for lane in searched.lanes if lane.kind is ProviderQueryKind.WORK)
+    # A four-rung asserted ladder and a three-rung alternative.
+    assert 7 == app._metadata_discovery_query_count(work, audiobook=True)
+    without = tuple(
+        lane for lane in plan.lanes if lane.kind is not ProviderQueryKind.WORK
+    )
+
+    assert not plan.overflow
+    assert app._metadata_discovery_query_count(plan.lanes, audiobook=True) <= (
+        app.MAX_PROVIDER_DISCOVERY_QUERIES
+    )
+    fits = (
+        app._metadata_discovery_query_count((*without, *work), audiobook=True)
+        <= app.MAX_PROVIDER_DISCOVERY_QUERIES
+    )
+    held = tuple(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK)
+    assert held == (tuple(sorted(work, key=lambda lane: lane.identity)) if fits else ())
+    # One local ASIN always leaves room: 1 + companion + 4 + 3 = 9.
+    assert fits is (count + companion <= 2)
+    # The ASIN and companion lanes are the ones planned without the fallback.
+    assert {lane.canonical_asin for lane in without if lane.canonical_asin} == set(
+        asins
+    )
+    isbn = dom.planned_companion_isbn_lane(
+        _audio_target(_FALLBACK_TITLE, _FALLBACK_AUTHORS).fields,
+        _fallback_claims(*asins),
+        plan.audio.discovery_titles if plan.audio is not None else (),
+        _fallback_companion() if companion else None,
+    )
+    assert [
+        lane.identity for lane in without if lane.kind is ProviderQueryKind.ISBN
+    ] == ([] if isbn is None else [isbn.identity])
+    assert companion is (isbn is not None)
+
+
+def test_five_local_asins_still_overflow_with_no_lane() -> None:
+    plan = _fallback_plan(*(f"B0LOCAL00{index}" for index in range(1, 6)))
+
+    assert plan.overflow
+    assert () == plan.lanes
+
+
+def test_a_malformed_local_asin_plans_no_lookup_but_the_search() -> None:
+    malformed = LocalClaim.create(
+        kind=ClaimKind.ASIN,
+        observed="Unabridged",
+        canonical=None,
+        excerpt="Unabridged",
+        applicability="not_applicable",
+        basis="embedded_tag",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        state=FieldState.MALFORMED,
+    )
+    plan = audiobook_discovery_plan(
+        _audio_target(_FALLBACK_TITLE, _FALLBACK_AUTHORS),
+        (_target_title_claim(_FALLBACK_TITLE), malformed),
+        audio=_fallback_audio(),
+    )
+
+    assert [ProviderQueryKind.WORK, ProviderQueryKind.WORK] == _kinds(plan)
+    assert not any(app.asin_fallback_lane(plan, lane) for lane in plan.lanes)
+
+
+def _asin_result(
+    lane: MetadataDiscoveryLane,
+    status: ProviderStatus,
+    *,
+    kept: bool = False,
+) -> ProviderLaneResult:
+    asin = cast("str", lane.canonical_asin)
+    identity = f"audible-product-{asin}"
+    return ProviderLaneResult(
+        lane,
+        status,
+        (
+            (
+                _audiobook_candidate(
+                    _fallback_claims(asin), identity=identity, asin=asin
+                ),
+            )
+            if status is ProviderStatus.CANDIDATES
+            else ()
+        ),
+        admission_bases=((identity, dom.TARGET_ADMISSION_BASIS),) if kept else (),
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "kept", "permitted"),
+    (
+        (ProviderStatus.NO_MATCH, False, True),
+        (ProviderStatus.CANDIDATES, False, True),
+        (ProviderStatus.CANDIDATES, True, False),
+        (ProviderStatus.UNAVAILABLE, False, False),
+        (ProviderStatus.RATE_LIMITED, False, False),
+        (ProviderStatus.MALFORMED, False, False),
+        (ProviderStatus.QUERY_LIMIT_EXCEEDED, False, False),
+    ),
+)
+def test_the_fallback_opens_only_when_the_lookup_kept_nothing(
+    status: ProviderStatus, kept: bool, permitted: bool
+) -> None:
+    plan = _fallback_plan("B0LOCAL001")
+    (lane,) = (value for value in plan.lanes if value.kind is ProviderQueryKind.ASIN)
+
+    assert permitted is app.asin_fallback_permitted(
+        plan, [_asin_result(lane, status, kept=kept)]
+    )
+
+
+def test_the_fallback_waits_for_every_own_lookup() -> None:
+    plan = _fallback_plan("B0LOCAL001", "B0LOCAL002")
+    first, second = (
+        value for value in plan.lanes if value.kind is ProviderQueryKind.ASIN
+    )
+
+    # A missing result is no answer.
+    assert not app.asin_fallback_permitted(plan, [])
+    assert not app.asin_fallback_permitted(
+        plan, [_asin_result(first, ProviderStatus.NO_MATCH)]
+    )
+    # One kept recording is enough to keep the search unasked.
+    assert not app.asin_fallback_permitted(
+        plan,
+        [
+            _asin_result(first, ProviderStatus.NO_MATCH),
+            _asin_result(second, ProviderStatus.CANDIDATES, kept=True),
+        ],
+    )
+    assert app.asin_fallback_permitted(
+        plan,
+        [
+            _asin_result(first, ProviderStatus.NO_MATCH),
+            _asin_result(second, ProviderStatus.CANDIDATES),
+        ],
+    )
+
+
+def test_a_plan_with_no_own_asin_lane_permits_its_search_outright() -> None:
+    searched = _fallback_plan()
+    # Retry narrows a fallback lane to a plan of its own.
+    plan = _fallback_plan("B0LOCAL001")
+    work = tuple(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK)
+    narrowed = replace(plan, lanes=work)
+    # A fed or carried product lane is not one of the item's own surfaces.
+    fed = replace(
+        searched,
+        lanes=tuple(
+            sorted(
+                (
+                    *searched.lanes,
+                    app._asin_discovery_lane(
+                        "B0FEEDASN1", searched.lanes[0].input_references
+                    ),
+                ),
+                key=lambda lane: lane.identity,
+            )
+        ),
+    )
+
+    for value in (searched, narrowed, fed):
+        assert app.asin_fallback_permitted(value, [])
+        assert not any(app.asin_fallback_lane(value, lane) for lane in value.lanes)
+
+
+@pytest.mark.parametrize(
+    "authority", ("hardcover", "open_library", "itunes_search", "audnexus", "audiosilo")
+)
+def test_only_the_audible_catalogue_is_handed_the_fallback(authority: str) -> None:
+    for companion in (False, True):
+        plan = _fallback_plan("B0LOCAL001", companion=companion)
+        handed = app.companion_binding_plan(plan, authority)
+
+        assert ProviderQueryKind.WORK not in {lane.kind for lane in handed.lanes}
+        audible = app.companion_binding_plan(plan, "audible_catalog")
+        assert {ProviderQueryKind.ASIN, ProviderQueryKind.WORK} == {
+            lane.kind for lane in audible.lanes
+        }
+    # An item with no own ASIN keeps its search everywhere.
+    searched = _fallback_plan()
+    assert app.companion_binding_plan(searched, authority).lanes == searched.lanes
+
+
+def _fallback_report(observation: ProviderObservation) -> MetadataReport:
+    target = _audio_target(_FALLBACK_TITLE, _FALLBACK_AUTHORS)
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", target.fields),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=_fallback_claims("B0LOCAL001"),
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=_fallback_audio(),
+    )
+    assert report == MetadataReport.from_json(report.to_json())
+    return report
+
+
+def test_a_disabled_catalogue_records_only_its_own_asin_lane() -> None:
+    plan = app.companion_binding_plan(_fallback_plan("B0LOCAL001"), "audible_catalog")
+    binding = ProviderBinding(
+        "audible", False, lambda: cast("MetadataProvider", None), "audible_catalog"
+    )
+
+    observation = app._undispatched_observation(
+        binding,
+        plan,
+        ProviderStatus.DISABLED,
+        tuple(lane for lane in plan.lanes if lane.title_basis is None),
+    )
+
+    assert [ProviderQueryKind.ASIN] == [lane.kind for lane in observation.lanes]
+    assert ProviderQueryKind.ASIN is observation.query_kind
+    _fallback_report(observation)
+
+
+def test_a_faulted_catalogue_records_only_its_own_asin_lane() -> None:
+    plan = app.companion_binding_plan(_fallback_plan("B0LOCAL001"), "audible_catalog")
+
+    class _Faulting:
+        def observe(
+            self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+        ) -> ProviderResult:
+            raise RuntimeError("synthetic fault")
+
+    result = app.observe_provider(
+        "audible",
+        "audible_catalog",
+        cast("MetadataProvider", _Faulting()),
+        plan,
+    )
+
+    assert [ProviderQueryKind.ASIN] == [lane.kind for lane in result.observation.lanes]
+    assert ProviderStatus.UNAVAILABLE is result.observation.status
+    _fallback_report(result.observation)
