@@ -122,6 +122,7 @@ from mechanical_librarian.domain.metadata_policy import (
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
+    TARGET_ADMISSION_BASIS,
     AudioDiscoveryTitle,
     ClaimKind,
     ClaimScope,
@@ -5145,3 +5146,118 @@ def test_an_ebook_without_one_to_four_distinct_epub_authors_asks_nothing(
 
     assert [] == sent
     assert all(not provider.lanes for provider in report.providers)
+
+
+class _HandedPlanRecorder:
+    """A source that records the plan it was handed and asks nothing (#1879)."""
+
+    def __init__(
+        self, name: str, authority: str, plans: dict[str, MetadataDiscoveryPlan]
+    ) -> None:
+        self._name = name
+        self._authority = authority
+        self._plans = plans
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderResult:
+        self._plans[self._authority] = plan
+        return ProviderResult(
+            ProviderObservation(
+                self._name, ProviderStatus.INSUFFICIENT_INPUT, authority=self._authority
+            )
+        )
+
+
+def test_only_the_catalogue_is_handed_the_search_beside_a_wrong_own_asin() -> None:
+    """A wrong tag is searched on Audible alone, and the report publishes (#1879)."""
+    from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+        AudibleCatalogMetadataProvider,
+    )
+
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    seen: list[httpx.URL] = []
+
+    def catalogue(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        if request.url.path.endswith("/B0WRONG001"):
+            product = {
+                "asin": "B0WRONG001",
+                "title": "Another Story Entirely",
+                "authors": [{"name": _FED_AUTHOR}],
+                "runtime_length_min": 100,
+            }
+            return httpx.Response(200, json={"product": product})
+        product = {
+            "asin": "B0FOUND001",
+            "title": _FED_TITLE,
+            "authors": [{"name": _FED_AUTHOR}],
+            "runtime_length_min": 720,
+        }
+        return httpx.Response(200, json={"total_results": 1, "products": [product]})
+
+    plans: dict[str, MetadataDiscoveryPlan] = {}
+    others = ("hardcover", "open_library", "itunes_search")
+    audnexus: list[MetadataDiscoveryPlan] = []
+    published = MetadataReport.from_json(
+        _fed_audiobook_service(
+            FakeTarget([_fed_snapshot(selected), _fed_snapshot(selected)]),
+            FakeReportRepository(),
+            _fed_inspector((ClaimKind.ASIN, "B0WRONG001", "embedded_tag", None)),
+            (
+                ProviderBinding(
+                    "audible",
+                    True,
+                    lambda: AudibleCatalogMetadataProvider(
+                        "audible",
+                        httpx.Client(transport=httpx.MockTransport(catalogue)),
+                        262_144,
+                        5.0,
+                        marketplaces=("us",),
+                        clock=lambda: 0.0,
+                        wall_clock=lambda: 1_700_000_000.0,
+                        sleep=lambda _: None,
+                        jitter=lambda: 0.0,
+                    ),
+                    authority="audible_catalog",
+                ),
+                ProviderBinding(
+                    "audnexus",
+                    True,
+                    lambda: _AsinAnsweringProvider("audnexus", audnexus),
+                    authority="audnexus",
+                ),
+                *(
+                    ProviderBinding(
+                        name,
+                        True,
+                        partial(_HandedPlanRecorder, name, name, plans),
+                        authority=name,
+                        # iTunes Search is asked only while its covers are on.
+                        cover_enabled=True,
+                    )
+                    for name in others
+                ),
+            ),
+        ).run("item-1", 0)
+    )
+
+    assert ["/1.0/catalog/products/B0WRONG001", "/1.0/catalog/products"] == [
+        url.path for url in seen
+    ]
+    (audible,) = (
+        value for value in published.providers if value.authority == "audible_catalog"
+    )
+    assert {ProviderQueryKind.ASIN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in audible.lanes
+    }
+    assert [("audible-product-B0FOUND001", TARGET_ADMISSION_BASIS)] == [
+        (member.edition_identity, member.admission_basis)
+        for lane in audible.lanes
+        if lane.kind is ProviderQueryKind.WORK
+        for member in lane.candidates
+    ]
+    assert set(others) == set(plans)
+    for plan in (*plans.values(), *audnexus):
+        assert ProviderQueryKind.WORK not in {lane.kind for lane in plan.lanes}
+    assert [ProviderQueryKind.ASIN] == [lane.kind for lane in audnexus[0].lanes]
