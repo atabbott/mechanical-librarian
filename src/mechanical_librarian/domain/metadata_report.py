@@ -222,6 +222,14 @@ class ReportValueError(ValueError):
     """A report or report input is outside the closed 0.4 contract."""
 
 
+class ReportSizeError(ReportValueError):
+    """A report being built is over `MAX_REPORT_BYTES` after every drop.
+
+    Typed apart so a caller can name an item too large to report (#1798)
+    without catching any other report refusal.
+    """
+
+
 def provider_access_time(timestamp: float) -> str:
     """Return one canonical UTC access time from an injected epoch clock."""
     if type(timestamp) not in {int, float} or isinstance(timestamp, bool):
@@ -5984,7 +5992,7 @@ class MetadataReport:
         if self.report_id != report_content_address(self._identity_data()):
             raise ReportValueError("report identity is inconsistent")
         if len(self.to_json().encode("utf-8")) > MAX_REPORT_BYTES:
-            raise ReportValueError("report exceeds its byte limit")
+            raise ReportSizeError("report exceeds its byte limit")
 
     def _validate_sections(self) -> bool:
         """Check each section's own shape; return whether the file is audio."""
@@ -9799,6 +9807,7 @@ __all__ = [
     "ASSERTED_ASIN_BASES",
     "WorkIdentityContradiction",
     "REPORT_SCHEMA",
+    "ReportSizeError",
     "ReportValueError",
     "TargetDestination",
     "TargetFacts",

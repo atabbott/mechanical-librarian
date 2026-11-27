@@ -746,18 +746,21 @@ def _serialized_bytes(value: dict[str, object]) -> int:
 def _claims_fit_beside(claims: tuple[LocalClaim, ...], audio: AudioFacts) -> bool:
     """Whether the claims and the audio section could share one retained report.
 
-    A report holds its local claims and its audio section verbatim, each as
-    its own part of one canonical document, so the two parts' serialized bytes
-    together are a floor on the report's own.  The audio section is measured
-    at its smallest step, the one report construction falls back to last
-    (#1796).  A claim set past ``MAX_REPORT_BYTES`` beside it can therefore
-    never be retained, and ADR-0066 names that the item's own budget failure
-    rather than leaving report construction to refuse it (#1798).
+    A report holds these claims unchanged, beside an audio section built
+    from this one: it keeps every chapter, track and manifest entry and adds
+    runtime observations.  The one thing it drops, a discovery title equal to
+    the target's title, author or series, is text the report's target section
+    carries anyway (#1255).  So the claims' bytes and this section's,
+    measured at its smallest step (the one report construction falls back to
+    last, #1796), are a floor on the report's own.  A claim set past
+    ``MAX_REPORT_BYTES`` beside it can never be retained, and ADR-0066 names
+    that the item's own budget failure, here, before any provider is asked
+    (#1798).
 
     This is a floor and not a guarantee: the target, provider, field-result
-    and identifier sections the report adds are not counted, and the drops
-    that make room for them happen when the report is built.  A claim set
-    that passes here can still leave a report over its limit.
+    and identifier sections the report adds are not counted.  A report
+    still over its limit once built ends the same way, in preparation
+    (``GenerateMetadataReport``).
     """
     smallest = audio_record_rungs(audio)[-1]
     return (

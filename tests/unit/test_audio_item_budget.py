@@ -26,12 +26,17 @@ from mechanical_librarian.application.review_pipeline import (
     audio_inspection_failure_code,
 )
 from mechanical_librarian.domain.audio_inspection import (
+    MAX_ASSOCIATION_CHARACTERS,
+    MAX_ASSOCIATION_CREATORS,
     MAX_AUDIO_TRACKS,
     MAX_CANONICAL_CHARACTERS,
     MAX_CHAPTER_TITLE_CHARACTERS,
     MAX_CHAPTERS,
     MAX_DESCRIPTION_CHARACTERS,
     MAX_FACTS,
+    MAX_OBSERVED_CHARACTERS,
+    MAX_PUBLIC_REPORT_BYTES,
+    MAX_SIDECAR_NAME_CHARACTERS,
     MULTI_FILE_WALL_SECONDS,
     AudioChapter,
     AudioChapterComposition,
@@ -41,6 +46,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionFact,
     AudioInspectionField,
     AudioInspectionOutcome,
+    AudioSidecarReading,
 )
 from mechanical_librarian.domain.audio_sidecar_association import (
     AudioAssociationContext,
@@ -49,7 +55,14 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     local_claim_runtime_seconds,
 )
 from mechanical_librarian.domain.identifiers import Fingerprint
-from mechanical_librarian.domain.metadata_report import MAX_REPORT_BYTES, canonical_json
+from mechanical_librarian.domain.metadata_report import (
+    MAX_REPORT_BYTES,
+    FileFacts,
+    MetadataReport,
+    TargetFacts,
+    canonical_json,
+)
+from tests.support.audiobook_reports import audio_target_fields
 
 # No target record and no own-file list: association fails closed.
 _NO_TARGET = AudioAssociationContext(None, (), None)
@@ -516,6 +529,146 @@ def test_claims_that_fit_beside_the_audio_section_still_succeed(
         len(canonical_json([claim.to_data() for claim in result.claims]).encode())
         + len(canonical_json(result.audio.to_data()).encode())
         <= MAX_REPORT_BYTES
+    )
+
+
+_WIDE = "\U0001d11e"
+
+
+def _wide_fact(
+    index: int, field: AudioInspectionField, surface: AudioEvidenceSurface, source
+) -> AudioInspectionFact:
+    """The widest fact of its field, in four-byte characters."""
+    width = (
+        MAX_DESCRIPTION_CHARACTERS
+        if field is AudioInspectionField.DESCRIPTION
+        else MAX_OBSERVED_CHARACTERS
+    )
+    text = f"{index:03d}{_WIDE * (width - 3)}"
+    return AudioInspectionFact(
+        field,
+        source,
+        text,
+        f"{index:03d}{_WIDE * (MAX_CANONICAL_CHARACTERS - 3)}",
+        text,
+        surface,
+        role="narrator" if field is AudioInspectionField.CONTRIBUTOR else None,
+    )
+
+
+class _SidecarHeavyChild:
+    """Maximal chapters, 64 file descriptions, and 8 refused documents' facts.
+
+    It reads every document it is handed as an OPF naming another book, with
+    the widest title and creators association text admits and 24 maximal
+    narrators each, and answers through the child's own bound.
+    """
+
+    def __init__(self) -> None:
+        self.whole: AudioInspection | None = None
+        self.answer: AudioInspection | None = None
+
+    def __call__(
+        self,
+        descriptor: int,
+        expected_source: Fingerprint,
+        limits: object,
+        *,
+        sidecars: tuple[tuple[str, str, int], ...] = (),
+        **_: object,
+    ) -> AudioInspection:
+        opf = AudioEvidenceSurface.SIDECAR_OPF
+        self.whole = AudioInspection(
+            AudioInspectionOutcome.SUCCESS,
+            expected_source,
+            tuple(
+                _wide_fact(
+                    index,
+                    AudioInspectionField.DESCRIPTION,
+                    AudioEvidenceSurface.ID3_USER_TEXT,
+                    expected_source,
+                )
+                for index in range(64)
+            ),
+            tuple(
+                AudioChapter(
+                    index + 1, index, index + 1, _WIDE * MAX_CHAPTER_TITLE_CHARACTERS
+                )
+                for index in range(MAX_CHAPTERS)
+            ),
+            AudioEmbeddedCover(True, AudioEvidenceSurface.CONTAINER_STREAM),
+            True,
+            sidecars=tuple(
+                AudioSidecarReading(
+                    name,
+                    opf,
+                    tuple(
+                        _wide_fact(
+                            reading * 24 + entry,
+                            AudioInspectionField.CONTRIBUTOR,
+                            opf,
+                            expected_source,
+                        )
+                        for entry in range(24)
+                    ),
+                    _WIDE * MAX_ASSOCIATION_CHARACTERS,
+                    tuple(
+                        f"{creator:02d}{_WIDE * (MAX_ASSOCIATION_CHARACTERS - 2)}"
+                        for creator in range(MAX_ASSOCIATION_CREATORS)
+                    ),
+                )
+                for reading, (_, name, _) in enumerate(sidecars)
+            ),
+        )
+        self.answer = AudioInspection.from_json(
+            self.whole.to_json_within(MAX_PUBLIC_REPORT_BYTES)
+        )
+        return self.answer
+
+
+def test_a_trimmed_answer_saves_an_item_whose_refused_documents_filled_it(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The trim gives up facts the parent would never publish (#1798).
+
+    The documents name another book, so their facts and association text are
+    never claims; trimming them lets the item's own facts through whole.
+    """
+    track = _tracks(mount, 1)
+    names = tuple(
+        f"{index}{'n' * (MAX_SIDECAR_NAME_CHARACTERS - 5)}.opf" for index in range(8)
+    )
+    for name in names:
+        _write(mount, name, b"<package/>")
+    child = _SidecarHeavyChild()
+    monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", child)
+
+    result = IsolatedAudioInspector().inspect(
+        mount,
+        track,
+        _MAXIMUM,
+        association=AudioAssociationContext(
+            "The Synthetic Voyage", (), ("01.mp3", *names)
+        ),
+    )
+
+    assert child.whole is not None and child.answer is not None
+    assert len(child.whole.sidecars) == 8
+    assert len(child.whole.to_json().encode("utf-8")) > MAX_PUBLIC_REPORT_BYTES
+    kept = sum(len(value.facts) for value in child.answer.sidecars)
+    assert 0 < kept < 8 * 24
+    assert child.answer.facts == child.whole.facts
+    assert len(result.claims) == 64
+    assert {entry.name for entry in result.audio.sidecars} == set(names)
+    assert all(entry.refusals for entry in result.audio.sidecars)
+    # And the retained report holds the item.
+    MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", audio_target_fields()),
+        file=FileFacts(0, "a" * 64, result.content_digest, "mp3"),
+        local_claims=result.claims,
+        local_reasons=("embedded_tag_description",),
+        providers=(),
+        audio=result.audio,
     )
 
 
