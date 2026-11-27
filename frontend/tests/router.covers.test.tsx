@@ -342,9 +342,82 @@ describe('Covers view (#1633)', () => {
       /^A source says it belongs to a different edition, so you cannot choose it\.$/u,
     )
     expect(card).not.toHaveTextContent('Match not confirmed')
+    // A screen reader hears the same title and reason (#1837).
+    expect(card).toHaveAccessibleDescription(
+      'Contradicts this book A source says it belongs to a different edition, so you cannot choose it.',
+    )
     expect(card).toBeDisabled()
     await user.click(card)
     expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('describes every cover card by its title and reason line (#1837)', async () => {
+    const http = coversHttp({ decide })
+    http.getCaseDetail.mockImplementation(async (id) => {
+      const value = coverDetail(id, titles[id] ?? id)
+      return {
+        ...value,
+        fields: value.fields.map((field) =>
+          field.coverConsideration
+            ? {
+                ...field,
+                coverConsideration: {
+                  ...field.coverConsideration,
+                  candidates: [
+                    ...field.coverConsideration.candidates,
+                    {
+                      ...candidate('5', false),
+                      deterministicRank: null,
+                      deterministicRankKey: null,
+                      identity: null,
+                      manualEligible: true,
+                      matchReason: 'matched_book' as const,
+                      matchState: 'match_not_confirmed' as const,
+                      ordinal: 2,
+                      sourceKinds: ['hardcover' as const],
+                    },
+                    {
+                      ...candidate('6', false),
+                      deterministicRank: null,
+                      deterministicRankKey: null,
+                      identity: null,
+                      manualEligible: true,
+                      matchState: 'match_not_confirmed' as const,
+                      ordinal: 3,
+                      sourceKinds: ['inventaire' as const],
+                    },
+                  ],
+                },
+              }
+            : field,
+        ),
+      }
+    })
+    renderRoute('/library?lens=all&view=covers&tab=decide&cover=case-1', http)
+    const group = await screen.findByRole('radiogroup', {
+      name: 'Which cover should this work use?',
+    })
+    const cards = within(group).getAllByRole('radio')
+    expect(cards.length).toBeGreaterThanOrEqual(4)
+    for (const card of cards) {
+      // Every id the description names is on the page (#1837).
+      for (const id of (card.getAttribute('aria-describedby') ?? '').split(' '))
+        expect(document.getElementById(id), id).not.toBeNull()
+      const reason = card.querySelector('.choice-recommendation')
+      expect(card).toHaveAccessibleDescription(
+        [card.querySelector('strong'), reason]
+          .flatMap((part) => (part?.textContent ? [part.textContent] : []))
+          .join(' '),
+      )
+    }
+    expect(
+      within(group).getByRole('radio', { name: /Hardcover cover/u }),
+    ).toHaveAccessibleDescription(
+      'Same book · recording not confirmed From the matched book, not a confirmed recording.',
+    )
+    expect(
+      within(group).getByRole('radio', { name: /Inventaire cover/u }),
+    ).toHaveAccessibleDescription('Match not confirmed')
   })
 
   it('records one tap as the choice, opens the next book and counts again', async () => {
@@ -542,6 +615,7 @@ describe('Covers view (#1633)', () => {
     cleanup()
     renderRoute('/library?lens=all&view=covers&tab=all&cover=case-1', http)
     const kept = await screen.findByRole('radio', { name: 'Keep current cover' })
+    expect(kept).toHaveAccessibleDescription('Unavailable')
     expect(kept).toHaveTextContent('Your choice')
     expect(kept).toHaveAttribute('aria-checked', 'true')
   })

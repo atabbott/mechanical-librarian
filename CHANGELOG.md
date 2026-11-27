@@ -47,6 +47,9 @@ brackets are GitHub issues.
   with the comparison notice, spaced from them, instead of touching the tabs
   between the selected tab and its field. Evidence and Find this book now
   line up under Needs you and Automatic (#2057).
+- A screen reader now hears each cover card's title, its reason line when it
+  shows one, and Recommended or Suggested when the card is, as well as the
+  action the card's name already gave (#1837).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).
