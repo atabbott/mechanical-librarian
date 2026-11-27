@@ -6072,11 +6072,15 @@ describe('Library route', () => {
     // The recommended card carries its reason, so the header has no caption (#1765).
     expect(recommendedComparison.querySelector(':scope > header > small')).toBeNull()
     // A proposed cover card is named by its sources, never "Alternative N" (#1519).
-    expect(
-      within(recommendedComparison)
-        .getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (2)' })
-        .querySelector('small'),
-    ).toHaveTextContent(/^Recommended$/u)
+    const recommendedCard = within(recommendedComparison).getByRole('radio', {
+      name: 'Choose Open Library cover, 800 × 1200 px (2)',
+    })
+    expect(recommendedCard.querySelector('small')).toHaveTextContent(/^Recommended$/u)
+    // A screen reader hears the mark, the title and the reason the card shows (#1837).
+    expect(recommendedCard).toHaveAccessibleDescription(
+      `Recommended ${recommendedCard.querySelector('strong')?.textContent ?? ''} ${recommendedCard.querySelector('.choice-recommendation')?.textContent ?? ''}`,
+    )
+    expect(recommendedCard.querySelector('.choice-recommendation')).not.toBeNull()
     expect(within(recommendedComparison).queryByText(/Alternative \d cover/u)).toBeNull()
 
     // The measured rules' stage says why nothing is recommended (#1363).
@@ -6288,11 +6292,14 @@ describe('Library route', () => {
     expect(
       within(suggested).queryByText('Your cover settings choose this cover.'),
     ).not.toBeInTheDocument()
-    expect(
-      within(suggested)
-        .getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (2)' })
-        .querySelector('small'),
-    ).toHaveTextContent(/^Suggested$/u)
+    const suggestedCard = within(suggested).getByRole('radio', {
+      name: 'Choose Open Library cover, 800 × 1200 px (2)',
+    })
+    expect(suggestedCard.querySelector('small')).toHaveTextContent(/^Suggested$/u)
+    // A suggestion has no reason line, so its mark is what says which card it is (#1837).
+    expect(suggestedCard).toHaveAccessibleDescription(
+      `Suggested ${suggestedCard.querySelector('strong')?.textContent ?? ''}`,
+    )
 
     // Once the owner keeps the current cover, the suggestion is no longer
     // pending: the field is headed as any answered comparison, keeps its

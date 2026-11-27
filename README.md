@@ -83,4 +83,6 @@ never edits Audiobookshelf's database directly.
 
 ## Licence
 
-[AGPL-3.0-or-later](LICENSE).
+[AGPL-3.0-or-later](LICENSE). The workspace bundles the Inter typeface,
+which is licensed under the
+[SIL Open Font License 1.1](LICENSES/Inter-OFL-1.1.txt).
