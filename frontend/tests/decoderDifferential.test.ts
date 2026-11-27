@@ -1142,11 +1142,6 @@ for (const [id, from, pointer, value] of CROSS_FIELD)
 // ---- Expected divergences ----------------------------------------------------
 
 const EXPECTED: Readonly<Record<string, Expected>> = {
-  'capture:post-reviewer-access-codex-device': {
-    class: 'mapper_cross_field',
-    check:
-      'mapCodexDevice http.ts:2283-2289: issued and waiting require verification_url, user_code and expires_in_seconds 900, every other state requires all three null. The capture is the bare waiting of the test double _Auth.start(); #1652 makes it realistic and removes this row.',
-  },
   ...Object.fromEntries(
     CROSS_FIELD.map(([id, , , , check, result]): [string, Expected] => [
       id,
