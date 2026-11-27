@@ -42,6 +42,11 @@ brackets are GitHub issues.
 - A library whose write was stopped while SQLite was still writing its journal
   now starts again, and a partly written store is rolled back. Before, it
   refused with "database recovery state is unsupported" (#2052).
+- In Library, the line saying a work is being checked against a new Book
+  matching setting, or could not be checked, now sits above the field tabs
+  with the comparison notice, spaced from them, instead of touching the tabs
+  between the selected tab and its field. Evidence and Find this book now
+  line up under Needs you and Automatic (#2057).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).
@@ -544,6 +549,10 @@ brackets are GitHub issues.
   preparation resumes. Before, it waited for the next library poll, and a
   library whose last scan had failures was not polled at all. Resuming also
   retries that library's failed items (#1785).
+- Description advice asked for during the first preparation, and a Current
+  covers save, now start the scan of a library whose first scan has ended.
+  Before, that library waited for the whole first preparation and the next
+  poll, or for Retry when its first scan had failures (#1816).
 - Library has a Covers view beside Works for going through every book's
   cover: To decide, Kept, Switched (automatic switches, with the cover before
   and now) and All, 50 books at a time. One tap records a choice and opens the
