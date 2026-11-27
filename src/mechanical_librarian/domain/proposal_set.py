@@ -124,6 +124,7 @@ from mechanical_librarian.domain.provider_value_language import (
 from mechanical_librarian.domain.work_identity import (
     WorkTitleElectionMatch,
     WorkTitleTransformationFamily,
+    comparison_author,
     direct_work_title_election_matches,
     initials_folded_name,
     series_label_name,
@@ -146,7 +147,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v48"
+POLICY_VERSION = "fixed-conservative-v49"
 # The identifier destinations S25 keeps off owner-link evidence (#1477).
 _IDENTIFIER_DESTINATIONS = frozenset({TargetDestination.ISBN, TargetDestination.ASIN})
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
@@ -4017,7 +4018,8 @@ def _target_backed_lookup_contains(
     # field holds a tuple of strings rather than a tuple of TargetSeries.
     expected_authors = (
         tuple(
-            normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
+            normalize_title(comparison_author(value))
+            for value in cast("tuple[str, ...]", authors.value)
         )
         if authors.state is TargetFieldState.VALUE
         and type(authors.value) is tuple
@@ -4025,7 +4027,7 @@ def _target_backed_lookup_contains(
         and all(type(value) is str for value in authors.value)
         and len(
             {
-                normalize_title(value).casefold()
+                normalize_title(comparison_author(value)).casefold()
                 for value in cast("tuple[str, ...]", authors.value)
             }
         )
@@ -5097,7 +5099,12 @@ def provider_candidate_represents_target_series_work(
             )
             and all(family == lane.matched_family for family in families)
             and provider_candidate_series_identity_matches(
-                source, title.value, cast("tuple[str, ...]", authors.value)
+                source,
+                title.value,
+                tuple(
+                    comparison_author(value)
+                    for value in cast("tuple[str, ...]", authors.value)
+                ),
             )
             for source in sources
         ):

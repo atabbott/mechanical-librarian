@@ -2518,6 +2518,30 @@ def test_a_tight_product_equal_to_the_shaped_rung_admits_as_a_recording(
     )
 
 
+def test_a_producer_credited_target_admits_a_product_crediting_its_bare_name() -> None:
+    """The record's producer suffix is no part of the author compared (#1880)."""
+    credited = ("Ada Example - Graphic Audio",)
+    plan = _band_plan(authors=credited)
+    plan = replace(
+        plan,
+        local_claims=(
+            *plan.local_claims,
+            *d.target_performance_claims(audio_target(_BAND_TITLE, credited).fields),
+        ),
+    )
+    observation, _ = _band_observation(
+        lambda _title: [_band_product("B000000001", "Plain Work")], plan
+    )
+    report = _band_report(observation, plan, authors=credited)
+
+    (lane,) = observation.lanes
+    assert ProviderStatus.CANDIDATES is lane.status
+    (provider,) = report.providers
+    assert p.provider_candidate_represents_target_work(
+        report, provider, provider.candidates[0]
+    )
+
+
 @pytest.mark.parametrize(
     "series",
     ((("Henry Example", "2"),), (), (("Collected Plays", "5"),)),

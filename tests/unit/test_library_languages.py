@@ -48,10 +48,13 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     ReportValueError,
+    TargetDestination,
     TargetFacts,
+    TargetFieldState,
     canonical_json,
     finalize_candidate_comparisons,
     recording_variant_conflict,
+    target_performance_claims,
 )
 from mechanical_librarian.infrastructure.configuration import (
     load_configuration_document,
@@ -302,6 +305,96 @@ def test_a_product_is_held_to_the_library_languages_without_a_local_one(
     assert expected == recording_variant_conflict(
         candidate, claims, "Ember Tide Protocol", library
     )
+
+
+# -- a dramatisation against a reading (#1880) --------------------------------
+
+
+def _stating(candidate: ProviderCandidate, *statements: str) -> ProviderCandidate:
+    evidence = (
+        *candidate.evidence,
+        *(
+            ProviderEvidence(
+                ProviderEvidenceKind.EDITION_STATEMENT, value, ClaimScope.EDITION
+            )
+            for value in statements
+        ),
+    )
+    return replace(
+        candidate,
+        evidence=tuple(
+            sorted(
+                evidence,
+                key=lambda value: (value.scope.value, value.kind.value, value.value),
+            )
+        ),
+    )
+
+
+_DRAMATISED = target_performance_claims(
+    tuple(
+        replace(field, state=TargetFieldState.VALUE, value=("Audio Drama",))
+        if field.destination is TargetDestination.GENRES
+        else field
+        for field in audio_target_fields()
+    )
+)
+
+
+@pytest.mark.parametrize(
+    ("local", "title", "language", "statements", "expected"),
+    (
+        # A reading named by the title's marker refuses a dramatisation.
+        ((), " (Abridged)", None, ("dramatisation",), "dramatization"),
+        ((), " (unabridged)", None, ("Hörspiel",), "dramatization"),
+        # A record's dramatisation refuses either reading.
+        (_DRAMATISED, "", None, ("Unabridged",), "dramatization"),
+        # A language conflict and a title-variant conflict come first.
+        (_DRAMATISED, "", "de", ("unabridged",), "language"),
+        (_DRAMATISED, " (Abridged)", None, ("unabridged",), "variant"),
+        # Nothing stated, or nothing that names a reading or a dramatisation.
+        (_DRAMATISED, "", None, (), None),
+        (_DRAMATISED, "", None, ("full cast",), None),
+        (_DRAMATISED, "", None, ("original_recording",), None),
+        (_DRAMATISED, "", None, ("dramatized",), None),
+        (
+            (audio_claim(ClaimKind.PERFORMANCE_TYPE, "full_cast", 3),),
+            "",
+            None,
+            ("dramatized",),
+            None,
+        ),
+        ((), "", None, ("dramatized",), None),
+    ),
+    ids=(
+        "title_abridged",
+        "title_unabridged_horspiel",
+        "record_unabridged",
+        "language_first",
+        "variant_first",
+        "no_statement",
+        "full_cast",
+        "original_recording",
+        "both_dramatised",
+        "local_full_cast",
+        "plain_local",
+    ),
+)
+def test_a_dramatisation_never_matches_a_reading(
+    local: tuple[LocalClaim, ...],
+    title: str,
+    language: str | None,
+    statements: tuple[str, ...],
+    expected: str | None,
+) -> None:
+    claims = (*_language_claims(language), *local)
+    candidate = _stating(audiobook_candidate(claims), *statements)
+    if language is not None:
+        candidate = _with_language(candidate, "en", claims)
+
+    assert recording_variant_conflict(
+        candidate, claims, f"Ember Tide Protocol{title}"
+    ) == (None if expected is None else f"recording_{expected}_conflict")
 
 
 # -- the stated-runtime path (#1305) ------------------------------------------

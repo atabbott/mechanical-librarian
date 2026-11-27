@@ -315,7 +315,8 @@ def test_a_new_command_never_names_a_root() -> None:
 def test_existing_decision_ids_do_not_move() -> None:
     """carried_from enters the request digest only when not null (contract
     T7): an owner request's decision keeps the id it had at human-decision-v8
-    (values measured at 881a92c)."""
+    (values measured at 881a92c, restated under fixed-conservative-v49 and
+    metadata-report-v84, #1880)."""
     report = _plain_report()
     case = ReviewCase.create(evaluate_report(report), report)
     proposal = next(
@@ -346,11 +347,11 @@ def test_existing_decision_ids_do_not_move() -> None:
 
     assert ids == {
         "accept": (
-            "human_decision_b53f9032b155321e8e441706d82e48c80537918ed7600eacca5f6989ac5ffca9",
-            "b9cdee37827ad8ff3bcb79793ad02bd7612d0b6169cbb1e03db04539d194cd6d",
+            "human_decision_9766f0fd13b2d5fdd54f6505c327a837669639b91ae7dc37f775b57a39c7f727",
+            "bb8830f28662cadf611878611f18d6fd0c6f88726f7d5041e1de13d40cdcb9f8",
         ),
         "keep_current": (
-            "human_decision_db4542ef67fe507a2f5c5020774169e6868c7a26e34a843ec8ca16dade151b8f",
-            "1c68f51146775e15653c1348bcd2b25e293ce625e232e65ef069b19025a07f33",
+            "human_decision_9e0e8278a4338f3594995dd39b6a0c5ca99885cf02f058e6ebba55e733eb9c5d",
+            "26a6173e41309d5ec8697f8f64706f97a3322e41d2859fbb451ac020209834ce",
         ),
     }

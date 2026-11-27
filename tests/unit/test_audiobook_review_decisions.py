@@ -729,6 +729,34 @@ def test_a_shadow_disposition_never_drops_a_recording_from_the_attention_lens() 
         ), disposition
 
 
+def test_a_chapter_basis_admits_against_an_author_without_its_producer() -> None:
+    """The chapter route compares the record's author without its suffix (#1880)."""
+    from mechanical_librarian.domain.metadata_report import target_performance_claims
+
+    base = chapter_runtime_report()
+    fields = tuple(
+        TargetField(
+            TargetDestination.AUTHORS,
+            TargetFieldState.VALUE,
+            ("Corin Halloway - Graphic Audio",),
+        )
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in base.target.fields
+    )
+    report = MetadataReport.create(
+        target=replace(base.target, fields=fields),
+        file=base.file,
+        local_claims=(*target_performance_claims(fields), *base.local_claims),
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+    )
+
+    assert recording_identity_basis(report) == recording_identity_basis(base)
+    assert recording_identity_basis(report) is not None
+
+
 def test_missing_provider_runtime_uses_complete_local_asin_chapters() -> None:
     report = chapter_runtime_report()
     assert admitted_audiobook_identity(report)

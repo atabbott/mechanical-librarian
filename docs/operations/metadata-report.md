@@ -127,6 +127,9 @@ become claims.
 - `und`, `mul`, `mis`, `zxx` and `xxx` are not language claims; undetermined
   language never supports recording identity.
 - The MP4 `prID` atom is not an ASIN.
+- A producer suffix on an Audiobookshelf author (` - Graphic Audio`), or a
+  Radio Drama, Audio Drama or Hörspiel genre, is a `dramatized` performance
+  claim.
 
 A multi-file item is one unit
 ([ADR-0066](../architecture/decisions/0066-multi-file-audiobook-composition.md)).
@@ -139,8 +142,8 @@ tracks keep both values; disagreeing ASINs each get a discovery lane.
 
 - The item is bounded by file count, summed bytes (`audio_source_bytes`) and a
   600-second reading wall. Exceeding one is `multi_file_budget_exceeded`.
-  Revalidation has the same wall; outside preparation an overrun just means the
-  report is not current and the item is prepared again.
+  Revalidation has the same wall; there an overrun only leaves the report
+  stale, to be prepared again.
 - One unreadable or hostile track ends the item, recorded as `track_<ordinal>`
   in the owner's reason. A zero-byte file ends it as `unreadable_media`.
   Missing, empty and unreadable files are not distinguished to the owner.
@@ -155,8 +158,7 @@ tracks keep both values; disagreeing ASINs each get a discovery lane.
 
 An audiobook holding one EPUB (a supplementary ebook) records it in
 `companion`: identity, digest, and the title, creator, ISBN and publisher the
-EPUB inspector read. These corroborate the work but are never the recording's
-own claims. An unreadable EPUB keeps only its identity, and changing the EPUB
+EPUB inspector read. An unreadable EPUB keeps only its identity, and changing the EPUB
 makes the report stale. Other reports have a null `companion`.
 
 The companion helps find the book, never states a value (#1468). When its ISBN
@@ -254,8 +256,8 @@ Discovery has two phases:
    audio edition, fed only when the editions challenge the match or no
    recording was put forward
    ([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)).
-   The fed observation replaces the first one, so each provider still states
-   one observation.
+   The fed observation replaces the first, so each provider states one
+   observation.
 
 At most four ASIN lanes run per item. Hardcover and Open Library have no ASIN
 lookup and record `insufficient_input` for an ASIN-only plan.
@@ -264,7 +266,7 @@ AudioSilo runs last in each phase. When the plan has an ASIN lane and the
 Audible catalog or Audnexus already admitted a recording by stated runtime
 (in the feed, phase one's Audible answer counts too), AudioSilo records
 `not_needed`, with its lanes `not_dispatched` and no request; a title-only
-plan still records `insufficient_input`. Open Library asks an audiobook
+plan records `insufficient_input`. Open Library asks an audiobook
 title-and-author lane one search and no narrowing retry (#1309).
 
 An ASIN from the item's own tags, associated sidecar or path is this
@@ -354,9 +356,8 @@ the union over the rungs and lanes that refused, de-duplicated in rung order,
 at most five per provider. `identity_refused_truncated` counts the records
 dropped, and each work lane's `identity_refused_new` names the identities it
 added that no earlier lane had. Any lane that admits anything leaves both
-empty; an overflowing, malformed or failed answer keeps nothing. They are the
-answers already received: no request is added and no cover of theirs is
-fetched.
+empty; an overflowing, malformed or failed answer keeps nothing. They are
+answers already received: no request is added and no cover fetched.
 
 The records add at most 524,288 bytes to a report and never take it past its
 2,097,152-byte limit. Report construction drops them first, last provider and
@@ -388,6 +389,8 @@ where the exact band found nothing.
   only. A title production needs the product's own series to state what the
   rung stripped. A local title with a variant or format term (dramatised,
   abridged, unabridged, full cast, radio and similar) never admits.
+- A dramatised recording conflicts with a product stated `unabridged` or
+  `abridged`, and the reverse.
 - **Band-first:** if several products admit, one is in the tight band and the
   rest are outside the loose band, the tight one is kept unless it conflicts.
 - **Corroborated:** if nothing admits on any lane, one product may admit when
@@ -438,7 +441,7 @@ Report validation re-derives all of these from the report's own claims.
 ### Provider limits
 
 Each provider's lanes share one client and byte envelope, and retries, ladder
-rungs and narrowing count inside each provider's ceilings. The per-item
+rungs and narrowing count inside its ceilings. The per-item
 deadline is in [time limits](provider-recovery.md#time-limits); request pacing
 and rate-limit holds are in
 [the retry schedule](provider-recovery.md#retry-schedule).
@@ -457,7 +460,7 @@ and rate-limit holds are in
   `ContentWarning` to tag. An unlabelled creator is never author evidence
   alone.
 - **Hardcover work lanes.** On both media a work lane asks for books, not
-  editions, by exact title and author, so a widely published book is no longer
+  editions, by exact title and author, so a widely published book is not
   over the limit for its editions. Each rung sends the title, its capitalised,
   title-case and lower-case forms, and the stored authors followed by up to two
   inverted or initials forms of each. These spellings are query-only and never
@@ -491,7 +494,7 @@ before it sends a request
 An answer held for the same request is read exactly as a live one: it counts
 against the same attempt, retry and byte ceilings and passes the same decoder
 and parser. Only the pacing wait and the request are skipped. A miss asks the
-provider as before. The provider's `accessed_at` is set by its first request:
+provider. The provider's `accessed_at` is set by its first request:
 the fetch time of the held answer that served it, or now when that request
 goes live.
 
@@ -526,8 +529,9 @@ goes live.
 - A provider title or subtitle with a control or format character (such as
   U+200B) is a value-free `malformed` claim; over-long text is `oversized`.
   Safe Unicode is kept exactly and never stripped into agreement.
-- Creator agreement needs the complete ordered same-role set. Fuzzy matching,
-  token subsets, rank and repeated queries never create agreement.
+- Creator agreement needs the complete ordered same-role set; an
+  Audiobookshelf author is compared without its producer suffix. Fuzzy
+  matching, token subsets, rank and repeated queries never create agreement.
 
 ### Covers
 
@@ -626,7 +630,7 @@ after publication, or sooner when its 90-day time below comes first
 If that weekly search still admits nothing, an open case is unchanged; if it
 admits a recording, the case is replaced. Once the book's 90-day time has
 passed since its last preparation, the search follows the rules for every
-other book instead.
+other book.
 
 Every other finished book is searched again every 90 days, at a time fixed for
 that book so that about one ninetieth of the library comes due each day, and
@@ -639,9 +643,9 @@ after any change. A search in which a provider could not answer, as
 in which every provider answered, or its case, and is tried again within the
 week. A search that now identifies nothing never takes a case away. A changed
 file, a requested refresh, a scan reset because its library's settings
-changed, or any other fresh start prepares the book again as before and sets
-its next time anew. Each search keeps its report as history, so the report
-history grows by about four reports per book a year.
+changed, or any other fresh start prepares the book again and sets
+its next time anew. Each search keeps its report as history, about four
+reports per book a year.
 
 For an evidence-only item, a work match or an unavailable provider does not
 mean no recording exists. Check the provider statuses and the title, author and
