@@ -187,9 +187,6 @@ exercise.
   Cross-field.
 - `check:mapDecisionAcknowledgement.case-identity`: the confirmed case is the
   requested case. `_ConfirmedDecision`. Identity across documents.
-- `capture:post-reviewer-access-codex-device`: issued and waiting need the
-  url, code and 900-second expiry, and every other state has none.
-  `_CodexDeviceAuthResponse`. Cross-field (#1652 makes the capture realistic).
 - X40: the engine equals its slot. `ReviewerEngineStatus.engine`. Cross-field
   (slot).
 - X41: the codex slot's state is in the codex subset.
