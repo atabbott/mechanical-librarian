@@ -189,10 +189,9 @@ subtitle, authors, description, genres, tags or series field, by a level's
 predicate. Comparison links, creator order and the table above are unchanged,
 and a level admission never creates an agreement link.
 
-## #1880 amendment
+## #1880 amendment (2026-11-27)
 
-- Status: proposed. Only the owner's own answer accepts it; until then the
-  decision above stays the accepted record.
+- Status: accepted (accepted by the owner on 2026-11-27).
 
 An audiobook's Audiobookshelf record can say it is a dramatisation. One parser
 reads a closed table of suffixes at the end of a credit: the last spaced
