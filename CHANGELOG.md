@@ -650,6 +650,9 @@ brackets are GitHub issues.
   dramatisation with a recording listed as unabridged or abridged, or the
   reverse (#1880).
 
+- Find this book says a linked or withheld recording is a different version of
+  this audiobook, where it said abridged for every kind of version (#1880).
+
 - **Clean rebuild required.** When an audiobook's recording was matched by a
   title other than its own, the book's page now says how: by this folder's
   name, the title tag in its audio file, the title of the EPUB in its folder,
