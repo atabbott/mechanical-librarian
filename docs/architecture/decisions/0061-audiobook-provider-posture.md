@@ -308,7 +308,7 @@ Without one, the work route offers it as an owner choice when its book is an
 exact work source, binding it by the book alone. It adds no request, provider or network destination beyond Hardcover's asset
 host. This is `metadata-report-v78` (ADR-0013 clean rebuild).
 
-**Clause 9 amendment (#1879, proposed).** An item's own ASIN, from a tag, an
+**Clause 9 amendment (#1879, accepted by the owner on 2026-11-27).** An item's own ASIN, from a tag, an
 associated sidecar or a bracketed path token, still leads discovery, but it is
 a hint rather than the only route. Beside its own ASIN lanes the plan carries
 the item's title-and-author lanes (the asserted lane, and the alternative lane
