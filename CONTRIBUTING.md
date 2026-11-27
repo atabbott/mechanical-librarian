@@ -180,7 +180,7 @@ from it for a manual one, so the table can be checked against the workflow.
 | Advisories against the locked dependency closure | gate | `--lockfile=uv.lock` in `dependency-audit` |
 | Explicit slow tier: scale, endurance, resource ceilings | maintainer-manual | `qualify_exact_artifact.py --test-tier slow` |
 | One-command complete exact-head qualification | maintainer-manual | `run_test_tier.py complete` |
-| The built container image's lifecycle: the file-managed sentinel and the first-run journey, against an image built from an archive of the exact revision | gate | `scripts/qualify_container_lifecycle.py` in `container-lifecycle` |
+| The built container image's lifecycle: an image built from an archive of the exact revision starts, restarts, recovers and completes first-run setup | gate | `scripts/qualify_container_lifecycle.py` in `container-lifecycle` |
 | Audiobookshelf field-effect qualification | maintainer-manual | `scripts/qualify_audiobookshelf_field_effect.py` |
 | Recoverability envelope | maintainer-manual | `scripts/recoverability_evaluator.py` |
 | Closing reference to an open issue, and the `tracking-exempt` exception | maintainer-manual | the trusted delivery controller, at preflight and again immediately before merge |

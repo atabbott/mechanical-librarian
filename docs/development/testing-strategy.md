@@ -174,9 +174,10 @@ paths, SQL, credentials or request values.
 ## The gate
 
 Every pull-request head runs `fast-source`, `fast-source-2` to `fast-source-4`,
-`exact-installed`, `protected-browser`, `container-image` and
-`dependency-audit`, and all are required checks; `protected-browser` stands
-for the three browser shard jobs. The workflow also runs on every push
+`exact-installed`, `protected-browser`, `container-image`,
+`container-lifecycle` and `dependency-audit`. All but `container-lifecycle`
+are required checks; `protected-browser` stands for the three browser shard
+jobs. The workflow also runs on every push
 to `main`, so two green pull requests cannot break `main` together unnoticed.
 Each job checks out `github.event.pull_request.head.sha || github.sha`; a newer
 head cancels only pull-request runs.
@@ -197,6 +198,11 @@ head cancels only pull-request runs.
   revision, so a Dockerfile regression fails the gate. It extracts the pinned
   `ffprobe` and SQLite for the `probe` and `shipped-sqlite` tiers and never
   starts or pushes the image.
+- **Container lifecycle.** `container-lifecycle` builds its own image, with no
+  layer cache, from an archive of the same revision, then starts it on an
+  existing configuration, restarts it, runs the recovery fixtures inside it and
+  takes it through first-run setup over HTTPS and HTTP. It pushes nothing and
+  has 20 minutes including setup.
 - **Exact installed artifact.** `scripts/qualify_exact_artifact.py` proves that
   what merges is what the source says. It builds the wheel from a clean
   checkout at the given SHA, installs it without dependency resolution into a
