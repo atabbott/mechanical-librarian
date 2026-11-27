@@ -66,21 +66,24 @@ AUTHOR = "R. F. Example"
 # The same person with the initials respelled: the closed comparison refuses
 # it, and the level path's fold admits it.
 FOLDED = "R.F. Example"
+# The same person credited with a producer suffix: compared as the bare name
+# (#1880).
+CREDITED = AUTHOR + " - Graphic Audio"
 PROVIDER = "google_books"
 _EXACT = WorkIdentityLevel.TITLE_AND_CREATOR_EXACT
 _WIDE = WorkIdentityLevel.TITLE_AND_CREATOR
 
 
-def _fields() -> tuple[TargetField, ...]:
+def _fields(author: str = AUTHOR) -> tuple[TargetField, ...]:
     return tuple(
-        TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, (AUTHOR,))
+        TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, (author,))
         if field.destination is TargetDestination.AUTHORS
         else field
         for field in default_target_fields(TITLE)
     )
 
 
-def _plan() -> MetadataDiscoveryPlan:
+def _plan(author: str = AUTHOR) -> MetadataDiscoveryPlan:
     claim = LocalClaim.create(
         kind=ClaimKind.TITLE,
         observed=TITLE,
@@ -93,12 +96,14 @@ def _plan() -> MetadataDiscoveryPlan:
         scope=ClaimScope.WORK,
     )
     return metadata_discovery_plan(
-        TargetSnapshot("ebook", TITLE, (), fields=_fields()), (claim,)
+        TargetSnapshot("ebook", TITLE, (), fields=_fields(author)), (claim,)
     )
 
 
-def _work_lane() -> MetadataDiscoveryLane:
-    (lane,) = (value for value in _plan().lanes if value.kind is ProviderQueryKind.WORK)
+def _work_lane(author: str = AUTHOR) -> MetadataDiscoveryLane:
+    (lane,) = (
+        value for value in _plan(author).lanes if value.kind is ProviderQueryKind.WORK
+    )
     return lane
 
 
@@ -171,16 +176,18 @@ def _rung(
     )
 
 
-def _refused_lane(*refused: ProviderCandidate) -> ProviderLaneResult:
+def _refused_lane(
+    *refused: ProviderCandidate, author: str = AUTHOR
+) -> ProviderLaneResult:
     return ProviderLaneResult(
-        _work_lane(), ProviderStatus.NO_MATCH, identity_refused_candidates=refused
+        _work_lane(author), ProviderStatus.NO_MATCH, identity_refused_candidates=refused
     )
 
 
-def _report(*providers: ProviderObservation) -> MetadataReport:
-    plan = _plan()
+def _report(*providers: ProviderObservation, author: str = AUTHOR) -> MetadataReport:
+    plan = _plan(author)
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", _fields()),
+        target=TargetFacts("primary", "ebooks", "item-1", _fields(author)),
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=plan.local_claims,
         local_reasons=("no_opening_claims",),
@@ -519,6 +526,52 @@ def test_an_admissible_refused_set_is_kept_only_as_truncated() -> None:
         provider.identity_refused_truncated,
         provider.lanes[0].identity_refused_new,
     )
+
+
+def test_a_producer_credited_target_keeps_no_set_its_bare_name_admits() -> None:
+    """Set admission compares the target's credit without its producer suffix
+    (#1880): built, a bare-name set is no refusal; forged, readback refuses it."""
+    built = _report(
+        provider_observation(
+            PROVIDER,
+            (_refused_lane(_candidate("volume-1", author=AUTHOR), author=CREDITED),),
+        ),
+        author=CREDITED,
+    )
+    (provider,) = built.providers
+    assert ((), 1, ("volume-1",)) == (
+        provider.identity_refused_candidates,
+        provider.identity_refused_truncated,
+        provider.lanes[0].identity_refused_new,
+    )
+    refused = _report(
+        provider_observation(
+            PROVIDER,
+            (
+                _refused_lane(
+                    _candidate("volume-1"), _candidate("volume-2"), author=CREDITED
+                ),
+            ),
+        ),
+        author=CREDITED,
+    )
+    (kept,) = refused.providers
+    assert len(kept.identity_refused_candidates) == 2
+    assert MetadataReport.from_json(refused.to_json()) == refused
+
+    def forge(data: dict[str, Any]) -> None:
+        stored = _stored(data)
+        stored["identity_refused_candidates"] = [
+            finalize_candidate_comparisons(
+                _candidate("volume-0", author=AUTHOR),
+                _plan(CREDITED).local_claims,
+                PROVIDER,
+            ).to_data()
+        ]
+        stored["lanes"][0]["identity_refused_new"] = ["volume-0"]
+
+    with pytest.raises(ReportValueError, match="refused work answers are admitted"):
+        MetadataReport.from_json(_forged(refused, forge))
 
 
 def _observation(

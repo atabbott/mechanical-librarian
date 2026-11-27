@@ -160,7 +160,10 @@ from mechanical_librarian.domain.metadata_report import (
     finalize_candidate_comparisons,
     normalize_title,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import (
+    evaluate_report,
+    provider_candidate_represents_target_work,
+)
 from mechanical_librarian.domain.review_browse import (
     browse_report,
     library_report_facts,
@@ -2188,6 +2191,101 @@ def test_an_asserted_asin_feeds_the_per_asin_providers_and_keeps_the_work_lane()
     assert (FieldSource.TARGET_METADATA, FieldState.VALID) in {
         (value.source, value.state) for value in asin.sources
     }
+
+
+def _dramatised_fields(title: str) -> tuple[TargetField, ...]:
+    """A record crediting its producer and naming a drama genre (#1880)."""
+    overrides = {
+        TargetDestination.AUTHORS: TargetField(
+            TargetDestination.AUTHORS,
+            TargetFieldState.VALUE,
+            (f"{_FED_AUTHOR} - Graphic Audio",),
+        ),
+        TargetDestination.GENRES: TargetField(
+            TargetDestination.GENRES, TargetFieldState.VALUE, ("Radio Drama",)
+        ),
+        TargetDestination.ASIN: TargetField(
+            TargetDestination.ASIN, TargetFieldState.VALUE, "B0ASSERTED"
+        ),
+    }
+    return tuple(
+        overrides.get(field.destination, field)
+        for field in default_target_fields(title)
+    )
+
+
+def test_a_dramatised_record_is_claimed_and_asked_by_its_bare_author() -> None:
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    snapshot = TargetSnapshot(
+        "audiobook", _FED_TITLE, (selected,), fields=_dramatised_fields(_FED_TITLE)
+    )
+    asin_plans: list[MetadataDiscoveryPlan] = []
+
+    published = MetadataReport.from_json(
+        _fed_audiobook_service(
+            FakeTarget([snapshot, snapshot]),
+            FakeReportRepository(),
+            _fed_inspector(),
+            (
+                ProviderBinding(
+                    "audnexus",
+                    True,
+                    lambda: _AsinAnsweringProvider("audnexus", asin_plans),
+                    authority="audnexus",
+                ),
+            ),
+        ).run("item-1", 0)
+    )
+
+    assert [
+        (ClaimKind.TITLE, _FED_TITLE),
+        (ClaimKind.ASIN, "B0ASSERTED"),
+        (ClaimKind.PERFORMANCE_TYPE, f"{_FED_AUTHOR} - Graphic Audio"),
+        (ClaimKind.PERFORMANCE_TYPE, "Radio Drama"),
+    ] == [
+        (claim.kind, claim.observed)
+        for claim in published.local_claims
+        if claim.basis == "target_metadata"
+    ]
+    (work,) = (
+        lane for lane in asin_plans[0].lanes if lane.kind is ProviderQueryKind.WORK
+    )
+    assert (_FED_AUTHOR,) == work.authors
+    assert (f"{_FED_AUTHOR} - Graphic Audio",) == next(
+        field.value
+        for field in published.target.fields
+        if field.destination is TargetDestination.AUTHORS
+    )
+
+
+def test_an_ebook_record_states_no_dramatisation() -> None:
+    selected = TargetFile("a" * 64, "one.epub", "epub")
+    snapshot = TargetSnapshot(
+        "ebook",
+        "Current title",
+        (selected,),
+        fields=_dramatised_fields("Current title"),
+    )
+    service = GenerateMetadataReport(
+        target=FakeTarget([snapshot, snapshot]),
+        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        repository_factory=lambda: cast(ReportRepository, FakeReportRepository()),
+        providers=(),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "ebooks", "primary", "library-id", "ebook", "books", ()
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+    )
+
+    published = MetadataReport.from_json(service.run("item-1", 0))
+
+    assert not any(
+        claim.kind is ClaimKind.PERFORMANCE_TYPE for claim in published.local_claims
+    )
 
 
 def _silo_binding(
@@ -5192,6 +5290,7 @@ def _creator(value: str, role: str | None, occurrence: int) -> LocalClaim:
 
 def _creator_report(
     creators: tuple[LocalClaim, ...],
+    authors: tuple[str, ...] = (),
 ) -> tuple[MetadataReport, list[dict[str, object]]]:
     sent: list[dict[str, object]] = []
 
@@ -5224,8 +5323,19 @@ def _creator_report(
         )
 
     selected = TargetFile("a" * 64, "one.epub", "epub")
+    snapshot = TargetSnapshot(
+        "ebook",
+        "Current title",
+        (selected,),
+        fields=tuple(
+            TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, authors)
+            if field.destination is TargetDestination.AUTHORS and authors
+            else field
+            for field in default_target_fields("Current title")
+        ),
+    )
     service = GenerateMetadataReport(
-        target=FakeTarget([TargetSnapshot("ebook", "Current title", (selected,))] * 2),
+        target=FakeTarget([snapshot] * 2),
         inspector=FakeInspector(InspectionResult("c" * 64, creators)),
         repository_factory=lambda: cast(ReportRepository, FakeReportRepository()),
         providers=(
@@ -5250,6 +5360,28 @@ def _creator_report(
         limits=ReportLimits(),
     )
     return MetadataReport.from_json(service.run("item-1", 0)), sent
+
+
+def test_a_producer_credited_ebook_author_is_asked_and_admitted_bare() -> None:
+    """A producer suffix is no part of any medium's author compared (#1880)."""
+    report, sent = _creator_report((), ("Ada Example - GraphicAudio", "Bea Example"))
+
+    assert sent
+    assert all(
+        ["Ada Example", "Bea Example"]
+        == cast("dict[str, list[str]]", body["variables"])["authors"]
+        for body in sent
+    )
+    (provider,) = report.providers
+    (lane,) = provider.lanes
+    assert (ProviderQueryKind.WORK, ProviderStatus.CANDIDATES) == (
+        lane.kind,
+        lane.status,
+    )
+    assert provider_candidate_represents_target_work(
+        report, provider, provider.candidates[0]
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
 
 
 def test_an_ebook_with_no_target_author_asks_with_its_epub_creators() -> None:

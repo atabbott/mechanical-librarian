@@ -172,6 +172,7 @@ from mechanical_librarian.domain.metadata_report import (
     recording_variant_conflict,
     starvation_backed,
     surviving_discovery_titles,
+    target_performance_claims,
     validate_provider_access_time,
     work_discovery_lane_payloads,
     work_ladder_diagnostics,
@@ -191,6 +192,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkQuery,
     WorkTitleTransformationLineage,
+    comparison_author,
     replay_provider_work_identity_admission,
     work_query_ladder,
 )
@@ -3191,7 +3193,7 @@ def metadata_lookup(
         or len(
             {
                 # Reached only once every author entry is a ``str``.
-                normalize_title(cast("str", value)).casefold()
+                normalize_title(comparison_author(cast("str", value))).casefold()
                 for value in authors.value
             }
         )
@@ -3202,7 +3204,10 @@ def metadata_lookup(
         ProviderQueryKind.WORK,
         local_claims,
         normalize_title(title.value),
-        tuple(normalize_title(cast("str", value)) for value in authors.value),
+        tuple(
+            normalize_title(comparison_author(cast("str", value)))
+            for value in authors.value
+        ),
     )
 
 
@@ -4613,6 +4618,7 @@ class GenerateMetadataReport:
             else (
                 *target_title_claim,
                 *_target_asserted_asin_claims(initial),
+                *target_performance_claims(initial.fields),
                 # The owner's link supersedes a carried admission (#1477):
                 # the item is asked through the record the owner chose.
                 *(

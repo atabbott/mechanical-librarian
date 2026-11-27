@@ -80,6 +80,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
+    comparison_author,
     work_title_extends,
     work_title_related,
 )
@@ -1240,7 +1241,11 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
     fields = {field.destination: field for field in report.target.fields}
     authors_value = fields[TargetDestination.AUTHORS].value
     authors = (
-        cast("tuple[str, ...]", authors_value) if type(authors_value) is tuple else ()
+        tuple(
+            comparison_author(value) for value in cast("tuple[str, ...]", authors_value)
+        )
+        if type(authors_value) is tuple
+        else ()
     )
     # Every route below needs exact work admission against the target's title,
     # so a target with none has no chapter basis (#1468).

@@ -86,7 +86,7 @@ describe('the pill and the link view', () => {
         identifier: 'B00B7NPRY8',
       }),
       'Link contradicted',
-      'Link contradicted. Audible now lists this recording as abridged. Change the link or withdraw it.',
+      'Link contradicted. Audible now lists this recording as a different version of this audiobook. Change the link or withdraw it.',
     ],
     [
       linked({ state: 'needs_replacing', reason: 'missing' }),
@@ -337,7 +337,7 @@ describe('a link from an identifiers file (#1478)', () => {
     [
       fileLink({ state: 'contradicted', reason: 'variant', ...recording }),
       'Link contradicted',
-      'Link contradicted. A source now lists this recording as abridged. Change the link or withdraw it.',
+      'Link contradicted. A source now lists this recording as a different version of this audiobook. Change the link or withdraw it.',
     ],
     [
       fileLink({ state: 'needs_replacing', reason: 'missing' }),

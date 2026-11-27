@@ -39,6 +39,7 @@ from mechanical_librarian.domain.owner_link import (
     OwnerLinkScope,
     OwnerLinkTarget,
 )
+from mechanical_librarian.domain.proposal_set import POLICY_VERSION
 from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 from tests.support.metadata_report_schemas import (
     PRE_2038_COVER_SELECTION_AUTHORITIES_SQL,
@@ -765,6 +766,19 @@ def test_the_review_store_main_created_before_the_file_source_is_refused_unchang
         "_REPORTS_SQL",
         schema._REPORTS_SQL.replace(f"'{REPORT_SCHEMA}'", "'metadata-report-v82'"),
     )
+    # Its proposal CHECKs named policy v48, before the dramatisation (#1880).
+    for name in (
+        "_PROPOSAL_SETS_SQL",
+        "_LEVEL_PROPOSAL_SETS_SQL",
+        "_LEVEL_DECISION_NOTES_SQL",
+    ):
+        monkeypatch.setattr(
+            schema,
+            name,
+            getattr(schema, name).replace(
+                f"'{POLICY_VERSION}'", "'fixed-conservative-v48'"
+            ),
+        )
     open_repository(path).close()
     monkeypatch.undo()
     connection = sqlite3.connect(path, isolation_level=None)

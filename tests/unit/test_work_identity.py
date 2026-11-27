@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from mechanical_librarian.domain.audio_inspection import AudioPerformanceType
 from mechanical_librarian.domain.metadata_report import (
     ProviderLaneCandidate,
     ProviderLaneObservation,
@@ -12,6 +13,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.work_identity import (
     HARDCOVER_AUTHOR_STRINGS,
     HARDCOVER_TITLE_SPELLINGS,
+    PRODUCER_CREDIT_SUFFIXES,
     WORK_TITLE_COMPOUND_PRODUCTIONS,
     WORK_TITLE_TRANSFORMATION_RULES,
     WorkDispatchLineage,
@@ -26,12 +28,14 @@ from mechanical_librarian.domain.work_identity import (
     admit_provider_work_identity,
     apply_work_title_transformation,
     closed_creator_display_possibility,
+    comparison_author,
     discovery_title_candidate,
     hardcover_query_spellings,
     initials_folded_name,
     narrowing_work_query,
     replay_provider_work_identity_admission,
     series_label_segment,
+    split_credit_suffix,
     work_dispatch_lineage_from_data,
     work_query_ladder,
     work_title_election_matches,
@@ -2244,3 +2248,58 @@ def test_a_form_repeating_a_stored_name_is_not_sent_twice() -> None:
     assert ("Example, Ada", "ada example") == _spellings(
         "Current title", "Example, Ada", "ada example"
     )[1]
+
+
+@pytest.mark.parametrize(
+    "credit",
+    (
+        "Given Family - Graphic Audio",
+        "Given Family - GraphicAudio",
+        "Given Family – graphic audio",
+        "Given Family — GRAPHIC AUDIO",
+        "Given Family -  Graphic\tAudio ",
+    ),
+)
+def test_a_producer_suffix_splits_off_a_credit(credit: str) -> None:
+    assert split_credit_suffix(credit, PRODUCER_CREDIT_SUFFIXES) == (
+        "Given Family",
+        AudioPerformanceType.DRAMATIZED,
+    )
+    assert comparison_author(credit) == "Given Family"
+
+
+@pytest.mark.parametrize(
+    "credit",
+    (
+        "Given Family",
+        "Graphic Audio",
+        " - Graphic Audio",
+        "Given Family-Graphic Audio",
+        "Given Family - Graphic Audio LLC",
+        "Given Family - Graphics Audio",
+        "Given Family - Graphic Audio - Narrator",
+    ),
+)
+def test_a_credit_without_a_closed_suffix_is_compared_as_it_stands(
+    credit: str,
+) -> None:
+    assert split_credit_suffix(credit, PRODUCER_CREDIT_SUFFIXES) is None
+    assert comparison_author(credit) == credit
+
+
+def test_only_the_last_spaced_dash_splits_a_credit() -> None:
+    assert split_credit_suffix("A - B - Graphic Audio", PRODUCER_CREDIT_SUFFIXES) == (
+        "A - B",
+        AudioPerformanceType.DRAMATIZED,
+    )
+
+
+def test_a_callers_own_suffix_table_reads_the_same_grammar() -> None:
+    table = {"translator": "translator"}
+
+    assert split_credit_suffix("Given Family – Translator", table) == (
+        "Given Family",
+        "translator",
+    )
+    assert split_credit_suffix("Given Family - Graphic Audio", table) is None
+    assert split_credit_suffix("Given Family - translator", {}) is None

@@ -95,10 +95,10 @@ def _companion() -> CompanionEbook:
     )
 
 
-def _plan() -> MetadataDiscoveryPlan:
+def _plan(author: str = _AUTHOR) -> MetadataDiscoveryPlan:
     return companion_binding_plan(
         audiobook_discovery_plan(
-            audio_target(_TITLE, (_AUTHOR,)),
+            audio_target(_TITLE, (author,)),
             (target_title_claim(_TITLE), local_runtime_claim()),
             audio=single_track_audio_facts(),
             companion=_companion(),
@@ -210,16 +210,16 @@ def _page(*rows: dict[str, object]) -> httpx.Response:
     return httpx.Response(200, json={"data": {"editions": list(rows)}})
 
 
-def _report(observation: ProviderObservation) -> MetadataReport:
+def _report(observation: ProviderObservation, author: str = _AUTHOR) -> MetadataReport:
+    fields = audio_target(_TITLE, (author,)).fields
     return MetadataReport.create(
-        target=TargetFacts(
-            "primary",
-            "audiobooks",
-            "item-1",
-            audio_target(_TITLE, (_AUTHOR,)).fields,
-        ),
+        target=TargetFacts("primary", "audiobooks", "item-1", fields),
         file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
-        local_claims=(target_title_claim(_TITLE), local_runtime_claim()),
+        local_claims=(
+            target_title_claim(_TITLE),
+            local_runtime_claim(),
+            *dom.target_performance_claims(fields),
+        ),
         local_reasons=("no_local_audio_claims",),
         # The generator records how each audio lane's dispatch ended.
         providers=(
@@ -310,6 +310,20 @@ def test_this_work_is_kept_by_title_and_authors_without_an_edition() -> None:
     assert lane.status is ProviderStatus.CANDIDATES
     assert observation.audio_editions == ()
     _report(observation)
+
+
+def test_this_work_is_kept_by_the_author_without_its_producer_suffix() -> None:
+    """The companion rule compares the record's author bare (#1880)."""
+    credited = f"{_AUTHOR} - Graphic Audio"
+    observation, _sent = _observe(
+        companion_title=_TITLE,
+        editions=lambda _book, _offset: httpx.Response(500, json={}),
+        plan=_plan(credited),
+    )
+
+    assert _isbn_lane(observation).status is ProviderStatus.CANDIDATES
+    report = _report(observation, credited)
+    assert MetadataReport.from_json(report.to_json()) == report
 
 
 def test_an_edition_row_of_another_isbn_names_nothing() -> None:

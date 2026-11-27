@@ -1286,3 +1286,243 @@ def test_an_ebook_mark_stripped_author_keeps_the_incumbent_spelling(
     ]
     if assessment is ProposalAssessment.PRESERVES_TARGET:
         assert result.outcome is ProposalOutcome.KEEP
+
+
+def _producer_credited_report(credit: str, authorities: int) -> MetadataReport:
+    """A recording whose stored author may carry a producer credit (#1880).
+
+    The work lanes compare the credit by the name before the suffix, so the
+    providers that credit only that name are admitted.
+    """
+    from mechanical_librarian.domain.metadata_report import (
+        FileFacts,
+        TargetFacts,
+        target_performance_claims,
+    )
+    from tests.support import audiobook_reports as ar
+
+    fields = tuple(
+        TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, (credit,))
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in ar.audio_target_fields()
+    )
+    claims = (*target_performance_claims(fields), *ar.audio_local_claims())
+    providers = tuple(
+        sorted(
+            (
+                ar.qualified_audiobook(
+                    claims,
+                    authority=authority,
+                    provider=provider,
+                    candidates=(
+                        ar.audiobook_candidate(
+                            claims, provider=provider, series=("Reading Order", "2")
+                        ),
+                    ),
+                )
+                for provider, authority in (
+                    ("catalogue", "audible_catalog"),
+                    ("registry", "audnexus"),
+                )[:authorities]
+            ),
+            key=lambda value: value.provider,
+        )
+    )
+    return MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", fields),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=providers,
+        audio=ar.single_track_audio_facts("b" * 64),
+    )
+
+
+@pytest.mark.parametrize(
+    "credit",
+    (
+        "Corin Halloway - Graphic Audio",
+        "Corin Halloway – GraphicAudio",
+        "Corin Halloway",
+    ),
+    ids=("suffix", "en_dash_joined_suffix", "plain"),
+)
+def test_one_source_naming_a_producer_credited_author_preserves_the_credit(
+    credit: str,
+) -> None:
+    result = _result(
+        evaluate_report(_producer_credited_report(credit, 1)),
+        TargetDestination.AUTHORS,
+    )
+    assert result.outcome is ProposalOutcome.KEEP
+    assert result.selected_alternative_id is None
+    # The only alternative states the stored credit, suffix and all, so no
+    # choice offers the bare name.
+    assert [(alt.assessment, alt.value.value) for alt in result.alternatives] == [
+        (ProposalAssessment.PRESERVES_TARGET, (credit,))
+    ]
+
+
+@pytest.mark.parametrize(
+    "credit",
+    ("Corin Halloway - Graphic Audio", "Corin Halloway"),
+    ids=("suffix", "plain"),
+)
+def test_two_sources_naming_a_producer_credited_author_never_recommend_it(
+    credit: str,
+) -> None:
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
+    from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
+
+    report = _producer_credited_report(credit, 2)
+    proposal = evaluate_report(report)
+    result = _result(proposal, TargetDestination.AUTHORS)
+    assert result.outcome is ProposalOutcome.KEEP
+    assert result.selected_alternative_id is None
+    assert [(alt.assessment, alt.value.value) for alt in result.alternatives] == [
+        (ProposalAssessment.PRESERVES_TARGET, (credit,))
+    ]
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    reopened = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
+    assert [
+        decision.recommendation
+        for decision in decide_shadow_packet(reopened).decisions
+        if decision.destination == "authors"
+    ] == ["recommend_keep_current"]
+
+
+@pytest.mark.parametrize(
+    "target,sourced,assessment,value",
+    (
+        (
+            ("Example Author - Graphic Audio",),
+            ("Example Author",),
+            ProposalAssessment.PRESERVES_TARGET,
+            ("Example Author - Graphic Audio",),
+        ),
+        (
+            ("A Writer - Graphic Audio", "B Writer"),
+            ("B Writer", "A Writer"),
+            ProposalAssessment.PRESERVES_TARGET,
+            ("A Writer - Graphic Audio", "B Writer"),
+        ),
+        # A source naming anyone else still replaces the credit as before.
+        (
+            ("Example Author - Graphic Audio",),
+            ("Other Writer",),
+            ProposalAssessment.REPLACES_TARGET,
+            ("Other Writer",),
+        ),
+        (
+            ("Example Author - Graphic Audio",),
+            ("Example Author", "Second Writer"),
+            ProposalAssessment.REPLACES_TARGET,
+            ("Example Author", "Second Writer"),
+        ),
+        (
+            ("Example Author",),
+            ("Other Writer",),
+            ProposalAssessment.REPLACES_TARGET,
+            ("Other Writer",),
+        ),
+        (
+            ("Example Author",),
+            ("EXAMPLE AUTHOR",),
+            ProposalAssessment.PRESERVES_TARGET,
+            ("EXAMPLE AUTHOR",),
+        ),
+    ),
+    ids=(
+        "suffix",
+        "suffix_reordered",
+        "suffix_other_author",
+        "suffix_added_coauthor",
+        "plain_other_author",
+        "plain_respelled",
+    ),
+)
+def test_only_a_producer_credits_bare_name_preserves_it(
+    target: tuple[str, ...],
+    sourced: tuple[str, ...],
+    assessment: ProposalAssessment,
+    value: tuple[str, ...],
+) -> None:
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_bibliographic_report,
+    )
+
+    report = synthetic_audiobook_bibliographic_report(
+        source_authors=sourced, target_authors=target
+    )
+    result = _result(evaluate_report(report), TargetDestination.AUTHORS)
+    assert [(alt.assessment, alt.value.value) for alt in result.alternatives] == [
+        (assessment, value)
+    ]
+    if assessment is ProposalAssessment.PRESERVES_TARGET:
+        assert result.outcome is ProposalOutcome.KEEP
+    else:
+        assert result.outcome is not ProposalOutcome.KEEP
+
+
+def test_a_marks_stripped_bare_name_still_preserves_a_producer_credit() -> None:
+    """A source that drops a mark and the producer suffix together names the
+    same author, so the stored credit is kept, suffix and marks (#1880)."""
+    target = TargetField(
+        TargetDestination.AUTHORS,
+        TargetFieldState.VALUE,
+        ("Seán Writer - Graphic Audio",),
+    )
+    providers = tuple(
+        _provider(
+            name,
+            f"{name}-edition",
+            (
+                _claim(
+                    name,
+                    f"{name}-edition",
+                    ClaimKind.CREATOR,
+                    "Sean Writer",
+                    scope=ClaimScope.WORK,
+                    role="author",
+                    order=0,
+                ),
+            ),
+            authority=name,
+        )
+        for name in ("hardcover", "open_library")
+    )
+    result = _result(
+        evaluate_report(
+            _report(fields=_fields(None, authors=target), providers=providers)
+        ),
+        TargetDestination.AUTHORS,
+    )
+    assert result.outcome is ProposalOutcome.KEEP
+    assert result.selected_alternative_id is None
+    assert [(alt.assessment, alt.value.value) for alt in result.alternatives] == [
+        (ProposalAssessment.PRESERVES_TARGET, ("Seán Writer - Graphic Audio",))
+    ]
+
+
+def test_a_bare_name_and_the_full_credit_are_one_preserving_alternative() -> None:
+    """One source gives the bare name and another the full credit: both state
+    the stored credit, so they are one alternative and nothing is asked
+    (#1880)."""
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_bibliographic_report,
+    )
+
+    report = synthetic_audiobook_bibliographic_report(
+        target_authors=("X Writer - Graphic Audio",),
+        source_authors=("X Writer",),
+        second_source_authors=("X Writer - Graphic Audio",),
+    )
+    result = _result(evaluate_report(report), TargetDestination.AUTHORS)
+    assert result.outcome is ProposalOutcome.KEEP
+    assert [(alt.assessment, alt.value.value) for alt in result.alternatives] == [
+        (ProposalAssessment.PRESERVES_TARGET, ("X Writer - Graphic Audio",))
+    ]

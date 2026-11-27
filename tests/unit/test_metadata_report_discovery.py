@@ -1164,8 +1164,9 @@ def _exhausted_report(
     *,
     title: str = _REFUSED_TITLE,
     audio: bool = True,
+    authors: tuple[str, ...] = _REFUSED_AUTHORS,
 ) -> MetadataReport:
-    fields = audio_target(title, _REFUSED_AUTHORS).fields
+    fields = audio_target(title, authors).fields
     # The lane is the one its own target plans, so only its ladder can differ.
     lane = replace(
         lane,
@@ -1176,7 +1177,10 @@ def _exhausted_report(
     return MetadataReport.create(
         target=TargetFacts("primary", "audio", "item-1", fields),
         file=FileFacts(0, "a" * 64, "b" * 64, "m4b" if audio else "epub"),
-        local_claims=(target_title_claim(_REFUSED_TITLE),),
+        local_claims=(
+            target_title_claim(_REFUSED_TITLE),
+            *(dom.target_performance_claims(fields) if audio else ()),
+        ),
         local_reasons=("target_metadata_title",),
         providers=(
             (recorded_dispatch if audio else lambda value: value)(
@@ -1522,6 +1526,58 @@ def test_a_report_keeps_only_the_ladder_its_audiobook_target_produces(
 ) -> None:
     with pytest.raises(ReportValueError, match="exhausted dispatch is inconsistent"):
         _exhausted_report(_exhausted_lane(**lane), **report)
+
+
+def test_a_producer_credited_target_replays_the_ladder_of_its_bare_name() -> None:
+    """The lane identity and ladder are the bare name's (#1880)."""
+    credited = (f"{_REFUSED_AUTHORS[0]} - Graphic Audio",)
+    report = _exhausted_report(_exhausted_lane(), authors=credited)
+
+    assert report == MetadataReport.from_json(report.to_json())
+    (lane,) = report.providers[0].lanes
+    assert _REFUSED_LADDER == lane.exhausted_dispatch
+    assert (
+        lane.identity
+        == _exhausted_report(_exhausted_lane()).providers[0].lanes[0].identity
+    )
+    assert credited == next(
+        field.value
+        for field in report.target.fields
+        if field.destination is TargetDestination.AUTHORS
+    )
+    assert [credited[0]] == [
+        claim.observed
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.PERFORMANCE_TYPE
+    ]
+    (payload,) = work_discovery_lane_payloads(report.target.fields, report.local_claims)
+    assert _REFUSED_AUTHORS == payload.authors
+    with pytest.raises(ReportValueError, match="exhausted dispatch is inconsistent"):
+        _exhausted_report(
+            _exhausted_lane(
+                exhausted_dispatch=tuple(
+                    WorkDispatchLineage.from_query(query)
+                    for query in work_query_ladder(
+                        _REFUSED_TITLE, credited, audiobook=True
+                    )
+                )
+            ),
+            authors=credited,
+        )
+
+
+def test_a_lookup_asks_with_an_author_without_its_producer_suffix() -> None:
+    def target(*authors: str) -> TargetSnapshot:
+        return audio_target("The Example", authors)
+
+    assert MetadataLookup(
+        ProviderQueryKind.WORK, (), "The Example", ("Ada Author", "Ben Writer")
+    ) == metadata_lookup(target("Ada Author – GraphicAudio", "Ben Writer"), ())
+    duplicated = target("Ada Author", "Ada Author - Graphic Audio")
+    assert ProviderQueryKind.NONE == metadata_lookup(duplicated, ()).kind
+    assert () == work_discovery_lane_payloads(
+        duplicated.fields, (target_title_claim("The Example"),)
+    )
 
 
 _EBOOK_LADDER = tuple(

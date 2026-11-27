@@ -25,6 +25,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionLimits,
     AudioObservation,
     AudioObservationKind,
+    AudioPerformanceType,
     AudioSidecarBinding,
     AudioSidecarByteOrderMark,
     AudioSidecarByteOrderMarkFact,
@@ -91,6 +92,7 @@ from mechanical_librarian.domain.work_identity import (
     BAND_TITLE_PRODUCTIONS,
     CORROBORATED_TITLE_APPLICATION,
     CORROBORATED_TITLE_PRODUCTION,
+    PRODUCER_CREDIT_SUFFIXES,
     WorkDispatchLineage,
     WorkDispatchRung,
     WorkIdentityAdmission,
@@ -99,11 +101,13 @@ from mechanical_librarian.domain.work_identity import (
     _creator_display_pair_possible,
     admit_provider_work_identity,
     closed_creator_display_possibility,
+    comparison_author,
     direct_work_title_election_matches,
     fold_lone_apostrophes,
     initials_folded_name,
     narrowing_work_query,
     replay_provider_work_identity_admission,
+    split_credit_suffix,
     work_dispatch_lineage_from_data,
     work_query_ladder,
     work_title_has_variant_marker,
@@ -116,13 +120,23 @@ from mechanical_librarian.domain.work_identity import (
 if TYPE_CHECKING:
     from mechanical_librarian.domain.owner_link import OwnerLinkLookup
 
-# v83: a rendered description keeps its formatted copy (#1995, ADR-0107).
-REPORT_SCHEMA = "metadata-report-v83"
+# v84: a dramatised audiobook's record is a performance claim and its authors
+# are compared without a producer suffix (#1880).
+REPORT_SCHEMA = "metadata-report-v84"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
 MAX_CANDIDATES = 5
+# The genres a record names a dramatisation by, folded as compared, and the
+# edition statements that name one (#1880).
+DRAMA_GENRES = frozenset({"radio drama", "audio drama", "hörspiel"})
+_DRAMATISED_EDITION_STATEMENTS = DRAMA_GENRES | {
+    "dramatized",
+    "dramatised",
+    "dramatization",
+    "dramatisation",
+}
 # Refused edition identities one WORK lane can add to its observation's
 # retained set (#1355): every rung of the longest ladder, four, each
 # answering at most `MAX_CANDIDATES` products.
@@ -1602,16 +1616,19 @@ class LocalClaim:
             or type(self.scope) is not ClaimScope
         ):
             raise ReportValueError("local claim kind is invalid")
-        # The target asserts exactly two things this product reads as claims:
-        # the title it displays, and the ASIN an owner or an earlier tool bound
-        # to the item. Both are assertions rather than readings of the media,
-        # so nothing here settles identity on them; the ASIN is admitted so the
+        # The target asserts exactly three things this product reads as
+        # claims: the title it displays, the ASIN an owner or an earlier tool
+        # bound to the item, and a dramatisation its authors or genres name
+        # (#1880). All are assertions rather than readings of the media, so
+        # nothing here settles identity on them; the ASIN is admitted so the
         # audiobook path can obtain enrichment evidence the runtime band then
-        # judges (ADR-0061).
-        if self.basis == "target_metadata" and self.kind not in {
-            ClaimKind.TITLE,
-            ClaimKind.ASIN,
-        }:
+        # judges (ADR-0061), and the dramatisation only refuses.
+        if self.basis == "target_metadata" and (
+            self.kind
+            not in {ClaimKind.TITLE, ClaimKind.ASIN, ClaimKind.PERFORMANCE_TYPE}
+            or self.kind is ClaimKind.PERFORMANCE_TYPE
+            and self.canonical != AudioPerformanceType.DRAMATIZED.value
+        ):
             raise ReportValueError("target metadata claim kind is invalid")
         # A carried admission and an owner link each name one edition and
         # nothing else (#1316, #1477).
@@ -1663,6 +1680,9 @@ class LocalClaim:
         maximum = (
             512
             if self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.DESCRIPTION}
+            # A record's author is bounded as a target value, not a tag.
+            or self.kind is ClaimKind.PERFORMANCE_TYPE
+            and self.basis == "target_metadata"
             else 280
         )
         _projection_text(self.observed, "observed claim", maximum)
@@ -3804,6 +3824,24 @@ def recording_variant_conflict(
         and local_variant.group(1).casefold() not in known_formats
     ):
         return "recording_variant_conflict"
+    # A dramatisation and a reading are different recordings (#1880): a
+    # local claim of either refuses a product stating the other.
+    performances = {
+        claim.canonical
+        for claim in local_claims
+        if claim.kind is ClaimKind.PERFORMANCE_TYPE and claim.state is FieldState.VALID
+    }
+    statements = {unicodedata.normalize("NFC", value) for value in formats}
+    if (
+        "dramatized" in performances
+        and statements & {"unabridged", "abridged"}
+        or (
+            performances & {"unabridged", "abridged"}
+            or re.search(r"\((abridged|unabridged)\)$", local_title, re.I)
+        )
+        and statements & _DRAMATISED_EDITION_STATEMENTS
+    ):
+        return "recording_dramatization_conflict"
     return None
 
 
@@ -3980,7 +4018,8 @@ def target_work_identity_context(
         return None
     normalized_title = normalize_title(title.value)
     normalized_authors = tuple(
-        normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
+        normalize_title(comparison_author(value))
+        for value in cast("tuple[str, ...]", authors.value)
     )
     if (
         not normalized_title
@@ -3990,6 +4029,52 @@ def target_work_identity_context(
     ):
         return None
     return normalized_title, normalized_authors
+
+
+def target_performance_claims(
+    fields: tuple[TargetField, ...],
+) -> tuple[LocalClaim, ...]:
+    """The dramatisation an audiobook's record states, as its own claims.
+
+    An author ending in a producer suffix, or a genre that folds exactly to
+    a drama genre, is one `dramatized` claim per distinct value, authors
+    first. The value stays as the record stores it.
+    """
+    values = {field.destination: field for field in fields}
+    observed: list[str] = []
+    for destination in (TargetDestination.AUTHORS, TargetDestination.GENRES):
+        field = values.get(destination)
+        if (
+            field is None
+            or field.state is not TargetFieldState.VALUE
+            or type(field.value) is not tuple
+        ):
+            continue
+        for value in field.value:
+            if type(value) is not str or value in observed:
+                continue
+            if (
+                split_credit_suffix(value, PRODUCER_CREDIT_SUFFIXES)
+                if destination is TargetDestination.AUTHORS
+                else " ".join(unicodedata.normalize("NFC", value).split()).casefold()
+                in DRAMA_GENRES
+            ):
+                observed.append(value)
+    return tuple(
+        LocalClaim.create(
+            kind=ClaimKind.PERFORMANCE_TYPE,
+            observed=value,
+            canonical=AudioPerformanceType.DRAMATIZED.value,
+            excerpt=value,
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.EDITION,
+            occurrence=0,
+        )
+        for value in observed
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -4112,7 +4197,10 @@ def work_discovery_lane_payloads(
         and bool(authors.value)
         and all(type(value) is str for value in authors.value)
         and len(
-            {normalize_title(cast("str", value)).casefold() for value in authors.value}
+            {
+                normalize_title(comparison_author(cast("str", value))).casefold()
+                for value in authors.value
+            }
         )
         == len(authors.value)
     )
@@ -4131,7 +4219,8 @@ def work_discovery_lane_payloads(
     # ``str`` and the authors are a non-empty tuple of ``str``.
     normalized_title = normalize_title(cast("str", title.value))
     normalized_authors = tuple(
-        normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
+        normalize_title(comparison_author(value))
+        for value in cast("tuple[str, ...]", authors.value)
     )
     references = tuple(
         sorted(
@@ -5373,8 +5462,9 @@ def _identity_refused_set_admitted(
 ) -> bool:
     """Whether exact work-identity set admission admits a retained refused set.
 
-    Read against the target's stored title and authors with the closed
-    comparison and no dispatch lineage, the way an untruncated set is checked
+    Read against the target's stored title and authors, each compared
+    without a producer suffix (#1880), with the closed comparison and no
+    dispatch lineage, the way an untruncated set is checked
     at readback (#1355): a set it admits was never a refusal, so a report
     never keeps it as one.
     """
@@ -5391,7 +5481,9 @@ def _identity_refused_set_admitted(
         provider.identity_refused_candidates,
         target.current_title or "",
         (
-            cast("tuple[str, ...]", authors)
+            tuple(
+                comparison_author(value) for value in cast("tuple[str, ...]", authors)
+            )
             if type(authors) is tuple and all(type(value) is str for value in authors)
             else ()
         ),
@@ -5489,7 +5581,7 @@ def _target_backed_work_lookup(
         # rather than TargetSeries values.
         and len(
             {
-                normalize_title(value).casefold()
+                normalize_title(comparison_author(value)).casefold()
                 for value in cast("tuple[str, ...]", authors.value)
             }
         )
@@ -5893,7 +5985,11 @@ class MetadataReport:
         title_values = {field.destination: field.value for field in self.target.fields}
         authors_value = title_values.get(TargetDestination.AUTHORS)
         authors = (
-            tuple(value for value in authors_value if type(value) is str)
+            tuple(
+                comparison_author(value)
+                for value in authors_value
+                if type(value) is str
+            )
             if type(authors_value) is tuple
             else ()
         )
@@ -6040,6 +6136,15 @@ class MetadataReport:
         references = tuple(value.reference for value in self.local_claims)
         if len(set(references)) != len(references):
             raise ReportValueError("local claim references are duplicated")
+        # Only an audiobook reads the record's dramatisation, and it states
+        # exactly what the record names (#1880).
+        if tuple(
+            value
+            for value in self.local_claims
+            if value.basis == "target_metadata"
+            and value.kind is ClaimKind.PERFORMANCE_TYPE
+        ) != (target_performance_claims(self.target.fields) if is_audio else ()):
+            raise ReportValueError("target performance claims are inconsistent")
         if self.audio is not None:
             # Per-file provenance is only provenance if it resolves.  A track
             # naming a claim this report does not carry, or a content digest
@@ -6109,7 +6214,10 @@ class MetadataReport:
             None,
         )
         target_authors = (
-            cast("tuple[str, ...]", target_authors_value)
+            tuple(
+                comparison_author(value)
+                for value in cast("tuple[str, ...]", target_authors_value)
+            )
             if type(target_authors_value) is tuple
             and all(type(value) is str for value in target_authors_value)
             else ()

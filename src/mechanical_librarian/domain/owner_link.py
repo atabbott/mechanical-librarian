@@ -61,6 +61,7 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     recording_variant_conflict,
 )
+from mechanical_librarian.domain.work_identity import comparison_author
 
 
 class OwnerLinkError(ValueError):
@@ -687,7 +688,7 @@ def _target_title_and_authors(
         and all(type(value) is str for value in authors_field.value)
     ):
         normalized = tuple(
-            normalize_title(value)
+            normalize_title(comparison_author(value))
             for value in cast("tuple[str, ...]", authors_field.value)
         )
         if all(normalized) and len({value.casefold() for value in normalized}) == len(
