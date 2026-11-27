@@ -46,6 +46,7 @@ from mechanical_librarian.application.metadata_report import (
     ProviderObservationFailure,
     ReportRepository,
     TargetReader,
+    asin_fallback_lane,
     audiobook_asin_feed_plan,
     audiobook_carried_plan,
     audiobook_discovery_plan,
@@ -705,10 +706,12 @@ class GenerateProviderRetrySuccessor:
     ) -> tuple[MetadataDiscoveryLane, ...]:
         planned = {lane.identity: lane for lane in plan.lanes}
         observed = {lane.identity: lane for lane in original.lanes}
-        # A suppressed alternative work lane is planned and never observed;
-        # every other planned lane must have been (#1255).
+        # A suppressed alternative work lane is planned and never observed,
+        # and so is a fallback beside an item's own ASIN that the catalogue
+        # never opened; every other planned lane must have been (#1255, #1879).
         if not set(observed) <= set(planned) or any(
             planned[identity].title_basis is None
+            and not asin_fallback_lane(plan, planned[identity])
             for identity in set(planned) - set(observed)
         ):
             raise ProviderRetrySuccessorError("provider retry source is invalid")
