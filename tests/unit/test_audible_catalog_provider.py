@@ -2962,3 +2962,239 @@ def test_an_asin_lane_states_how_it_kept_each_marketplace_product() -> None:
         TARGET_ADMISSION_BASIS == candidate_admission_basis(observation, candidate)
         for candidate in kept
     )
+
+
+# #1879: an item's own ASIN leads, and the title-and-author search beside it
+# is asked only when that lookup kept no recording.
+_WRONG_ASIN = "B0WRONG001"
+_LOOKUP = AUDIBLE_CATALOG_URLS["us"] + "/"
+
+
+def _own_asin_claims(asin: str, *extra: d.LocalClaim) -> tuple[d.LocalClaim, ...]:
+    return (*local_claims(asin), target_title_claim(), *extra)
+
+
+def _own_asin_plan(asin: str, *extra: d.LocalClaim) -> m.MetadataDiscoveryPlan:
+    plan = m.audiobook_discovery_plan(
+        audio_target(), _own_asin_claims(asin, *extra), audio=single_track_audio_facts()
+    )
+    assert {ProviderQueryKind.ASIN, ProviderQueryKind.WORK} == {
+        lane.kind for lane in plan.lanes
+    }
+    return plan
+
+
+def _lookup_only(plan: m.MetadataDiscoveryPlan) -> m.MetadataDiscoveryPlan:
+    return replace(
+        plan,
+        lanes=tuple(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ASIN),
+    )
+
+
+def _own_asin_report(
+    observation: Any, asin: str, *extra: d.LocalClaim
+) -> MetadataReport:
+    target = audio_target()
+    report = MetadataReport.create(
+        target=d.TargetFacts("primary", "audio", "item-1", target.fields),
+        file=d.FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=_own_asin_claims(asin, *extra),
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=single_track_audio_facts(),
+    )
+    decoded = MetadataReport.from_json(report.to_json())
+    assert decoded == report
+    return decoded
+
+
+def _wrong_product(minutes: int = 100, **fields: Any) -> dict[str, Any]:
+    document = payload("audible_lookup")
+    document["product"].update(
+        asin=_WRONG_ASIN,
+        title="Another Story Entirely",
+        runtime_length_min=minutes,
+        **fields,
+    )
+    return document
+
+
+def _members(observation: Any, kind: ProviderQueryKind) -> list[tuple[str, Any]]:
+    return [
+        (member.edition_identity, member.admission_basis)
+        for lane in observation.lanes
+        if lane.kind is kind
+        for member in lane.candidates
+    ]
+
+
+def test_an_own_asin_that_is_kept_sends_no_search_and_changes_nothing() -> None:
+    plan = _own_asin_plan(_ASIN)
+    seen, handle = _recorder(default=_json(payload("audible_lookup")))
+    result = _observed(handle, plan)
+    _, alone = _recorder(default=_json(payload("audible_lookup")))
+    expected = _observed(alone, _lookup_only(plan))
+
+    assert 1 == len(seen)
+    assert seen[0].path.endswith(f"/{_ASIN}")
+    assert expected.observation == result.observation
+    assert expected.observation.request_accounting == (
+        result.observation.request_accounting
+    )
+    assert 1 == result.observation.request_accounting.logical_requests
+    assert expected.work_ladders == result.work_ladders == ()
+
+
+def test_a_throttled_own_lookup_keeps_the_retries_it_had_before() -> None:
+    def throttled() -> tuple[list[float], Callable[[httpx.Request], httpx.Response]]:
+        delays: list[float] = []
+        attempts: list[httpx.URL] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            attempts.append(request.url)
+            if len(attempts) == 1:
+                return _json({"message": "slow down"}, 429, **{"retry-after": "7"})
+            return _json(payload("audible_lookup"))
+
+        return delays, handle
+
+    plan = _own_asin_plan(_ASIN)
+    delays, handle = throttled()
+    provider = _provider(handle, delays=delays)
+    observation = m.observe_provider(
+        "audible", "audible_catalog", provider, plan
+    ).observation
+    alone_delays, alone_handle = throttled()
+    alone = _provider(alone_handle, delays=alone_delays)
+    expected = m.observe_provider(
+        "audible", "audible_catalog", alone, _lookup_only(plan)
+    ).observation
+
+    assert [7.0] == delays == alone_delays
+    assert expected == observation
+    assert expected.request_accounting == observation.request_accounting
+
+
+def test_a_wrong_own_asin_is_searched_and_the_real_recording_admitted() -> None:
+    plan = _own_asin_plan(_WRONG_ASIN)
+    seen, handle = _recorder(
+        {_LOOKUP + _WRONG_ASIN: _json(_wrong_product())},
+        default=_json(_search_page(0)),
+    )
+    observation = _observed(handle, plan).observation
+
+    assert [f"/1.0/catalog/products/{_WRONG_ASIN}", "/1.0/catalog/products"] == [
+        url.path for url in seen
+    ]
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert 2 == observation.request_accounting.logical_requests
+    # The lane that kept the recording says so; the vetoed lookup keeps none.
+    assert [(f"audible-product-{_WRONG_ASIN}", None)] == _members(
+        observation, ProviderQueryKind.ASIN
+    )
+    assert [(f"audible-product-{_ASIN}", TARGET_ADMISSION_BASIS)] == _members(
+        observation, ProviderQueryKind.WORK
+    )
+    report = _own_asin_report(observation, _WRONG_ASIN)
+    assert m.admitted_audiobook_identity(report)
+    (admitted,) = (
+        candidate
+        for candidate in report.providers[0].candidates
+        if candidate.identity == f"audible-product-{_ASIN}"
+    )
+    assert (_ASIN,) == tuple(claim.value for claim in _claims(admitted, ClaimKind.ASIN))
+
+
+def test_a_vetoed_own_product_found_again_by_the_search_merges() -> None:
+    """A loose-band product outside the tight band is one candidate (Risk 1)."""
+    plan = _own_asin_plan(_ASIN)
+    # 962 minutes is 524 s from the 58,244 s file: in the loose band only.
+    lookup = payload("audible_lookup")
+    lookup["product"]["runtime_length_min"] = 962
+    page = _search_page(0, 1)
+    page["products"][0]["runtime_length_min"] = 962
+    seen, handle = _recorder({_LOOKUP + _ASIN: _json(lookup)}, default=_json(page))
+    observation = _observed(handle, plan).observation
+
+    assert 2 == len(seen)
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert [ProviderStatus.CANDIDATES, ProviderStatus.CANDIDATES] == [
+        lane.status for lane in observation.lanes
+    ]
+    assert 1 == sum(
+        candidate.identity == f"audible-product-{_ASIN}"
+        for candidate in observation.candidates
+    )
+    assert not any(
+        basis for _identity, basis in _members(observation, ProviderQueryKind.ASIN)
+    )
+    _own_asin_report(observation, _ASIN)
+
+
+def test_an_own_asin_no_marketplace_carries_is_searched() -> None:
+    plan = _own_asin_plan(_WRONG_ASIN)
+    seen, handle = _recorder(
+        {
+            AUDIBLE_CATALOG_URLS["us"] + "/" + _WRONG_ASIN: _json(
+                {"message": "no"}, 404
+            ),
+            AUDIBLE_CATALOG_URLS["uk"] + "/" + _WRONG_ASIN: _json(
+                {"message": "no"}, 404
+            ),
+        },
+        default=_json(_search_page(0)),
+    )
+    provider = _provider(handle, marketplaces=("us", "uk"))
+    observation = m.observe_provider(
+        "audible", "audible_catalog", provider, plan
+    ).observation
+
+    assert 3 == len(seen)
+    assert [ProviderStatus.NO_MATCH] == [
+        lane.status for lane in observation.lanes if lane.kind is ProviderQueryKind.ASIN
+    ]
+    assert [(f"audible-product-{_ASIN}", TARGET_ADMISSION_BASIS)] == _members(
+        observation, ProviderQueryKind.WORK
+    )
+    _own_asin_report(observation, _WRONG_ASIN)
+
+
+def test_an_own_product_in_another_language_is_searched() -> None:
+    language = audio_claim(ClaimKind.LANGUAGE, "en", 9)
+    plan = _own_asin_plan(_WRONG_ASIN, language)
+    seen, handle = _recorder(
+        {_LOOKUP + _WRONG_ASIN: _json(_wrong_product(970, language="italian"))},
+        default=_json(_search_page(0)),
+    )
+    observation = _observed(handle, plan).observation
+
+    assert 2 == len(seen)
+    assert [(f"audible-product-{_WRONG_ASIN}", None)] == _members(
+        observation, ProviderQueryKind.ASIN
+    )
+    assert [(f"audible-product-{_ASIN}", TARGET_ADMISSION_BASIS)] == _members(
+        observation, ProviderQueryKind.WORK
+    )
+    _own_asin_report(observation, _WRONG_ASIN, language)
+
+
+@pytest.mark.parametrize(
+    ("response", "status"),
+    (
+        (_json({"message": "down"}, 503), ProviderStatus.UNAVAILABLE),
+        (_json({"message": "slow"}, 429), ProviderStatus.RATE_LIMITED),
+    ),
+    ids=("unavailable", "throttled"),
+)
+def test_a_failed_own_lookup_never_opens_the_search(
+    response: httpx.Response, status: ProviderStatus
+) -> None:
+    plan = _own_asin_plan(_ASIN)
+    seen, handle = _recorder(default=response)
+    observation = _observed(handle, plan).observation
+
+    assert all(url.path.endswith(f"/{_ASIN}") for url in seen)
+    assert [ProviderQueryKind.ASIN] == [lane.kind for lane in observation.lanes]
+    assert status is observation.lanes[0].status
+    # The search it never opened is not planned work in the accounting.
+    assert 1 == observation.request_accounting.logical_requests
