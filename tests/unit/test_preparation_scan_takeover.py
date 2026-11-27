@@ -899,3 +899,62 @@ def test_claim_pass_cost_does_not_grow_with_a_finished_library(
     ten_steps = claim_steps(10)
     thousand_steps = claim_steps(1_000)
     assert thousand_steps <= ten_steps + 80
+
+
+# --- #1816: description work during the first preparation --------------------
+
+
+@pytest.mark.parametrize(
+    "first_scan_state",
+    ("completed", "completed_with_failures"),
+    ids=("completed", "completed_with_failures"),
+)
+def test_a_description_request_during_the_first_preparation_starts_the_library_scan(
+    tmp_path: Path, first_scan_state: str
+) -> None:
+    # Another library's first scan is still queued, so the first preparation
+    # runs on. The poll would not scan ebooks until it finishes, and never
+    # after failures; description work asked for it starts B now (#1816).
+    library = _closed_first_boot_library(tmp_path / "state.sqlite3")
+    connection = library.repository._connection
+    if first_scan_state == "completed":
+        connection.execute(
+            "UPDATE review_preparation_scans SET state='completed' WHERE scan_id=?",
+            (SCAN_A,),
+        )
+        connection.commit()
+    library.repository.request_review_scan(
+        "primary", "fiction", "lib-2", PRODUCER, 25, first_boot=True
+    )
+    scans_sql = "SELECT * FROM review_preparation_scans ORDER BY scan_id"
+    triggers_sql = (
+        "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='trigger'"
+    )
+    before = tuple(connection.execute(scans_sql))
+    triggers = connection.execute(triggers_sql).fetchone()
+
+    # The poll's request still waits for the first preparation.
+    library.repository.request_review_scan("primary", "ebooks", "lib-1", PRODUCER, 26)
+    assert tuple(connection.execute(scans_sql)) == before
+
+    _choose_description(library, 27)
+
+    after = {row[0]: row for row in connection.execute(scans_sql)}
+    assert set(after) == {row[0] for row in before} | {SCAN_B}
+    assert all(after[row[0]] == row for row in before)
+    assert connection.execute(
+        "SELECT state,requested_at FROM review_preparation_scans WHERE scan_id=?",
+        (SCAN_B,),
+    ).fetchone() == ("queued", 27)
+    (progress,), _paused = library.repository.review_pipeline_status(LIBRARY)
+    assert progress is not None and (progress.scan_id, progress.state) == (
+        SCAN_B,
+        "queued",
+    )
+    assert connection.execute(triggers_sql).fetchone() == triggers
+    assert connection.execute(
+        "SELECT review_case_id FROM description_preparation_pending"
+    ).fetchall() == [(library.case_id,)]
+    library.reopen()
+    assert _library_state(library) == "queued"
+    library.repository.close()

@@ -1045,7 +1045,11 @@ def request_description_preparation(
         return
     repository = SQLiteReviewScanRepository(connection)
     for target, library, library_id, producer in sorted(scans):
-        repository.request_review_scan(target, library, library_id, producer, now)
+        # Even during the first preparation: the poll would not scan a library
+        # whose first scan has ended until it finishes, or ever after failures.
+        repository.request_review_scan(
+            target, library, library_id, producer, now, waiting_work=True
+        )
 
 
 def pending_description_libraries(

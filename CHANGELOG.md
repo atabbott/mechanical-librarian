@@ -549,6 +549,10 @@ brackets are GitHub issues.
   preparation resumes. Before, it waited for the next library poll, and a
   library whose last scan had failures was not polled at all. Resuming also
   retries that library's failed items (#1785).
+- Description advice asked for during the first preparation, and a Current
+  covers save, now start the scan of a library whose first scan has ended.
+  Before, that library waited for the whole first preparation and the next
+  poll, or for Retry when its first scan had failures (#1816).
 - Library has a Covers view beside Works for going through every book's
   cover: To decide, Kept, Switched (automatic switches, with the cover before
   and now) and All, 50 books at a time. One tap records a choice and opens the

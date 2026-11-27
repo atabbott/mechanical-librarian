@@ -99,6 +99,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
     audio_inspection_failure_code,
+    pipeline_scan_id,
 )
 from mechanical_librarian.application.review_pipeline_stages import ReviewPipelineStages
 from mechanical_librarian.application.review_web import BrowseReviewLibrary
@@ -3591,16 +3592,30 @@ def test_resume_requests_pending_description_scan_during_first_preparation(
     history = repository._connection.execute(
         "SELECT * FROM review_preparation_scans WHERE library_name='history'"
     ).fetchall()
+    first_fiction_sql = "SELECT * FROM review_preparation_scans WHERE scan_id=?"
+    first_fiction_id = pipeline_scan_id("primary", "fiction", first_boot=True)
+    first_fiction = repository._connection.execute(
+        first_fiction_sql, (first_fiction_id,)
+    ).fetchall()
+    assert len(first_fiction) == 1
 
     with patch(_PENDING_DESCRIPTION_LIBRARIES, return_value=(("primary", "fiction"),)):
         repository.resume_review_pipeline(libraries, 103)
 
     assert not repository.review_pipeline_paused()
+    # The scan is the library's ordinary one; the first-boot row stays as it
+    # ended (#1816).
     assert repository._connection.execute(
-        "SELECT state,requested_at FROM review_preparation_scans "
+        "SELECT scan_id,state,requested_at FROM review_preparation_scans "
         "WHERE connection_name='primary' AND library_name='fiction' "
         "ORDER BY requested_at DESC,scan_id DESC LIMIT 1"
-    ).fetchone() == ("queued", 103)
+    ).fetchone() == (pipeline_scan_id("primary", "fiction"), "queued", 103)
+    assert (
+        repository._connection.execute(
+            first_fiction_sql, (first_fiction_id,)
+        ).fetchall()
+        == first_fiction
+    )
     assert (
         repository._connection.execute(
             "SELECT * FROM review_preparation_scans WHERE library_name='history'"
