@@ -53,6 +53,7 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _validate_field_effect_state,
 )
+from mechanical_librarian.adapters.persistence.ledger_migrations import steps_from
 from mechanical_librarian.adapters.persistence.level_sql import (
     _reconciled_level_sql,
     _unreconciled_case_sql,
@@ -98,6 +99,7 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.metadata_report import (
     DerivedRegenerationRequired,
+    LedgerMigrationRequired,
     LedgerRebuildRequired,
     MetadataReportError,
 )
@@ -3242,15 +3244,24 @@ def setup_ledger_meta_row() -> tuple[int, int, int, int, str]:
     )
 
 
+def _missing_ledger_object(
+    connection: sqlite3.Connection, objects: tuple[_Object, ...]
+) -> bool:
+    """Whether any of these ledger objects is absent or stored otherwise."""
+    stored = {(kind, name, sql) for kind, name, _, sql in _creation_order(connection)}
+    return any((kind, name, sql) not in stored for kind, name, _, sql in objects)
+
+
 def _validate_ledger_meta(connection: sqlite3.Connection) -> None:
     """Refuse another build's database before anything else is compared.
 
     The precedence is frozen (ADR-0108 "Startup"): no ledger record, or
-    another ledger format, needs a clean rebuild; an altered ledger object
-    refuses as today; another build's derived partition, or browse facts
-    folded under another Unicode version or rule list, needs a regeneration;
-    the full comparison that follows refuses a planted or altered derived
-    object as today.
+    another ledger format, needs a clean rebuild, except an earlier one this
+    build's migrations reach, which needs a regeneration before any object
+    is compared; an altered ledger object refuses as today; another build's
+    derived partition, or browse facts folded under another Unicode version
+    or rule list, needs a regeneration; the full comparison that follows
+    refuses a planted or altered derived object as today.
     """
     try:
         rows = connection.execute(
@@ -3262,13 +3273,14 @@ def _validate_ledger_meta(connection: sqlite3.Connection) -> None:
     if len(rows) != 1:
         raise LedgerRebuildRequired
     format_version, version, digest = rows[0]
-    if type(format_version) is not int or format_version != LEDGER_FORMAT_VERSION:
+    if type(format_version) is not int:
+        raise LedgerRebuildRequired
+    if format_version != LEDGER_FORMAT_VERSION:
+        if steps_from(format_version, LEDGER_FORMAT_VERSION) is not None:
+            raise LedgerMigrationRequired
         raise LedgerRebuildRequired
     build = build_partition()
-    stored = {(kind, name, sql) for kind, name, _, sql in _creation_order(connection)}
-    if any(
-        (kind, name, sql) not in stored for kind, name, _, sql in build.ledger_objects
-    ):
+    if _missing_ledger_object(connection, build.ledger_objects):
         raise MetadataReportError("database is unavailable or incompatible")
     if (
         type(version) is not int

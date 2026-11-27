@@ -4,8 +4,8 @@ Back up the complete `/data` volume while the container is stopped, together
 with your deploy-side files. The application database and the cover artifact
 store are a pair: always back up and restore them together.
 
-There is no import, selective restore, per-record purge, repair or migration
-command. To recover, you restore a matching backup, run
+There is no import, selective restore, per-record purge or repair command. To
+recover, you restore a matching backup, run
 [`regenerate-derived`](upgrades.md#upgrading-with-a-regeneration) when startup
 names it, or start clean. Never edit
 database rows, pointers or artifact files to force a store open.
@@ -83,7 +83,8 @@ of them is a way to export credentials.
 
 Restore only into a build whose schemas match the backup. Otherwise startup
 refuses the stores without changing them. When only what preparation makes
-differs, startup names `regenerate-derived`; otherwise you need a clean
+differs, or your answers and settings are in an earlier format this build
+converts, startup names `regenerate-derived`; otherwise you need a clean
 rebuild. Both are in [upgrades](upgrades.md). To go back to the build before
 a regeneration, restore its
 [restore point](upgrades.md#the-restore-point) instead. Remove any `/data/config.json` left over from earlier

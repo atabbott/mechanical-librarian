@@ -564,9 +564,10 @@ a provider, and is composed with no network client.
    object, canonical documents). Before C6 a ledger mismatch refuses as clean
    rebuild required. After C6 admission also accepts a ledger at an earlier
    version that this build's chain reaches, validated at that version without
-   changing it; the migration itself runs only in step 6, after the retained
-   backup. `integrity_check` and a foreign-key check of every ledger table
-   must pass. It refuses with
+   changing it (its content is proved by migrating a private scratch copy,
+   #2041); the migration itself runs only
+   in step 6, after the retained backup. `integrity_check` and a foreign-key
+   check of every ledger table must pass. It refuses with
    nothing to do only when no ledger migration is pending and the derived
    partition is already exact; a pending ledger migration with a current
    derived partition still runs. The volume must hold the

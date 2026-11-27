@@ -50,6 +50,11 @@ from mechanical_librarian.adapters.persistence.field_effect_activity import (
 from mechanical_librarian.adapters.persistence.field_effects import (
     SQLiteFieldEffectRepository,
 )
+from mechanical_librarian.adapters.persistence.ledger_migrations import (
+    LedgerObject,
+    ledger_objects_at,
+    migrate_ledger,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_existing_database,
 )
@@ -68,8 +73,8 @@ from mechanical_librarian.adapters.persistence.schema import (
     LEDGER_FORMAT_VERSION,
     BuildPartition,
     _check_constraint_violation,
-    _create_schema,
     _expected_schema_objects,
+    _missing_ledger_object,
     _register_casefold,
     _validate_ledger_meta,
     _validate_schema,
@@ -79,6 +84,7 @@ from mechanical_librarian.adapters.persistence.schema import (
 )
 from mechanical_librarian.application.metadata_report import (
     DerivedRegenerationRequired,
+    LedgerMigrationRequired,
     MetadataReportError,
     PersistedStateRefusal,
 )
@@ -183,15 +189,37 @@ def _prepare(connection: sqlite3.Connection) -> None:
 # --- Admission -----------------------------------------------------------
 
 
-def _validate_ledger_structure(connection: sqlite3.Connection) -> None:
-    """The ledger record, every ledger object exactly, the whole file's
-    integrity, each ledger table's foreign keys and CHECKs.
+def _ledger_format(connection: sqlite3.Connection) -> int:
+    """The ledger format the admitted database's record names."""
+    (version,) = connection.execute(
+        "SELECT ledger_format_version FROM ledger_meta WHERE singleton=1"
+    ).fetchone()
+    return int(version)
 
-    Startup's own precedence applies; another build's derived partition is
-    what this command is for, so only that refusal is let through.
+
+def _ledger_objects(connection: sqlite3.Connection) -> tuple[LedgerObject, ...]:
+    """The ledger objects of the format the admitted database is in."""
+    return ledger_objects_at(
+        _ledger_format(connection),
+        LEDGER_FORMAT_VERSION,
+        build_partition().ledger_objects,
+    )
+
+
+def _validate_ledger_structure(connection: sqlite3.Connection) -> None:
+    """The ledger record, every ledger object of its format exactly, the
+    whole file's integrity, each ledger table's foreign keys and CHECKs.
+
+    Startup's own precedence applies; another build's derived partition, or
+    an earlier ledger this build migrates, is what this command is for, so
+    only that refusal is let through. An earlier ledger is checked against
+    its own format's objects, which startup never compares.
     """
     try:
         _validate_ledger_meta(connection)
+    except LedgerMigrationRequired:
+        if _missing_ledger_object(connection, _ledger_objects(connection)):
+            raise RegenerationRefusal(Refusal.LEDGER_ALTERED) from None
     except DerivedRegenerationRequired:
         pass
     except PersistedStateRefusal:
@@ -200,9 +228,7 @@ def _validate_ledger_structure(connection: sqlite3.Connection) -> None:
         raise RegenerationRefusal(Refusal.LEDGER_ALTERED) from error
     if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise RegenerationRefusal(Refusal.INTEGRITY)
-    ledger = [
-        (kind, name, sql) for kind, name, _, sql in build_partition().ledger_objects
-    ]
+    ledger = [(kind, name, sql) for kind, name, _, sql in _ledger_objects(connection)]
     for kind, name, _ in ledger:
         if (
             kind == "table"
@@ -287,38 +313,40 @@ def _ledger_select(name: str, sql: str | None) -> str:
 def _validate_ledger_content(
     connection: sqlite3.Connection, binding: _LinuxDatabaseBinding
 ) -> None:
-    """Validation point 3: copy every ledger row into a fresh schema of this
-    build, whose derived partition holds only its seed rows, and run the
-    open's content validation there, offline. Triggers are set aside for the
-    copy, as a regeneration leaves no derived row behind them."""
-    tables = [
-        (name, sql)
-        for kind, name, _, sql in build_partition().ledger_objects
-        if kind == "table"
-    ]
+    """Validation point 3, a dry run of the transaction's ledger half on a
+    private copy: the ledger's objects at its own format, every ledger row
+    copied before its triggers exist, then, with foreign keys enforced, the
+    pending migrations and this build's derived objects and seed rows, and
+    the open's content validation, offline. The copy is rolled back and
+    removed; the database is never written."""
+    version = _ledger_format(connection)
+    build = build_partition()
+    objects = ledger_objects_at(version, LEDGER_FORMAT_VERSION, build.ledger_objects)
     with _scratch(binding) as (_, path):
         scratch = sqlite3.connect(path, isolation_level=None)
         try:
             _prepare(scratch)
-            _create_schema(scratch)
-            triggers = scratch.execute(
-                "SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY rowid"
-            ).fetchall()
             scratch.execute("BEGIN")
-            for name, _ in triggers:
-                scratch.execute(f"DROP TRIGGER {_quoted(name)}")
-            for name, sql in tables:
-                scratch.execute(f"DELETE FROM {_quoted(name)}")
+            for kind, _, _, sql in objects:
+                if kind != "trigger" and sql is not None:
+                    scratch.execute(sql)
+            for kind, name, _, sql in objects:
+                if kind != "table":
+                    continue
                 rows = connection.execute(_ledger_select(name, sql))
                 width = len(rows.description)
                 scratch.executemany(
                     f"INSERT INTO {_quoted(name)} VALUES({','.join('?' * width)})",
                     rows,
                 )
-            for _, sql in triggers:
-                scratch.execute(sql)
+            for kind, _, _, sql in objects:
+                if kind == "trigger" and sql is not None:
+                    scratch.execute(sql)
             scratch.execute("COMMIT")
+            scratch.execute("PRAGMA foreign_keys=ON")
             scratch.execute("BEGIN")
+            migrate_ledger(scratch, version, LEDGER_FORMAT_VERSION)
+            _recreate_derived(scratch, build)
             _validate_schema_contents(scratch, offline=True)
             scratch.execute("ROLLBACK")
         finally:
@@ -408,7 +436,7 @@ class SQLiteRegenerationStore:
             held = None
             # A database of this build has nothing to regenerate: the run
             # writes nothing, so it needs neither the reserve nor the copy.
-            if not _derived_is_current(connection):
+            if not _up_to_date(connection):
                 # The scratch copy is the run's first write: the free-space
                 # refusal comes before it, never a full volume met while copying.
                 free, needed = _space(binding.parent_descriptor, binding.descriptor)
@@ -501,10 +529,12 @@ def _open_held_in_folder(parent: int, name: str) -> int | None:
         os.close(directory)
 
 
-def _ledger_digests(connection: sqlite3.Connection) -> list[str]:
+def _ledger_digests(
+    connection: sqlite3.Connection, objects: tuple[LedgerObject, ...]
+) -> list[str]:
     return [
         _table_digest(connection, name, sql)
-        for kind, name, _, sql in build_partition().ledger_objects
+        for kind, name, _, sql in objects
         if kind == "table"
     ]
 
@@ -526,7 +556,10 @@ def _replaced_copy(connection: sqlite3.Connection, parent: int) -> _HeldCopy | N
         try:
             _prepare(copy)
             copy.execute("BEGIN")
-            same = _ledger_digests(copy) == _ledger_digests(connection)
+            objects = _ledger_objects(connection)
+            same = _ledger_digests(copy, objects) == _ledger_digests(
+                connection, objects
+            )
         finally:
             copy.close()
         if not same or _identity(os.fstat(held)) != identity:
@@ -538,18 +571,25 @@ def _replaced_copy(connection: sqlite3.Connection, parent: int) -> _HeldCopy | N
     return _HeldCopy(name, identity)
 
 
-def _derived_is_current(connection: sqlite3.Connection) -> bool:
-    """The ledger names this build's derived partition, the file holds
-    exactly this build's objects, and its browse facts were folded under this
-    build's Unicode version and rule list."""
+def _up_to_date(connection: sqlite3.Connection) -> bool:
+    """No migration is pending, as the ledger is this build's format; it
+    names this build's derived partition; the file holds exactly this
+    build's objects; and its browse facts were folded under this build's
+    Unicode version and rule list."""
     row = connection.execute(
-        "SELECT derived_version,derived_schema_digest FROM ledger_meta"
+        "SELECT ledger_format_version,derived_version,derived_schema_digest "
+        "FROM ledger_meta"
     ).fetchone()
     objects = connection.execute(
         "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
     ).fetchall()
     return (
-        row == (DERIVED_VERSION, build_partition().derived_schema_digest)
+        row
+        == (
+            LEDGER_FORMAT_VERSION,
+            DERIVED_VERSION,
+            build_partition().derived_schema_digest,
+        )
         and objects == _expected_schema_objects()
         and browse_fact_identity_is_current(connection) is True
     )
@@ -679,11 +719,12 @@ class SQLiteRegenerationSession:
             self._binding.parent_descriptor, self._binding.descriptor
         )
 
-    def derived_is_current(self) -> bool:
-        """Nothing to do: the ledger names this build's derived partition and
-        the file holds exactly this build's objects."""
+    def up_to_date(self) -> bool:
+        """Nothing to do: no migration is pending, the ledger names this
+        build's derived partition and the file holds exactly this build's
+        objects."""
         with self._named_failures():
-            return _derived_is_current(self._connection)
+            return _up_to_date(self._connection)
 
     def free_space(self) -> tuple[int, int]:
         """Free space counts the held restore point admission found the run
@@ -992,13 +1033,16 @@ class SQLiteRegenerationSession:
     def _transaction(self, retire_pending: bool, inspection: Inspection) -> None:
         """Step 6 inside `BEGIN EXCLUSIVE`, in ADR-0108's order:
 
-        1. drop every object not in this build's ledger list;
-        2. ledger writes from ledger rows only. A pending ledger migration
-           runs first, here, once C6 builds one (admission refuses any other
-           ledger format until then); then, with the flag, its retirements
-           (`_retire_pending`); then every current authority is revoked through the existing
-           revocation; then the cover pointer plan; then `ledger_meta` takes
-           the next epoch and this build's derived version and digest;
+        1. drop every object not in the ledger list of the format the ledger
+           is in, so nothing a migration rewrites is dropped before it runs;
+        2. ledger writes from ledger rows only. Each pending migration runs
+           first (`migrate_ledger`, from the ledger's format to this
+           build's, as admission's dry run ran it); then, with the flag, its
+           retirements (`_retire_pending`); then every current authority is
+           revoked through the existing revocation, which makes authority a
+           migration invalidated history; then the cover pointer plan; then
+           `ledger_meta` takes the next epoch and this build's derived
+           version and digest;
         3. recreate every derived object from this build and its seed rows;
            the empty scan table makes the next start ask every configured
            library to scan;
@@ -1013,7 +1057,11 @@ class SQLiteRegenerationSession:
             "derived_schema_digest FROM ledger_meta WHERE singleton=1"
         ).fetchone()
         counts = dict.fromkeys(_COUNT_KEYS, 0)
-        counts["derived_objects_dropped"] = _drop_derived(connection, build)
+        counts["derived_objects_dropped"] = _drop_derived(
+            connection,
+            ledger_objects_at(before[0], LEDGER_FORMAT_VERSION, build.ledger_objects),
+        )
+        migrate_ledger(connection, before[0], LEDGER_FORMAT_VERSION)
         at = self._clock()
         effects = _field_effects(connection, self._binding)
         if retire_pending:
@@ -1111,10 +1159,12 @@ def _verify_copy(source: sqlite3.Connection, path: Path) -> None:
         copy.close()
 
 
-def _drop_derived(connection: sqlite3.Connection, build: BuildPartition) -> int:
-    """Drop every object outside this build's ledger list: triggers and views,
+def _drop_derived(
+    connection: sqlite3.Connection, ledger_objects: tuple[LedgerObject, ...]
+) -> int:
+    """Drop every object outside these ledger objects: triggers and views,
     then indexes on tables that stay, then tables, children first."""
-    ledger = {(kind, name, sql) for kind, name, _, sql in build.ledger_objects}
+    ledger = {(kind, name, sql) for kind, name, _, sql in ledger_objects}
     dropped = [
         (kind, name, table)
         for kind, name, table, sql in connection.execute(

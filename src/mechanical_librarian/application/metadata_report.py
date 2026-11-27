@@ -234,6 +234,14 @@ class DerivedRegenerationRequired(PersistedStateRefusal):
         )
 
 
+class LedgerMigrationRequired(DerivedRegenerationRequired):
+    """The ledger is an earlier format this build's migrations reach.
+
+    ``regenerate-derived`` migrates it, so startup names that command, in
+    the same words as for another build's derived partition.
+    """
+
+
 class ReportStorageError(MetadataReportError):
     """The report store could not publish; ``busy`` says it may succeed later.
 
@@ -5493,6 +5501,7 @@ __all__ = [
     "ArtifactAuthorityError",
     "InspectionResult",
     "ItemInspectionError",
+    "LedgerMigrationRequired",
     "LedgerRebuildRequired",
     "MetadataDiscoveryLane",
     "MetadataDiscoveryPlan",

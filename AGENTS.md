@@ -177,7 +177,9 @@ Every change must include the smallest appropriate combination of:
   and, from C6, code-defined exact-predecessor ledger migrations. A change
   that moves the derived digest takes a new `DERIVED_VERSION` and declares
   **Derived regeneration required**; a ledger change takes a new
-  `LEDGER_FORMAT_VERSION` and declares **Clean rebuild required**;
+  `LEDGER_FORMAT_VERSION` and declares **Ledger migration**, with one
+  migration step from the previous version and that version's frozen
+  fixture, or **Clean rebuild required** when its meaning cannot be kept;
 - an ADR when a durable architectural decision changes;
 - changelog entry for user-visible behavior, stating the outcome in at most six
   lines with its issue reference and leaving the arithmetic, proof narrative,

@@ -6,9 +6,9 @@ needs a clean rebuild, under the rule in
 [Compatibility](../reference/compatibility.md#the-clean-state-rule).
 
 [CHANGELOG.md](../../CHANGELOG.md) marks every change that needs the command
-with **Derived regeneration required**, and every change that needs a rebuild
-with **Clean rebuild required.** Read the entries between your build and the
-new one before you upgrade.
+with **Derived regeneration required** or **Ledger migration**, and every
+change that needs a rebuild with **Clean rebuild required.** Read the entries
+between your build and the new one before you upgrade.
 
 ## Before every upgrade
 
@@ -24,8 +24,9 @@ new one before you upgrade.
 
 ## Upgrading without a rebuild
 
-If no entry since your build is marked **Derived regeneration required** or
-**Clean rebuild required**, rebuild and start as usual:
+If no entry since your build is marked **Derived regeneration required**,
+**Ledger migration** or **Clean rebuild required**, rebuild and start as
+usual:
 
 ```text
 docker compose up --build -d
@@ -38,7 +39,10 @@ from a page built for a different bundle.
 ## Upgrading with a regeneration
 
 A **Derived regeneration required** entry changes only what preparation
-rebuilds from the library, its providers and your decisions. Startup refuses
+rebuilds from the library, its providers and your decisions. A **Ledger
+migration** entry also changes the format your answers, settings and write
+history are stored in, and the command converts them in the same run, after
+it takes the restore point. Startup refuses
 such a database without changing it, with one line: "This database was
 prepared by another build. Stop the container, run docker compose run --rm
 mechanical-librarian regenerate-derived, then start it again. Upgrades has the
@@ -294,8 +298,8 @@ nothing:
 
 | Startup says | Cause | What to do |
 | --- | --- | --- |
-| "This database was prepared by another build. …" | What preparation made is from another build | [Upgrading with a regeneration](#upgrading-with-a-regeneration) |
-| "This database is from a build this one cannot read, so it needs a clean rebuild. Upgrades has the steps." | Your answers and settings are stored in another build's format, or in one from before this format existed | [Clean rebuild](#clean-rebuild) |
+| "This database was prepared by another build. …" | What preparation made is from another build, or your answers and settings are stored in an earlier format this build converts | [Upgrading with a regeneration](#upgrading-with-a-regeneration) |
+| "This database is from a build this one cannot read, so it needs a clean rebuild. Upgrades has the steps." | Your answers and settings are stored in a newer build's format, in an earlier one this build cannot convert, or in one from before this format existed | [Clean rebuild](#clean-rebuild) |
 
 Everything listed under
 [Not supported](../reference/compatibility.md#not-supported) is refused. Two

@@ -128,9 +128,11 @@ in their own commit, for Python and TypeScript alike.
   user-visible behaviour and an ADR for a durable architectural decision. See
   [documentation standards](docs/development/documentation-standards.md).
 - Before 1.0.0, a persisted-schema change declares **Derived regeneration
-  required** when it changes only derived state, with a new `DERIVED_VERSION`,
-  or **Clean rebuild required** when it changes the ledger, with a new
-  `LEDGER_FORMAT_VERSION`
+  required** when it changes only derived state, with a new `DERIVED_VERSION`;
+  **Ledger migration** when it changes the ledger, with a new
+  `LEDGER_FORMAT_VERSION`, one migration step from the previous version and
+  that version's frozen fixture; or **Clean rebuild required** when a ledger
+  change cannot keep its meaning, with its own decision record
   ([ADR-0108](docs/architecture/decisions/0108-ledger-and-derived-state.md)).
 - Keep unrelated refactoring out, and never weaken a test, type, linter or
   safety gate to make a change pass.

@@ -40,8 +40,9 @@ The exact commands run and their outcomes:
 - [ ] Documentation this change made stale is updated in place, and the
       changelog has an entry for any user-visible behaviour.
 - [ ] Persisted-state changes declare **Derived regeneration required**
-      (derived only, new `DERIVED_VERSION`) or **Clean rebuild required**
-      (ledger, new `LEDGER_FORMAT_VERSION`); durable decisions add or
-      supersede an ADR.
+      (derived only, new `DERIVED_VERSION`), **Ledger migration** (ledger,
+      new `LEDGER_FORMAT_VERSION`, its migration step and frozen fixture) or
+      **Clean rebuild required** (a ledger change that cannot be migrated,
+      with its ADR); durable decisions add or supersede an ADR.
 - [ ] No credentials, private URLs, personal paths, copyrighted media or
       production data.

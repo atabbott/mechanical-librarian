@@ -53,6 +53,7 @@ from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY
 from mechanical_librarian.interfaces.cli import regenerate as cli
 from tests.support.field_effects import effects  # noqa: F401  # reason: the companion pair's fixture asks for it.
 from tests.support.genre_reports import genre_report
+from tests.support.ledger_chain import chain, identity
 from tests.support.ledger_partition import (
     _derived_setup,
     copied_store,
@@ -339,6 +340,23 @@ def test_another_ledger_needs_a_clean_rebuild(
     assert lines == [str(refusal())]
 
 
+@pytest.mark.parametrize(
+    ("sources", "current"),
+    [((2,), 3), ((1,), 3)],
+    ids=["first_step_missing", "last_step_missing"],
+)
+def test_an_earlier_ledger_the_chain_does_not_reach_needs_a_clean_rebuild(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sources: tuple[int, ...],
+    current: int,
+) -> None:
+    path = _fresh(tmp_path / "data")
+    chain(monkeypatch, *(identity(source) for source in sources), current=current)
+    _, lines, _ = _refuses_unchanged(path)
+    assert lines == [str(LedgerRebuildRequired())]
+
+
 def test_an_altered_ledger_object_refuses_with_its_own_line(tmp_path: Path) -> None:
     """Refused before anything else, as startup refuses it (S1 precedence),
     but in the command's own words (copy R10), never startup's internal
@@ -419,17 +437,42 @@ def test_the_free_space_refusal_names_an_earlier_restore_point(
     assert lines[0].endswith(" " + cli.NO_SPACE_HELD)
 
 
+# Steps admission's dry run calls first, on its private copy, before the
+# transaction calls them again (ADR-0108 step 1).
+_DRY_RUN_TOO = frozenset({"_recreate_derived", "migrate_ledger"})
+
+
+def _fails_in_the_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    error: BaseException,
+    *,
+    after_the_step: bool = True,
+) -> None:
+    """The transaction's call of ``phase`` raises ``error``, after doing its
+    work unless ``after_the_step`` is false; the dry run's call, if any,
+    runs as it is."""
+    real = getattr(regeneration, phase)
+    calls: list[None] = []
+
+    def failing(*arguments: Any) -> Any:
+        calls.append(None)
+        if phase in _DRY_RUN_TOO and len(calls) == 1:
+            return real(*arguments)
+        if after_the_step:
+            real(*arguments)
+        raise error
+
+    monkeypatch.setattr(regeneration, phase, failing)
+
+
 def _held_after_a_stopped_run(path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A run that took its restore point and then stopped inside the
     transaction, leaving the database as it was and `epoch-0` held: the
     state recovery leaves after a run killed there."""
-    real = regeneration._recreate_derived
-
-    def failing(*arguments: Any) -> Any:
-        real(*arguments)
-        raise sqlite3.OperationalError("disk I/O error")
-
-    monkeypatch.setattr(regeneration, "_recreate_derived", failing)
+    _fails_in_the_transaction(
+        monkeypatch, "_recreate_derived", sqlite3.OperationalError("disk I/O error")
+    )
     assert _run(path)[2].refusal is regeneration.Refusal.ROLLED_BACK
     monkeypatch.undo()
     held = path.parent / "regeneration-backup" / "epoch-0.sqlite3"
@@ -649,14 +692,16 @@ def _scratch_entries(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 def _scratch_meets_a_full_volume(monkeypatch: pytest.MonkeyPatch) -> None:
     """Admission's scratch copy cannot grow: SQLite's own SQLITE_FULL, met on
-    the copy's first write, as on a volume with no room left."""
-    real = regeneration._create_schema
+    the copy's first write, as on a volume with no room left. The scratch
+    file is the one connection the run opens on an empty file."""
+    real = regeneration._prepare
 
-    def create(connection: sqlite3.Connection) -> None:
-        connection.execute("PRAGMA max_page_count=1")
+    def prepare(connection: sqlite3.Connection) -> None:
         real(connection)
+        if connection.execute("PRAGMA page_count").fetchone() == (0,):
+            connection.execute("PRAGMA max_page_count=1")
 
-    monkeypatch.setattr(regeneration, "_create_schema", create)
+    monkeypatch.setattr(regeneration, "_prepare", prepare)
 
 
 def _no_space_line(outcome: Outcome) -> str:
@@ -737,7 +782,9 @@ def _full_at_backup_sync(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _full_in_the_transaction(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(regeneration, "_recreate_derived", _fails_with(_sqlite_full()))
+    _fails_in_the_transaction(
+        monkeypatch, "_recreate_derived", _sqlite_full(), after_the_step=False
+    )
 
 
 @pytest.mark.parametrize(
@@ -1024,21 +1071,23 @@ def test_a_copy_that_does_not_match_refuses(
 
 @pytest.mark.parametrize(
     "phase",
-    ["_drop_derived", "_revoke_authorities", "_recreate_derived", "_validate_schema"],
-    ids=["drop", "ledger_writes", "recreate", "checks"],
+    [
+        "_drop_derived",
+        "migrate_ledger",
+        "_revoke_authorities",
+        "_recreate_derived",
+        "_validate_schema",
+    ],
+    ids=["drop", "migrate_ledger", "ledger_writes", "recreate", "checks"],
 )
 def test_a_failure_in_the_transaction_rolls_it_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
 ) -> None:
     path = _fresh(tmp_path / "data")
     _another_build(path)
-    real = getattr(regeneration, phase)
-
-    def failing(*arguments: Any) -> Any:
-        real(*arguments)
-        raise sqlite3.OperationalError("disk I/O error")
-
-    monkeypatch.setattr(regeneration, phase, failing)
+    _fails_in_the_transaction(
+        monkeypatch, phase, sqlite3.OperationalError("disk I/O error")
+    )
     before = _sha(path)
     status, lines, _ = _run(path)
     assert (status, lines) == (1, [cli.REFUSALS[regeneration.Refusal.ROLLED_BACK]])
@@ -1424,7 +1473,7 @@ class _Session:
         self.inspection = inspection
         self.written: list[str] = []
 
-    def derived_is_current(self) -> bool:
+    def up_to_date(self) -> bool:
         return False
 
     def free_space(self) -> tuple[int, int]:

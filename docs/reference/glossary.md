@@ -16,9 +16,9 @@ report ID returns that named report.
 
 **Exact current schema**
 The only database shape the application accepts. Earlier schemas are refused
-before any change. Same-schema report replay works; there is no migration,
-import or compatibility parser. See the
-[clean-state rule](compatibility.md#the-clean-state-rule).
+before any change. Same-schema report replay works. Only `regenerate-derived`
+migrates, and only the ledger; there is no import or compatibility parser.
+See the [clean-state rule](compatibility.md#the-clean-state-rule).
 
 **Local claim**
 A source-attributed field fact about the item: EPUB package metadata or

@@ -19,8 +19,8 @@ In short:
 - Every external input (provider response, media file, sidecar, image, model
   output, stored row) is hostile: bounded, strictly decoded and reduced to
   closed typed facts before use. Failures are value-free.
-- Persisted state is accepted only in its exact current schema. Nothing is
-  migrated or repaired.
+- Persisted state is accepted only in its exact current schema. Only
+  `regenerate-derived` migrates, and only the ledger.
 
 ## Assets and actors
 
@@ -514,7 +514,7 @@ of the owner's latest answer per field, covers included, which keeps Automatic
 off that field of the work until Resume automatic handling completes after its
 scan succeeds, or a withdrawal leaves no earlier answer
 ([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
-[ADR-0108](decisions/0108-ledger-and-derived-state.md), proposed).
+[ADR-0108](decisions/0108-ledger-and-derived-state.md)).
 
 The server carries an answer to a later case or episode of the same book that
 asks the same question, within a release or after a regeneration. The carried
@@ -663,25 +663,24 @@ no owner decision, plan or write.
 
 ### Schema admission
 
-Every store follows
-[the clean-state rule](../reference/compatibility.md#the-clean-state-rule):
-anything but absence or the exact current schema fails closed before any
-mutation. Admission does not rely on SQLite alone:
+A store fails closed before any mutation on anything
+[the clean-state rule](../reference/compatibility.md#the-clean-state-rule)
+does not admit. Each accepted gap below needs write access to the volume:
 
 - The application database reads `ledger_meta` first: derived state from
-  another build refuses and names `regenerate-derived`; no record or another
-  ledger format needs a clean rebuild. First-boot detection passes both
-  refusals through.
+  another build, or an earlier ledger this build migrates, refuses and names
+  `regenerate-derived`; no record or any other format needs a clean rebuild.
+  First-boot detection passes both refusals through.
+- `regenerate-derived` checks an earlier ledger's rows only on a migrated
+  scratch copy, so a value only the newer format admits is accepted.
 - A read-only open re-evaluates every CHECK constraint, because
   SQLite's read-only integrity check skips them. A CHECK it cannot extract
-  refuses.
-- The permission-readiness check misses a CHECK-breaking row, an
-  accepted gap since adding one needs write access to the volume.
-- Browse and attention facts are compared with their documents at open for
-  every current row; any difference refuses the database
+  refuses. The permission-readiness check misses a CHECK-breaking row.
+- Every current row's browse and attention facts are compared with their
+  documents at open; any difference refuses
   ([ADR-0084](decisions/0084-persisted-attention-facts.md)). No product code
   writes with `REPLACE`, which would skip delete triggers.
-- Ledger rows are always checked against ledger tables, and a live write
+- Ledger rows are checked against ledger tables, and a live write
   plan still needs its derived rows, except a subtitle companion under
   `regenerate-derived`
   ([ADR-0108](decisions/0108-ledger-and-derived-state.md)). While the derived
@@ -694,9 +693,8 @@ mutation. Admission does not rely on SQLite alone:
   regeneration removes them, nothing checks a copy against its source, nor
   any case, proposal, comparison, selection or report a ledger row names; a
   description's chosen form is never checked, and an answer's episode only
-  against the answer it replaced. Each is an accepted gap, since changing one
-  needs write access to the volume. The record of the owner's answers must
-  equal its recomputation from them.
+  against the answer it replaced. The record of the owner's answers must equal
+  its recomputation.
 
 Database-root crash recovery is explicit, runs under an exclusive lock and
 rolls back a private journal on verified copies first; unknown or malformed
@@ -739,12 +737,13 @@ None of these has target-write, media-write or startup authority.
 - The qualification-state bridge (`scripts/qualification_state_bridge.py`)
   is test-state tooling with no credential, network or provider authority,
   and never writes its source.
-- The owner-run offline `regenerate-derived` command
+- The owner-run `regenerate-derived` command
   ([ADR-0108](decisions/0108-ledger-and-derived-state.md)) is the one tool
   that writes the canonical database. It runs on a stopped volume under the
-  binding's lock, never contacts Audiobookshelf or a provider, verifies and
-  keeps a backup before its one transaction, and replaces only derived state,
-  apart from revoking authority, repointing cover pointers and, with
+  binding's lock, never contacts Audiobookshelf or a provider, keeps a
+  verified backup before its one transaction, and replaces only derived state,
+  apart from migrating an earlier ledger, revoking authority, repointing cover
+  pointers and, with
   `--retire-pending`, closing writes not yet sent. Its report names items by
   item id and library, never a title, path, value or credential.
 - [Reviewer cost measurement](../development/reviewer-cost-measurement.md)

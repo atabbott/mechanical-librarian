@@ -155,7 +155,9 @@ class Inspection:
 class RegenerationSession(Protocol):
     """The admitted database, held exclusively until `close`."""
 
-    def derived_is_current(self) -> bool: ...
+    def up_to_date(self) -> bool:
+        """No migration is pending and derived state is this build's."""
+        ...
 
     def free_space(self) -> tuple[int, int]:
         """Bytes free on the volume, counting a held restore point the run
@@ -266,7 +268,7 @@ def _run(
     retire_pending: bool,
     configuration: Callable[[], ApplicationConfiguration],
 ) -> Outcome:
-    if session.derived_is_current():
+    if session.up_to_date():
         return Outcome("nothing_to_do")
     inspection = session.inspect(configured_libraries(configuration, session))
     free, needed = session.free_space()

@@ -1,13 +1,15 @@
-"""The frozen synthetic v1 ledger (ADR-0108, "Ledger format and migrations").
+"""The frozen synthetic ledgers (ADR-0108, "Ledger format and migrations").
 
-`tests/fixtures/ledger/v1.sqlite3` is what `tests/support/ledger_fixture.py`
-generates: a ledger written through the product's own writers, then
+`tests/fixtures/ledger/v<n>.sqlite3` is, for each ledger format `n` up to this
+build's, what `tests/support/ledger_fixture.py` generated at that format: a
+ledger written through the product's own writers, then
 `regenerate-derived --retire-pending`, so it sits at epoch 1 beside an empty
-derived partition. A later build must open it (after a regeneration where its
-derived partition differs), decode every ledger document in it and encode each
-back byte for byte, and the generator must still write a ledger of the same
-shape (`ledger_projection`). C6's first migration starts from this file, whose
-bytes are pinned.
+derived partition. Each file's bytes are pinned. This build must open the
+current one (after a regeneration where its derived partition differs),
+decode every ledger document in it and encode each back byte for byte, and
+the generator must still write a ledger of the same shape
+(`ledger_projection`); every earlier one must migrate through the command to
+a ledger of this build whose documents re-encode.
 """
 
 from __future__ import annotations
@@ -19,11 +21,13 @@ from pathlib import Path
 
 import pytest
 
-from mechanical_librarian.adapters.persistence import schema
+from mechanical_librarian.adapters.persistence import ledger_migrations, schema
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import (
     DerivedRegenerationRequired,
+    LedgerMigrationRequired,
 )
+from tests.support.ledger_chain import chain, identity
 from tests.support.ledger_documents import DOCUMENTS, missing_documents
 from tests.support.ledger_fixture import (
     FIXTURE,
@@ -50,8 +54,11 @@ EMPTY = frozenset(
         "retained_cover_removals",
     }
 )
-# `tests/fixtures/ledger/v1.sqlite3`, as written by `write_fixture`.
-FIXTURE_SHA256 = "1b939510faf6b9661a980d8f867a92df1121096c1390ac4d4775085a2ba6869f"
+# {ledger format: `tests/fixtures/ledger/v<format>.sqlite3`, as written by
+# `write_fixture` at that format}
+FIXTURE_SHA256 = {
+    1: "1b939510faf6b9661a980d8f867a92df1121096c1390ac4d4775085a2ba6869f",
+}
 # Ledger rows a regeneration without the flag writes (its record and every
 # current authority revoked); every other ledger row stays.
 _WRITTEN_BY_A_RUN = frozenset(
@@ -59,11 +66,15 @@ _WRITTEN_BY_A_RUN = frozenset(
 )
 
 
-def _copy(root: Path) -> Path:
-    """A copy of the fixture in a private folder, as `/data` is."""
+def _fixture(version: int) -> Path:
+    return FIXTURE.parent / f"v{version}.sqlite3"
+
+
+def _copy(root: Path, fixture: Path = FIXTURE) -> Path:
+    """A copy of a fixture in a private folder, as `/data` is."""
     root.mkdir(mode=0o700)
     path = root / "application.sqlite3"
-    shutil.copyfile(FIXTURE, path)
+    shutil.copyfile(fixture, path)
     path.chmod(0o600)
     return path
 
@@ -224,10 +235,56 @@ def test_the_command_regenerates_the_fixture_under_an_earlier_derived_partition(
     assert [row[2] for row in after["derived_regenerations"]] == [1, 2]
 
 
-def test_the_fixture_is_the_frozen_file() -> None:
-    """The fixture's bytes, pinned: it never changes for its format version
-    (a later ledger is a migration from it), so a rewrite is deliberate."""
-    assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == FIXTURE_SHA256
+def test_every_ledger_version_has_its_frozen_fixture() -> None:
+    """One fixture per format up to this build's, each the frozen file: it
+    never changes for its format (a later ledger is a migration from it), so
+    a rewrite is deliberate."""
+    versions = range(1, schema.LEDGER_FORMAT_VERSION + 1)
+    assert sorted(FIXTURE.parent.glob("v*.sqlite3")) == sorted(
+        _fixture(version) for version in versions
+    )
+    assert {
+        version: hashlib.sha256(_fixture(version).read_bytes()).hexdigest()
+        for version in versions
+    } == FIXTURE_SHA256
+
+
+def _migrates_through_the_command(fixture: Path, root: Path) -> None:
+    """A copy of an earlier fixture, through the real command: startup names
+    it, the run migrates it to a ledger holding exactly this build's ledger
+    objects, every document re-encodes byte for byte, and it opens."""
+    path = _copy(root, fixture)
+    with pytest.raises(LedgerMigrationRequired):
+        open_repository(path, create=False)
+    regenerate(path, at=2_000)
+    connection = sqlite3.connect(path)
+    try:
+        ledger, _ = schema._partition(schema._creation_order(connection))
+        assert set(ledger) == set(schema.build_partition().ledger_objects)
+        assert connection.execute(
+            "SELECT ledger_format_version FROM ledger_meta"
+        ).fetchone() == (schema.LEDGER_FORMAT_VERSION,)
+    finally:
+        connection.close()
+    assert _not_byte_for_byte(path) == []
+    open_repository(path, create=False).close()
+
+
+def test_each_older_fixture_migrates_through_the_command(tmp_path: Path) -> None:
+    """Every older fixture the chain reaches; one behind a **Clean rebuild
+    required** version has no step and is refused at startup instead."""
+    for version in range(1, schema.LEDGER_FORMAT_VERSION):
+        if ledger_migrations.steps_from(version, schema.LEDGER_FORMAT_VERSION):
+            _migrates_through_the_command(_fixture(version), tmp_path / f"v{version}")
+
+
+def test_an_older_fixture_migrates_through_a_synthetic_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The generic test's own proof, before any real step exists: this
+    build as format 2 with an identity step, and v1 as the older fixture."""
+    chain(monkeypatch, identity(1), current=2)
+    _migrates_through_the_command(FIXTURE, tmp_path / "v1")
 
 
 def test_the_generator_writes_a_ledger_of_the_frozen_shape(tmp_path: Path) -> None:
