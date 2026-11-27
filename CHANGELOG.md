@@ -47,6 +47,9 @@ brackets are GitHub issues.
   with the comparison notice, spaced from them, instead of touching the tabs
   between the selected tab and its field. Evidence and Find this book now
   line up under Needs you and Automatic (#2057).
+- With enlarged text on a wide window, a work's Evidence, Find this book and
+  More start flush with the cover under the title, without a stray rule and
+  indent at their left (found reviewing #2057).
 - A screen reader now hears each cover card's title, its reason line when it
   shows one, and Recommended or Suggested when the card is, as well as the
   action the card's name already gave (#1837).

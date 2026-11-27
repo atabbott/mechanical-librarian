@@ -1384,7 +1384,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 
 /* Read-only per-work diagnostics: History keeps a quiet reading column while
    Evidence may widen for field comparison; neither carries Library controls. */
-.selected-work-diagnostics { display:flex; align-items:center; gap:.75rem; padding-left:.9rem; border-left:1px solid var(--line); }
+.selected-work-diagnostics { display:flex; align-items:center; gap:.75rem; }
 .selected-work-diagnostics a { display:inline-flex; min-height:44px; align-items:center; color:var(--accent-strong); font-size:.76rem; font-weight:700; text-underline-offset:.2em; }
 .diagnostic-route { display:grid; width:min(100%,98rem); min-width:0; gap:clamp(1.4rem,4vw,2.6rem); margin-inline:auto; }
 .diagnostic-back-to-work { display:inline-flex; min-height:44px; align-items:center; justify-self:start; gap:.45rem; padding:.45rem .7rem; border:1px solid var(--line-strong); border-radius:.45rem; color:var(--accent-strong); background:var(--surface); font-size:.78rem; font-weight:700; text-decoration:none; }
@@ -1534,7 +1534,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .selected-work-header { grid-template-columns:auto minmax(0,1fr) auto auto; padding-bottom:17px; }
 }
 @media (max-width:1199px) {
-  .selected-work-diagnostics { grid-column:1 / -1; width:100%; padding:.65rem 0 0; border-top:1px solid var(--line); border-left:0; }
+  .selected-work-diagnostics { grid-column:1 / -1; width:100%; padding:.65rem 0 0; border-top:1px solid var(--line); }
 }
 @media (max-width:390px) {
   .diagnostic-route { gap:1.25rem; }
