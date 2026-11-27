@@ -520,8 +520,8 @@ function CoverCardText({
   selected,
   actionableCandidate,
   progress,
-  matchId,
-  reasonId,
+  reason,
+  describedIds,
 }: {
   candidate: CoverCandidate
   label: string
@@ -530,9 +530,10 @@ function CoverCardText({
   selected: boolean
   actionableCandidate: boolean
   progress: ChoiceProgress
-  /** Ids the card button's description names: the match line and the reason (#1837). */
-  matchId: string
-  reasonId: string
+  /** The reason line, computed once with the card's description (#1837). */
+  reason: string | null
+  /** Ids of the lines the card button's description names (#1837). */
+  describedIds: { mark: string; match: string; reason: string }
 }) {
   const recommended = candidate.reference === recommendedReference
   // The original a switch replaced is this book's own cover from before, so
@@ -543,18 +544,20 @@ function CoverCardText({
   const contradicted =
     candidate.contradiction !== undefined ||
     (candidate.incumbent && stageReason === 'current_contradicted')
-  const reason = coverCardReason(candidate, context, recommended && !suggesting)
+  // A proposed cover's sources show below, so only the current one is labelled.
+  const mark = `${candidate.incumbent ? label : ''}${
+    recommended
+      ? `${candidate.incumbent ? ' · ' : ''}${suggesting ? 'Suggested' : 'Recommended'}`
+      : ''
+  }`
   return (
     <span>
       <small>
-        {/* A proposed cover's sources show below, so only the current one is labelled. */}
-        {candidate.incumbent ? label : null}
-        {recommended
-          ? `${candidate.incumbent ? ' · ' : ''}${suggesting ? 'Suggested' : 'Recommended'}`
-          : ''}
+        {/* One span, so the small line's flex gap stays where it was. */}
+        {mark ? <span id={describedIds.mark}>{mark}</span> : null}
         {selected && actionableCandidate ? <b className="choice-chosen">Your choice</b> : null}
       </small>
-      <strong id={matchId}>
+      <strong id={describedIds.match}>
         {retained
           ? coverSourceLabels.retained
           : contradicted
@@ -590,7 +593,7 @@ function CoverCardText({
       )}
       {context?.rationale ? <em>{context.rationale}</em> : null}
       {reason === null ? null : (
-        <span id={reasonId} className="choice-recommendation">
+        <span id={describedIds.reason} className="choice-recommendation">
           {reason}
         </span>
       )}
@@ -643,12 +646,21 @@ function CoverCard({
   // The name says what pressing does; the description says what the card is
   // and why, which a sighted owner reads on the card itself (#1837).
   const textId = useId()
-  const matchId = `${textId}-match`
-  const reasonId = `${textId}-reason`
-  const describedBy =
-    coverCardReason(candidate, context, recommended && !shape.suggesting) === null
-      ? matchId
-      : `${matchId} ${reasonId}`
+  const describedIds = {
+    mark: `${textId}-mark`,
+    match: `${textId}-match`,
+    reason: `${textId}-reason`,
+  }
+  const reason = coverCardReason(candidate, context, recommended && !shape.suggesting)
+  // The name already says Current cover, so only a Recommended or Suggested
+  // mark is named: it is the one thing on a suggested card that says so.
+  const describedBy = [
+    recommended ? describedIds.mark : null,
+    describedIds.match,
+    reason === null ? null : describedIds.reason,
+  ]
+    .filter((id) => id !== null)
+    .join(' ')
   return (
     <article
       className={`cover-choice${open ? ' is-evidence-open' : ''}${candidate.matchState === 'match_not_confirmed' && !retained ? ' is-unconfirmed' : ''}`}
@@ -692,8 +704,8 @@ function CoverCard({
           selected={selected}
           actionableCandidate={actionableCandidate}
           progress={progress}
-          matchId={matchId}
-          reasonId={reasonId}
+          reason={reason}
+          describedIds={describedIds}
         />
       </button>
       <CoverObservationEvidence

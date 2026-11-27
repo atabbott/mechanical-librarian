@@ -376,6 +376,16 @@ describe('Covers view (#1633)', () => {
                       ordinal: 2,
                       sourceKinds: ['hardcover' as const],
                     },
+                    {
+                      ...candidate('6', false),
+                      deterministicRank: null,
+                      deterministicRankKey: null,
+                      identity: null,
+                      manualEligible: true,
+                      matchState: 'match_not_confirmed' as const,
+                      ordinal: 3,
+                      sourceKinds: ['inventaire' as const],
+                    },
                   ],
                 },
               }
@@ -388,8 +398,11 @@ describe('Covers view (#1633)', () => {
       name: 'Which cover should this work use?',
     })
     const cards = within(group).getAllByRole('radio')
-    expect(cards.length).toBeGreaterThanOrEqual(3)
+    expect(cards.length).toBeGreaterThanOrEqual(4)
     for (const card of cards) {
+      // Every id the description names is on the page (#1837).
+      for (const id of (card.getAttribute('aria-describedby') ?? '').split(' '))
+        expect(document.getElementById(id), id).not.toBeNull()
       const reason = card.querySelector('.choice-recommendation')
       expect(card).toHaveAccessibleDescription(
         [card.querySelector('strong'), reason]
@@ -402,6 +415,9 @@ describe('Covers view (#1633)', () => {
     ).toHaveAccessibleDescription(
       'Same book · recording not confirmed From the matched book, not a confirmed recording.',
     )
+    expect(
+      within(group).getByRole('radio', { name: /Inventaire cover/u }),
+    ).toHaveAccessibleDescription('Match not confirmed')
   })
 
   it('records one tap as the choice, opens the next book and counts again', async () => {
