@@ -1380,12 +1380,21 @@ def test_hardcover_is_handed_exactly_the_lanes_it_serves() -> None:
         companion=_companion(),
     )
     kinds = {lane.kind for lane in plan.lanes}
-    assert kinds == {ProviderQueryKind.ASIN, ProviderQueryKind.ISBN}
+    # The title-and-author fallback beside the local ASIN (#1879).
+    assert kinds == {
+        ProviderQueryKind.ASIN,
+        ProviderQueryKind.ISBN,
+        ProviderQueryKind.WORK,
+    }
     hardcover = companion_binding_plan(plan, "hardcover")
     assert [lane.kind for lane in hardcover.lanes] == [ProviderQueryKind.ISBN]
     audible = companion_binding_plan(plan, "audible_catalog")
-    assert {lane.kind for lane in audible.lanes} == {ProviderQueryKind.ASIN}
-    # Without a companion lane Hardcover's plan is untouched.
+    assert {lane.kind for lane in audible.lanes} == {
+        ProviderQueryKind.ASIN,
+        ProviderQueryKind.WORK,
+    }
+    # Without a companion lane Hardcover is handed the plan without the
+    # fallback: only the ASIN lanes it was handed before #1879.
     plain = audiobook_discovery_plan(
         target,
         (
@@ -1395,7 +1404,9 @@ def test_hardcover_is_handed_exactly_the_lanes_it_serves() -> None:
         ),
         audio=single_track_audio_facts(),
     )
-    assert companion_binding_plan(plain, "hardcover") is plain
+    assert companion_binding_plan(plain, "hardcover").lanes == tuple(
+        lane for lane in plain.lanes if lane.kind is ProviderQueryKind.ASIN
+    )
 
 
 def test_editions_that_disagree_admit_nothing_through_the_gate() -> None:

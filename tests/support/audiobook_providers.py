@@ -168,8 +168,9 @@ def fed_asin_plan(asin: str = "B0SYNE7P1K") -> MetadataDiscoveryPlan:
 def with_asin_lane(plan: MetadataDiscoveryPlan) -> MetadataDiscoveryPlan:
     """`plan` with one embedded-ASIN product lane added beside its own lanes.
 
-    No plan the product builds mixes the two -- an audiobook's lanes are ASIN
-    or work and an ebook's carry no ASIN -- so this only proves that an adapter
+    An audiobook plan mixes the two only where its title-and-author fallback
+    rides beside its own ASIN (#1879), which only the Audible catalogue is
+    handed; an ebook's carries no ASIN. So this only proves that an adapter
     serving one kind leaves its answer to the other as it was.
     """
     product = asin_plan()
