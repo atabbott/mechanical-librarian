@@ -27,9 +27,15 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.domain.audio_inspection import (
     MAX_AUDIO_TRACKS,
+    MAX_CANONICAL_CHARACTERS,
+    MAX_CHAPTER_TITLE_CHARACTERS,
+    MAX_CHAPTERS,
+    MAX_DESCRIPTION_CHARACTERS,
     MAX_FACTS,
     MULTI_FILE_WALL_SECONDS,
+    AudioChapter,
     AudioChapterComposition,
+    AudioEmbeddedCover,
     AudioEvidenceSurface,
     AudioInspection,
     AudioInspectionFact,
@@ -43,7 +49,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     local_claim_runtime_seconds,
 )
 from mechanical_librarian.domain.identifiers import Fingerprint
-from mechanical_librarian.domain.metadata_report import canonical_json
+from mechanical_librarian.domain.metadata_report import MAX_REPORT_BYTES, canonical_json
 
 # No target record and no own-file list: association fails closed.
 _NO_TARGET = AudioAssociationContext(None, (), None)
@@ -435,6 +441,82 @@ def test_a_composed_claim_set_past_its_ceiling_is_a_budget_terminal(
         )
 
     assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+
+
+class _MaximalChild:
+    """A child answering 1,024 maximal chapters and ``count`` maximal facts."""
+
+    def __init__(self, count: int) -> None:
+        self._count = count
+
+    def __call__(
+        self, descriptor: int, expected_source: Fingerprint, limits: object, **_: object
+    ) -> AudioInspection:
+        wide = "\U0001d11e"
+        answer = AudioInspection(
+            AudioInspectionOutcome.SUCCESS,
+            expected_source,
+            tuple(
+                AudioInspectionFact(
+                    AudioInspectionField.DESCRIPTION,
+                    expected_source,
+                    f"{index:03d}{wide * (MAX_DESCRIPTION_CHARACTERS - 3)}",
+                    f"{index:03d}{wide * (MAX_CANONICAL_CHARACTERS - 3)}",
+                    f"{index:03d}{wide * (MAX_DESCRIPTION_CHARACTERS - 3)}",
+                    AudioEvidenceSurface.ID3_USER_TEXT,
+                )
+                for index in range(self._count)
+            ),
+            tuple(
+                AudioChapter(
+                    index + 1, index, index + 1, wide * MAX_CHAPTER_TITLE_CHARACTERS
+                )
+                for index in range(MAX_CHAPTERS)
+            ),
+            AudioEmbeddedCover(True, AudioEvidenceSurface.CONTAINER_STREAM),
+            True,
+        )
+        # Every answer here is one the child's own protocol admits.
+        return AudioInspection.from_json(answer.to_json())
+
+
+@pytest.mark.parametrize("count", [136, 140], ids=["136-facts", "140-facts"])
+def test_claims_that_cannot_fit_beside_the_audio_section_are_a_budget_terminal(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch, count: int
+) -> None:
+    """The report could never hold them, so the item fails alone (#1798).
+
+    Each answer fits the child's bound; its claims and its chapters together
+    are past the retained report's, which report construction would refuse.
+    """
+    monkeypatch.setattr(
+        isolated_audio, "run_audio_inspector_child", _MaximalChild(count)
+    )
+
+    with pytest.raises(AudioItemInspectionError) as raised:
+        IsolatedAudioInspector().inspect(
+            mount, _tracks(mount, 1), _MAXIMUM, association=_NO_TARGET
+        )
+
+    assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+
+
+def test_claims_that_fit_beside_the_audio_section_still_succeed(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same item with fewer facts reaches a report that holds it."""
+    monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", _MaximalChild(120))
+
+    result = IsolatedAudioInspector().inspect(
+        mount, _tracks(mount, 1), _MAXIMUM, association=_NO_TARGET
+    )
+
+    assert len(result.claims) == 120
+    assert (
+        len(canonical_json([claim.to_data() for claim in result.claims]).encode())
+        + len(canonical_json(result.audio.to_data()).encode())
+        <= MAX_REPORT_BYTES
+    )
 
 
 def test_the_composed_item_gives_the_runtime_gate_one_value_to_elect(

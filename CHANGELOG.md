@@ -953,6 +953,11 @@ brackets are GitHub issues.
   "Cancelling sign-in…" while the reviewer step's Codex buttons work. Pending
   buttons in Settings, Policy, a field's own value and Activity keep a
   full-strength focus outline too (#1698).
+- An audiobook file with the most chapters and tag text Mechanical Librarian
+  reads no longer fails inspection: the facts read last are left out until the
+  file's evidence fits. An audiobook whose facts cannot fit in its report
+  beside its chapters now fails on its own, as one too large to read as one
+  book, instead of stopping the run (#1798).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

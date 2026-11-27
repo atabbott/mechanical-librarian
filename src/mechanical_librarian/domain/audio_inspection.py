@@ -49,7 +49,11 @@ AUDIO_LIMIT_PROFILE = "audio-inspection-limits-v1"
 # characters serializes to about 1.2 MB before a single fact is added, so any
 # tighter cap refuses evidence this vocabulary admits and loses the whole
 # inspection.  A larger cap would be no use either: an audio section the
-# retained report cannot hold is evidence that can never be published.
+# retained report cannot hold is evidence that can never be published.  The
+# chapters and association text fit it on their own, but not with the most
+# facts beside them, so an answer over it leaves out its readings without a
+# byte-order mark and then the facts it read last until it fits (#1796,
+# #1798).  The trim is not recorded: a withheld fact is absent.
 MAX_PUBLIC_REPORT_BYTES = 2_097_152
 MAX_CHAPTERS = 1_024
 MAX_CHAPTER_TITLE_CHARACTERS = 280
@@ -1586,27 +1590,69 @@ class AudioInspection:
 
         Readings without a byte-order mark are shadow evidence (#1796), so they
         are the first thing an answer gives up: one too large with them is
-        written again with every one removed and marked ``child_output``.  Only
-        an answer too large without them fails, as it did before they existed.
+        written again with every one removed and marked ``child_output``.  An
+        answer still too large then gives up the facts it read last (#1798):
+        the fact budget is spent on the file's own facts and then on each
+        sidecar reading in order, so the facts kept are the longest prefix of
+        that order that fits, which is what a smaller budget would have kept.
+        Nothing records the trim; a withheld fact is simply absent.  Only an
+        answer too large with no facts at all fails, which the bounds on
+        chapters and association text never allow.
         """
         serialized = self.to_json()
-        if len(serialized.encode("utf-8")) <= maximum or all(
-            value.stripped is None for value in self.sidecars
-        ):
+        if len(serialized.encode("utf-8")) <= maximum:
             return serialized
-        return dataclasses.replace(
-            self,
-            sidecars=tuple(
-                value
-                if value.stripped is None
-                else dataclasses.replace(
-                    value,
-                    stripped=None,
-                    stripped_limit=AudioSidecarStrippedLimit.CHILD_OUTPUT,
-                )
-                for value in self.sidecars
-            ),
-        ).to_json()
+        plain = self
+        if any(value.stripped is not None for value in self.sidecars):
+            plain = dataclasses.replace(
+                self,
+                sidecars=tuple(
+                    value
+                    if value.stripped is None
+                    else dataclasses.replace(
+                        value,
+                        stripped=None,
+                        stripped_limit=AudioSidecarStrippedLimit.CHILD_OUTPUT,
+                    )
+                    for value in self.sidecars
+                ),
+            )
+            serialized = plain.to_json()
+            if len(serialized.encode("utf-8")) <= maximum:
+                return serialized
+        total = len(plain.facts) + sum(len(value.facts) for value in plain.sidecars)
+        if total == 0:
+            return serialized
+        # The whole order is known not to fit, so search the shorter prefixes:
+        # a prefix that fits is never followed by a shorter one that does not.
+        low, high = 0, total - 1
+        while low < high:
+            middle = (low + high + 1) // 2
+            if len(plain._keeping_facts(middle).to_json().encode("utf-8")) <= maximum:
+                low = middle
+            else:
+                high = middle - 1
+        return plain._keeping_facts(low).to_json()
+
+    def _keeping_facts(self, kept: int) -> AudioInspection:
+        """This inspection with only the first ``kept`` facts of its budget order.
+
+        The order is the one the child spends its fact budget in: the file's
+        own facts, then each sidecar reading's facts in turn (#1481).  Readings
+        without a byte-order mark come last in that order and are removed
+        before this is reached, so an inspection that still has one is refused
+        rather than cut: a cut one could equal its plain reading.
+        """
+        if any(value.stripped is not None for value in self.sidecars):
+            raise ValueError("audio inspection still has stripped readings")
+        facts = self.facts[:kept]
+        remaining = kept - len(facts)
+        sidecars = []
+        for value in self.sidecars:
+            reading = value.facts[:remaining]
+            remaining -= len(reading)
+            sidecars.append(dataclasses.replace(value, facts=reading))
+        return dataclasses.replace(self, facts=facts, sidecars=tuple(sidecars))
 
     @classmethod
     def from_json(cls, serialized: str) -> "AudioInspection":

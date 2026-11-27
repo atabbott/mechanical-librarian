@@ -319,4 +319,7 @@ the association text never leaves the inspector. Audiobookshelf's own
 folder, are digested and never handed to the child.
 
 `audio-inspection-v6` adds, per sidecar, whether it started with a byte-order
-mark and its reading without that mark when the two differ (#1796).
+mark and its reading without that mark when the two differ (#1796). An answer
+over the child's byte bound gives up those readings first and then, without
+recording it, the facts it read last, the file's own facts going last, until it
+fits (#1798).
