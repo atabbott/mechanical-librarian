@@ -17,7 +17,10 @@ from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
     AudibleCatalogMetadataProvider,
     AudibleCatalogPacer,
 )
-from mechanical_librarian.adapters.providers.retry_safety import ProviderRequestPacer
+from mechanical_librarian.adapters.providers.retry_safety import (
+    ProviderRequestPacer,
+    _DiscoveryRequestLedger,
+)
 from mechanical_librarian.adapters.providers.visible_text import read_description
 from mechanical_librarian.application import metadata_report as m
 from mechanical_librarian.application.metadata_report import (
@@ -3198,3 +3201,51 @@ def test_a_failed_own_lookup_never_opens_the_search(
     assert status is observation.lanes[0].status
     # The search it never opened is not planned work in the accounting.
     assert 1 == observation.request_accounting.logical_requests
+
+
+def test_an_opened_fallback_keeps_the_alternative_retry_reserve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both fallback searches register together, as in a plain plan (#1879)."""
+    plan = m.audiobook_discovery_plan(
+        audio_target(_ASSERTED, _AUTHORS),
+        (
+            *local_claims(_WRONG_ASIN),
+            target_title_claim(_ASSERTED),
+            local_runtime_claim("58244.201"),
+        ),
+        audio=_alternative_audio(),
+    )
+    work = tuple(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK)
+    assert 2 == len(work)
+    assert any(lane.title_basis is not None for lane in work)
+    reserves: list[int] = []
+    allows_retry = _DiscoveryRequestLedger.allows_retry
+
+    def spy(self: _DiscoveryRequestLedger, attempts: int, ceiling: int) -> bool:
+        reserves.append(len(self._pending))
+        return allows_retry(self, attempts, ceiling)
+
+    monkeypatch.setattr(_DiscoveryRequestLedger, "allows_retry", spy)
+
+    def throttled_search() -> Callable[[httpx.Request], httpx.Response]:
+        searches: list[str] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith(f"/{_WRONG_ASIN}"):
+                return _json({"message": "no"}, 404)
+            searches.append(request.url.params["title"])
+            if searches == [_ASSERTED]:
+                return _json({"message": "slow down"}, 429, **{"retry-after": "1"})
+            if request.url.params["title"] == _ASSERTED:
+                return _json(_search_page())
+            return _json(_work_page(_ALTERNATIVE))
+
+        return handle
+
+    _observed(throttled_search(), plan)
+    beside_asin, reserves[:] = list(reserves), []
+    _observed(throttled_search(), replace(plan, lanes=work))
+
+    assert reserves
+    assert reserves == beside_asin

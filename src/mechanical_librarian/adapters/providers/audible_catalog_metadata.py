@@ -353,13 +353,17 @@ class AudibleCatalogMetadataProvider(SchemaRejections):
                 if lane in fallback:
                     if not asin_fallback_permitted(plan, results):
                         continue
-                    ledger.register(
-                        kind=lane.kind.value,
-                        matched_family=lane.matched_family,
-                        title=lane.title,
-                        authors=lane.authors,
-                        projection=_RESPONSE_GROUPS,
-                    )
+                    # Every fallback lane is registered once the gate opens, so
+                    # the alternative keeps its retry reserve as in a plain plan.
+                    for pending in fallback:
+                        ledger.register(
+                            kind=pending.kind.value,
+                            matched_family=pending.matched_family,
+                            title=pending.title,
+                            authors=pending.authors,
+                            projection=_RESPONSE_GROUPS,
+                        )
+                    fallback = ()
                 if lane.title_basis is not None and not alternative_work_lane_permitted(
                     plan,
                     next(
