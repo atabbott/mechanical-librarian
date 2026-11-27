@@ -5,6 +5,7 @@ merge on reopen, and publication preconditions.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import tempfile
@@ -34,6 +35,9 @@ from mechanical_librarian.adapters.providers.google_books_metadata import (
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
+from mechanical_librarian.application.batch import BatchSelection, CatalogueSnapshot
+from mechanical_librarian.application.batch_run import ForegroundBatchRun
+from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
     AUDIOBOOK_DISPATCH_ADAPTERS,
     EBOOK_DISPATCH_ADAPTERS,
@@ -87,6 +91,9 @@ from mechanical_librarian.application.provider_recovery_evidence import (
 from mechanical_librarian.application.provider_recovery_policy import (
     provider_recovery_decision,
 )
+from mechanical_librarian.application.review_pipeline import (
+    audio_inspection_failure_code,
+)
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
@@ -122,6 +129,7 @@ from mechanical_librarian.domain.metadata_policy import (
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_REPORT_BYTES,
     TARGET_ADMISSION_BASIS,
     AudioDiscoveryTitle,
     ClaimKind,
@@ -147,6 +155,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     audio_set_content_digest,
     audio_set_identity,
+    canonical_json,
     default_target_fields,
     finalize_candidate_comparisons,
     normalize_title,
@@ -1660,6 +1669,145 @@ def _audiobook_service(
         limits=limits or ReportLimits(),
         audio_inspector=audio_inspector,
     )
+
+
+def _wide_description_result(count: int):
+    """1,024 maximal chapters and ``count`` maximal description claims."""
+    wide = "\U0001d11e"
+    return audio_result(
+        tuple(
+            (
+                ClaimKind.DESCRIPTION,
+                f"{index:03d}{wide * 509}",
+                "embedded_tag",
+                None,
+            )
+            for index in range(count)
+        ),
+        chapters=tuple(
+            AudioChapter(index + 1, index, index + 1, wide * 280)
+            for index in range(1_024)
+        ),
+        chapters_truncated=True,
+    )
+
+
+def _floor_bytes(result) -> int:
+    """The claims and the audio section alone, as the inspector measures them."""
+    return len(
+        canonical_json([claim.to_data() for claim in result.claims]).encode("utf-8")
+    ) + len(canonical_json(result.audio.to_data()).encode("utf-8"))
+
+
+@functools.cache
+def _most_claims_past_the_floor() -> int:
+    full = _wide_description_result(256)
+    sizes = [
+        len(canonical_json(claim.to_data()).encode("utf-8")) for claim in full.claims
+    ]
+    audio = len(canonical_json(full.audio.to_data()).encode("utf-8"))
+    # A list's bytes are its brackets, its members and the commas between them.
+    count = max(
+        count
+        for count in range(1, 257)
+        if 2 + sum(sizes[:count]) + count - 1 + audio <= MAX_REPORT_BYTES
+    )
+    assert _floor_bytes(_wide_description_result(count)) <= MAX_REPORT_BYTES
+    assert _floor_bytes(_wide_description_result(count + 1)) > MAX_REPORT_BYTES
+    return count
+
+
+def _too_large_to_report():
+    """The most claims the inspector's floor passes, which no report can hold."""
+    count = _most_claims_past_the_floor()
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    target = FakeTarget(
+        [
+            TargetSnapshot("audiobook", "Recorded title", (selected,)),
+            TargetSnapshot("audiobook", "Recorded title", (selected,)),
+        ]
+    )
+    repository = FakeReportRepository()
+    activity: list[str] = []
+    service = _audiobook_service(
+        target,
+        repository,
+        FakeAudioInspector(_wide_description_result(count)),
+        activity=activity,
+    )
+    return service, repository, activity
+
+
+def test_an_audiobook_too_large_to_report_fails_alone_as_its_budget() -> None:
+    """Past the inspector's floor, the whole report is measured (#1798)."""
+    service, repository, activity = _too_large_to_report()
+
+    with pytest.raises(AudioItemInspectionError) as raised:
+        service.run("item-1", 0)
+
+    assert raised.value.outcome is AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+    assert isinstance(raised.value.__cause__, ReportValueError)
+    assert audio_inspection_failure_code(raised.value.outcome) == (
+        "multi_file_budget_exceeded"
+    )
+    # The providers were asked; nothing was published and the handle is released.
+    assert "provider" in activity
+    assert repository.values == {}
+    assert repository.closed
+
+
+def test_a_batch_continues_past_an_audiobook_too_large_to_report() -> None:
+    def entry(item: str) -> CatalogueEntry:
+        return CatalogueEntry(
+            "primary",
+            "audio",
+            "library-id",
+            item,
+            1,
+            "title",
+            (),
+            True,
+            False,
+            "singular-supported",
+            "a" * 64,
+            "book.m4b",
+            "m4b",
+            "audiobooks",
+        )
+
+    def report(value: CatalogueEntry) -> tuple[str, tuple[ProviderStatus, ...]]:
+        if value.item_id == "item-2":
+            return ("report", ())
+        service, _, _ = _too_large_to_report()
+        return (service.run(value.item_id, 0), ())
+
+    lines: list[dict[str, object]] = []
+    result = ForegroundBatchRun(
+        snapshot=CatalogueSnapshot(1, "b" * 64, (entry("item-1"), entry("item-2"))),
+        selections=tuple(
+            BatchSelection(
+                "primary",
+                "audio",
+                "library-id",
+                item,
+                "a" * 64,
+                "singular-supported",
+                True,
+            )
+            for item in ("item-1", "item-2")
+        ),
+        projection=lambda: "p",
+        expected_projection="p",
+        current_entry=lambda *key: entry(key[-1][-1]),
+        report=report,
+        emit=lines.append,
+    ).run()
+
+    assert [line.get("outcome") for line in lines[:-1]] == [
+        "item_failed",
+        "completed",
+    ]
+    assert result is True
 
 
 def test_audiobook_publishes_local_evidence_and_dispatches_its_asin_plan() -> None:

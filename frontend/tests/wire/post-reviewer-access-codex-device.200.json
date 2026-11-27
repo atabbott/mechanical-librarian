@@ -16,7 +16,7 @@
         "host_headroom_bytes": 2147483648,
         "model": "gpt-5.6-sol",
         "reason": null,
-        "state": "waiting",
+        "state": "starting",
         "tier": null
       },
       "cost_evidence": {
@@ -88,7 +88,7 @@
     "device": {
       "expires_in_seconds": null,
       "failure": null,
-      "state": "waiting",
+      "state": "starting",
       "user_code": null,
       "verification_url": null
     }

@@ -38,6 +38,7 @@ from mechanical_librarian.application.provider_evidence import (
 )
 from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionField,
+    AudioInspectionOutcome,
     AudioObservation,
     AudioObservationKind,
     AudioSidecarDigest,
@@ -135,6 +136,7 @@ from mechanical_librarian.domain.metadata_report import (
     PublicationDateRelation,
     RecordingCorroboration,
     RecordingLookupHint,
+    ReportSizeError,
     ReportValueError,
     TargetDestination,
     TargetFacts,
@@ -5240,6 +5242,19 @@ class GenerateMetadataReport:
                 library_languages=self._library.languages,
                 owner_link=phase.facts,
             )
+        except ReportSizeError as error:
+            # Every drop the report makes for its byte bound is already spent,
+            # so what is left is the item's own evidence: ADR-0066 names a
+            # claim set over the report ceiling the item's budget failure, and
+            # it ends this item alone rather than the run (#1798).  The parent
+            # inspector refuses most such items before any provider is asked;
+            # this is the rest, measured on the whole report.  Nothing has
+            # been published, so only the repository handle is released.
+            failure = AudioItemInspectionError(
+                AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+            )
+            _release_repository(repository, failure)
+            raise failure from error
         except Exception as error:
             _release_repository(repository, error)
             raise

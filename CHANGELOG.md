@@ -47,6 +47,13 @@ brackets are GitHub issues.
   with the comparison notice, spaced from them, instead of touching the tabs
   between the selected tab and its field. Evidence and Find this book now
   line up under Needs you and Automatic (#2057).
+- A screen reader now hears each cover card's title, its reason line when it
+  shows one, and Recommended or Suggested when the card is, as well as the
+  action the card's name already gave (#1837).
+- A screen reader now hears what each metadata choice card shows besides its
+  value: Recommended, Your choice, Automatic's choice or Pinned, and its source
+  and recommendation lines, as well as the action the card's name already gave
+  (#2069).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).
@@ -958,6 +965,11 @@ brackets are GitHub issues.
   "Cancelling sign-in…" while the reviewer step's Codex buttons work. Pending
   buttons in Settings, Policy, a field's own value and Activity keep a
   full-strength focus outline too (#1698).
+- When an audiobook file's chapters, tags and sidecar files are too large for
+  the inspector's answer, the facts read last are now left out until it fits,
+  instead of the file failing as an internal error. An audiobook whose report
+  still cannot hold its facts fails on its own, as too large to read as one
+  book, instead of stopping the run (#1798).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

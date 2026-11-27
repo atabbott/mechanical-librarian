@@ -498,6 +498,20 @@ function PrepareCoverComparison({
 }
 // A card's words: its label and choice, its match, size and sources, and why
 // it can or cannot be chosen.
+// The card's reason line: why it cannot be chosen, or why it is recommended.
+// The card button names it in its description, so it is computed once (#1837).
+const coverCardReason = (
+  candidate: CoverCandidate,
+  context: CoverContext | undefined,
+  recommending: boolean,
+): string | null =>
+  !(candidate.incumbent || candidate.manualEligible) ||
+  candidate.matchState === 'match_not_confirmed' ||
+  candidate.matchReason === 'matched_book'
+    ? coverExcludedReason(candidate)
+    : recommending && context?.recommendationReason
+      ? context.recommendationReason
+      : null
 function CoverCardText({
   candidate,
   label,
@@ -506,6 +520,8 @@ function CoverCardText({
   selected,
   actionableCandidate,
   progress,
+  reason,
+  describedIds,
 }: {
   candidate: CoverCandidate
   label: string
@@ -514,8 +530,11 @@ function CoverCardText({
   selected: boolean
   actionableCandidate: boolean
   progress: ChoiceProgress
+  /** The reason line, computed once with the card's description (#1837). */
+  reason: string | null
+  /** Ids of the lines the card button's description names (#1837). */
+  describedIds: { mark: string; match: string; reason: string }
 }) {
-  const eligibleCandidate = candidate.incumbent || candidate.manualEligible
   const recommended = candidate.reference === recommendedReference
   // The original a switch replaced is this book's own cover from before, so
   // it carries no match claim and is named for what it is (#1363).
@@ -525,18 +544,20 @@ function CoverCardText({
   const contradicted =
     candidate.contradiction !== undefined ||
     (candidate.incumbent && stageReason === 'current_contradicted')
-  const excludedReason = coverExcludedReason(candidate)
+  // A proposed cover's sources show below, so only the current one is labelled.
+  const mark = `${candidate.incumbent ? label : ''}${
+    recommended
+      ? `${candidate.incumbent ? ' · ' : ''}${suggesting ? 'Suggested' : 'Recommended'}`
+      : ''
+  }`
   return (
     <span>
       <small>
-        {/* A proposed cover's sources show below, so only the current one is labelled. */}
-        {candidate.incumbent ? label : null}
-        {recommended
-          ? `${candidate.incumbent ? ' · ' : ''}${suggesting ? 'Suggested' : 'Recommended'}`
-          : ''}
+        {/* One span, so the small line's flex gap stays where it was. */}
+        {mark ? <span id={describedIds.mark}>{mark}</span> : null}
         {selected && actionableCandidate ? <b className="choice-chosen">Your choice</b> : null}
       </small>
-      <strong>
+      <strong id={describedIds.match}>
         {retained
           ? coverSourceLabels.retained
           : contradicted
@@ -571,15 +592,11 @@ function CoverCardText({
         </span>
       )}
       {context?.rationale ? <em>{context.rationale}</em> : null}
-      {!eligibleCandidate ||
-      candidate.matchState === 'match_not_confirmed' ||
-      candidate.matchReason === 'matched_book' ? (
-        excludedReason === null ? null : (
-          <span className="choice-recommendation">{excludedReason}</span>
-        )
-      ) : recommended && !suggesting && context?.recommendationReason ? (
-        <span className="choice-recommendation">{context.recommendationReason}</span>
-      ) : null}
+      {reason === null ? null : (
+        <span id={describedIds.reason} className="choice-recommendation">
+          {reason}
+        </span>
+      )}
       {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
     </span>
   )
@@ -626,6 +643,25 @@ function CoverCard({
   // The original a switch replaced is this book's own cover from before, so
   // it carries no match claim and is named for what it is (#1363).
   const retained = candidate.candidateKind === 'retained'
+  // The name says what pressing does; the description says what the card is
+  // and why, which a sighted owner reads on the card itself (#1837).
+  const textId = useId()
+  const describedIds = {
+    mark: `${textId}-mark`,
+    match: `${textId}-match`,
+    reason: `${textId}-reason`,
+  }
+  const reason = coverCardReason(candidate, context, recommended && !shape.suggesting)
+  // The mark line is named only when it carries Recommended or Suggested: on a
+  // suggested card it is the one thing that says so. On the current card it
+  // reads with its label, "Current cover · Recommended", as the card shows it.
+  const describedBy = [
+    recommended ? describedIds.mark : null,
+    describedIds.match,
+    reason === null ? null : describedIds.reason,
+  ]
+    .filter((id) => id !== null)
+    .join(' ')
   return (
     <article
       className={`cover-choice${open ? ' is-evidence-open' : ''}${candidate.matchState === 'match_not_confirmed' && !retained ? ' is-unconfirmed' : ''}`}
@@ -634,6 +670,7 @@ function CoverCard({
       <button
         type="button"
         aria-label={name}
+        aria-describedby={describedBy}
         {...radio}
         className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${recommended ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
         disabled={cardDisabled}
@@ -668,6 +705,8 @@ function CoverCard({
           selected={selected}
           actionableCandidate={actionableCandidate}
           progress={progress}
+          reason={reason}
+          describedIds={describedIds}
         />
       </button>
       <CoverObservationEvidence
@@ -716,11 +755,17 @@ function UnavailableCurrentCard({
   progress: ChoiceProgress
   choose: ChooseCover
 } & EvidenceToggle) {
+  const textId = useId()
+  const reason =
+    currentContext?.recommendation === 'recommended' && currentContext.recommendationReason
+      ? currentContext.recommendationReason
+      : null
   return (
     <article className="cover-choice" onFocusCapture={revealFocusedCoverChoice}>
       <button
         type="button"
         aria-label="Keep current cover"
+        aria-describedby={reason === null ? `${textId}-match` : `${textId}-match ${textId}-reason`}
         {...radio}
         className={`library-cover-card is-current${keepSelected ? ' is-selected' : ''}`}
         disabled={disabled || !keeps}
@@ -737,12 +782,13 @@ function UnavailableCurrentCard({
             Current cover
             {keepSelected ? <b className="choice-chosen">Your choice</b> : null}
           </small>
-          <strong>Unavailable</strong>
+          <strong id={`${textId}-match`}>Unavailable</strong>
           {currentContext?.rationale ? <em>{currentContext.rationale}</em> : null}
-          {currentContext?.recommendation === 'recommended' &&
-          currentContext.recommendationReason ? (
-            <span className="choice-recommendation">{currentContext.recommendationReason}</span>
-          ) : null}
+          {reason === null ? null : (
+            <span id={`${textId}-reason`} className="choice-recommendation">
+              {reason}
+            </span>
+          )}
           {commandSelected(progress?.command ?? null, field.destination, 'keep_current') &&
           progress?.phase === 'recording' ? (
             <b>Recording…</b>
