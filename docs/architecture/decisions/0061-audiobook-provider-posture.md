@@ -308,6 +308,29 @@ Without one, the work route offers it as an owner choice when its book is an
 exact work source, binding it by the book alone. It adds no request, provider or network destination beyond Hardcover's asset
 host. This is `metadata-report-v78` (ADR-0013 clean rebuild).
 
+**Clause 9 amendment (#1879, proposed).** An item's own ASIN, from a tag, an
+associated sidecar or a bracketed path token, still leads discovery, but it is
+a hint rather than the only route. Beside its own ASIN lanes the plan carries
+the item's title-and-author lanes (the asserted lane, and the alternative lane
+where one survives) as a fallback. They are added only where the query budget
+still has room after the ASIN lanes and the companion ISBN lane, all or none,
+so a plan that fits without them never overflows. Only the Audible catalogue
+is handed them. It asks them only after every own-ASIN lookup answered and
+none kept a recording: nothing was found, or every product was refused on the
+tight runtime band or a language or abridgement conflict. A failed or
+unanswered lookup never permits them, and an item whose own product is kept
+sends exactly the requests it sent before. Hardcover, Open Library, iTunes
+Search, Audnexus and AudioSilo are handed the plan without them; widening the
+fallback to them needs its own decision, as for #1468. The independent route
+still checks no work identity: on #1294's 43 local-ASIN items, 16 of 41
+correct admissions failed exact work admission against a noisier library
+title. A tag, sidecar or bracketed value with no digit is not an ASIN, because
+every ASIN, `B0` or ISBN-10 shaped, has one; this is a shape rule, not a
+prefix filter, so clause 4 stands. A fallback admission is not carried
+(ADR-0088), so the fallback runs again while the item names the wrong ASIN.
+Lanes and their admission bases already record which lane kept the recording;
+no report shape changes and no clean rebuild is needed.
+
 ## Ebook dispatch set (#1486)
 
 Ebook preparation dispatches only to the connected providers named in

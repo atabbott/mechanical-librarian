@@ -127,6 +127,8 @@ become claims.
 - `und`, `mul`, `mis`, `zxx` and `xxx` are not language claims; undetermined
   language never supports recording identity.
 - The MP4 `prID` atom is not an ASIN.
+- A tag, sidecar or bracketed name value with no digit, such as
+  `[UNABRIDGED]`, is not an ASIN.
 
 A multi-file item is one unit
 ([ADR-0066](../architecture/decisions/0066-multi-file-audiobook-composition.md)).
@@ -246,6 +248,11 @@ Discovery has two phases:
    ASIN whose previous report for the same tracks admitted an edition carries
    that ASIN as a `prior_admission` claim, which Audible looks up first
    ([ADR-0088](../architecture/decisions/0088-carried-recording-admission.md)).
+   Beside its own ASINs the Audible catalog also holds the item's
+   title-and-author search. It sends it only when no own-ASIN lookup kept a
+   product as the recording (nothing found, or refused on running time,
+   language or abridgement), and only where the query budget has room. Other
+   sources are not sent it.
 2. **The ASIN feed.** Only for an item with no ASIN of its own: providers
    that answered no lane are fed unnamed ASINs in order — carried, promoted
    from search by the runtime band, asserted by Audiobookshelf, Hardcover
@@ -281,8 +288,8 @@ withheld. Regional ASINs for one recording count once.
 
 The audio section records up to two `discovery_titles` (folder leaf, then a
 single-file title tag), dropping any equal to the title, an author, a series
-name or each other. With no local ASIN, the first can drive one alternative
-work lane, which Audible alone asks after the asserted lane ends `no_match`. It
+name or each other. With no local ASIN, or when the Audible catalog's
+fallback search runs, the first can drive one alternative work lane, which Audible alone asks after the asserted lane ends `no_match`. It
 gives recording authority only.
 
 ### Owner links
