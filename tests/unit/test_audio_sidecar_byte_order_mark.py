@@ -549,20 +549,32 @@ def test_an_answer_too_large_with_its_stripped_readings_drops_them() -> None:
     assert report.to_json_within(maximum * 2) == report.to_json()
 
 
-def test_the_child_writes_the_smaller_answer_and_fails_only_past_it(
+def test_the_child_writes_its_floor_answer_and_fails_only_past_it(
     monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
+    """The floor is the answer with no stripped reading and no fact (#1798)."""
     report = _near_limit(_marked_reading())
-    without = report.to_json_within(0)
+    floor = dataclasses.replace(
+        report,
+        sidecars=(
+            dataclasses.replace(
+                report.sidecars[0],
+                facts=(),
+                stripped=None,
+                stripped_limit=AudioSidecarStrippedLimit.CHILD_OUTPUT,
+            ),
+        ),
+    ).to_json()
+    assert report.to_json_within(0) == floor
     monkeypatch.setattr(
-        audio_child, "_STDOUT_LIMIT", len((without + "\n").encode("utf-8"))
+        audio_child, "_STDOUT_LIMIT", len((floor + "\n").encode("utf-8"))
     )
 
     audio_child._write_report(report)
 
     written = capfd.readouterr().out
-    assert written == without + "\n"
-    monkeypatch.setattr(audio_child, "_STDOUT_LIMIT", len(without.encode("utf-8")))
+    assert written == floor + "\n"
+    monkeypatch.setattr(audio_child, "_STDOUT_LIMIT", len(floor.encode("utf-8")))
     with pytest.raises(ValueError, match="exceeded protocol"):
         audio_child._write_report(report)
 
@@ -869,10 +881,14 @@ def test_the_byte_cap_holds_when_records_without_facts_fill_it_exactly() -> None
 class _BoundedChild(GrammarChild):
     """The grammar child, answering through the child's own protocol bound."""
 
-    def __init__(self, maximum: int | None = None, *, blind: bool = False) -> None:
+    def __init__(
+        self, maximum: int | None = None, *, blind: bool = False, plain: bool = False
+    ) -> None:
         super().__init__()
         self.maximum = maximum
         self.blind = blind
+        # Bound each answer at its own size without its stripped readings.
+        self.plain = plain
 
     def __call__(self, *arguments, **keywords) -> AudioInspection:
         answer = super().__call__(*arguments, **keywords)
@@ -886,11 +902,26 @@ class _BoundedChild(GrammarChild):
                     for value in answer.sidecars
                 ),
             )
-        return AudioInspection.from_json(
-            answer.to_json_within(
-                len(answer.to_json()) * 4 if self.maximum is None else self.maximum,
+        maximum = len(answer.to_json()) * 4 if self.maximum is None else self.maximum
+        if self.plain:
+            maximum = len(
+                dataclasses.replace(
+                    answer,
+                    sidecars=tuple(
+                        value
+                        if value.stripped is None
+                        else dataclasses.replace(
+                            value,
+                            stripped=None,
+                            stripped_limit=AudioSidecarStrippedLimit.CHILD_OUTPUT,
+                        )
+                        for value in answer.sidecars
+                    ),
+                )
+                .to_json()
+                .encode("utf-8")
             )
-        )
+        return AudioInspection.from_json(answer.to_json_within(maximum))
 
 
 @pytest.fixture
@@ -1037,7 +1068,11 @@ def test_an_answer_over_its_bound_drops_only_the_stripped_readings(
         "folder.nfo": _BOM
         + _nfo(f"ASIN: {_ASIN}", f"Title: {_TITLE}", f"Author: {_AUTHOR}"),
     }
-    monkeypatch.setattr(isolated_audio, "run_audio_inspector_child", _BoundedChild(0))
+    # Bounded at the answer's size without its readings without a mark, so
+    # those readings go and no fact does (#1798).
+    monkeypatch.setattr(
+        isolated_audio, "run_audio_inspector_child", _BoundedChild(plain=True)
+    )
     omitted = _inspect(tmp_path, documents)
     monkeypatch.setattr(
         isolated_audio, "run_audio_inspector_child", _BoundedChild(blind=True)

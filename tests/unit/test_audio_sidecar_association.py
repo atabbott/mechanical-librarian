@@ -22,8 +22,11 @@ from mechanical_librarian.adapters.evidence_extractors.audio_local import (
 from mechanical_librarian.domain.audio_inspection import (
     MAX_ASSOCIATION_CHARACTERS,
     MAX_ASSOCIATION_CREATORS,
+    MAX_CANONICAL_CHARACTERS,
     MAX_CHAPTER_TITLE_CHARACTERS,
     MAX_CHAPTERS,
+    MAX_DESCRIPTION_CHARACTERS,
+    MAX_FACTS,
     MAX_PUBLIC_REPORT_BYTES,
     MAX_SIDECAR_NAME_CHARACTERS,
     MAX_SIDECAR_SHADOW,
@@ -44,6 +47,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioSidecarRefusal,
     AudioSidecarShadow,
     AudioSidecarShadowField,
+    AudioSidecarStrippedLimit,
 )
 from mechanical_librarian.domain.audio_sidecar_association import (
     TARGET_SCANNED_EXTENSIONS,
@@ -946,18 +950,15 @@ def _maximal_reading(index: int, title: str = "") -> AudioSidecarReading:
     )
 
 
-def test_the_worst_case_child_output_survives_its_own_protocol() -> None:
-    """T27: maximal chapters plus 8 maximal sidecar readings and file text.
-
-    Every character costs four bytes.  Each reading also carries a maximal
-    reading without its byte-order mark (#1796).  The facts budget is
-    unchanged by #1481 and is not part of this bound; past it the child drops
-    the readings without a mark first (control 4).
-    """
-    report = AudioInspection(
+def _worst_case(
+    facts: tuple[AudioInspectionFact, ...] = (),
+    reading_facts: tuple[tuple[AudioInspectionFact, ...], ...] = ((),) * 8,
+) -> AudioInspection:
+    """T27's inspection: maximal chapters, 8 maximal readings and file text."""
+    return AudioInspection(
         AudioInspectionOutcome.SUCCESS,
         _SOURCE,
-        (),
+        facts,
         tuple(
             AudioChapter(
                 index + 1, index, index + 1, _wide(MAX_CHAPTER_TITLE_CHARACTERS)
@@ -974,16 +975,159 @@ def test_the_worst_case_child_output_survives_its_own_protocol() -> None:
         sidecars=tuple(
             dataclasses.replace(
                 _maximal_reading(index),
+                facts=reading_facts[index],
                 byte_order_mark=True,
                 stripped=_maximal_reading(index, "s"),
             )
             for index in range(8)
         ),
     )
+
+
+def _maximal_description(
+    index: int, surface: AudioEvidenceSurface
+) -> AudioInspectionFact:
+    """The widest fact the domain admits: a 512-character description."""
+    text = f"{index:03d}{_wide(MAX_DESCRIPTION_CHARACTERS - 3)}"
+    return AudioInspectionFact(
+        _F.DESCRIPTION,
+        _SOURCE,
+        text,
+        f"{index:03d}{_wide(MAX_CANONICAL_CHARACTERS - 3)}",
+        text,
+        surface,
+    )
+
+
+def _budget_order(report: AudioInspection) -> list[AudioInspectionFact]:
+    """The order the child spends its fact budget in, plain readings only."""
+    return [*report.facts, *(fact for value in report.sidecars for fact in value.facts)]
+
+
+def _keeping(report: AudioInspection, kept: int) -> AudioInspection:
+    """``report`` without its stripped readings, keeping ``kept`` facts."""
+    remaining = kept - len(report.facts[:kept])
+    sidecars = []
+    for value in report.sidecars:
+        sidecars.append(
+            dataclasses.replace(
+                value,
+                facts=value.facts[:remaining],
+                stripped=None,
+                stripped_limit=AudioSidecarStrippedLimit.CHILD_OUTPUT
+                if value.stripped is not None
+                else value.stripped_limit,
+            )
+        )
+        remaining -= len(value.facts[:remaining])
+    return dataclasses.replace(
+        report, facts=report.facts[:kept], sidecars=tuple(sidecars)
+    )
+
+
+def test_the_worst_case_child_output_survives_its_own_protocol() -> None:
+    """T27: maximal chapters plus 8 maximal sidecar readings and file text.
+
+    Every character costs four bytes.  Each reading also carries a maximal
+    reading without its byte-order mark (#1796).  This bound holds without
+    facts; with the most facts beside it the child trims them to fit, which
+    the test below proves (#1798).
+    """
+    report = _worst_case()
     serialized = report.to_json()
 
     assert len(serialized.encode("utf-8")) <= MAX_PUBLIC_REPORT_BYTES
     assert AudioInspection.from_json(serialized) == report
+
+
+@pytest.mark.parametrize(
+    "split",
+    [False, True],
+    ids=["all-in-the-files-facts", "split-across-the-sidecar-readings"],
+)
+def test_the_worst_case_with_every_fact_trims_its_last_facts_to_fit(
+    split: bool,
+) -> None:
+    """T27 plus 256 maximal facts: the facts read last give way (#1798)."""
+    report = (
+        _worst_case(
+            reading_facts=tuple(
+                tuple(
+                    _maximal_description(index * 32 + entry, _LIBATION)
+                    for entry in range(32)
+                )
+                for index in range(8)
+            )
+        )
+        if split
+        else _worst_case(
+            tuple(
+                _maximal_description(index, AudioEvidenceSurface.MP4_FREEFORM)
+                for index in range(MAX_FACTS)
+            )
+        )
+    )
+    assert len(_budget_order(report)) == MAX_FACTS
+    assert len(report.to_json().encode("utf-8")) > MAX_PUBLIC_REPORT_BYTES
+
+    serialized = report.to_json_within(MAX_PUBLIC_REPORT_BYTES)
+
+    assert len(serialized.encode("utf-8")) <= MAX_PUBLIC_REPORT_BYTES
+    answer = AudioInspection.from_json(serialized)
+    assert answer.to_json() == serialized
+    kept = _budget_order(answer)
+    assert 0 < len(kept) < MAX_FACTS
+    assert kept == _budget_order(report)[: len(kept)]
+    assert answer == _keeping(report, len(kept))
+    assert (
+        len(_keeping(report, len(kept) + 1).to_json().encode("utf-8"))
+        > MAX_PUBLIC_REPORT_BYTES
+    )
+
+
+def test_an_answer_gives_up_stripped_readings_then_the_last_read_facts() -> None:
+    """The trim runs backwards along the order the fact budget is spent in."""
+    first = _reading(
+        "book.opf", _OPF, _fact(_F.ASIN, _ASIN), _fact(_F.CONTRIBUTOR, _NARRATOR)
+    )
+    stripped = _reading("book.nfo", _NFO, _fact(_F.LANGUAGE, "French", _NFO))
+    second = dataclasses.replace(
+        _reading(
+            "book.nfo",
+            _NFO,
+            _fact(_F.LANGUAGE, "English", _NFO),
+            _fact(_F.SERIES, "Synthetic Saga", _NFO),
+        ),
+        byte_order_mark=True,
+        stripped=stripped,
+    )
+    report = AudioInspection(
+        AudioInspectionOutcome.SUCCESS,
+        _SOURCE,
+        (
+            _fact(_F.ASIN, _OTHER_ASIN, AudioEvidenceSurface.MP4_FREEFORM),
+            _fact(_F.DESCRIPTION, _TITLE, AudioEvidenceSurface.MP4_FREEFORM),
+        ),
+        sidecars=(first, second),
+    )
+    sizes = [len(_keeping(report, kept).to_json().encode("utf-8")) for kept in range(7)]
+    assert sizes == sorted(set(sizes))
+    assert len(report.to_json().encode("utf-8")) > sizes[6]
+
+    answers = [AudioInspection.from_json(report.to_json_within(size)) for size in sizes]
+
+    assert answers == [_keeping(report, kept) for kept in range(7)]
+    # The reading without its mark goes first, with no fact of the plain ones.
+    assert answers[6].sidecars[1].stripped is None
+    assert (
+        answers[6].sidecars[1].stripped_limit is AudioSidecarStrippedLimit.CHILD_OUTPUT
+    )
+    # Then the last reading's tail, then the first reading, the file's last.
+    assert [len(value.sidecars[1].facts) for value in answers] == [0, 0, 0, 0, 0, 1, 2]
+    assert [len(value.sidecars[0].facts) for value in answers] == [0, 0, 0, 1, 2, 2, 2]
+    assert [len(value.facts) for value in answers] == [0, 1, 2, 2, 2, 2, 2]
+    assert answers[5].sidecars[1].facts == second.facts[:1]
+    assert answers[1].facts == report.facts[:1]
 
 
 def test_protocol_v6_round_trips_and_refuses_v5() -> None:

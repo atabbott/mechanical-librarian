@@ -7,6 +7,7 @@ protocol is proved without ffmpeg installed.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -30,8 +31,11 @@ from mechanical_librarian.adapters.evidence_extractors.process import (
     run_probe_child,
 )
 from mechanical_librarian.domain.audio_inspection import (
+    MAX_CANONICAL_CHARACTERS,
     MAX_CHAPTER_TITLE_CHARACTERS,
     MAX_CHAPTERS,
+    MAX_DESCRIPTION_CHARACTERS,
+    MAX_FACTS,
     MAX_PUBLIC_REPORT_BYTES,
     AudioChapter,
     AudioEmbeddedCover,
@@ -689,6 +693,54 @@ def test_a_maximal_legal_inspection_survives_its_own_protocol() -> None:
     assert AudioInspection.from_json(serialized) == report
     # And the child may write exactly what the protocol accepts.
     assert len((serialized + "\n").encode("utf-8")) <= child._STDOUT_LIMIT
+
+
+def test_a_maximal_inspection_with_every_fact_is_written_trimmed(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """1,024 maximal chapters and 256 maximal facts: the last facts give way.
+
+    Every character costs four bytes.  The whole answer is past the bound, so
+    the child writes the longest prefix of its facts that fits rather than
+    failing the item (#1798).
+    """
+    wide = "\U0001d11e"
+    facts = tuple(
+        AudioInspectionFact(
+            AudioInspectionField.DESCRIPTION,
+            _SOURCE,
+            f"{index:03d}{wide * (MAX_DESCRIPTION_CHARACTERS - 3)}",
+            f"{index:03d}{wide * (MAX_CANONICAL_CHARACTERS - 3)}",
+            f"{index:03d}{wide * (MAX_DESCRIPTION_CHARACTERS - 3)}",
+            AudioEvidenceSurface.MP4_FREEFORM,
+        )
+        for index in range(MAX_FACTS)
+    )
+    report = AudioInspection(
+        AudioInspectionOutcome.SUCCESS,
+        _SOURCE,
+        facts,
+        tuple(
+            AudioChapter(
+                index + 1, index, index + 1, wide * MAX_CHAPTER_TITLE_CHARACTERS
+            )
+            for index in range(MAX_CHAPTERS)
+        ),
+        AudioEmbeddedCover(True, AudioEvidenceSurface.CONTAINER_STREAM),
+        True,
+    )
+    assert len(report.to_json().encode("utf-8")) > MAX_PUBLIC_REPORT_BYTES
+
+    child._write_report(report)
+
+    written = capfd.readouterr().out.encode("utf-8")
+    assert len(written) <= child._STDOUT_LIMIT
+    assert written.endswith(b"\n")
+    answer = AudioInspection.from_json(written[:-1].decode("utf-8"))
+    assert 0 < len(answer.facts) < MAX_FACTS
+    assert answer == dataclasses.replace(report, facts=facts[: len(answer.facts)])
+    longer = dataclasses.replace(report, facts=facts[: len(answer.facts) + 1])
+    assert len(longer.to_json().encode("utf-8")) > MAX_PUBLIC_REPORT_BYTES
 
 
 @pytest.mark.parametrize("value", (None, 0, 1, "false"))
