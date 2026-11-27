@@ -4754,7 +4754,9 @@ def _fallback_report(observation: ProviderObservation) -> MetadataReport:
 
 def test_a_disabled_catalogue_records_only_its_own_asin_lane() -> None:
     plan = app.companion_binding_plan(_fallback_plan("B0LOCAL001"), "audible_catalog")
-    binding = ProviderBinding("audible", False, lambda: None, "audible_catalog")  # type: ignore[arg-type,return-value]
+    binding = ProviderBinding(
+        "audible", False, lambda: cast("MetadataProvider", None), "audible_catalog"
+    )
 
     observation = app._undispatched_observation(
         binding,
