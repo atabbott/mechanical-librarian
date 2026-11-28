@@ -30,9 +30,9 @@ WORKFLOW_SUFFIXES = frozenset({".yml", ".yaml"})
 # discipline `osv-scanner.toml` applies to an advisory.
 #
 # Empty today: no workflow in this repository needs write authority of any
-# kind. Issue #674 adds `security-events: write` for its CodeQL job, which
-# cannot upload results to code scanning without it, and records that reason
-# here when it lands.
+# kind. CodeQL runs as GitHub's default setup, outside these workflows, and
+# `dependency-review` reads the dependency graph with `contents: read` and
+# posts nothing to the pull request (#674).
 PERMITTED_WRITE_SCOPES: Mapping[tuple[str, str], str] = {}
 
 # An acceptance is a deadline, not a decision to live with an advisory. Ninety
