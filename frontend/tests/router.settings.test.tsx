@@ -2417,7 +2417,7 @@ describe('owner settings route', () => {
       expect(unit?.textContent).toMatch(/^(MB|seconds|minutes)/u)
       expect(input.getAttribute('aria-describedby')?.split(' ')).toContain(unit?.id)
       expect(input).toHaveAccessibleDescription(
-        new RegExp(`^${(unit?.textContent ?? '').replace(/[()]/gu, '\\$&')} `, 'u'),
+        new RegExp(`^${(unit?.textContent ?? '').replace(/[\\^$.*+?()[\]{}|]/gu, '\\$&')} `, 'u'),
       )
     }
     expect(screen.getByRole('spinbutton', { name: 'Ebook file limit' })).toHaveValue(256)
