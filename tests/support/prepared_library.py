@@ -34,6 +34,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     PrivateCoverRecoveryStore,
 )
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
+from mechanical_librarian.adapters.persistence import schema
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -596,7 +597,13 @@ def regenerate(
     library.close()
     database = library.database
     assert database is not None
-    assert rewrite(database, "UPDATE ledger_meta SET derived_version=2") == 1
+    assert (
+        rewrite(
+            database,
+            f"UPDATE ledger_meta SET derived_version={schema.DERIVED_VERSION + 1}",
+        )
+        == 1
+    )
     lines: list[str] = []
     status = cli.render(
         regenerate_derived(

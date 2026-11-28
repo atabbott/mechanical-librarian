@@ -107,7 +107,12 @@ def _fresh(root: Path) -> Path:
 
 def _another_build(path: Path) -> None:
     """The ledger names a derived partition this build did not make."""
-    assert rewrite(path, "UPDATE ledger_meta SET derived_version=2") == 1
+    assert (
+        rewrite(
+            path, f"UPDATE ledger_meta SET derived_version={schema.DERIVED_VERSION + 1}"
+        )
+        == 1
+    )
 
 
 def _ledger(
@@ -932,7 +937,7 @@ def test_the_regeneration_recreates_derived_state_and_keeps_the_ledger(
     assert row[:8] == (
         0,
         1,
-        2,
+        schema.DERIVED_VERSION + 1,
         schema.DERIVED_VERSION,
         before_meta[2],
         schema.build_partition().derived_schema_digest,
@@ -968,7 +973,8 @@ def test_the_restore_point_is_private_verified_and_restorable(tmp_path: Path) ->
     restored.mkdir(mode=0o700)
     (restored / "application.sqlite3").write_bytes(backup.read_bytes())
     rewrite(
-        restored / "application.sqlite3", "UPDATE ledger_meta SET derived_version=1"
+        restored / "application.sqlite3",
+        f"UPDATE ledger_meta SET derived_version={schema.DERIVED_VERSION}",
     )
     assert opens(restored / "application.sqlite3")
     # A later run replaces it with the next epoch's copy.
@@ -1835,7 +1841,7 @@ def test_the_next_start_asks_every_configured_library_to_scan(tmp_path: Path) ->
             repository.close()
         return calls
 
-    rewrite(path, "UPDATE ledger_meta SET derived_version=1")
+    rewrite(path, f"UPDATE ledger_meta SET derived_version={schema.DERIVED_VERSION}")
     assert requested() == []  # each library's scan is still queued
     _another_build(path)
     assert _run(path)[0] == 0

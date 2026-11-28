@@ -2207,7 +2207,7 @@ def _create_attention_facts(connection: sqlite3.Connection) -> None:
 # `regeneration_notice_dismissals` holds the owner's one dismissal of each
 # run's upgrade notice. All three are ledger.
 LEDGER_FORMAT_VERSION = 1
-DERIVED_VERSION = 1
+DERIVED_VERSION = 2
 
 
 def _whole(column: str, minimum: int) -> str:

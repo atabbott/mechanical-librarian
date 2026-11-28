@@ -59,6 +59,7 @@ from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
 from mechanical_librarian.application.review_covers import cover_page
+from mechanical_librarian.application.review_pipeline import pipeline_scan_id
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain import cover_qualification_policy
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
@@ -135,6 +136,7 @@ def _prepared(
     duplicate_size: tuple[int, int] | None = None,
     candidate_size: tuple[int, int] = (3000, 4500),
     shared_measures: CoverMeasures | None = None,
+    first_boot: bool = False,
     **current: Any,
 ) -> Iterator[_Prepared]:
     """Prepare one ebook whose 200x300 current cover is under the floor.
@@ -142,7 +144,7 @@ def _prepared(
     ``duplicate_size`` adds an EPUB copy of the current cover's own picture
     from another original at that size. ``current`` passes how the current
     cover was read (``readable_current``, ``abs_state``, ``abs_digest``) to
-    the report (#1362).
+    the report (#1362). ``first_boot`` prepares it in the first preparation.
     """
     os.chmod(root, 0o700)
     database = root / "reports.sqlite"
@@ -196,7 +198,7 @@ def _prepared(
     try:
         with patch.object(composition, "run_cover_packet_reviewer") as dispatch:
             pipeline = _run_qualified_cover_pipeline(
-                repository, root, report, proposal, supervisor
+                repository, root, report, proposal, supervisor, first_boot=first_boot
             )
             for _ in range(64):
                 if not pipeline.run_next(1):
@@ -515,6 +517,42 @@ def test_a_current_covers_save_prepares_each_cover_again(
         assert repository._connection.execute(
             "SELECT stage,state,review_case_id FROM review_preparation_work"
         ).fetchall() == [("complete", "complete", prepared.review_case_id)]
+
+
+def test_a_current_covers_save_during_the_first_preparation_requests_the_scan(
+    tmp_path: Path,
+) -> None:
+    """A library whose first scan ended is scanned now, not after the poll (#1816).
+
+    Another library's first scan is still queued, so the first preparation
+    runs on; the poll would leave ebooks alone until it finishes.
+    """
+    with _prepared(tmp_path, first_boot=True) as prepared:
+        repository = prepared.repository
+        connection = repository._connection
+        first_ebooks = pipeline_scan_id("primary", "ebooks", first_boot=True)
+        assert connection.execute(
+            "SELECT scan_id,state FROM review_preparation_scans"
+        ).fetchall() == [(first_ebooks, "completed")]
+        repository.request_review_scan(
+            "primary", "fiction", "lib-2", "f" * 64, 15, first_boot=True
+        )
+        scans_sql = "SELECT * FROM review_preparation_scans ORDER BY scan_id"
+        before = tuple(connection.execute(scans_sql))
+        repository.request_review_scan("primary", "ebooks", "lib-1", "f" * 64, 16)
+        assert tuple(connection.execute(scans_sql)) == before
+        review = _owner_settings_application(repository, _service(prepared))
+
+        review.write_owner_settings(_settings(2, "proposals_only"), 1, ())
+
+        after = {row[0]: row for row in connection.execute(scans_sql)}
+        ordinary = pipeline_scan_id("primary", "ebooks")
+        assert set(after) == {row[0] for row in before} | {ordinary}
+        assert all(after[row[0]] == row for row in before)
+        assert connection.execute(
+            "SELECT state,requested_at FROM review_preparation_scans WHERE scan_id=?",
+            (ordinary,),
+        ).fetchone() == ("queued", 20)
 
 
 def _started(

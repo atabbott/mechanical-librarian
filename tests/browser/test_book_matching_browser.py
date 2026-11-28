@@ -3,7 +3,8 @@
 At a wider Book matching level a field that needs the owner may offer a
 value from a source record with the book's title and author, and its
 evidence says so beside the source. While a work is checked against a new
-setting, a line says so and its choices are unavailable. A choice sent as
+setting, a line above the field tabs says so and its choices are
+unavailable. A choice sent as
 Book matching changed the field's offer is not recorded, and the field says
 so. Each is shown whole at 1440 and 390 pixels, with no sideways scroll.
 """
@@ -58,6 +59,13 @@ def _checking(payload: dict[str, object]) -> None:
     payload["checking"] = True
 
 
+def _checking_after_a_comparison_notice(payload: dict[str, object]) -> None:
+    payload["checking"] = True
+    payload["comparison_notices"] = [
+        "Hardcover did not answer, so this work was compared without it."
+    ]
+
+
 def _given_up(payload: dict[str, object]) -> None:
     payload["checking"] = True
     payload["check_given_up"] = True
@@ -99,6 +107,29 @@ def _refuse_digest_mismatch(route: Route) -> None:
             }
         ),
     )
+
+
+def _gaps(page: Page) -> dict[str, float]:
+    """Where the line sits against the field tabs and the field's own content."""
+    return cast(
+        "dict[str, float]",
+        page.evaluate(
+            """() => {
+              const box = (s) => document.querySelector(s).getBoundingClientRect()
+              const line = box('.case-checking-line'), tabs = box('.field-map'),
+                    canvas = box('.decision-canvas')
+              return {above_tabs: tabs.top - line.bottom, canvas_below_tabs: canvas.top - tabs.bottom}
+            }"""
+        ),
+    )
+
+
+def _assert_above_the_tabs(page: Page, label: object) -> None:
+    """The line is about the whole work, so it sits above the field tabs with
+    the case's notice gap, and the selected tab stays on its content (#2057)."""
+    gaps = _gaps(page)
+    assert abs(gaps["above_tabs"] - 14) <= 0.5, (label, gaps)
+    assert gaps["canvas_below_tabs"] <= 0.5, (label, gaps)
 
 
 def _in_view(page: Page, selector: str) -> dict[str, float]:
@@ -166,7 +197,31 @@ def test_a_work_being_checked_says_so_and_its_choices_are_unavailable(
             expect(choice).to_be_disabled()
             box = _in_view(page, ".case-checking-line")
             assert 0 <= box["left"] and box["right"] <= box["width"], (scheme, box)
+            _assert_above_the_tabs(page, (scheme, width))
             assert page.evaluate(_NO_SIDEWAYS_SCROLL), (scheme, width)
+
+
+@pytest.mark.parametrize("width", _WIDTHS)
+def test_the_case_notices_stand_apart_above_the_field_tabs(width: int) -> None:
+    """The comparison notice, then the checking line, then the tabs, each the
+    case's notice gap apart, with no tab strip padding to lean on (#2057)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(
+            viewport={"width": width, "height": 900}, locale="en-US"
+        )
+        _serve(page, _checking_after_a_comparison_notice)
+        page.goto(_URL)
+        expect(page.locator(".case-checking-line")).to_have_text(_CHECKING)
+        gap = page.evaluate(
+            """() => document.querySelector('.case-checking-line').getBoundingClientRect().top
+              - document.querySelector('.comparison-notice').getBoundingClientRect().bottom"""
+        )
+        assert abs(gap - 14) <= 0.5, (width, gap)
+        _assert_above_the_tabs(page, width)
+        assert page.evaluate(_NO_SIDEWAYS_SCROLL), width
 
 
 @pytest.mark.parametrize("width", _WIDTHS)
@@ -227,4 +282,5 @@ def test_a_work_whose_check_gave_up_says_how_to_retry(width: int) -> None:
             expect(choice).to_be_disabled()
             box = _in_view(page, ".case-checking-line")
             assert 0 <= box["left"] and box["right"] <= box["width"], (scheme, box)
+            _assert_above_the_tabs(page, (scheme, width))
             assert page.evaluate(_NO_SIDEWAYS_SCROLL), (scheme, width)

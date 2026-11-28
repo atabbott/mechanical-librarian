@@ -38,6 +38,7 @@ from mechanical_librarian.application.provider_evidence import (
 )
 from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionField,
+    AudioInspectionOutcome,
     AudioObservation,
     AudioObservationKind,
     AudioSidecarDigest,
@@ -135,6 +136,7 @@ from mechanical_librarian.domain.metadata_report import (
     PublicationDateRelation,
     RecordingCorroboration,
     RecordingLookupHint,
+    ReportSizeError,
     ReportValueError,
     TargetDestination,
     TargetFacts,
@@ -170,6 +172,7 @@ from mechanical_librarian.domain.metadata_report import (
     recording_variant_conflict,
     starvation_backed,
     surviving_discovery_titles,
+    target_performance_claims,
     validate_provider_access_time,
     work_discovery_lane_payloads,
     work_ladder_diagnostics,
@@ -189,6 +192,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkQuery,
     WorkTitleTransformationLineage,
+    comparison_author,
     replay_provider_work_identity_admission,
     work_query_ladder,
 )
@@ -1161,6 +1165,51 @@ def alternative_work_lane_permitted(
     ) or (asserted is not None and asserted.status is ProviderStatus.NO_MATCH)
 
 
+def asin_fallback_lane(
+    plan: MetadataDiscoveryPlan, lane: MetadataDiscoveryLane
+) -> bool:
+    """Whether `lane` is a title-and-author fallback beside an item's own ASIN.
+
+    An item whose tag, sidecar or bracketed path names its product still
+    carries its WORK lanes, so a wrong ASIN cannot lock it out of search
+    (#1879). Only the Audible catalogue is handed them, and it asks them only
+    once `asin_fallback_permitted` holds.
+    """
+    own = local_identifier_asins(plan.local_claims)
+    return lane.kind is ProviderQueryKind.WORK and any(
+        planned.kind is ProviderQueryKind.ASIN and planned.canonical_asin in own
+        for planned in plan.lanes
+    )
+
+
+def asin_fallback_permitted(
+    plan: MetadataDiscoveryPlan, results: list[ProviderLaneResult]
+) -> bool:
+    """Permit the fallback WORK lanes once no own-ASIN lookup kept a recording.
+
+    Every lane for one of the item's own ASINs must have been observed and
+    ended `no_match`, or answered with products of which it kept none as the
+    recording (`admission_bases` empty: every one refused on the tight runtime
+    band or a recording conflict). A failure, an overflow, a malformed answer
+    or a missing result is never reclassified as permission. A plan with no
+    own-ASIN lane -- a carried, fed or retry-narrowed one -- permits it outright.
+    """
+    own = local_identifier_asins(plan.local_claims)
+    observed = {result.lane.identity: result for result in results}
+    return all(
+        (result := observed.get(lane.identity)) is not None
+        and (
+            result.status is ProviderStatus.NO_MATCH
+            or (
+                result.status is ProviderStatus.CANDIDATES
+                and not result.admission_bases
+            )
+        )
+        for lane in plan.lanes
+        if lane.kind is ProviderQueryKind.ASIN and lane.canonical_asin in own
+    )
+
+
 def corroborated_rule_permitted(
     plan: MetadataDiscoveryPlan, results: list[ProviderLaneResult]
 ) -> bool:
@@ -1273,8 +1322,11 @@ def audiobook_discovery_plan(
     local surfaces carry becomes one marketplace-resolved product lane. An item
     with no ASIN at all -- 57.6% of the reference library measured on #925 --
     falls back to the title and author lane, which is the only way discovery
-    reaches it. The two are alternatives rather than a pair: an item that
-    already names its product does not also need a search for it.
+    reaches it. An item that names its product is led by that lookup, but the
+    ASIN is a hint rather than the only route: where the budget has room the
+    plan also carries its title and author lanes, which only the Audible
+    catalogue is handed and asks only when no own-ASIN lookup kept a
+    recording (#1879, `asin_fallback_permitted`).
 
     An ASIN the target merely asserts is not one of these surfaces and never
     suppresses the search lane: it is fed to the per-ASIN providers afterwards,
@@ -1336,17 +1388,16 @@ def audiobook_discovery_plan(
             )
         )
         lanes.append(_asin_discovery_lane(asin, references))
+    work = _work_discovery_lanes(
+        target.fields,
+        local_claims,
+        audio,
+        companion,
+        anchored=anchored,
+        anchor=anchor,
+    )
     if not lanes:
-        lanes.extend(
-            _work_discovery_lanes(
-                target.fields,
-                local_claims,
-                audio,
-                companion,
-                anchored=anchored,
-                anchor=anchor,
-            )
-        )
+        lanes.extend(work)
     # The companion EPUB's ISBN asks for the book beside whichever lanes the
     # recording's own surfaces planned (#1468). It never replaces them: an
     # ebook's identifier cannot stand in for a search for the recording, so
@@ -1369,6 +1420,20 @@ def audiobook_discovery_plan(
                 isbn.canonical_isbns,
             )
         )
+    # Beside its own ASINs the item keeps its title-and-author lanes as a
+    # fallback the Audible catalogue asks only when no own-ASIN lookup kept a
+    # recording (#1879, `asin_fallback_permitted`). They are added after the
+    # companion lane and all or none: a corroborated admission replays every
+    # planned alternative lane, so a plan never carries a part of them, and
+    # one that fits without them never overflows for them.
+    if (
+        audio is not None
+        and work
+        and any(lane.kind is ProviderQueryKind.ASIN for lane in lanes)
+        and _metadata_discovery_query_count((*lanes, *work), audiobook=True)
+        <= MAX_PROVIDER_DISCOVERY_QUERIES
+    ):
+        lanes.extend(work)
     ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
     if (
         _metadata_discovery_query_count(ordered_lanes, audiobook=audio is not None)
@@ -1422,9 +1487,22 @@ def companion_binding_plan(
     Such an authority has no product lookup, so beside the companion lane it
     is handed no ASIN lane: the plan names exactly the lanes it serves, which
     is the plan a retry of its observation rebuilds and reconciles against.
+
+    The title-and-author fallback beside an item's own ASIN goes only to the
+    Audible catalogue (#1879, `asin_fallback_lane`): every other binding is
+    handed the plan it was handed before the fallback existed.
     """
     if plan.audio is None:
         return plan
+    if authority != "audible_catalog" and any(
+        asin_fallback_lane(plan, lane) for lane in plan.lanes
+    ):
+        plan = replace(
+            plan,
+            lanes=tuple(
+                lane for lane in plan.lanes if not asin_fallback_lane(plan, lane)
+            ),
+        )
     if authority in COMPANION_ISBN_AUTHORITIES:
         if not any(lane.kind is ProviderQueryKind.ISBN for lane in plan.lanes):
             return plan
@@ -1520,9 +1598,10 @@ def promoted_asins(
     work lanes holds reached it through the title-and-author ladder, and
     edition-scope marketplace corroboration identifies the recording the
     runtime band admitted. A product lane's answer -- the catalogue's carried
-    lookup beside its search (#1316), or any lane of an item that names its
-    own product -- promotes nothing. Informational ASIN hints alone never
-    promote.
+    lookup beside its search (#1316), or an item's own ASIN lookup -- promotes
+    nothing. An item that names its own product feeds nothing at all
+    (`audiobook_asin_feed_plan`), so a recording its fallback search found
+    (#1879) is not fed either. Informational ASIN hints alone never promote.
     """
     return tuple(
         sorted(
@@ -2825,7 +2904,11 @@ def _undispatched_observation(
     status: ProviderStatus,
     lanes: tuple[MetadataDiscoveryLane, ...],
 ) -> ProviderObservation:
-    """Record a binding this pass never asked: disabled, or not needed (#1309)."""
+    """Record a binding this pass never asked: disabled, or not needed (#1309).
+
+    The fallback beside an item's own ASIN is recorded only where it could
+    have been sent, which an unasked binding never permits (#1879).
+    """
     recorded = tuple(
         ProviderLaneObservation(
             lane.identity,
@@ -2840,6 +2923,7 @@ def _undispatched_observation(
             ),
         )
         for lane in lanes
+        if not asin_fallback_lane(plan, lane)
     )
     return ProviderObservation(
         binding.name,
@@ -2987,7 +3071,8 @@ def observe_provider(
         # An alternative work lane is recorded only where it could have been
         # sent, so a retry never replays one the adapter would suppress: only
         # Audible dispatches it, and unconditionally only when the plan has no
-        # asserted work lane (#1255).
+        # asserted work lane (#1255). Nor is the fallback beside an item's own
+        # ASIN, which waits on that lookup's answer (#1879).
         alternative_sent = authority == "audible_catalog" and not any(
             lane.kind is ProviderQueryKind.WORK and lane.title_basis is None
             for lane in plan.lanes
@@ -3002,7 +3087,8 @@ def observe_provider(
                     diagnostics=fault_diagnostics,
                 )
                 for lane in plan.lanes
-                if lane.title_basis is None or alternative_sent
+                if (lane.title_basis is None or alternative_sent)
+                and not asin_fallback_lane(plan, lane)
             ),
             authority=authority,
             diagnostics=fault_diagnostics,
@@ -3107,7 +3193,7 @@ def metadata_lookup(
         or len(
             {
                 # Reached only once every author entry is a ``str``.
-                normalize_title(cast("str", value)).casefold()
+                normalize_title(comparison_author(cast("str", value))).casefold()
                 for value in authors.value
             }
         )
@@ -3118,7 +3204,10 @@ def metadata_lookup(
         ProviderQueryKind.WORK,
         local_claims,
         normalize_title(title.value),
-        tuple(normalize_title(cast("str", value)) for value in authors.value),
+        tuple(
+            normalize_title(comparison_author(cast("str", value)))
+            for value in authors.value
+        ),
     )
 
 
@@ -4529,6 +4618,7 @@ class GenerateMetadataReport:
             else (
                 *target_title_claim,
                 *_target_asserted_asin_claims(initial),
+                *target_performance_claims(initial.fields),
                 # The owner's link supersedes a carried admission (#1477):
                 # the item is asked through the record the owner chose.
                 *(
@@ -5158,6 +5248,19 @@ class GenerateMetadataReport:
                 library_languages=self._library.languages,
                 owner_link=phase.facts,
             )
+        except ReportSizeError as error:
+            # Every drop the report makes for its byte bound is already spent,
+            # so what is left is the item's own evidence: ADR-0066 names a
+            # claim set over the report ceiling the item's budget failure, and
+            # it ends this item alone rather than the run (#1798).  The parent
+            # inspector refuses most such items before any provider is asked;
+            # this is the rest, measured on the whole report.  Nothing has
+            # been published, so only the repository handle is released.
+            failure = AudioItemInspectionError(
+                AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED
+            )
+            _release_repository(repository, failure)
+            raise failure from error
         except Exception as error:
             _release_repository(repository, error)
             raise
@@ -5522,6 +5625,8 @@ __all__ = [
     "recording_admission_basis",
     "qualify_provider_lane",
     "alternative_work_lane_permitted",
+    "asin_fallback_lane",
+    "asin_fallback_permitted",
     "corroborated_rule_permitted",
     "audiobook_asin_feed_plan",
     "audiobook_carried_plan",

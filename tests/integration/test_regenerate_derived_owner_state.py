@@ -86,7 +86,12 @@ def _store_mode() -> Any:
 def _another_build(path: Path) -> None:
     """The ledger names a derived partition this build did not make, as an
     upgrade leaves it."""
-    assert rewrite(path, "UPDATE ledger_meta SET derived_version=2") == 1
+    assert (
+        rewrite(
+            path, f"UPDATE ledger_meta SET derived_version={schema.DERIVED_VERSION + 1}"
+        )
+        == 1
+    )
 
 
 def _run(path: Path, *, retire_pending: bool = False) -> tuple[int, list[str], Outcome]:

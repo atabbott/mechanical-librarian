@@ -96,6 +96,8 @@ from mechanical_librarian.domain.metadata_report import (
     RearClaimProvenance,
     ReportValueError,
     TargetFacts,
+    TargetField,
+    TargetFieldState,
     audio_set_content_digest,
     audio_set_identity,
     canonical_json,
@@ -106,6 +108,7 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_date_value,
     normalize_title,
     provider_access_time,
+    target_performance_claims,
 )
 from mechanical_librarian.domain.proposal_set import (
     TargetDestination,
@@ -2153,6 +2156,159 @@ def test_an_abs_asserted_field_outside_title_and_asin_is_still_refused(
 ) -> None:
     with pytest.raises(ReportValueError):
         _audio_claim(kind, "asserted", "target_metadata")
+
+
+def _record_fields(
+    authors: tuple[str, ...] | None = None, genres: tuple[str, ...] | None = None
+) -> tuple[TargetField, ...]:
+    """A record titled "Recorded title" with these authors and genres."""
+    stated = {
+        TargetDestination.AUTHORS: authors,
+        TargetDestination.GENRES: genres,
+    }
+    return tuple(
+        TargetField(destination, TargetFieldState.VALUE, value)
+        if (value := stated.get(destination))
+        else field
+        for destination, field in zip(
+            TargetDestination, default_target_fields("Recorded title"), strict=True
+        )
+    )
+
+
+def _performances(fields: tuple[TargetField, ...]) -> tuple[str, ...]:
+    claims = target_performance_claims(fields)
+    assert all(
+        (
+            claim.kind,
+            claim.canonical,
+            claim.basis,
+            claim.scope,
+            claim.excerpt,
+            claim.occurrence,
+        )
+        == (
+            ClaimKind.PERFORMANCE_TYPE,
+            "dramatized",
+            "target_metadata",
+            ClaimScope.EDITION,
+            claim.observed,
+            0,
+        )
+        for claim in claims
+    )
+    return tuple(claim.observed for claim in claims)
+
+
+@pytest.mark.parametrize(
+    ("authors", "genres", "observed"),
+    (
+        (("Given Family - Graphic Audio",), None, ("Given Family - Graphic Audio",)),
+        (("Given Family — GraphicAudio",), None, ("Given Family — GraphicAudio",)),
+        (None, ("Radio Drama",), ("Radio Drama",)),
+        (None, ("Fiction", "AUDIO DRAMA"), ("AUDIO DRAMA",)),
+        (None, ("Ho\u0308rspiel",), ("Ho\u0308rspiel",)),
+        (None, ("H\u00f6rspiel",), ("H\u00f6rspiel",)),
+        (
+            ("Other Author", "Given Family - Graphic Audio"),
+            ("Radio Drama", "Radio Drama"),
+            ("Given Family - Graphic Audio", "Radio Drama"),
+        ),
+    ),
+    ids=(
+        "suffix",
+        "joined_suffix",
+        "radio_drama",
+        "audio_drama_upper",
+        "horspiel_nfd",
+        "horspiel_nfc",
+        "authors_first",
+    ),
+)
+def test_a_dramatised_record_is_one_claim_per_value(
+    authors: tuple[str, ...] | None,
+    genres: tuple[str, ...] | None,
+    observed: tuple[str, ...],
+) -> None:
+    assert _performances(_record_fields(authors, genres)) == observed
+
+
+@pytest.mark.parametrize(
+    "genre",
+    ("Full Cast", "Drama", "Radio Dramas", "Fiction / Radio Drama", "Horspiel"),
+)
+def test_a_genre_near_a_drama_genre_is_no_claim(genre: str) -> None:
+    assert _performances(_record_fields(("Given Family",), (genre,))) == ()
+
+
+def test_a_record_without_values_states_no_performance() -> None:
+    assert _performances(default_target_fields("Recorded title")) == ()
+    fields = tuple(
+        TargetField(field.destination, TargetFieldState.MALFORMED)
+        if field.destination in {TargetDestination.AUTHORS, TargetDestination.GENRES}
+        else field
+        for field in default_target_fields("Recorded title")
+    )
+    assert _performances(fields) == ()
+
+
+def test_a_record_dramatisation_is_a_valid_target_performance_claim() -> None:
+    fields = _record_fields(genres=("Radio Drama",))
+    (claim,) = target_performance_claims(fields)
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", fields),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(claim,),
+        local_reasons=("embedded_tag",),
+        providers=(),
+        audio=_ONE_TRACK_AUDIO_FACTS,
+    )
+    performance = next(
+        value
+        for value in report.field_results
+        if value.kind is ClaimKind.PERFORMANCE_TYPE
+    )
+    assert (FieldSource.TARGET_METADATA, FieldState.VALID) in {
+        (value.source, value.state) for value in performance.sources
+    }
+    assert MetadataReport.from_json(report.to_json()) == report
+    with pytest.raises(ReportValueError, match="target metadata claim kind"):
+        LocalClaim.create(
+            kind=ClaimKind.PERFORMANCE_TYPE,
+            observed="Radio Drama",
+            canonical="unabridged",
+            excerpt="Radio Drama",
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+        )
+
+
+@pytest.mark.parametrize(
+    ("genres", "claimed", "file_format"),
+    (
+        (("Radio Drama",), (), "m4b"),
+        (("Fiction",), ("Radio Drama",), "m4b"),
+        (("Radio Drama",), ("Radio Drama",), "epub"),
+    ),
+    ids=("missing", "fabricated", "ebook"),
+)
+def test_a_report_states_exactly_the_record_dramatisation_on_audio(
+    genres: tuple[str, ...], claimed: tuple[str, ...], file_format: str
+) -> None:
+    claims = target_performance_claims(_record_fields(genres=claimed))
+    with pytest.raises(ReportValueError, match="target performance claims"):
+        MetadataReport.create(
+            target=TargetFacts(
+                "primary", "audio", "item-1", _record_fields(genres=genres)
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64, file_format),
+            local_claims=claims,
+            local_reasons=("embedded_tag",) if claims else ("no_opening_claims",),
+            providers=(),
+            audio=_ONE_TRACK_AUDIO_FACTS if file_format == "m4b" else None,
+        )
 
 
 def test_an_asserted_asin_is_a_target_metadata_claim_reported_valid() -> None:

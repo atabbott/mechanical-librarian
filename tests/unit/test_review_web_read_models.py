@@ -4342,6 +4342,109 @@ def test_conflicting_recording_statements_remain_nonselectable_evidence(statemen
     )
 
 
+@pytest.mark.parametrize(
+    ("genres", "performance", "statement"),
+    (
+        (("Radio Drama",), None, "unabridged"),
+        (("Radio Drama",), None, "abridged"),
+        ((), "unabridged", "dramatized"),
+    ),
+    ids=("drama_genre_unabridged", "drama_genre_abridged", "reading_dramatized"),
+)
+def test_a_dramatisation_and_a_reading_are_different_recordings(
+    genres, performance, statement
+):
+    """Both directions of #1880, end to end through the stored report."""
+    from dataclasses import replace
+
+    from mechanical_librarian.application.review_web import (
+        _review_unselectable_evidence,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        ClaimScope,
+        MetadataReport,
+        ProviderEvidence,
+        ProviderEvidenceKind,
+        TargetDestination,
+        TargetField,
+        TargetFieldState,
+        recording_variant_conflict,
+        target_performance_claims,
+    )
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.audiobook_providers import audio_claim
+    from tests.support.audiobook_reports import admitted_audiobook_report
+
+    base = admitted_audiobook_report()
+    target = replace(
+        base.target,
+        fields=tuple(
+            TargetField(TargetDestination.GENRES, TargetFieldState.VALUE, genres)
+            if field.destination is TargetDestination.GENRES and genres
+            else field
+            for field in base.target.fields
+        ),
+    )
+    provider = base.providers[0]
+    candidate = provider.candidates[0]
+    candidate = replace(
+        candidate,
+        evidence=tuple(
+            sorted(
+                (
+                    *candidate.evidence,
+                    ProviderEvidence(
+                        ProviderEvidenceKind.EDITION_STATEMENT,
+                        statement,
+                        ClaimScope.EDITION,
+                    ),
+                ),
+                key=lambda evidence: (
+                    evidence.scope.value,
+                    evidence.kind.value,
+                    evidence.value,
+                ),
+            )
+        ),
+    )
+    report = MetadataReport.create(
+        target=target,
+        file=base.file,
+        local_claims=(
+            *target_performance_claims(target.fields),
+            *base.local_claims,
+            *(
+                ()
+                if performance is None
+                else (audio_claim(ClaimKind.PERFORMANCE_TYPE, performance, 3),)
+            ),
+        ),
+        local_reasons=base.local_reasons,
+        providers=(replace(provider, candidates=(candidate,)),),
+        audio=base.audio,
+    )
+    reopened = MetadataReport.from_json(report.to_json())
+    assert reopened == report
+    assert (
+        recording_variant_conflict(
+            candidate, reopened.local_claims, reopened.target.current_title or ""
+        )
+        == "recording_dramatization_conflict"
+    )
+    narrator = next(
+        result
+        for result in evaluate_report(reopened).results
+        if result.destination is TargetDestination.NARRATORS
+    )
+    assert narrator.alternatives == ()
+    claim = next(claim for claim in candidate.claims if claim.role == "narrator")
+    evidence = _review_unselectable_evidence(reopened, set())[claim.reference]
+    assert evidence["observation"].startswith(
+        "Narrator: Ilsa Brandt. Not offered as a choice. "
+        "That recording is a different version of this audiobook."
+    )
+
+
 def _local_language(value: str) -> LocalClaim:
     return LocalClaim.create(
         kind=ClaimKind.LANGUAGE,

@@ -202,6 +202,16 @@ def test_the_same_title_and_every_author_meets_the_exact_level() -> None:
         assert value is not None and value.creator_comparison == "closed"
 
 
+def test_a_producer_credited_target_meets_the_exact_level_by_its_bare_name() -> None:
+    """The target's credit is compared without its producer suffix (#1880)."""
+    record = _record()
+    report, provider = _report(record, authors=("R. F. Example - Graphic Audio",))
+    for level in (_EXACT, _WIDE):
+        value = _admit(report, provider, record, level)
+        assert _level(value) is _EXACT
+        assert value is not None and value.creator_comparison == "closed"
+
+
 def test_the_same_title_and_any_author_meets_only_the_wide_level() -> None:
     record = _record(creators=("R. F. Example",))
     report, provider = _report(record, authors=("R. F. Example", "Bea Example"))

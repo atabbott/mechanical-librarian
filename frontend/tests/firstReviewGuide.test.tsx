@@ -278,6 +278,7 @@ describe('first review guide', () => {
 
     expect(proposed).toBeChecked()
     expect(within(proposed).getByText('Your choice · Pinned')).toBeVisible()
+    expect(proposed).toHaveAccessibleDescription('Your choice · Pinned Hardcover, Open Library')
     const unpin = within(dialog).getByRole('button', { name: 'Unpin' })
     expect(unpin).toHaveClass('is-on')
     expect(unpin).toHaveAccessibleDescription('Example Story')

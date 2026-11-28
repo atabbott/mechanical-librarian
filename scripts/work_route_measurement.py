@@ -110,6 +110,7 @@ from mechanical_librarian.domain.proposal_set import (
     work_route_cover_sources,
 )
 from mechanical_librarian.domain.reviewer_decision_summary import correlation_identity
+from mechanical_librarian.domain.work_identity import comparison_author
 
 WORK_ROUTE_MEASUREMENT_SCHEMA = "work-route-measurement-v1"
 PROVENANCE_SECTION = "current_audiobook_work_route_measurement"
@@ -543,7 +544,14 @@ def _measure_recording(
         TargetDestination.AUTHORS
     ].value
     if type(title) is str and type(authors) is tuple:
-        context = (title, cast("tuple[str, ...]", authors))
+        # Compared without a producer suffix, as the lanes ask (#1880).
+        context = (
+            title,
+            tuple(
+                comparison_author(value) if type(value) is str else value
+                for value in cast("tuple[str, ...]", authors)
+            ),
+        )
     recordings = _admitted_recordings(report)
     compared: dict[str, tuple[ProviderCandidate, ...]] = {}
     for authority, found in sources.items():

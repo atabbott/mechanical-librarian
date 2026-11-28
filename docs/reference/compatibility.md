@@ -100,9 +100,9 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `metadata-report-v83` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
+| `metadata-report-v84` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
-| `fixed-conservative-v48` | The proposal policy |
+| `fixed-conservative-v49` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |
 | `metadata-policy-profile-v3` | A library's metadata policy profile |
 | `review-case-v3` | A review case built from a proposal set ([Review cases](../operations/review-case.md)) |

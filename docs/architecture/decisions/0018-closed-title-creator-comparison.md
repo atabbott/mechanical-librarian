@@ -188,3 +188,34 @@ may also match a cover, or offer a value for the owner to choose in a title,
 subtitle, authors, description, genres, tags or series field, by a level's
 predicate. Comparison links, creator order and the table above are unchanged,
 and a level admission never creates an agreement link.
+
+## #1880 amendment (2026-11-27)
+
+- Status: accepted (accepted by the owner on 2026-11-27).
+
+An audiobook's Audiobookshelf record can say it is a dramatisation. One parser
+reads a closed table of suffixes at the end of a credit: the last spaced
+hyphen, en dash or em dash, then a table entry compared after whitespace and
+case folding, with a name left before it. For the record's authors the table
+is the producers `graphic audio` and `graphicaudio`. Work-identity admission,
+the WORK lane query and the owner's search compare the name before the suffix,
+for every medium; the record and every write keep the stored value. The
+comparison policy stays `-v6`: no step of the relation above changes, only
+which part of the credit is the local author.
+
+On an audiobook, a credit with a producer suffix, or a genre that folds
+exactly to `radio drama`, `audio drama` or `hörspiel`, is a local
+`performance_type` claim of `dramatized` with basis `target_metadata`, the
+third kind that basis carries after title and ASIN. Like the asserted ASIN it
+only refuses. `full cast` alone is not a drama genre.
+
+`recording_variant_conflict` gains the reason
+`recording_dramatization_conflict`, after its language and title-variant
+reasons. A local dramatised claim refuses a product whose edition statement is
+`unabridged` or `abridged`. A local unabridged or abridged claim, from a tag, a
+sidecar or the title's marker, refuses a product whose edition statement is
+`dramatized`, `dramatised`, `dramatization`, `dramatisation` or one of the
+three drama genres; a product's title is not read for it. The title-variant
+veto and every other floor are unchanged, and admitting a dramatised recording
+to a dramatised listing remains a separate decision. The report schema
+advances to `metadata-report-v84`.

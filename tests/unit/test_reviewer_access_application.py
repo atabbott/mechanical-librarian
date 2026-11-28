@@ -48,9 +48,11 @@ class _Auth:
         self.recheck_state: DeviceAuthStatus | None = None
 
     def start(self):
+        # What `CodexDeviceAuthManager.start` answers: the flow has begun and
+        # the code arrives later, on a status read (#1652).
         self.start_calls += 1
-        self.state = "waiting"
-        return CodexDeviceAuthState("waiting")
+        self.state = "starting"
+        return CodexDeviceAuthState("starting")
 
     def activate_lease(self) -> None:
         return None
@@ -440,13 +442,13 @@ def test_reauthentication_deselects_codex_before_starting_replacement() -> None:
     operations, auth, _openrouter, _codex = _operations(auth_state="usable")
     assert operations.select_codex(expected_revision=1).revision == 2
     access, started = operations.start_codex(expected_revision=2)
-    assert started.state == "waiting"
+    assert started.state == "starting"
     assert access.revision == 3
     assert access.mapping is None
     document, _configured = operations._repository.read()
     assert document.revision == 3
     assert document.cover_observation is None
-    assert operations.codex_status().state == "waiting"
+    assert operations.codex_status().state == "starting"
 
 
 def test_a_refused_sandbox_refuses_start_before_clearing_codex() -> None:
@@ -1577,7 +1579,7 @@ def test_codex_sign_in_changes_clear_only_codex_taste_and_openrouter_clear_keeps
     assert cleared.mapping is None
     assert cleared.taste_mapping == CodexTaskSelection(engine="codex")
     access, started = operations.start_codex(expected_revision=cleared.revision)
-    assert started.state == "waiting"
+    assert started.state == "starting"
     assert access.revision == cleared.revision + 1
     assert access.taste_mapping is None
     assert operations._repository.read()[0].cover_taste_build is None

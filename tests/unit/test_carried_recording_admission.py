@@ -430,7 +430,7 @@ def test_a_tight_search_admission_is_carried() -> None:
 def test_an_item_with_its_own_asin_carries_nothing() -> None:
     claims = (*_claims(carried=None), _local(ClaimKind.ASIN, _CARRIED, 3))
     plan = _plan(claims)
-    (lane,) = plan.lanes
+    (lane,) = (value for value in plan.lanes if value.kind is ProviderQueryKind.ASIN)
     observation = provider_observation(
         "audible",
         (

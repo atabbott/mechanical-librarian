@@ -1027,3 +1027,72 @@ def test_a_long_link_pill_takes_no_width_from_an_ordinary_title(
         title="The Lighthouse Keeper's Daughter",
     )
     assert measured["waiting"] == measured["linked"] == measured["not-linked"], measured
+
+
+_ACTION_COLUMNS = """() => {
+  const left = (element) => element.getBoundingClientRect().left
+  const counts = Array.from(document.querySelectorAll('.selected-work-status > div'), left)
+  const actions = Array.from(
+    document.querySelectorAll('.selected-work-diagnostics > :not(.sr-only)'),
+    (element) => left(element.matches('.work-more') ? element.querySelector('button') : element),
+  )
+  return {counts, actions}
+}"""
+
+
+_ACTIONS_EDGE = """() => {
+  const style = getComputedStyle(document.querySelector('.selected-work-diagnostics'))
+  return {borderLeft: style.borderLeftWidth, paddingLeft: style.paddingLeft}
+}"""
+
+
+@pytest.mark.parametrize("width", [1440, 1280, 1200], ids=["1440", "1280", "1200"])
+def test_enlarged_text_on_a_wide_window_draws_no_line_before_the_actions(
+    browser: Browser, width: int
+) -> None:
+    """With 200% text the shell is under 50rem, so the header wraps its parts;
+    the actions keep no line or indent at their left, whether they start a
+    line or follow the counts, as in every other layout (#2071)."""
+    page = _page(browser, _Served(), width)
+    try:
+        _open_case(page)
+        set_root_text(page, "200%")
+        expect(
+            _actions(page).get_by_role("button", name="Find this book")
+        ).to_be_visible()
+        edge = page.evaluate(_ACTIONS_EDGE)
+        assert edge == {"borderLeft": "0px", "paddingLeft": "0px"}, edge
+        assert page.evaluate(_NO_SIDEWAYS_SCROLL)
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("width", [1440, 1280], ids=["1440", "1280"])
+def test_the_work_actions_line_up_under_the_counts(
+    browser: Browser, width: int
+) -> None:
+    """Beside the counts, Evidence starts where Needs you starts and Find this
+    book, or the longest pill in its place, where Automatic starts (#2057)."""
+    states = {
+        "not-linked": _HEADER_STATES["not-linked"],
+        "waiting": (
+            _view(_current(provider="google_books", state="waiting")),
+            "Linked, waiting for Google Books",
+        ),
+    }
+    for name, (view, control) in states.items():
+        page = _page(browser, _Served(view=view), width)
+        try:
+            _open_case(page)
+            expect(
+                _actions(page).get_by_role("button", name=control, exact=True)
+            ).to_be_visible()
+            page.evaluate("() => document.fonts.ready")
+            columns = page.evaluate(_ACTION_COLUMNS)
+            counts, actions = columns["counts"], columns["actions"]
+            assert len(actions) == 3, (name, columns)
+            assert abs(actions[0] - counts[0]) <= 0.5, (name, columns)
+            assert abs(actions[1] - counts[1]) <= 0.5, (name, columns)
+            assert page.evaluate(_NO_SIDEWAYS_SCROLL), name
+        finally:
+            page.close()

@@ -468,7 +468,7 @@ and wash. The mark is identity support, never a fake cover. When a work's report
 retains the cover its library holds, that real cover takes the mark's place in
 the row and the open work's header, contained whole. In the header it is at
 most 60 by 90px; at 760px and below it is up to 84px wide and 132px tall, with
-Needs you and Automatic under the title beside it. From 761px, where the shell is 50rem or wider, the work actions (Evidence, Find this book, More) sit under the counts at the header's right in a column of fixed width, where a long link pill wraps inside itself, so they push no field down; narrower, they keep their own line below. In a row it fits the spine's own column, at most 48 by 72px (42
+Needs you and Automatic under the title beside it. From 761px, where the shell is 50rem or wider, the work actions (Evidence, Find this book, More) sit under the counts at the header's right in a column of fixed width, Evidence under Needs you and Find this book or its pill under Automatic, where a long link pill wraps inside itself, so they push no field down; narrower, they keep their own line below. In a row it fits the spine's own column, at most 48 by 72px (42
 by 63px below 760px), centred as the spine is, so every title starts at the same
 edge and the cover never sets the row's height. Every other work keeps its
 spine, and a cover that fails to load falls back to it.
@@ -495,7 +495,9 @@ Keyboard focus is a 3px focus-colour outline drawn just inside the whole choice,
 resolved, or stale fields must not present a false choice. A choice that is refused or not confirmed is
 said in Correction Red right under the choices, in Works and in Covers, with its Try the same decision again or Reload current
 case, and the page scrolls just far enough to show it. Field tabs name their status in words (Needs you,
-Decided, Pinned, Automatic, Optional, No change), never by a glyph.
+Decided, Pinned, Automatic, Optional, No change), never by a glyph. A notice about the whole work, such as a
+provider comparison or a Book matching check, sits above the field tabs, 14px from
+what precedes it and from the tabs, so the selected tab stays on its own content.
 
 ### Cover Choice
 

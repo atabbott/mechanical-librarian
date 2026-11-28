@@ -35,15 +35,16 @@ from tests.unit.test_level_proposal_sets import _refused, _synopsis
 from tests.unit.test_level_proposal_sets import _report as _level_report
 
 _REPORT = genre_report(current=("Drama",), genres=("Fantasy",))
-# What 881a92c's evaluator, before the epoch existed, made of `_REPORT`.
+# What 881a92c's evaluator, before the epoch existed, made of `_REPORT`,
+# restated under fixed-conservative-v49 and metadata-report-v84 (#1880).
 _PROPOSAL_SET_ID = (
-    "proposal_set_d9cbd8c0ca0fa34d86b1bd049ec333c0c1fbb8a3f519bdbd5119f542fe9a3fb3"
+    "proposal_set_bcfff5d2b96372b4b476321cc16e85f5fe110b06cce471f44e38951316d3d86c"
 )
 _REVIEW_CASE_ID = (
-    "review_case_90e22892ba84dd7a5f8a606635a07349a662b1d6fec1ad1356b6debf55339dec"
+    "review_case_0fd61c31ac3b7803b133bbb96146ea57df411e1411b9cd8b817489fe1dd018e0"
 )
 _FIRST_REVIEW_PROPOSAL_ID = (
-    "review_proposal_802ba7bdfb21db6dff23debc22942f6503dc4e42e31bfae4e9e0990aadf6ade6"
+    "review_proposal_0fc4e855beba609be743346094d0b8c7f3b5e8b87a79de21339b0dfa48c141f9"
 )
 _SRC = Path(__file__).parents[2] / "src" / "mechanical_librarian"
 # The calls that need no epoch: a title conflict reads only the results, which

@@ -42,6 +42,21 @@ brackets are GitHub issues.
 - A library whose write was stopped while SQLite was still writing its journal
   now starts again, and a partly written store is rolled back. Before, it
   refused with "database recovery state is unsupported" (#2052).
+- In Library, the line saying a work is being checked against a new Book
+  matching setting, or could not be checked, now sits above the field tabs
+  with the comparison notice, spaced from them, instead of touching the tabs
+  between the selected tab and its field. Evidence and Find this book now
+  line up under Needs you and Automatic (#2057).
+- With enlarged text on a wide window, a work's Evidence, Find this book and
+  More now start in line with the cover's left edge, without a stray line and
+  indent before them (#2071).
+- A screen reader now hears each cover card's title, its reason line when it
+  shows one, and Recommended or Suggested when the card is, as well as the
+  action the card's name already gave (#1837).
+- A screen reader now hears what each metadata choice card shows besides its
+  value: Recommended, Your choice, Automatic's choice or Pinned, and its source
+  and recommendation lines, as well as the action the card's name already gave
+  (#2069).
 - A field Automatic decided says "You can change it here." only where the field
   offers a choice or a value of your own, as your own decisions already do
   (#2034).
@@ -544,6 +559,10 @@ brackets are GitHub issues.
   preparation resumes. Before, it waited for the next library poll, and a
   library whose last scan had failures was not polled at all. Resuming also
   retries that library's failed items (#1785).
+- Description advice asked for during the first preparation, and a Current
+  covers save, now start the scan of a library whose first scan has ended.
+  Before, that library waited for the whole first preparation and the next
+  poll, or for Retry when its first scan had failures (#1816).
 - Library has a Covers view beside Works for going through every book's
   cover: To decide, Kept, Switched (automatic switches, with the cover before
   and now) and All, 50 books at a time. One tap records a choice and opens the
@@ -630,6 +649,16 @@ brackets are GitHub issues.
   may write it there too (#1905).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
+
+- **Derived regeneration required.** An audiobook whose author in
+  Audiobookshelf ends in a producer credit such as " - Graphic Audio", or whose
+  genre is Radio Drama, Audio Drama or Hörspiel, counts as a dramatisation.
+  Matching compares the author without the credit and never pairs a
+  dramatisation with a recording listed as unabridged or abridged, or the
+  reverse (#1880).
+
+- Find this book says a linked or withheld recording is a different version of
+  this audiobook, where it said abridged for every kind of version (#1880).
 
 - **Clean rebuild required.** When an audiobook's recording was matched by a
   title other than its own, the book's page now says how: by this folder's
@@ -749,6 +778,11 @@ brackets are GitHub issues.
 - When setup's step list is too narrow to hold a step's name beside its Change
   button, as it is beside the steps with 200% text, the button moves under the
   name, so words such as "Audiobookshelf" stay whole (#1508).
+- An audiobook whose own ASIN (in a tag, a sidecar or a bracketed file or
+  folder name) names a recording that doesn't match is also searched on Audible
+  by title and author, so it can still match its real recording. An audiobook
+  whose own ASIN matches sends no extra request. A tagged or bracketed value
+  with no digit, such as `[UNABRIDGED]`, is no longer read as an ASIN (#1879).
 
 ## 0.29.3 — Review fixes and hygiene (in progress)
 
@@ -944,6 +978,11 @@ brackets are GitHub issues.
   "Cancelling sign-in…" while the reviewer step's Codex buttons work. Pending
   buttons in Settings, Policy, a field's own value and Activity keep a
   full-strength focus outline too (#1698).
+- When an audiobook file's chapters, tags and sidecar files are too large for
+  the inspector's answer, the facts read last are now left out until it fits,
+  instead of the file failing as an internal error. An audiobook whose report
+  still cannot hold its facts fails on its own, as too large to read as one
+  book, instead of stopping the run (#1798).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
